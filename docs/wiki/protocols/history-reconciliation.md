@@ -1796,10 +1796,8 @@ the old conversation, through the boot merge's own move, and logs the count eith
   user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
   joined group only after the move, which would have reopened the window at the swap.
 - **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
-  the boot merge's decision, the lowest group id on every device
-  ([below](#a-crossed-11-pair-ends-on-the-lowest-group-id-2026-11-12)). A Welcome into the HIGHER of
-  the two re-keys the thread onto it live all the same - the peer is talking there - and the next
-  boot folds it back into the lower one.
+  the boot merge's decision, and it folds only into the lowest group id
+  ([below](#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
 - **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
   message landing between the read and the write is written over by the stored body; what is
   keyed by the conversation rather than the message - read watermarks, mutations still waiting for
@@ -1810,45 +1808,55 @@ taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsS
 it across a store walk would serialise unrelated groups' commits behind a disk read. The
 compare-and-set closes the same gap per row, on every writer, at no cost when nothing races.
 
-#### A crossed 1:1 pair ends on the lowest group id (2026-11-12)
+#### A crossed 1:1 pair: the lower id is never deleted (2026-11-12)
 
 Two 1:1 groups for the same two people exist when both started the conversation independently.
-`mergeDirectConversationDuplicates` (boot) used to keep the row with the newest `updatedAt` and
-delete the other locally AND on the server. `updatedAt` is local - it ties for a row re-keyed by a
-Welcome and differs between the peers by whatever each saw last - so each peer could keep a
-different group and delete the other's choice for everybody: both groups gone.
+`mergeDirectConversationDuplicates` (boot) keeps the row with the newest `updatedAt`, moves the
+others' rows into it and deletes them locally AND on the server. Recency is local - it ties for a
+row re-keyed by a Welcome and differs between the peers by whatever each saw last - so each peer
+could keep a different group and delete the other's choice for everybody: both groups gone.
 
-**The survivor is the lowest group id** (`isPreferredDirectGroup`), the one fact every member holds
-identically, that never ties and never moves. The server's `createdAt` was the other candidate; it is
-absent from rows stored before it was sent and can tie. **What a device may DO about it is gated on
-what it knows** (`judgeDirectDuplicate`, one `[DM_MERGE]` line per pair either way):
+**What every device of both peers shares at decision time** is only the group ids (and the server's
+immutable facts about each group, if fetched). The ratchet tree is read at the epoch each device
+last saved (the restore runs before `bootCatchUp`), tombstones arrive at different moments, recency
+is local, and the server's membership view is a fact about the instant it was read. So a CHOICE can
+be shared; "nobody still uses this group" cannot be known by any client, and every client-side
+server delete is a guess. A first version of this fix (#3417 as opened) gated the delete on the
+trees and the merge on the lowest id; its review found it deleted rows the server still routed,
+disagreed with the Welcome re-key, and moved a mixed pair's history under a tombstone.
 
-| Gate | Fails | Then |
-| --- | --- | --- |
-| held groups known (`heldGroupsKnown`) | not yet | both rows kept |
-| survivor held, this device a member (`isGroupActive`) | Welcome owed, or evicted | both rows kept - never delete the group it can use before it holds the other |
-| every leaf of the loser is a leaf of the survivor (both TREES, read locally) | a device can talk only in the loser | both rows kept, on both peers: the trees are shared state |
-| loser not held, or evicted from | - | rows moved, row deleted locally, nothing on the server |
-| survivor strictly more recent than the loser here | the loser is the more recent | rows moved, row deleted locally, **left on the server** |
-| all of the above | - | rows moved, row deleted locally, **deleted on the server** |
+**Decided (owner, 2026-11-12): (c) now, then (b) with prevention on the server.**
 
-The order is move, local delete, server delete: a crash after the move leaves the loser's row, and
-the next boot picks the same survivor (nothing local decides it), moves what is left and finishes.
+**(c), shipped in 1.6.11 - restrict what a device may DELETE, nothing else** (`decideCrossedPair`).
+Recency still picks the group kept, and the Welcome re-key is untouched. A device folds - moves the
+rows, deletes on the server, then locally - only when its recency keeps the LOWEST id; a tie counts
+as keeping the lowest. When its recency keeps a higher id it decides nothing: both rows, both
+groups, one `[DM_MERGE]` line per pair per session.
 
-**The recency gate is the mixed-pair guard.** A 1.6.6-1.6.10 client still keeps the newest
-`updatedAt` and deletes the rest on the server. When that rule would keep the survivor too, both
-agree and the delete is harmless; when it would keep the LOSER, the old peer deletes the survivor on
-the server, and the new device holds back its own delete so the loser remains: the survivor becomes
-a tombstone (no candidate), discovery re-creates the loser's row, and the pair ends on the loser. The
-history moved into the survivor stays readable under its tombstone. Local recency is a guess at the
-old peer's view, not a proof, so the race the old rule always had (both peers deleting at once) is
-narrowed in a mixed pair, not closed; it is closed between two new clients, who never delete the
-survivor.
+- Two clients running this rule never delete the lowest id, so they can no longer lose both.
+- A group this device holds always keeps a row while the server routes it: a device either holds
+  back, or deletes on the server first and keeps the row when that delete fails (a frame for a
+  held group with no row is refused `absent-conversation`, and discovery never re-creates a second
+  DM of a loaded peer). The next boot retries.
+- A Welcome into the higher id leaves a tie (the joined row carries the old row's `updatedAt`), so
+  the next boot folds it back into the lower one; a message in the higher group after the Welcome
+  makes it the more recent, and the device holds instead.
+- Mixed pair (a 1.6.6-1.6.10 peer on recency alone): never worse than before. Both keep the higher
+  id - the old client deletes the lower one, the new one holds, nothing has moved. Both keep the
+  lower - both delete the higher. The new keeps the lower, the old the higher - both are deleted,
+  the race the old rule always had; it closes with the floor.
+- The accepted cost: when both peers' recency keeps the higher id, both see two rows for the same
+  person until a message in the lower group folds them. Nothing is lost, and both groups work.
 
-**Discovery ignores only a group that ranks after the one loaded** (`ensureConversationForServerGroup`).
-It used to ignore any second DM for a loaded peer, so a device that held only the loser never got
-the survivor's row and never joined it. A loser held back on the server stays there, ignored by every
-new client; its end is left to a server rule ([what is left](../backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md)).
+**(b), the chantier after 1.6.11 - server prevention FIRST.** The chat-delivery `createGroup`
+creates a DM without checking for a live 1:1 between the same two people; creation always goes
+through the server, so it can serialise it and answer the existing group, and new crossed pairs
+stop appearing. Then the pairs that already exist are presented as ONE thread keyed to the lowest
+id - both rows and both MLS groups kept, each frame landing on its own row, sends to the survivor,
+nothing moved - and no client deletes the other group on the server: its end is proven by the
+server (no member device has undelivered frames for it, nobody has posted in it since a post in the
+survivor), never by a clock. The cost is an alias-aware reader everywhere a conversation is read by
+id. What is left: [backlog](../backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md).
 
 #### A lookup by id is scoped to its conversation (review of #2936, P1, security)
 

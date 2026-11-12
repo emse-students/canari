@@ -1,11 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
-import {
-  buildConversationRow,
-  canRepresentThePeer,
-  isPreferredDirectGroup,
-  resolveDirectPeerId,
-} from './conversations';
+import { buildConversationRow, canRepresentThePeer, resolveDirectPeerId } from './conversations';
 import { holdsGroupState } from './groupUsability';
 
 /**
@@ -231,29 +226,16 @@ export async function ensureConversationForServerGroup(
   // A TOMBSTONE IS NOT A CANDIDATE - {@link canRepresentThePeer}, and this is the user's own report
   // of 2026-08-23: a 1v1 pending local deletion blocked the arrival of the NEW conversation with
   // that same peer. A record that exists only to be removed must not refuse its own replacement.
-  //
-  // ONLY A GROUP THAT RANKS AFTER THE ONE LOADED IS IGNORED ({@link isPreferredDirectGroup}). The boot
-  // merge keeps the lowest group id on every device of both people; ignoring the SURVIVOR because a
-  // loser was loaded first left a device that held only the loser (a partial re-join, a second
-  // device whose Welcome was owed) without the survivor's row - so it never joined it, and the pair
-  // could never fold together. The survivor's row is created beside the loser's, and the next boot
-  // merge folds the loser in once this device holds the survivor.
   if (directPeer) {
-    const sameDirectPeer = [...conversations.values()].filter(
+    const alreadyLoaded = [...conversations.values()].find(
       (c) =>
         canRepresentThePeer(c) &&
         (c.conversationType ?? 'group') === 'direct' &&
         (c.directPeerId ?? c.contactName).toLowerCase() === directPeer
     );
-    const preferred = sameDirectPeer.find((c) => !isPreferredDirectGroup(groupId, c.id));
-    if (preferred) {
-      log(`[DISCOVERY] Duplicate ignored for "${directPeer}" (existing: ${preferred.id})`);
+    if (alreadyLoaded) {
+      log(`[DISCOVERY] Duplicate ignored for "${directPeer}" (existing: ${alreadyLoaded.id})`);
       return 'duplicate';
-    }
-    if (sameDirectPeer.length > 0) {
-      log(
-        `[DISCOVERY] "${directPeer}" has a second DM ${groupIdShort(groupId)}, which ranks before ${sameDirectPeer.map((c) => groupIdShort(c.id)).join(', ')} - its row is created, the boot merge folds the other in`
-      );
     }
   }
 

@@ -1,29 +1,28 @@
-## P2 - a crossed 1:1 pair: what the convergent boot merge left (2026-11-12)
+## P2 - a crossed 1:1 pair: what the 1.6.11 fix left (owner's decision of 2026-11-12)
 
-Found in the review of #3406 as a P1: the boot merge kept the newest `updatedAt`, so the two peers
-could each keep a different group and delete the other's choice on the server - both groups gone.
-**Fixed:** the survivor is the lowest group id on every device, and the merge is gated on what the
-device knows ([history-reconciliation](../protocols/history-reconciliation.md#a-crossed-11-pair-ends-on-the-lowest-group-id-2026-11-12)).
-Tests: `conversations.crossedPair.test.ts` (both groups held, a tie, a partial re-join, an eviction
-from either group, a second device, a crash between the writes, a mixed old/new pair) and
-`serverGroupConversation.crossedPair.test.ts` (discovery).
+Found in the review of #3406 as a P1: the boot merge kept the newest `updatedAt` on each side, so
+two peers could each delete the other's choice on the server - both groups gone. **Fixed for
+1.6.11 by (c):** a device folds only into the lowest group id, and decides nothing otherwise
+([history-reconciliation](../protocols/history-reconciliation.md#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12), tests in
+`conversations.crossedPair.test.ts`). The owner chose on 2026-11-12: (c) now, then the chantier
+below, **server prevention first**.
 
-**What is left, and what would close each:**
+**What is left, in order:**
 
-1. **A loser held back on the server stays there.** Nothing ends it: every new client ignores it
-   (discovery ranks it after the survivor), and it costs one idle group row. Closed by a server rule
-   (a second 1:1 for a pair whose lower one is live is retired), or by dropping the recency gate
-   below once the dev and production floors pass the version carrying this fix.
-2. **The recency gate is a guess at an OLD peer's view.** A 1.6.6-1.6.10 peer still keeps the newest
-   `updatedAt` and deletes the other group on the server; the new client holds its own delete back
-   when that rule would keep the loser, which narrows the race the old rule always had (both peers
-   deleting at once) and does not close it. Closes by itself with the floor.
-3. **A stale leaf only in the loser's tree holds the merge back for good** - both rows stay shown,
-   nothing is lost. The count is the `[DM_MERGE] ... both rows kept: N leaf(s) of the loser are not
-   in the survivor` line; read it on dev before deciding anything.
-4. **A Welcome into the higher group re-keys the thread onto it live** (#3406), and the next boot
-   folds it back into the lower one. Harmless while both peers hold both groups; not a convergence
-   defect, a churn.
-5. **No rig reading yet.** One crossed pair on dev (two accounts, each starting the DM offline, then
-   both online and rebooted) must show one conversation on every device and no server delete of the
-   lower group.
+1. **Server prevention.** The chat-delivery `createGroup` creates a DM without checking for a live
+   1:1 between the same two people. Creation always goes through the server, so it can serialise it
+   and answer the existing group, and no new crossed pair appears. Open before building: how the
+   pair is known at creation (today the peer is registered after it), and what an old client does
+   when it is answered an existing group it does not hold. Test: two concurrent creations for one
+   pair end on one group id.
+2. **One thread for the pairs that already exist (b).** Both rows and both MLS groups kept,
+   presented as one thread keyed to the lowest id; each frame lands on its own row, sends go to the
+   survivor, nothing is moved. No client deletes the other group on the server - its end is proven
+   by the server (no member device holds undelivered frames for it, nobody has posted in it since a
+   post in the survivor), never by a clock. Every reader by conversation id must become alias-aware.
+3. **What (c) accepts until then:** two rows for one person when both peers' recency keeps the
+   higher id (until a message in the lower group); and in a mixed pair, the new client keeping the
+   lower id while the old one keeps the higher still loses both - it closes when the dev and
+   production floors pass 1.6.11.
+4. **One rig reading on dev:** a crossed pair, both peers rebooted with opposite recencies, ends with
+   the lower group alive and no `absent-conversation` refusal for either group.

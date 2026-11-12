@@ -32,26 +32,17 @@ function makeStorage(): IStorage {
   } as unknown as IStorage;
 }
 
-/**
- * A device holding every group it is asked about, a member of each, with one tree shared by all of
- * them - so the merge's gates all pass and the outcome is the survivor rule alone.
- */
 function makeMlsService(getGroupMetaImpl: (id: string) => unknown): IMlsService {
   return {
     getGroupMeta: vi.fn().mockImplementation((id: string) => Promise.resolve(getGroupMetaImpl(id))),
-    heldGroupsKnown: () => true,
-    getLocalGroups: () => [PRED_ID, SUCC_ID, IND_A, IND_B, 'fres0000-0000-0000-0000-000000000000'],
-    isGroupActive: vi.fn().mockResolvedValue(true),
-    getGroupMemberIdentities: vi.fn().mockResolvedValue([`${ME}:d1`, `${PEER}:d1`]),
     deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
   } as unknown as IMlsService;
 }
 
 describe('mergeDirectConversationDuplicates', () => {
-  it('keeps the LOWEST group id even when it is the older, and leaves the more recent loser on the server', async () => {
-    // The survivor is the lowest id (PRED < SUCC), the same on every device of both people. SUCC is
-    // the more recent here, so a peer still on the old recency rule keeps SUCC and deletes PRED on
-    // the server - deleting SUCC as well would leave neither, so it is merged locally only.
+  it('decides nothing when the most recent group is not the lowest id', async () => {
+    // SUCC is the more recent, PRED the lower id. Folding into SUCC would delete PRED on the server,
+    // and a peer whose recency keeps PRED deletes SUCC: both gone. So both rows and groups stay.
     const storage = makeStorage();
     const mls = makeMlsService(() => null);
 
@@ -64,22 +55,21 @@ describe('mergeDirectConversationDuplicates', () => {
       mls
     );
 
-    expect(result.map((c) => c.id)).toContain(PRED_ID);
-    expect(result.map((c) => c.id)).not.toContain(SUCC_ID);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(SUCC_ID);
+    expect(result.map((c) => c.id).sort()).toEqual([PRED_ID, SUCC_ID].sort());
+    expect(storage.deleteConversation).not.toHaveBeenCalled();
     expect(mls.deleteGroupOnServer).not.toHaveBeenCalled();
   });
 
-  it('deletes the loser on the server when the survivor is also the more recent', async () => {
+  it('folds into the lowest id when it is also the most recent, and deletes the other on the server', async () => {
     // Two independent groups for the same peer (two devices opened the conv at the same time).
     const storage = makeStorage();
     const mls = makeMlsService(() => null); // aucune relation successeur
 
-    const survivor = makeMeta(IND_A, 1000);
-    const loser = makeMeta(IND_B, 500);
+    const lowerAndNewer = makeMeta(IND_A, 1000);
+    const higherAndOlder = makeMeta(IND_B, 500);
 
     const result = await mergeDirectConversationDuplicates(
-      [loser, survivor],
+      [higherAndOlder, lowerAndNewer],
       ME,
       'pin',
       storage,
@@ -90,7 +80,7 @@ describe('mergeDirectConversationDuplicates', () => {
     expect(result.map((c) => c.id)).toContain(IND_A);
     expect(result.map((c) => c.id)).not.toContain(IND_B);
     expect(storage.deleteConversation).toHaveBeenCalledWith(IND_B);
-    // The old rule would keep the same group, so no peer still on it deletes the survivor.
+    // deleteGroupOnServer MUST be called to prevent resurrection via discoverMissingGroups
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(IND_B);
   });
@@ -105,8 +95,8 @@ describe('mergeDirectConversationDuplicates', () => {
  * deletes every other one locally AND on the server, so a tombstone that happens to be newer takes
  * the fresh conversation's messages and deletes the fresh group for BOTH parties.
  *
- * Both orderings are pinned, because `updatedAt` decided the outcome then, and either device may
- * hold either order. The survivor is now the lowest id, and the tombstone is still no candidate.
+ * Both orderings are pinned, because `updatedAt` is what decided the outcome and either device may
+ * hold either order. Recency still picks the group kept; a fold happens only into the lowest id.
  */
 describe('mergeDirectConversationDuplicates - a record pending deletion', () => {
   const TOMB_ID = 'tomb0000-0000-0000-0000-000000000000';
@@ -167,7 +157,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
     const mls = makeMlsService(() => null);
 
     const result = await mergeDirectConversationDuplicates(
-      [makeMeta(IND_A, 900), makeMeta(IND_B, 1000)],
+      [makeMeta(IND_A, 1000), makeMeta(IND_B, 900)],
       ME,
       'pin',
       storage,

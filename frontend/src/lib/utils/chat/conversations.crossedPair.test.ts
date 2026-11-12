@@ -1,15 +1,17 @@
 /**
- * A CROSSED 1:1 PAIR - two DM groups for the same two people - MUST END ON THE SAME GROUP FOR
- * EVERYBODY, AND NO GROUP ANYBODY STILL TALKS IN MAY BE DELETED ON THE SERVER.
+ * A CROSSED 1:1 PAIR - two DM groups for the same two people - MAY NEVER LOSE BOTH GROUPS TO TWO
+ * CLIENTS RUNNING THIS RULE, AND A GROUP THIS DEVICE HOLDS AND THE SERVER STILL ROUTES ALWAYS KEEPS
+ * A ROW FOR ITS FRAMES TO LAND ON.
  *
- * The boot merge used to keep the row with the newest `updatedAt` and delete the other one locally
- * AND on the server. `updatedAt` is a local fact (and ties for a row re-keyed by a Welcome), so the
- * two peers could each keep a different group and each delete the other's choice for everybody:
- * both groups gone ([backlog](../../../../../docs/wiki/backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).
+ * The boot merge keeps the newest `updatedAt` (the rule a Welcome re-key agrees with, and the one a
+ * 1.6.6-1.6.10 peer still runs) and folds the rest into it, deleting them on the server. Recency is
+ * local, so two peers could each keep a different group and delete the other's choice: both gone.
+ * Now a device folds only when its recency keeps the LOWEST id (a tie counts as the lowest), and
+ * otherwise decides nothing - so the lowest id is never deleted by a new client
+ * ([history-reconciliation](../../../../../docs/wiki/protocols/history-reconciliation.md#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
  *
- * Each test below models every device of the pair: the rows it stores, the groups it holds (and
- * whether it was evicted from them), and the two ratchet trees - which every member of a group
- * agrees on, so they are SHARED facts. A server delete is recorded in one set the pair shares.
+ * Each test models every device of the pair: its rows and their recency, the messages under each,
+ * the groups it holds - and the server, which routes frames for every group it has not deleted.
  */
 import type { ConversationMeta, IStorage, StoredMessage } from '$lib/db/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
@@ -17,37 +19,29 @@ import { mergeDirectConversationDuplicates } from './conversations';
 
 const ALICE = 'a11ce000-0000-4000-8000-000000000000';
 const BOB = 'b0b00000-0000-4000-8000-000000000000';
-/** The LOWER group id - the survivor under the convergent rule. */
+/** The LOWER group id - the one no new client ever deletes. */
 const LOW = '10000000-0000-4000-8000-00000000000a';
 /** The HIGHER group id. */
 const HIGH = 'f0000000-0000-4000-8000-00000000000b';
 
-const leaf = (user: string, device: string) => `${user}:${device}`;
-const A1 = leaf(ALICE, 'dev-a1');
-const A2 = leaf(ALICE, 'dev-a2');
-const B1 = leaf(BOB, 'dev-b1');
-
-type Held = 'active' | 'evicted';
-
-/** One device of one person: its own rows, the groups it holds, and its own user id. */
+/** One device: its rows (groupId -> updatedAt, in storage order), its messages, what it holds. */
 interface Device {
   userId: string;
   peerId: string;
-  /** groupId -> updatedAt of the row this device stores (absent: no row). */
-  rows: Record<string, number>;
-  held: Record<string, Held>;
-  /** groupId -> the message ids this device stores under it. */
+  rows: Array<[string, number]>;
   messages: Record<string, string[]>;
+  held: string[];
 }
 
-/** The facts every member shares: the ratchet trees, and what the server has deleted. */
-interface World {
-  trees: Record<string, string[]>;
-  serverDeleted: string[];
+/** The server: what it has deleted, and the deletes it refuses (a transport failure). */
+interface Server {
+  deleted: string[];
+  failing: Set<string>;
 }
 
-function inMemoryStorage(device: Device, failDeleteOnce = false): IStorage & { dump(): Device } {
-  const rows = new Map<string, number>(Object.entries(device.rows));
+const newServer = (): Server => ({ deleted: [], failing: new Set() });
+
+function storageOf(device: Device): IStorage {
   const messages = new Map<string, StoredMessage>();
   for (const [conv, ids] of Object.entries(device.messages)) {
     for (const id of ids) {
@@ -60,60 +54,34 @@ function inMemoryStorage(device: Device, failDeleteOnce = false): IStorage & { d
       });
     }
   }
-  let failNext = failDeleteOnce;
+  const sync = () => {
+    const byConv: Record<string, string[]> = {};
+    for (const m of messages.values()) (byConv[m.conversationId] ??= []).push(m.id);
+    for (const ids of Object.values(byConv)) ids.sort();
+    device.messages = byConv;
+  };
   return {
-    saveConversation: vi.fn(async (meta: ConversationMeta) => {
-      rows.set(meta.id, meta.updatedAt);
-    }),
+    saveConversation: vi.fn(async () => {}),
     deleteConversation: vi.fn(async (id: string) => {
-      if (failNext) {
-        failNext = false;
-        throw new Error('simulated crash between the move and the delete');
-      }
-      rows.delete(id);
+      device.rows = device.rows.filter(([g]) => g !== id);
       for (const [k, m] of messages) if (m.conversationId === id) messages.delete(k);
+      sync();
     }),
     getMessages: vi.fn(async (conv: string) =>
       [...messages.values()].filter((m) => m.conversationId === conv)
     ),
     saveMessages: vi.fn(async (msgs: StoredMessage[]) => {
       for (const m of msgs) messages.set(m.id, m);
+      sync();
     }),
     countMessages: vi.fn(
       async (conv: string) => [...messages.values()].filter((m) => m.conversationId === conv).length
     ),
-    dump(): Device {
-      const byConv: Record<string, string[]> = {};
-      for (const m of messages.values()) (byConv[m.conversationId] ??= []).push(m.id);
-      for (const ids of Object.values(byConv)) ids.sort();
-      return { ...device, rows: Object.fromEntries(rows), messages: byConv };
-    },
-  } as unknown as IStorage & { dump(): Device };
-}
-
-function mlsFor(device: Device, world: World): IMlsService {
-  const holds = (id: string) => {
-    if (!(id in device.held)) throw new Error(`group ${id} not held`);
-  };
-  return {
-    heldGroupsKnown: () => true,
-    getLocalGroups: () => Object.keys(device.held),
-    isGroupActive: async (id: string) => {
-      holds(id);
-      return device.held[id] === 'active';
-    },
-    getGroupMemberIdentities: async (id: string) => {
-      holds(id);
-      return world.trees[id] ?? [];
-    },
-    deleteGroupOnServer: async (id: string) => {
-      world.serverDeleted.push(id);
-    },
-  } as unknown as IMlsService;
+  } as unknown as IStorage;
 }
 
 function metasOf(device: Device): ConversationMeta[] {
-  return Object.entries(device.rows).map(([id, updatedAt]) => ({
+  return device.rows.map(([id, updatedAt]) => ({
     id,
     name: `${device.userId}::${device.peerId}`,
     lifecycle: 'active' as const,
@@ -121,280 +89,268 @@ function metasOf(device: Device): ConversationMeta[] {
   }));
 }
 
-/** Runs the NEW boot merge on one device; returns the device as it stands afterwards. */
-async function boot(device: Device, world: World, opts: { crash?: boolean } = {}) {
-  const storage = inMemoryStorage(device, opts.crash);
-  const kept = await mergeDirectConversationDuplicates(
+/** Runs the boot merge of THIS rule on one device, mutating the device; returns its log. */
+async function boot(device: Device, server: Server): Promise<string[]> {
+  const lines: string[] = [];
+  await mergeDirectConversationDuplicates(
     metasOf(device),
     device.userId,
     'key',
-    storage,
-    () => {},
-    mlsFor(device, world)
+    storageOf(device),
+    (l) => lines.push(l),
+    {
+      deleteGroupOnServer: async (id: string) => {
+        if (server.failing.has(id)) throw new Error('transport failure');
+        server.deleted.push(id);
+      },
+    } as unknown as IMlsService
   );
-  return { kept: kept.map((m) => m.id).sort(), after: storage.dump() };
+  return lines;
+}
+
+/** The rule a 1.6.6-1.6.10 client still runs: newest `updatedAt` (first in storage order on a tie). */
+function bootOldClient(device: Device, server: Server): string {
+  const survivor = device.rows.reduce((a, b) => (a[1] >= b[1] ? a : b));
+  for (const [id] of device.rows) if (id !== survivor[0]) server.deleted.push(id);
+  device.rows = [survivor];
+  return survivor[0];
 }
 
 /**
- * The rule a 1.6.6-1.6.10 client still runs: the newest `updatedAt` survives (first in storage
- * order on a tie), every other row is deleted on the server.
+ * A Welcome into `joined` for a peer this device already holds a DM with (`upsertConversation` +
+ * `runPendingRekey`): the stored rows move onto the joined group, whose row carries the old row's
+ * `updatedAt`, and the old row is KEPT.
  */
-function bootOldClient(device: Device, world: World): string {
-  const metas = metasOf(device);
-  const survivor = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-  for (const m of metas) if (m.id !== survivor.id) world.serverDeleted.push(m.id);
-  return survivor.id;
+function welcomeRekey(device: Device, joined: string): void {
+  const [oldId, updatedAt] = device.rows[0];
+  device.messages[joined] = [...(device.messages[joined] ?? []), ...(device.messages[oldId] ?? [])];
+  delete device.messages[oldId];
+  device.rows = [[joined, updatedAt], ...device.rows];
+  device.held.push(joined);
 }
 
-const device = (over: Partial<Device> & Pick<Device, 'userId' | 'peerId'>): Device => ({
-  rows: {},
-  held: {},
-  messages: {},
-  ...over,
-});
+const rowIds = (d: Device) => d.rows.map(([g]) => g).sort();
 
-describe('a crossed DM pair - the boot merge converges', () => {
-  it('1. both peers hold both groups: both keep the LOWER id, whatever each one saw last', async () => {
-    // Opposite recencies on the two sides - exactly what made each delete the other's choice.
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const alice = device({
+/** THE INVARIANT: every group this device holds and the server still routes has a row here. */
+function expectEveryRoutedGroupHasARow(d: Device, server: Server): void {
+  for (const g of d.held) {
+    if (!server.deleted.includes(g)) expect(rowIds(d)).toContain(g);
+  }
+}
+
+const both = { held: [LOW, HIGH] };
+
+describe('a crossed DM pair - the boot merge never loses both groups', () => {
+  it('opposite recencies: the one whose recency keeps LOW folds, the other decides nothing', async () => {
+    const server = newServer();
+    const alice: Device = {
       userId: ALICE,
       peerId: BOB,
-      rows: { [LOW]: 100, [HIGH]: 200 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
+      rows: [
+        [LOW, 100],
+        [HIGH, 200],
+      ],
       messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
-    });
-    const bob = device({
+      ...structuredClone(both),
+    };
+    const bob: Device = {
       userId: BOB,
       peerId: ALICE,
-      rows: { [LOW]: 300, [HIGH]: 200 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
+      rows: [
+        [LOW, 300],
+        [HIGH, 200],
+      ],
       messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
-    });
+      ...structuredClone(both),
+    };
 
-    const a = await boot(alice, world);
-    const b = await boot(bob, world);
+    await boot(alice, server);
+    await boot(bob, server);
 
-    expect(a.kept).toEqual([LOW]);
-    expect(b.kept).toEqual([LOW]);
-    // No message lost: the higher group's rows moved into the survivor.
-    expect(a.after.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(b.after.messages[LOW]).toEqual(['m-high', 'm-low']);
-    // The survivor is never deleted on the server, by anybody.
-    expect(world.serverDeleted).not.toContain(LOW);
+    // The rule this replaces had Alice delete LOW and Bob delete HIGH: both gone.
+    expect(server.deleted).toEqual([HIGH]);
+    expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
+    expect(alice.messages).toEqual({ [LOW]: ['m-low'], [HIGH]: ['m-high'] });
+    expect(rowIds(bob)).toEqual([LOW]);
+    expect(bob.messages[LOW]).toEqual(['m-high', 'm-low']);
+    expectEveryRoutedGroupHasARow(alice, server);
+    expectEveryRoutedGroupHasARow(bob, server);
   });
 
-  it('1b. a tie on updatedAt (a row re-keyed by a Welcome) picks the same survivor on both sides', async () => {
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const mk = (userId: string, peerId: string, order: string[]) =>
-      device({
-        userId,
-        peerId,
-        rows: Object.fromEntries(order.map((id) => [id, 500])),
-        held: { [LOW]: 'active', [HIGH]: 'active' },
-      });
-    // Opposite storage orders, so "the first one on a tie" differs between the two.
-    const a = await boot(mk(ALICE, BOB, [HIGH, LOW]), world);
-    const b = await boot(mk(BOB, ALICE, [LOW, HIGH]), world);
-    expect(a.kept).toEqual([LOW]);
-    expect(b.kept).toEqual([LOW]);
-    expect(world.serverDeleted).not.toContain(LOW);
-  });
-
-  it('1c. the loser is deleted on the server only when the survivor is strictly the more recent', async () => {
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    await boot(
-      device({
-        userId: ALICE,
-        peerId: BOB,
-        rows: { [LOW]: 300, [HIGH]: 200 },
-        held: { [LOW]: 'active', [HIGH]: 'active' },
-      }),
-      world
-    );
-    expect(world.serverDeleted).toEqual([HIGH]);
-  });
-
-  it('2. a partial re-join (Bob holds only the higher group): nobody merges, nobody deletes', async () => {
-    // Bob was re-admitted to HIGH only: his leaf is in HIGH's tree, not in LOW's, and he does not
-    // hold LOW (its row is a placeholder waiting for a Welcome).
-    const world: World = { trees: { [LOW]: [A1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const alice = device({
-      userId: ALICE,
-      peerId: BOB,
-      rows: { [LOW]: 100, [HIGH]: 50 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
+  it('both recencies keep HIGH: nobody deletes anything, until a message in LOW folds the pair', async () => {
+    const server = newServer();
+    const mk = (userId: string, peerId: string): Device => ({
+      userId,
+      peerId,
+      rows: [
+        [LOW, 100],
+        [HIGH, 200],
+      ],
       messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
+      ...structuredClone(both),
     });
-    const bob = device({
-      userId: BOB,
-      peerId: ALICE,
-      rows: { [LOW]: 0, [HIGH]: 200 },
-      held: { [HIGH]: 'active' },
-      messages: { [HIGH]: ['m-high'] },
+    const alice = mk(ALICE, BOB);
+    const bob = mk(BOB, ALICE);
+    await boot(alice, server);
+    await boot(bob, server);
+    expect(server.deleted).toEqual([]);
+    expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
+    expect(rowIds(bob)).toEqual([HIGH, LOW].sort());
+
+    // A message in LOW makes it the more recent on both sides; the next boot folds HIGH into it.
+    for (const d of [alice, bob]) d.rows = d.rows.map(([g, t]) => [g, g === LOW ? 300 : t]);
+    await boot(alice, server);
+    await boot(bob, server);
+    expect(rowIds(alice)).toEqual([LOW]);
+    expect(rowIds(bob)).toEqual([LOW]);
+    expect(server.deleted).not.toContain(LOW);
+  });
+
+  it('a tie on updatedAt folds into LOW whatever the storage order', async () => {
+    const server = newServer();
+    const mk = (userId: string, peerId: string, rows: Array<[string, number]>): Device => ({
+      userId,
+      peerId,
+      rows,
+      messages: {},
+      ...structuredClone(both),
     });
-
-    const a = await boot(alice, world);
-    const b = await boot(bob, world);
-
-    // Alice must keep HIGH: it is the only group Bob can talk in, and a frame there must land on a row.
-    expect(a.kept).toEqual([HIGH, LOW].sort());
-    // Bob must keep HIGH: he does not hold the survivor yet.
-    expect(b.kept).toEqual([HIGH, LOW].sort());
-    expect(b.after.messages[HIGH]).toEqual(['m-high']);
-    expect(world.serverDeleted).toEqual([]);
+    const alice = mk(ALICE, BOB, [
+      [HIGH, 500],
+      [LOW, 500],
+    ]);
+    const bob = mk(BOB, ALICE, [
+      [LOW, 500],
+      [HIGH, 500],
+    ]);
+    await boot(alice, server);
+    await boot(bob, server);
+    expect(rowIds(alice)).toEqual([LOW]);
+    expect(rowIds(bob)).toEqual([LOW]);
+    expect(server.deleted).not.toContain(LOW);
   });
 
-  it('3. a device evicted from the survivor keeps the group it can still use', async () => {
-    // Alice's device was removed from LOW's tree; it still holds LOW's state (evicted) and HIGH.
-    const world: World = { trees: { [LOW]: [B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const a = await boot(
-      device({
-        userId: ALICE,
-        peerId: BOB,
-        rows: { [LOW]: 900, [HIGH]: 100 },
-        held: { [LOW]: 'evicted', [HIGH]: 'active' },
-        messages: { [HIGH]: ['m-high'] },
-      }),
-      world
-    );
-    const b = await boot(
-      device({
-        userId: BOB,
-        peerId: ALICE,
-        rows: { [LOW]: 900, [HIGH]: 100 },
-        held: { [LOW]: 'active', [HIGH]: 'active' },
-      }),
-      world
-    );
-    expect(a.kept).toEqual([HIGH, LOW].sort());
-    expect(a.after.messages[HIGH]).toEqual(['m-high']);
-    // Bob sees Alice's leaf only in HIGH: HIGH is not covered by LOW, so it stays for both.
-    expect(b.kept).toEqual([HIGH, LOW].sort());
-    expect(world.serverDeleted).toEqual([]);
-  });
-
-  it('3b. a device evicted from the LOSER merges it locally and deletes nothing on the server', async () => {
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [B1] }, serverDeleted: [] };
-    const a = await boot(
-      device({
-        userId: ALICE,
-        peerId: BOB,
-        rows: { [LOW]: 100, [HIGH]: 900 },
-        held: { [LOW]: 'active', [HIGH]: 'evicted' },
-        messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
-      }),
-      world
-    );
-    expect(a.kept).toEqual([LOW]);
-    expect(a.after.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(world.serverDeleted).toEqual([]);
-  });
-
-  it('4. a second device that does not hold the survivor holds the merge back on BOTH devices', async () => {
-    // a2 is only in HIGH (its Welcome to LOW is owed). a1 must not orphan what a2 sends in HIGH.
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, A2, B1] }, serverDeleted: [] };
-    const a1 = device({
+  it('a Welcome into HIGH between two boots: the tie it leaves folds back into LOW', async () => {
+    const server = newServer();
+    const alice: Device = {
       userId: ALICE,
       peerId: BOB,
-      rows: { [LOW]: 300, [HIGH]: 100 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
-    });
-    const a2 = device({
-      userId: ALICE,
-      peerId: BOB,
-      rows: { [LOW]: 0, [HIGH]: 100 },
-      held: { [HIGH]: 'active' },
-    });
-    expect((await boot(a1, world)).kept).toEqual([HIGH, LOW].sort());
-    expect((await boot(a2, world)).kept).toEqual([HIGH, LOW].sort());
-    expect(world.serverDeleted).toEqual([]);
+      rows: [[LOW, 100]],
+      messages: { [LOW]: ['m-1', 'm-2'] },
+      held: [LOW],
+    };
+    welcomeRekey(alice, HIGH);
+    expect(alice.messages).toEqual({ [HIGH]: ['m-1', 'm-2'] });
 
-    // Once a2 is in LOW, every device lands on LOW.
-    world.trees[LOW] = [A1, A2, B1];
-    a2.held[LOW] = 'active';
-    expect((await boot(a1, world)).kept).toEqual([LOW]);
-    expect((await boot(a2, world)).kept).toEqual([LOW]);
-    expect(world.serverDeleted).not.toContain(LOW);
+    await boot(alice, server);
+    expect(rowIds(alice)).toEqual([LOW]);
+    expect(alice.messages).toEqual({ [LOW]: ['m-1', 'm-2'] });
+    expect(server.deleted).toEqual([HIGH]);
   });
 
-  it('5. a crash between the move and the local delete: the next boot finishes onto the SAME survivor', async () => {
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const alice = device({
+  it('a Welcome into HIGH, then a message there: nothing is decided and HIGH keeps its row', async () => {
+    const server = newServer();
+    const alice: Device = {
       userId: ALICE,
       peerId: BOB,
-      rows: { [LOW]: 100, [HIGH]: 900 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
+      rows: [[LOW, 100]],
+      messages: { [LOW]: ['m-1'] },
+      held: [LOW],
+    };
+    welcomeRekey(alice, HIGH);
+    alice.rows = alice.rows.map(([g, t]) => [g, g === HIGH ? 200 : t]);
+
+    await boot(alice, server);
+    expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
+    expect(alice.messages).toEqual({ [HIGH]: ['m-1'] });
+    expect(server.deleted).toEqual([]);
+    expectEveryRoutedGroupHasARow(alice, server);
+  });
+
+  it('a server delete that fails keeps the row its frames still need; the next boot finishes', async () => {
+    const server = newServer();
+    server.failing.add(HIGH);
+    const alice: Device = {
+      userId: ALICE,
+      peerId: BOB,
+      rows: [
+        [LOW, 300],
+        [HIGH, 100],
+      ],
       messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
-    });
-    const first = await boot(alice, world, { crash: true });
-    // The rows moved, the losing row stayed, and nothing was deleted on the server.
-    expect(first.after.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(Object.keys(first.after.rows).sort()).toEqual([HIGH, LOW].sort());
-    expect(world.serverDeleted).toEqual([]);
+      ...structuredClone(both),
+    };
+    await boot(alice, server);
+    // The rows moved, the row stayed: the server still routes HIGH's frames to this device.
+    expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
+    expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
+    expectEveryRoutedGroupHasARow(alice, server);
 
-    const second = await boot(first.after, world);
-    expect(second.kept).toEqual([LOW]);
-    expect(second.after.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(world.serverDeleted).not.toContain(LOW);
+    server.failing.clear();
+    await boot(alice, server);
+    expect(rowIds(alice)).toEqual([LOW]);
+    expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
+    expect(server.deleted).toEqual([HIGH]);
   });
 
-  it('6. a mixed pair whose old client keeps the HIGHER group: the new client deletes nothing on the server', async () => {
-    // The old client sees HIGH as the newer and deletes LOW for everybody. If the new client also
-    // deleted HIGH, both groups would be gone - the P1. It holds the delete back instead.
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const newAlice = device({
-      userId: ALICE,
-      peerId: BOB,
-      rows: { [LOW]: 100, [HIGH]: 200 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
+  describe('a mixed pair - a 1.6.6-1.6.10 peer still on recency', () => {
+    const mk = (userId: string, peerId: string, low: number, high: number): Device => ({
+      userId,
+      peerId,
+      rows: [
+        [LOW, low],
+        [HIGH, high],
+      ],
+      messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
+      ...structuredClone(both),
     });
-    const oldBob = device({ userId: BOB, peerId: ALICE, rows: { [LOW]: 100, [HIGH]: 200 } });
 
-    await boot(newAlice, world);
-    const oldChoice = bootOldClient(oldBob, world);
+    it('both keep HIGH: the old client deletes LOW, the new one holds - HIGH survives, no history moved', async () => {
+      const server = newServer();
+      const alice = mk(ALICE, BOB, 100, 200);
+      await boot(alice, server);
+      expect(bootOldClient(mk(BOB, ALICE, 100, 200), server)).toBe(HIGH);
+      expect(server.deleted).toEqual([LOW]);
+      // Nothing moved under LOW, so nothing ends under its tombstone.
+      expect(alice.messages).toEqual({ [LOW]: ['m-low'], [HIGH]: ['m-high'] });
+      expectEveryRoutedGroupHasARow(alice, server);
+    });
 
-    expect(oldChoice).toBe(HIGH);
-    expect(world.serverDeleted).toEqual([LOW]);
-    expect(world.serverDeleted).not.toContain(HIGH);
+    it('both keep LOW: both delete HIGH, LOW survives', async () => {
+      const server = newServer();
+      const alice = mk(ALICE, BOB, 300, 200);
+      await boot(alice, server);
+      expect(bootOldClient(mk(BOB, ALICE, 300, 200), server)).toBe(LOW);
+      expect(server.deleted).not.toContain(LOW);
+      expect(rowIds(alice)).toEqual([LOW]);
+    });
+
+    it('the new one keeps LOW, the old one HIGH: both are deleted - the race main always had, until the floor passes', async () => {
+      // Pinned so that the limit is a decision on record, not a surprise: no client-only rule can
+      // stop an old client from deleting LOW.
+      const server = newServer();
+      await boot(mk(ALICE, BOB, 300, 200), server);
+      expect(bootOldClient(mk(BOB, ALICE, 100, 200), server)).toBe(HIGH);
+      expect(server.deleted.sort()).toEqual([HIGH, LOW].sort());
+    });
   });
 
-  it('6b. a mixed pair whose old client keeps the LOWER group: both end on it', async () => {
-    const world: World = { trees: { [LOW]: [A1, B1], [HIGH]: [A1, B1] }, serverDeleted: [] };
-    const newAlice = device({
-      userId: ALICE,
+  it('says a held-back pair once per session, however many restores run', async () => {
+    const server = newServer();
+    // An account of its own: the session's report set already holds Alice's pair from the cases above.
+    const alice: Device = {
+      userId: 'c0ffee00-0000-4000-8000-000000000000',
       peerId: BOB,
-      rows: { [LOW]: 300, [HIGH]: 200 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
-    });
-    const oldBob = device({ userId: BOB, peerId: ALICE, rows: { [LOW]: 300, [HIGH]: 200 } });
-
-    const a = await boot(newAlice, world);
-    expect(bootOldClient(oldBob, world)).toBe(LOW);
-    expect(a.kept).toEqual([LOW]);
-    expect(world.serverDeleted).not.toContain(LOW);
-  });
-
-  it('decides nothing while the held groups are not known', async () => {
-    const world: World = { trees: {}, serverDeleted: [] };
-    const alice = device({
-      userId: ALICE,
-      peerId: BOB,
-      rows: { [LOW]: 100, [HIGH]: 200 },
-      held: { [LOW]: 'active', [HIGH]: 'active' },
-    });
-    const storage = inMemoryStorage(alice);
-    const mls = { ...mlsFor(alice, world), heldGroupsKnown: () => false } as IMlsService;
-    const kept = await mergeDirectConversationDuplicates(
-      metasOf(alice),
-      ALICE,
-      'key',
-      storage,
-      () => {},
-      mls
-    );
-    expect(kept.map((m) => m.id).sort()).toEqual([HIGH, LOW].sort());
-    expect(storage.deleteConversation).not.toHaveBeenCalled();
-    expect(world.serverDeleted).toEqual([]);
+      rows: [
+        [LOW, 100],
+        [HIGH, 200],
+      ],
+      messages: {},
+      ...structuredClone(both),
+    };
+    const first = await boot(alice, server);
+    const second = await boot(alice, server);
+    expect(first.filter((l) => l.startsWith('[DM_MERGE]'))).toHaveLength(1);
+    expect(second.filter((l) => l.startsWith('[DM_MERGE]'))).toHaveLength(0);
   });
 });

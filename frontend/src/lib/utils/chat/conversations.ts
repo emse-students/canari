@@ -32,7 +32,6 @@ import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
-import { holdsGroupState } from './groupUsability';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -129,10 +128,10 @@ export function toConversationMeta(
  * barrage a la reception de la nouvelle conversation avec ce pair"*. **A record that exists only to
  * be removed must not be able to refuse its own replacement.** The two sites failed differently and
  * the second is the worse of the two: discovery merely declined to create the new conversation
- * ({@link ensureConversationForServerGroup}), while {@link mergeDirectConversationDuplicates} (then
- * keeping the most RECENT of the group and deleting the others, locally AND on the server) let a
- * tombstone newer than the fresh group take the fresh group's messages and destroy the group for
- * BOTH parties. The merge now keeps the lowest group id, and a tombstone could be that one too.
+ * ({@link ensureConversationForServerGroup}), while {@link mergeDirectConversationDuplicates} then picked
+ * the most RECENT of the group as canonical and deleted the others - locally AND on the server - so
+ * a tombstone newer than the fresh group took the fresh group's messages and destroyed the group
+ * for BOTH parties.
  *
  * A tombstone therefore takes no part in either: it keeps its own row and its own messages, and it
  * cannot be a merge target or a merge source.
@@ -695,126 +694,70 @@ export async function moveDirectConversationRows(
 }
 
 /**
- * Whether group `a` is preferred over group `b` as the ONE 1:1 of a crossed pair: the lower id wins.
+ * Whether group `a` ranks before group `b` in a crossed 1:1 pair: the lower id.
  *
- * THE KEY EVERY DEVICE OF BOTH PEOPLE COMPUTES THE SAME WAY. Two 1:1 groups for the same two people
- * exist when both started the conversation independently, and every device that holds rows for both
- * must keep the SAME one. The rule used to be the newest `updatedAt` - a local fact, which ties for a
- * row re-keyed by a Welcome and differs between the two peers by whatever each one saw last - so each
- * peer could keep a different group and delete the other's choice on the server, both groups gone
- * (backlog, "the boot merge of a crossed DM pair does not converge", 2026-11-12). A group id is the
- * one fact every member holds identically, never ties between two groups, and never moves. The
- * server's `createdAt` was the other candidate: it is absent from every row stored before it was
- * sent, and two groups created in the same millisecond would tie again.
- *
- * Used by the boot merge ({@link mergeDirectConversationDuplicates}) and by discovery
- * (`ensureConversationForServerGroup`), which must not ignore the survivor because a loser came first.
+ * The one fact every device of both people holds identically about two groups (design note in
+ * [history-reconciliation](../../../../../docs/wiki/protocols/history-reconciliation.md#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
+ * It decides which group the boot merge may NEVER delete, not which one a device keeps.
  */
 export function isPreferredDirectGroup(a: string, b: string): boolean {
   return a.toLowerCase() < b.toLowerCase();
 }
 
 /**
- * What the boot merge may do with one losing 1:1 of a crossed pair, decided on THIS device.
+ * What the boot merge does with a crossed 1:1 pair (two or more DM groups for the same peer).
  *
- * `keep`: both rows stay - a fact the merge needs is missing, or somebody can still talk only in the
- * loser. `merge`: the loser's rows move into the survivor and its row is deleted locally;
- * `serverDelete` says whether the loser is also deleted on the server.
+ * `fold`: every other group moves into `survivor` and is deleted. `hold`: nothing is decided, every
+ * row and every group stays.
  */
-export type DirectDuplicateVerdict =
-  | { action: 'keep'; why: string }
-  | { action: 'merge'; serverDelete: boolean; why: string };
+export type CrossedPairDecision =
+  | { action: 'fold'; survivor: ConversationMeta }
+  | { action: 'hold'; recent: ConversationMeta; lowest: ConversationMeta };
 
 /**
- * Judges one loser of a crossed 1:1 pair against its survivor ({@link isPreferredDirectGroup}).
+ * Decides a crossed 1:1 pair: fold ONLY when this device's recency keeps the LOWEST group id.
  *
- * THE CHOICE OF SURVIVOR IS SHARED; WHAT THIS DEVICE MAY DO ABOUT IT IS GATED ON WHAT IT KNOWS:
+ * The rule kept from before is recency - the newest `updatedAt` - which is what a Welcome re-key
+ * agrees with and what a 1.6.6-1.6.10 peer still runs. Recency is local, so two peers could each
+ * keep a different group and delete the other's choice on the server: both groups gone. Restricting
+ * the delete to groups that rank AFTER the one kept means the lowest id is never deleted by a client
+ * running this rule, so two such clients can no longer lose both. A tie counts as keeping the lowest
+ * id: a row re-keyed by a Welcome carries its old row's `updatedAt`, and the lower id is the one
+ * answer both sides of a tie compute alike.
  *
- * 1. **The survivor is held and this device is a member of it** - otherwise its Welcome may still be
- *    owed, or it was evicted from it, and deleting the group it can use would leave it with none.
- * 2. **Every leaf of the loser is also a leaf of the survivor** (both trees read locally, and every
- *    member agrees on a tree at a given epoch, so the two peers reach the same answer). A leaf only
- *    in the loser is a device - the peer's, or another of this account's - that can talk ONLY there:
- *    merged away here, its frames would reach a group this device holds no row for and stay
- *    invisible. Checked only when this device is still a member of the loser; a loser it does not
- *    hold, or was evicted from, can deliver nothing here, so its rows simply move.
- * 3. **The server delete, the destructive half, also needs the survivor strictly more recent than
- *    the loser here.** That is the old rule's own choice (1.6.6-1.6.10, by `updatedAt`), so a peer
- *    still running it keeps the same group and deletes the loser too; when the old rule would keep
- *    the LOSER, a peer running it deletes the survivor on the server, and this device deleting the
- *    loser as well would leave neither. Held back, the loser stays on the server, and this device
- *    falls back on it when the survivor's deletion reaches it (the survivor becomes a tombstone,
- *    which is no candidate, and discovery re-creates the loser's row). The delete also needs the
- *    loser's tree read, so it is never made for a loser this device does not hold or was evicted
- *    from.
- *
- * Any throw reads as "not known" and keeps both rows: a destructive repair is gated on knowing.
+ * When recency keeps a HIGHER id, nothing is decided: both rows and both groups stay, so every
+ * frame of a held group still has a row to land on. The cost is a second row for the same person,
+ * until a message in the lower group makes it the more recent (owner, 2026-11-12: accepted).
  */
-export async function judgeDirectDuplicate(
-  survivor: Pick<ConversationMeta, 'id' | 'updatedAt'>,
-  loser: Pick<ConversationMeta, 'id' | 'updatedAt'>,
-  mlsService: IMlsService | undefined
-): Promise<DirectDuplicateVerdict> {
-  if (!mlsService || !mlsService.heldGroupsKnown()) {
-    return { action: 'keep', why: 'the groups this device holds are not known yet' };
-  }
-  try {
-    if (!holdsGroupState(mlsService, survivor.id)) {
-      return { action: 'keep', why: 'the survivor is not held here - its Welcome may be owed' };
-    }
-    if (!(await mlsService.isGroupActive(survivor.id))) {
-      return { action: 'keep', why: 'this device was evicted from the survivor' };
-    }
-    if (!holdsGroupState(mlsService, loser.id)) {
-      return { action: 'merge', serverDelete: false, why: 'the loser is not held here' };
-    }
-    if (!(await mlsService.isGroupActive(loser.id))) {
-      return {
-        action: 'merge',
-        serverDelete: false,
-        why: 'this device was evicted from the loser',
-      };
-    }
-    const [loserLeaves, survivorLeaves] = await Promise.all([
-      mlsService.getGroupMemberIdentities(loser.id),
-      mlsService.getGroupMemberIdentities(survivor.id),
-    ]);
-    const inSurvivor = new Set(survivorLeaves.map((l) => l.toLowerCase()));
-    const onlyInLoser = loserLeaves.filter((l) => !inSurvivor.has(l.toLowerCase()));
-    if (onlyInLoser.length > 0) {
-      return {
-        action: 'keep',
-        why: `${onlyInLoser.length} leaf(s) of the loser are not in the survivor - a device can talk only in the loser`,
-      };
-    }
-    if (!(survivor.updatedAt > loser.updatedAt)) {
-      return {
-        action: 'merge',
-        serverDelete: false,
-        why: 'the loser is the more recent here, so a peer on the old rule keeps it - not deleted on the server',
-      };
-    }
-    return {
-      action: 'merge',
-      serverDelete: true,
-      why: 'the survivor covers every leaf of the loser',
-    };
-  } catch (e) {
-    return { action: 'keep', why: `a fact could not be read: ${String(e)}` };
-  }
+export function decideCrossedPair(metas: readonly ConversationMeta[]): CrossedPairDecision {
+  const lowest = metas.reduce((a, b) => (isPreferredDirectGroup(b.id, a.id) ? b : a));
+  const recent = metas.reduce((a, b) =>
+    b.updatedAt > a.updatedAt || (b.updatedAt === a.updatedAt && isPreferredDirectGroup(b.id, a.id))
+      ? b
+      : a
+  );
+  return recent.id === lowest.id
+    ? { action: 'fold', survivor: lowest }
+    : { action: 'hold', recent, lowest };
 }
 
 /**
- * Folds every crossed 1:1 pair (two or more DM groups for the same peer) into ONE conversation per
- * peer, the same one on every device of both people, and normalises direct-conversation names to
- * `"userId::peer"` for consistent future detection.
+ * The held-back pairs already reported this session, so a restore - which runs several times per
+ * session - says each one once. Keyed by account and pair, so a switch of account reports again.
+ */
+const reportedHeldPairs = new Set<string>();
+
+/**
+ * Folds every crossed 1:1 pair this device may fold ({@link decideCrossedPair}) into one
+ * conversation, and normalises direct-conversation names to `"userId::peer"` for consistent future
+ * detection.
  *
- * The survivor is the lowest group id ({@link isPreferredDirectGroup}); what this device may do with
- * each loser is {@link judgeDirectDuplicate}'s verdict, logged on one `[DM_MERGE]` line either way. A
- * merge moves the loser's rows into the survivor ({@link moveDirectConversationRows}), THEN deletes
- * its row locally, THEN - only when the verdict allows it - deletes it on the server: a crash after
- * the move leaves the loser's row for the next boot, which picks the same survivor, moves what is
- * left and finishes.
+ * A fold moves each other group's rows into the survivor ({@link moveDirectConversationRows}), then
+ * deletes that group ON THE SERVER, then its row locally. In that order so that a group whose
+ * server delete failed keeps its row: the server still routes its frames here, and a frame for a
+ * held group with no row is refused `absent-conversation` until something creates one - which
+ * discovery never does for a second DM of a loaded peer. The next boot retries the fold, which
+ * moves nothing more and deletes again.
  *
  * Returns the deduplicated, normalised list of `ConversationMeta` objects.
  */
@@ -824,13 +767,13 @@ export async function mergeDirectConversationDuplicates(
   deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
-  mlsService?: IMlsService
+  mlsService: Pick<IMlsService, 'deleteGroupOnServer'>
 ): Promise<ConversationMeta[]> {
   const directByPeer = new Map<string, ConversationMeta[]>();
   for (const meta of convMetas) {
     // A TOMBSTONE IS NOT A CANDIDATE - {@link canRepresentThePeer}. Left in, it competes for the
-    // survivor, and the loser's row is deleted: a conversation the user has just started, taken by
-    // a record that exists only to be removed.
+    // survivor, and the other row is deleted locally AND on the server: a conversation the user
+    // has just started, destroyed for both parties by the reconciler.
     if (!canRepresentThePeer(meta)) continue;
     const identity = deriveConversationIdentity(meta.name, userId, meta.id);
     if (identity.conversationType !== 'direct' || !identity.directPeerId) continue;
@@ -843,20 +786,29 @@ export async function mergeDirectConversationDuplicates(
   const mergedAway = new Set<string>();
   for (const metas of directByPeer.values()) {
     if (metas.length === 1) continue;
-    const survivor = metas.reduce((a, b) => (isPreferredDirectGroup(b.id, a.id) ? b : a));
+    const decision = decideCrossedPair(metas);
+    if (decision.action === 'hold') {
+      const pairKey = `${userId.toLowerCase()}|${metas
+        .map((m) => m.id)
+        .sort()
+        .join('|')}`;
+      if (!reportedHeldPairs.has(pairKey)) {
+        reportedHeldPairs.add(pairKey);
+        log(
+          `[DM_MERGE] ${metas.length} DM groups for one peer kept as they are: the most recent here (${decision.recent.id.slice(0, 8)}...) is not the lowest id (${decision.lowest.id.slice(0, 8)}...), which is the only one this device may fold into`
+        );
+      }
+      continue;
+    }
+    const survivor = decision.survivor;
     for (const loser of metas) {
       if (loser.id === survivor.id) continue;
       const pair = `${loser.id.slice(0, 8)}... -> ${survivor.id.slice(0, 8)}...`;
-      const verdict = await judgeDirectDuplicate(survivor, loser, mlsService);
-      if (verdict.action === 'keep') {
-        log(`[DM_MERGE] ${pair} both rows kept: ${verdict.why}`);
-        continue;
-      }
       try {
         // The move and its window: {@link moveDirectConversationRows}. Landing after the move, a
         // mutation handled by the loser's group finds no row there, keeps it under the loser, and
-        // `deleteConversation` below removes that entry; this boot-time merge runs once per
-        // loser, before its conversation is shown.
+        // `deleteConversation` below removes that entry; this boot-time merge runs once per loser,
+        // before its conversation is shown.
         const { moved, left } = await moveDirectConversationRows(
           loser.id,
           survivor.id,
@@ -868,19 +820,18 @@ export async function mergeDirectConversationDuplicates(
             `[DM_MERGE] ${left} row(s) of ${loser.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
           );
         }
+        try {
+          await mlsService.deleteGroupOnServer(loser.id);
+        } catch (e) {
+          logBestEffortGroupDeleteFailure(loser.id, e, 'merged duplicate 1:1');
+          log(
+            `[DM_MERGE] ${pair} ${moved.length} row(s) moved, the row KEPT: the server delete failed and its frames still need a row - the next boot retries`
+          );
+          continue;
+        }
         await storage.deleteConversation(loser.id);
         mergedAway.add(loser.id);
-        log(
-          `[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${verdict.serverDelete ? 'deleted on the server' : 'left on the server'}: ${verdict.why}`
-        );
-        if (verdict.serverDelete && mlsService) {
-          try {
-            await mlsService.deleteGroupOnServer(loser.id);
-          } catch (e) {
-            // Non-blocking: the next boot holds no row for it, and discovery ignores a loser.
-            logBestEffortGroupDeleteFailure(loser.id, e, 'merged duplicate 1:1');
-          }
-        }
+        log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, deleted on the server`);
       } catch (error) {
         log(`[DM_MERGE] ${pair} merge error - the next boot retries it: ${String(error)}`);
       }
