@@ -257,7 +257,8 @@ HEADER
 # file describes the same stack. POSTGRES_* MUST match the compose - the cluster was initialised
 # with those.
 DOMAIN=localhost
-ALLOW_ORIGIN=http://localhost:8081,http://127.0.0.1:8081,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost
+# ALLOW_ORIGIN is NOT written here: production's list is not carried over, and the local one is
+# built by the compose file from the port it publishes (CANARI_LOCAL_ALLOW_ORIGIN overrides it).
 
 # IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
 #

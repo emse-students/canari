@@ -88,8 +88,9 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       # A LIST, NEVER "*": a socket upgrade must come from an allowed origin, and the gateway takes
       # no wildcard for one (docs/wiki/services/chat-gateway.md). The nginx entry, the Vite dev
-      # server and the Tauri WebViews; a page served from anywhere else (a phone on the LAN address
-      # of `tauri dev`) is named through CANARI_LOCAL_ALLOW_ORIGIN.
+      # server and the Tauri WebViews. A phone's chat socket is opened by the native plugin and
+      # names no origin, so it needs no entry; a desktop browser loading the page from a LAN address
+      # does, through CANARI_LOCAL_ALLOW_ORIGIN.
       ALLOW_ORIGIN: "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
     depends_on:
       redis:
