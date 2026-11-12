@@ -84,9 +84,10 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
 - **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
-  **The pill takes all the free width** (`w-full`, 2026-11-09): its web rect IS the native pill, and a
-  pill hugging the web text was narrower than the native system font needs, cutting a name at 186 pt
-  with 70 pt of bar empty.
+  **The pill fits its content and is centred** (owner, 2026-11-10: the full-width pill of 1.6.9 was
+  reverted); a long name truncates. **This reintroduces design-audit M5 as a cost the owner accepted**:
+  the native glass pill is drawn at the web button's rect, and its (wider) native system font clipped
+  "Canari Test Alpha" at 186 pt with 70 pt of the bar empty. Owed: one iPhone reading of a long name.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
@@ -445,7 +446,7 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
-**BUILT (user, 2026-10-11, D-camera): no native camera.** No `<input capture>`, no capture intent, no `queries` entry: the camera column is ONE "Ouvrir la camera" entry opening the in-app CanaReel camera as an OVERLAY (`components/reels/CameraOverlay.svelte` over `ReelCapture` with `destination="chat"`), in the chat and in the new-post composer alike; the library and files entries stay. **In a chat the camera takes PHOTOS ONLY for now**, and the review button is "Ajouter": the photo is STAGED in the composer through `onFilesSelected`, exactly like a library pick, and the member presses send (an ORDINARY image message, no new wire format). The chat camera opens WITHOUT the microphone (`openPhotoCamera`), so a refused or absent one never blocks a photo; a video filmed in a chat is the reel message ([reels-in-chat](reels-in-chat.md), RC-3..RC-5, not built), whose take will be `chat-reel` (30 days). A post take is a post (post class, [posts](posts.md)). **An iOS phone BROWSER still shows the system sheet of WebKit, "Prendre une photo" included**: a web page cannot remove an entry of that sheet for a file input, and Canari draws no menu there ([backlog](../../backlog.md#decided-by-the-user-on-2026-10-11)).
+**BUILT (user, 2026-10-11, D-camera): no native camera.** No `<input capture>`, no capture intent, no `queries` entry: the camera column is ONE "Ouvrir la camera" entry opening the in-app CanaReel camera as an OVERLAY (`components/reels/CameraOverlay.svelte` over `ReelCapture` with `destination="chat"`), in the chat and in the new-post composer alike; the library and files entries stay. **In a chat the camera takes PHOTOS ONLY for now**, and the review button is "Ajouter": the photo is STAGED in the composer through `onFilesSelected`, exactly like a library pick, and the member presses send (an ORDINARY image message, no new wire format). The chat camera opens WITHOUT the microphone (`openPhotoCamera`), so a refused or absent one never blocks a photo; a video filmed in a chat is the reel message ([reels-in-chat](reels-in-chat.md), RC-3..RC-5, not built), whose take will be `chat-reel` (30 days). A post take is a post (post class, [posts](posts.md)). **An iOS phone BROWSER still shows the system sheet of WebKit, "Prendre une photo" included**: a web page cannot remove an entry of that sheet for a file input, and Canari draws no menu there.
 
 - **Android has ONE camera entry now** (it had two, photo and video, because wry's capture intents were one or the other). Nothing reaches wry's camera intents any more: `RustWebChromeClient.onShowFileChooser` launches one only for an input carrying `capture`, and none does. The Kotlin itself is NOT edited - it is wry's `generated/` output, rewritten by wry's build script on every Android build, so an edit there is silently undone (PR #1859 review, 2026-10-14); the frontend having no `capture` input is what closes the path, and the manifest test pins the rest.
 - **The iOS app's native picks come back through `take_picked_file`** (`commands/picked_files.rs`): the
@@ -654,7 +655,10 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([backlog](../../backlog.md)).
+  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+- **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
+  when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
+  2026-10-16).
 
 ### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
 
@@ -763,9 +767,9 @@ the bytes decrypted, and was red on the defect.
 2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
 deleted); it now only ANNOUNCES the edit.
 
-- **`MessageBubble` takes `onBeginEdit(messageId, text)`**, not `onEdit`. The toolbar's and the mobile
-  sheet's "edit" call it for the author's own text message (`canEdit`: not deleted, own, no media, a
-  parent able to take it). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
+- **`MessageBubble` takes `onBeginEdit(messageId, text, captionOnly)`**, not `onEdit`. The toolbar's and the mobile
+  sheet's "edit" call it for the author's own message (`canEdit`: not deleted, own, not a poll, a
+  parent able to take it) - a media message's edit is its CAPTION's since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
 - **`createEditSession` (`utils/chat/editSession.svelte.ts`) holds the state.** `begin` loads the
   message into the composer's text and keeps the DRAFT it replaced; `cancel` and `confirm` give the
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
@@ -794,6 +798,82 @@ Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
 edit through `handleEditMessage` end to end on a phone.
 
+### A media message's edit is a caption edit (2026-11-11)
+
+Owner, 2026-11-11: a message carrying a photo, a video or a file is editable, **caption only** - the
+media stays the same and the bubble shows the same "modifié" mark as an edited text. A poll is not.
+**Scope (lead's decision, 2026-11-11):** a CanaReel sent in a conversation stays editable, since a take's
+caption is text like a photo's; a **voice note is not** (`mediaRef.voiceNote`): it has no caption to
+edit. Until then `canEdit` hid the action on a media message on purpose (`!mediaRef`, and `!hasMedia` in
+`MessageBubbleToolbar` and `MessageMobileActions`); both props are gone and the bubble's `canEdit` is
+the one rule.
+
+**NO NEW WIRE SHAPE, AND THAT IS THE DECISION.** The frame is the `edit_message` a text edit has
+always been, `{ messageId, newContent, editedAt }`, and `newContent` is the caption. Every applier
+already writes the text through `applyEditToBody`, whose media branch replaces `caption` and keeps
+`media` (blob id, key, iv) and `replyTo` - since #903 (`v0.18.18`), far under the `1.6.6` floor. So
+an old client never meets a shape it does not know, and none of them can replace the body with
+plain text and drop the photo: the one way that could happen (a whole-body write of `newContent`)
+was removed for the reply quote's sake in September. A new field (`caption`, `kind`) would have
+bought nothing and made older readers fall back on `newContent` anyway.
+
+**What each reader sees:**
+
+| Reader | Caption edited | Caption emptied |
+| --- | --- | --- |
+| this build, DM or group | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build (>= `1.6.6`), DM or group | same | **either result, depending on the path the edit took**. Live and replay: **old caption kept, no mark** (the `data.newContent` truthiness check drops `''`). A history bundle carrying the author's signed edit: **photo bare, marked** (`vetRestoredEdit` takes any string and stores `caption: ''`, which the bubble draws bare). So one old build can show either, and two old builds can disagree |
+| this build, salon | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build, salon | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same |
+
+Every row keeps the media. The degraded cells are a stale caption, never a loss, and they end
+with the floor passing this release.
+
+**An empty caption.** `editFitsBody(content, text)` (`envelope.ts`) is the one rule, asked by every
+applier before `applyEditToBody` - the live path, the replay, the post-save pass, a parked edit
+(`pendingMutations`), a restored signed edit and the sender's own write: any text fits a media
+message's caption, an empty one included, and only a non-empty text fits anything else (the old
+truthiness rule, unchanged for a text message). The live and replay paths now accept a STRING
+`newContent` rather than a truthy one, so `''` reaches that rule. `applyEditToBody` stores an
+emptied caption as NO caption, the shape of a photo sent without one, so the bubble draws it bare.
+In the composer, `editSession.begin(id, text, captionOnly)` records that the edit may be emptied and
+`ChatComposer`'s `editingAllowsEmpty` lets Save through on an empty field.
+
+**An edit of a file still queued (DM, group).** The edit goes into the outbox as usual and names the
+message, so `dependsOnAny` holds it behind the file: the peers receive the file, then the edit. The
+author's own row was the trap: the real envelope swapped in once the upload ends is built from the
+QUEUE ENTRY, which holds the caption typed at the tap, so `updateMessageContent` (`outbox.ts`) wrote
+the old caption back over the edit - and `persistSent` stored it. Two places fix it, one per half:
+- **At rest, the stored row decides** (`sentRowContent`, inside `persistSent`'s compare-and-set). If
+  the stored row holds a later edit than the copy on screen (`editSupersedes`), its text goes onto
+  the sent body through `applyEditToBody`, so the attachment reference is the send's and the caption
+  is the edit's. This matters because the flushing tab may not be the editing one. A leader tab that
+  flushes a follower's queued photo holds the tap caption on screen while the follower's edit is at
+  rest, and writing the screen's body showed "modifié" over the old caption after a reload. A text
+  edited in a follower tab had the same flaw, and the same rule fixes it.
+- **On screen**, `updateMessageContent` keeps an edited row's caption over the real attachment
+  reference (`[OUTBOX] … keeps the caption edited while it was queued`), and leaves a deleted row
+  alone - a tombstone does not get its attachment back.
+
+The edit of a message that then never leaves (withdrawn, or failed for good) is not handled yet:
+[backlog](../../backlog.d/p3-an-edit-of-a-queued-message-whose-send-never-happens.md). A salon echo still uploading is not editable at all (`awaitingServerId` withholds every
+action addressed by a server id), so the salon has no such window.
+
+**The sender's other devices** receive the edit like any member and apply it by the same rule; the
+conversation list follows because its preview is read from the row's body. The push and the native
+layers do not render an edit (`proto_fields.rs` silences `edit_message`).
+
+Tests: `envelope.editBody.test.ts` (caption replaced, emptied, media and quote kept; `editFitsBody`),
+`systemMessageHandler.captionEdit.test.ts` (live path, in memory and at rest; an empty text on a text
+row dropped), `messagingEditCaption.test.ts` (the frame's three keys, the empty string an older
+client drops), `channelEdit.test.ts` (salon caption edited and emptied),
+`outbox.captionEditedWhileQueued.test.ts`, `editSession.svelte.test.ts`,
+`ChatComposer.edit.svelte.test.ts`, `MessageBubble.editAction.svelte.test.ts` and
+`MessageMobileActions.row.svelte.test.ts` (Modifier offered on an own media message and a CanaReel,
+not on a voice note). `outbox.captionEditedWhileQueued.test.ts` also covers the stored row edited
+with the screen stale. **Not
+exercised:** a real caption edit between two phones, and a `1.6.x` store build receiving one.
+
 ### Editing your own message in a salon (2026-10-05)
 
 **An edit is a SILENT ENCRYPTED CHANNEL ROW, exactly like a reaction** ([channel-encryption 4.7](../../protocols/channel-encryption.md)): a new `EditMsg` (`AppMessage.edit`, field 13: the target's SERVER row id, the replacement TEXT, `edited_at`), sealed under the author's Graine session by `sendChannelEdit` (`channelCrypto.ts`). The server stores an opaque row flagged `silent`, so **there is no new push and no server change, no endpoint, no migration** - and none COULD validate it: it cannot tell the row is an edit or whose message it names.
@@ -801,7 +881,7 @@ edit through `handleEditMessage` end to end on a phone.
 - **Authorship is checked by every reader**, in ONE function, `applyChannelEdit` (`utils/chat/channelEdit.ts`), used by the live handler (`channelEventHandler`), a history page and the search sweep (`useConversations`) and the sender's own write (`editChannelMessage`). The edit's sender is the ROW's - what Graine v2 proves, unforgeable by the server and by other members - and it must equal the target's author. **A moderator may remove someone's message (`channel.moderate`), never rewrite it.** A refusal is logged (`REFUSED`), silent to the user.
 - **"Proven" holds for v2 sessions only.** A row opened under a v1 session has a server-supplied, unsigned `senderId`, so a malicious server or a pre-G2-5 v1 row could forge an edit from the author - the same trust level as DELETE today, not a regression, and deliberately not restricted. It ends with the v1 reader ([channel-encryption 21.5b](../../protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05), [backlog](../../backlog.md)).
 - **Paging limit, stated exactly.** `listMessages` returns silent rows only inside `[oldest body of the page, before)`, and the server cannot know which silent row targets which message (opaque), so no clean server-side fix exists. With a `before` cursor an edit made AFTER the cursor is not in that page. Nothing affected today: the history load takes the newest page (no cursor), channels have no older-page load (`loadOlderMessages` returns false), and the search sweep applies edits over ALL pages it collected. Reactions share the limit. Backlog item below.
-- It edits a plain TEXT message only: not a poll, a notice, a media message or a tombstone (a delete is final). Empty text is refused. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
+- It edits a plain TEXT message, and a media message's CAPTION since 2026-11-11 ([below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)): not a poll, a notice or a tombstone (a delete is final). Empty text is refused on a text, and removes a caption. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
 - **The history load applies the edit rows after the page is built**, because a salon is not stored locally: the marker and the new text come back from the same silent rows. The page limit counts non-silent rows and brings every newer silent row, so an edit of a loaded message is always on the page.
 - UI: `MainChatPage` now passes `onEdit` for a channel (`channels.editChannelMessage`); the inline edit is the composer's, shared with DMs and groups, and the edited marker is the existing `isEdited`.
 - **Old clients** read `AppMessage` with an unknown oneof, which decodes to an empty frame: the row is not rendered and nothing breaks, they simply keep the original text. **Not exercised: two real devices round-trip, and the 365-day retention purge of an edit row whose (pinned) target outlives it** - the edit is then lost with its row, the original text stays.
@@ -884,6 +964,21 @@ reader and the accounts the reader blocked are never offered (the server hides b
 ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
 falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
+
+**Typing an `@` looped the roster picker's effect on `1.6.6`-`1.6.8`, and the chat fell to its
+boundary (reported on Android `1.6.6`, 2026-11-12).** The caret reaching an `@` changes `start`,
+which re-runs the effect `MentionComposerInput` keeps on the roster prop (`refreshRoster`). There,
+`suggestLocally` wrote `suggestions` and read it back to set `open`, so the effect depended on the
+array it replaced on every run: `effect_update_depth_exceeded` at the first `@`, in a DM and in a
+salon alike, right after the blocks read and the name batch the picker's first open asks for. **It
+was fixed by #3233 (`v1.6.9`)**, which sets `open` from the local array; a reader on an older build
+only has to update. `MentionComposerInput.keystrokes.svelte.test.ts` types "salut @" and "a@b." key
+by key through the real component, with the blocks read and the batch answered asynchronously, and
+fails with that error on the `1.6.6` shape. The boundary's own line read `[object Object]` in that
+log; it now goes through `describeCaughtError` (name, message, three stack frames) at the error
+level. On the way: a server search still waiting for its delay ran after the mention had ended
+("a@b." typed quickly) and reopened the picker on plain text with nothing selectable; the end of a
+mention now drops it.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
 
@@ -1294,6 +1389,16 @@ onglet." banner is gone, and every gesture a follower tab refused is possible fr
 still never commits - its MLS state is a copy loaded once ([mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08))
 and `FollowerTabCommitError` stays at the service as the guard - but it no longer stops there: it
 HANDS THE GESTURE to the leader, exactly as it hands its sends (above). `tabCommitDelegation.ts`.
+
+**The follower's connection pill (`tabLeaderLink.svelte.ts`, fixed 2026-11-10).** A follower holds no
+socket, so its pill reads the leader's, which the leader publishes on the tab-messages channel. Every
+event is stamped with the account and a receiver drops another account's. The follower's query used to
+go out once at module start with `currentUserId() ?? ''`, before the user id was known: the leader dropped
+it as another account's and the second tab read "Hors-ligne" while the account was online. Now nothing is
+sent before the account is known, and `announce()` runs when the account becomes known AND when the
+election is decided, in either order: a follower asks, a leader republishes its socket (so a follower whose
+query the leader could not answer still hears it). A promotion reloads the page, which runs it again.
+Pinned in `tabLeaderLink.svelte.test.ts` by the boot order (no account, then the account).
 
 | Gesture in a follower tab | Handed over as | Run by the leader as |
 | --- | --- | --- |
@@ -1734,7 +1839,7 @@ on a weak one. Refusals keep their clock. The reasoning, the bounds and the numb
 
 ### A deploy's "not now" is not a send failure (R05, 2026-11-09)
 
-**The defect** ([backlog](../../backlog.md#p1---a-tab-or-app-open-across-a-production-deploy-sees-the-outage-as-chec-de-lenvoi)).
+**The defect** ([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
 A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
 its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
 read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
@@ -2270,7 +2375,7 @@ showing the quote out of the in-memory `ChatMessage.replyTo` set at send time, s
 like a peer-side defect - it was reported as one, two screenshots of one message, quoted on its
 author's PC and bare on the peer's - and one reload would have lost it there too. `applyEditToBody`
 (`envelope.ts`) is the one implementation: it parses the stored body, replaces the text (or a media
-envelope's caption, unreachable from this UI and better than throwing the attachment away), and
+envelope's caption - reachable from the UI since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)), and
 re-serializes, so every field the edit does not carry survives it.
 
 **THAT MADE THE TIE-BREAK READ THE ENVELOPE TOO**, and it is the part worth keeping. `editSupersedes`
@@ -2424,6 +2529,39 @@ The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because M
 device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
 devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
+
+### Opening from another page: a conversation, or the DM with a person (fixed 2026-11-11)
+
+Another page hands the chat page something to open through `sessionStorage`, and there are two KINDS,
+each with its own key (`utils/chat/pendingChatOpening.ts`):
+
+| Key | Written by | Names | Answered by |
+| --- | --- | --- | --- |
+| `canari_pending_contact` | the posts mini panel, the multi-tab reload (`selectionAcrossReload.ts`) | a conversation's MAP key (its group id) | `selectConversation`, if the map holds it |
+| `canari_pending_direct_peer` | a profile's "Message" button | a PERSON (their user id), and the account that asked (`{ owner, peer }`) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
+
+**The defect (production web `1.6.10`):** the profile button wrote the person's USER id into the
+conversation key. No conversation is keyed by a user id
+([one key per conversation](#one-key-per-conversation---the-a-dm-has-two-keys-premise-audited-and-refuted-2026-10-04)),
+so the selection watchdog dropped it in the same frame - `[SELECT] <id> is not in the conversation
+map - selection dropped, nothing opens` - and "Message" opened nothing, whether a DM with the person
+existed or not. A second defect sat under it: the key was applied **600 ms after login**, a guess at
+the restore's length; on a slower restore the map was still empty and even a real key was dropped.
+
+**Now:** the opening is applied when the map is authoritative (`conversationSourcesSettled`, the gate
+the notification landing uses), never on a clock, and is not consumed before then. Pinned by
+`pendingChatOpening.test.ts` (an existing DM opens, a DM restored after the press opens once
+restored, no DM creates and opens one, a refusal reaches the reader, a conversation key waits for
+the map). Logged under `[OPEN]`.
+
+**What is never lost or misapplied.** The ask is removed from storage before the DM path is awaited,
+so a THROW there (no MLS client, a follower tab's delegation) would have lost the press in an
+unhandled rejection; `landPendingChatOpening` never rejects - a throw reaches the reader as
+`creation-failed`, like a refusal. sessionStorage outlives a sign-out in the same tab and no sign-out
+hook clears it, so a DM ask names its OWNER and is dropped, with a warning, for any other account -
+otherwise B signing in after A's tap would start a DM between B and A's pick. A conversation ask
+pending beside a DM ask is dropped with a warning (the DM ask, the later tap, wins). The conversation
+key carries no owner: it can only select a key the map already holds, never create anything.
 
 ### Being removed from a channel or a community
 
@@ -2694,6 +2832,25 @@ for the search, how many messages were actually looked at.
 `catch { return message.content; }` fires when `parseEnvelope` rejects a plain-text body, which is
 the ordinary case for most of a conversation - logging it would put a line on every search over
 normal history. It is named here so the next reader does not re-open it.
+
+## The search bar opens on the field and lands on the first match (2026-11-11)
+
+- **Typing takes the reader to the match the counter calls 1, which is the NEWEST** (lead
+  decision, 2026-11-11, reversible: landing on the oldest forced a long scroll and loaded old
+  history on every search; Messenger and WhatsApp land on the newest). `searchMatches` is held
+  newest-first (`onSearchAll` answers oldest-first and is reversed). `refreshSearchMatches` ends by
+  calling `navigateToMessageEnsureLoaded(searchMatches[0])` once the list for the current term is
+  known - a superseded query returns before it (the `searchSeq` token), so a keystroke whose list
+  is still being computed never moves the view, and no timer is involved. An unloaded match pages
+  older history in exactly as the arrows do. **Directions:** the up arrow and Shift+Enter go to
+  OLDER matches (`jumpSearch('older')`, counter rises), the down arrow and Enter toward NEWER ones
+  (counter falls, wrapping from 1 to the oldest). The icons did not move: up is up the conversation.
+- **The tap focuses the field.** `openSearch` sets `showSearch` and calls `flushSync()` so the input
+  is mounted inside the tap's own call stack, then focuses it: iOS raises the keyboard only for a
+  focus made in the gesture, so a `tick()` or a `setTimeout` focus would lose it.
+- **Escape (or the toggle) closes** through `closeSearch`, which resets the search and calls
+  `ChatHeader.focusSearchToggle()` to return the focus to the magnifier. Test:
+  `ChatArea.search.svelte.test.ts`.
 
 ## One fold behind every search box (2026-08-31)
 
@@ -4832,6 +4989,133 @@ only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutati
   shell drains the durable owed marks itself, under the same task, the way the quick reply sends
   without the page. That variant is designed and not built, because only that reading tells us whether it is needed.
 
+### A DM's unread count is derived from its read point at every load (2026-11-11)
+
+**Reported by the owner (Android `1.6.9`):** a DM whose last message was never opened showed no
+badge in the list, and the peer still saw "Envoyé" - no read mark had left.
+
+**Cause.** `unreadCount` is not persisted (`ConversationMeta` carries the read marks, not the
+count), so every row starts at 0 at a cold start. The load (`loadExistingConversations`) then set the
+count to the unread messages its archive replay ADDED - `!preReplayMsgIds.has(m.id)`, a proxy from
+May 2026 that predates the watermark (2026-08-12), when "arrived now" was the only signal there was.
+A message was therefore counted only in the session that STORED it: on Android a resume stored the
+push cache (`consumeFcmCache`) and counted it (+1 in `fcmMemoryMerge.ts`), the process died, and the
+next cold start found the message already held and counted 0. A load with no link was worse: it
+`continue`d before the recount and left every badge at 0. Salons had the same gap and were fixed by
+the server's count ([above](#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08));
+DMs and groups (the same loop - only salons skip it) never were.
+
+**The rule: the count is derived from durable state, never from what arrived this session.** A load
+assigns each row `derivedUnreadCount` (`readState.ts`): the held messages `isUnreadForUser` calls
+unread at the `countingReadPoint`. It is PUBLISHED AS SOON AS THE STORED PAGE IS READ
+(`publishBootCount`), online or not, BEFORE the replay - on a slow link the replay takes seconds and
+the badge of what the device holds must not wait for it (weak-network chantier) - then again after the
+replay, and after a failed one, from what is held. Rows are only ever added, so after the first
+publish the count rises for what the replay brought and **only a mark lowers it** (tested: a mark the
+replay brings takes 1 to 0). A row that left the map before its count is said at debug. **A row that
+is not `active` derives 0**: a removed or pending conversation takes no read
+mark (the receipt effect refuses it, and a selection zeroes the count in memory only), so nothing
+could ever clear a badge given to it.
+
+The live writers ask the same point, so the `+1` they add is what the next load re-derives:
+`mergeFcmMessagesIntoConversations` (which used to add 1 for any foreign row, even one the shade had
+already marked read), both add paths of `useMessaging`, the `history_bundle` recount, and
+`withOwnReadAdvanced`, and so do the readers: the shade's hand-off (`applyNativeReadWatermarks`,
+`readWatermarkCache.ts`), the "already read here" question before a banner, and the scroll-down
+pill. **Salons included**: the live add path and the salon self-mark ask
+`countingReadPoint` too, so a salon with no mark of this reader's does not count, on this device, a
+row older than the reader's own newest post; the server's count (`unread-counts`, merged at a
+reconnect) still does. Pinned by `readState.test.ts`, "PINS THE SALON BEHAVIOUR".
+
+**The read point - ONE clock, the server's, for all it adds to the saved marks.**
+
+| What applies | Server point | Why |
+| --- | --- | --- |
+| a saved mark (either map) | the saved marks, max the seed | the marks are what says "read"; the seed keeps covering what the row held at the upgrade, so a mark BELOW it (another device's, an old "Marquer comme lu" from the shade) never un-hides it - `applyNativeReadWatermarks` ASSIGNS the count, and a lower point there RAISED a badge on a read (tested) |
+| the upgrade's local seed (`localReadSeed`) | the seed | see below |
+| no saved mark, an own message the server dated | its SERVER time, max the seed | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
+| none of them | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread |
+
+**The upgrade's local seed - no flood on upgrade (owner), written INSIDE the store migration.**
+Older builds counted only what a session received, so a group read but never marked, a first contact
+ignored, anything last read before the marks existed (2026-08-12) has no read point, and deriving its
+count would light up to a page of "unread" on every such row the day this build lands. So each
+conversation gets a LOCAL point: **the newest server time among ITS OWN stored messages, written by
+the store migration that adds the field** - SQLite v20 (`CONVERSATION_LOCAL_READ_SEED_FILL`, one
+`UPDATE` before the version is stamped), IndexedDB 14 (`seedLocalReadPointsInUpgrade`, in the
+`versionchange` transaction). The restore only READS it.
+
+- **Why in the migration, and not in the app (two versions of this fix were refuted on that).** The
+  first seeded in the restore's second phase, after the boot pull had stored what arrived while the
+  app was killed, and swallowed it; the second moved the seeding before the pull, which is an
+  app-level order, and every other writer (the push cache at a resume, a login) is one more order to
+  prove. A migration needs no proof: SQLite's `init` resolves only after it, and nothing writes
+  through a store whose `init` has not resolved; an IndexedDB `versionchange` transaction is
+  exclusive - an older tab gets `versionchange` and closes (`onVersionChange`), an open blocked by
+  one is rejected and logged, and any other connection's write waits for the upgrade to commit
+  (`localReadSeedStore.test.ts` queues one during the upgrade). **What is held at the migration is
+  "before the upgrade" by construction; everything stored after counts.**
+- **Per row, never a global boundary**: one row's newest time cannot cover another row's older
+  message (tested on both backends).
+- **The server time, read in the clear.** `serverTimestamp` is inside the encrypted payload; the
+  migration cannot decrypt (it has no device key). It reads the ORDER KEY instead, which is plain:
+  `order_at` / `orderAt` is `messageTime`, the server's time when the row knows it, the author's
+  `sentAt` otherwise. A row whose order key equals its `timestamp` is undated (or still provisional,
+  `order_pending` / `orderPending`) and is skipped - one phone running fast would otherwise push the
+  seed past messages not received yet. A row with nothing dated (or nothing at all) is seeded **0**:
+  it covers nothing, and what is replayed into it afterwards counts.
+- **Idempotent**: the SQLite fill writes only rows still NULL, the IndexedDB walk only rows holding no
+  number, so a migration run twice (a crash before the version stamp) changes nothing it wrote
+  (tested on both).
+- **Limits, accepted.** A message the server held before the upgrade, older than the newest one this
+  device held in the same conversation, but not yet delivered to it, is covered - the device's queue
+  delivers in the server's order, so this needs an out-of-order delivery. An IndexedDB store below
+  version 12 holds only provisional keys and is seeded 0 everywhere (nothing dated to read). A
+  message stored before the upgrade, past a row's saved mark but before its seed, is covered: the
+  seed applies with a mark too (above), and the upgrade does not flood marked rows either.
+- **A backup exported before the column** restores rows with no seed (NULL covers nothing), so a row
+  with no saved mark lights up to one page (60) of what it holds.
+- **A downgrade, then a re-upgrade**, is the same case: an older build's `INSERT OR REPLACE` writes
+  the row without the column, which NULLs it, and the fill never runs again once `user_version` is
+  20.
+- **A web rollback after this ships** fails `indexedDB.open(name, 13)` with a `VersionError`, said as
+  `StorageOpenError`. No data is lost; this is true of every IndexedDB version bump.
+- **Stale marks now count** (accepted): a conversation whose saved mark is old, with messages past it
+  that an older build never counted after a restart, shows them as unread at the next load - above
+  its seed only. That is what its marks say.
+
+It is a column of its own (`conversations.local_read_seed`; the same field in IndexedDB). A row this
+build INSERTS is born `0`; a save that does not state the field keeps the row's
+(`CONVERSATION_LOCAL_READ_SEED_VALUE`, `localReadSeedStore.test.ts` on both backends). **It is
+local**: neither mark map moves, no frame or receipt is sent, no bundle carries it, and a backup
+import keeps the state it was exported with. **Accepted consequence:** a first contact never opened
+and held before the upgrade shows 0, as it did before.
+
+**History bundles** count only past the read point: the bundle carries the read marks (step 0 of
+`history_bundle`, persisted before the messages), so what was read on another device is covered. A
+bundle answering an ask (`addOnly`) carries no marks; its rows count past the point above.
+**Own messages and system notices** never count (`isUnreadForUser`).
+
+**One page, a lower bound - chosen, not a store count.** The count is taken over the rows HELD: the
+stored page (`INITIAL_MESSAGES_PAGE`, 60) merged with what arrived live. A conversation with more
+than a page unread shows a page's worth until it is opened. A store count would need a query in both
+backends over encrypted rows for a badge that reads "many" either way.
+
+**Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) counted from the
+upgrade's local read seed, N with a badge, N unread in all`; per row, at debug only, the count and
+the point that decided it (`saved`, `seed`, `own`, `none`). The migrations say once how many rows they
+seeded (`[SQLITE] Migration v19->v20: ...`, `[IDB] Migration v13->v14: ...`). `[FCM_CACHE] message
+<id> is already covered by the read point - no badge` when a push row is not counted. Tests:
+`restoreUnreadCount.test.ts` (cold starts against one store: the reported defect, offline, skew both
+ways, non-active rows, no rise-then-fall; the seed only read, a push-cache row stored before, at the
+pull, during the replay or after the load counted), `localReadSeedStore.test.ts` (both migrations:
+per row, undated and provisional skipped, empty 0, run twice a no-op, a write queued during the
+IndexedDB upgrade), `readState.test.ts`, `fcmMemoryMerge.test.ts`,
+`useMessaging.unreadReadPoint.svelte.test.ts` (both add paths), `systemMessageHandler.readState.test.ts`
+(the bundle recount); each fails on the code it replaced. **Owed:** the owner's reading on the
+Android phone.
+
+
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 
 **Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
@@ -4940,6 +5224,12 @@ take the key from the caller (`MainChatPage` passes `convs.selectedContact`), an
 entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
 Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
 Test: `useMessaging.replyScope.svelte.test.ts`.
+
+### A reply survives attaching a file (2026-11-10)
+
+Owner report (1.6.9): reply to a message, attach a photo, and the photo went out as a plain message. Attaching never touched the armed reply; the loss was at the SEND. `handleSendChat` takes the reply out of `replyByConversation` at the tap, but only the text path (`sendChatMessage`) used it - the media path never read it - and the wire could not carry it anyway: `MediaMsg` had no reference, unlike `ReplyMsg`.
+
+Now the reply rides the FIRST file, like the caption (several files: the others are plain attachments). `quoteReference` (`utils/chat/messaging.ts`) builds the quote once for the text and the media send. The reference is written to the outbox entry's `replyTo` (the entry stays `kind: 'media'`; the encrypted payload already stored `replyTo` for any kind), to the placeholder envelope and row, and, once the upload names the blob, to `MediaMsg.reply_to` (proto field 17, a `ReplyRef`) and the stored media envelope (`buildMediaMessage(..., replyTo)`). A salon attachment takes the same path through `startSalonAttachment({ replyTo })`. The receiver rebuilds the envelope's `replyTo` in `appMsgToEnvelope`; `MessageBubble` already drew a media envelope's quote. The exclusion-window rule is the text reply's: `decideQuote` also covers a `media` entry carrying a quote (its preview is blanked for a reader outside the window), taken BEFORE the seal barrier so nothing is awaited between the gates and the send (the promise of review #2874 L1 stays true). **How a quoted file is held:** `dependsOnAny` cannot see it - the queue read leaves a media row's encrypted payload undecoded, so `replyTo` is unknown there. `flushOne` takes the lane's `heldBack` set and, once the full row is loaded, answers `uploading` (held, not failed) for a file whose quoted message is still unsent in that pass; the lane re-evaluates it on its next pass. A voice note armed with a reply carries it the same way (it goes through the same send path as the first file). If the first file is refused and re-staged, the reply is re-armed with it (`[REPLY] re-armed`). Older clients ignore the new field and show the file without the quote. The native notification scanner (`proto_fields.rs`) does not read it: a notification of such a photo names the photo, not the reply. Tests: `useMessaging.replyWithAttachment.svelte.test.ts`, and `utils/chat/outbox.replyingFile.test.ts` (real IndexedDB queue read: the hold, and the order quote decided -> barrier -> gates -> send).
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
@@ -5410,3 +5700,7 @@ admin queue shows its text while that version is shown, none once it changed
 ([moderation-and-blocking](../../moderation-and-blocking.md)). A moderator reverses one by clearing it
 on the screen. An MLS group's nicknames reach no server, so they have no report: the target resets
 theirs, or blocks.
+
+### Channel access is a choice, not a switch (2026-11-10)
+
+Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.

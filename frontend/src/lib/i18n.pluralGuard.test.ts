@@ -20,6 +20,7 @@ const ALLOWED: Record<string, string> = {
   chat_community_invite_max_uses_count: '"max" is a label, not a noun to inflect',
   chat_send_held: '"waiting" is a participle; "(1 waiting)" reads right',
   time_minutes_ago: '"min" is an invariable abbreviation',
+  replay_time_left_minutes: '"min" is an invariable abbreviation',
   asso_member_access_some: '"sur" introduces a total, not a noun',
   moderation_live_standing_cuts: '"sur" introduces a total, not a noun',
   admin_hub_pending_count: '"pending" is invariable',
@@ -40,6 +41,7 @@ const ALLOWED: Record<string, string> = {
   reel_sendto_cancel_all_hint: 'shown only when the take reaches two conversations or more',
   reel_sendto_delete_everywhere_hint: 'shown only when the take reaches two conversations or more',
   bookings_row_resources: 'shown only when a space has more than one resource',
+  post_reach_chip_spaces: 'the chip names the one space, and counts only two or more',
 };
 
 const BARE = /\{count\}\s+[^\W\d_]{3,}/i;

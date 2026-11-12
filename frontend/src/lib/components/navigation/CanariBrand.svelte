@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { FlaskConical } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { isNonProductionDeployment } from '$lib/utils/deployEnvironment';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -25,6 +27,8 @@
   const now = new Date();
   const brandName =
     now.getMonth() === 4 && now.getDate() === 27 ? m.brand_tribute_name() : 'Canari';
+
+  const showEnvironmentBadge = isNonProductionDeployment();
 
   let brandRow = $state<HTMLDivElement | null>(null);
   let nameBlock = $state<HTMLDivElement | null>(null);
@@ -71,16 +75,35 @@
 
 <!-- Wrapper principal pour encapsuler l'état "group" et gérer l'espacement -->
 <div bind:this={brandRow} class="group relative flex items-center gap-3 select-none">
-  <!-- Conteneur de l'icône -->
-  <div
-    class="bg-cn-ink relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-black/5 shadow-md shadow-black/10 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:border-white/10 dark:group-hover:shadow-white/5"
-  >
-    <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
-    <img
-      src="/favicon.png"
-      alt="Logo Canari"
-      class="h-[26px] w-[26px] object-contain drop-shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3"
-    />
+  <!-- The wrapper is the icon's box, so the badge can sit on its corner outside the icon's own
+       `overflow-hidden`. It is the first child the fit measurement reads: still 40px wide. -->
+  <div class="relative h-10 w-10 shrink-0">
+    <!-- Conteneur de l'icône -->
+    <div
+      class="bg-cn-ink relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl border border-black/5 shadow-md shadow-black/10 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:border-white/10 dark:group-hover:shadow-white/5"
+    >
+      <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
+      <img
+        src="/favicon.png"
+        alt="Logo Canari"
+        class="h-[26px] w-[26px] object-contain drop-shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3"
+      />
+    </div>
+    <!-- THE TEST-ENVIRONMENT MARK (owner, 2026-11-11). It replaced a full-width banner that cost a
+         row on every screen and, on the camera screen, sat under the iOS status bar. A badge on the
+         logo costs no space, so it is not dismissible. It stays OFF the avatar: that ring is the
+         connection indicator. A build-time fact, so it is up before the first request. -->
+    {#if showEnvironmentBadge}
+      <span
+        data-testid="environment-badge"
+        role="img"
+        title={m.env_banner_test_label()}
+        aria-label={m.env_banner_test_label()}
+        class="bg-banner-info absolute -top-1 -left-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-(--surface-elevated) text-white shadow-sm"
+      >
+        <FlaskConical size={9} aria-hidden="true" />
+      </span>
+    {/if}
   </div>
 
   <!--
@@ -107,7 +130,7 @@
          line-height 1 the cap top sits 0.166em below the line box top and the baseline 0.131em
          above its bottom (measured from canvas metrics at 1000px, 2026-10-31). -->
     <p
-      class="font-brand text-text-main -mt-[0.166em] -mb-[0.131em] text-xl leading-none font-bold capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
+      class="font-brand text-text-main group-hover:text-accent-text -mt-[0.166em] -mb-[0.131em] text-xl leading-none font-bold capitalize transition-colors duration-300"
     >
       {brandName}
     </p>

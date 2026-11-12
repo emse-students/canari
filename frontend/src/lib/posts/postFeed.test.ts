@@ -28,6 +28,11 @@ describe('post feeds', () => {
     expect(parsePostFeed('toString')).toBeNull();
   });
 
+  it('reads the retired Suivis id as the tab that replaced it, Pour toi', () => {
+    expect(POST_FEEDS).not.toContain('followed');
+    expect(parsePostFeed('followed')).toBe('foryou');
+  });
+
   /**
    * ONE PLACE RESOLVES THE FEED, AND IT IS `load`.
    *

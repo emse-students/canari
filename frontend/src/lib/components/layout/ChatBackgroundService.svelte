@@ -100,9 +100,10 @@
   import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
-  import type {
-    ListingRetryTrigger,
-    WorkspacePurgeContext,
+  import {
+    writeFieldsOf,
+    type ListingRetryTrigger,
+    type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { registerReelSendHost } from '$lib/reels/reelSendBridge';
@@ -152,7 +153,11 @@
     isChannelConversationId,
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
-  import { channelService } from '$lib/services/ChannelService';
+  import {
+    channelService,
+    type ChannelWritePolicy,
+    type WriteVerdicts,
+  } from '$lib/services/ChannelService';
   import {
     drainNativePendingCallAccept,
     listenForNativeCallAccept,
@@ -163,6 +168,10 @@
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { serveDelegatedCommits } from '$lib/utils/chat/tabCommitDelegation';
+  import { frameHandoverExecutors } from '$lib/mls-client/frameFromAnyTab';
+  import { salonSealExecutors } from '$lib/utils/graine/channelSeal';
+  import { forgetSeedsHandedToLeader, seedRepairExecutors } from '$lib/utils/graine/repair';
+  import { onLeaderTabChanged } from '$lib/mls-client/tabLeader';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -986,6 +995,7 @@
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
+      onChannelWriteRefused: globalChannels.handleChannelWriteRefused,
     };
   }
 
@@ -1124,6 +1134,7 @@
           id: channelConversationId,
           name: channelName,
           isPrivate,
+          ...writeFieldsOf(event),
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
           globalConvs.conversations.set(
@@ -1298,7 +1309,12 @@
             : `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
         );
       },
-      onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {
+      onChannelUpdated: (event: {
+        channelId: string;
+        name?: string;
+        viewerCanWrite?: boolean;
+        writePolicy?: ChannelWritePolicy;
+      }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         // ONE PASS FOR BOTH FACTS, and each applied only when the event carried it: a rename sends
@@ -1316,12 +1332,13 @@
                     ...(typeof event.viewerCanWrite === 'boolean'
                       ? { canWrite: event.viewerCanWrite }
                       : {}),
+                    ...(event.writePolicy ? { writePolicy: event.writePolicy } : {}),
                   }
                 : ch
             ),
           }));
           appendLog(
-            `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')}`
+            `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')} writePolicy=${event.writePolicy ?? 'unchanged'}`
           );
         }
         const convo = globalConvs.conversations.get(channelConversationId);
@@ -1380,11 +1397,13 @@
         canManage: boolean;
         canManageChannels?: boolean;
         canModerate?: boolean;
+        canWriteByPolicy?: WriteVerdicts;
         permissions: string[];
       }) => {
         globalChannels.handleWorkspaceRoleChanged(event);
+        const writes = event.canWriteByPolicy;
         appendLog(
-          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'} canModerate=${event.canModerate ?? 'unchanged'})`
+          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'} canModerate=${event.canModerate ?? 'unchanged'} canWrite=${writes ? `admins_moderators:${writes.admins_moderators},admins:${writes.admins}` : 'unchanged'})`
         );
       },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {
@@ -2059,6 +2078,15 @@
     const stopServingKeyGroupCommits = serveDelegatedCommits(
       globalChannels.delegatedKeyGroupExecutors(channelsCtx)
     );
+    // AND ITS SENDS: a frame a follower's gesture sends, and a salon message it seals - a follower
+    // emits nothing and writes no Graine store (`frameFromAnyTab.ts`, `channelSeal.ts`).
+    const stopServingFollowerSends = serveDelegatedCommits({
+      ...frameHandoverExecutors(() => globalSession.ensureMls()),
+      ...salonSealExecutors,
+      ...seedRepairExecutors,
+    });
+    // A missing seed handed to a leader lived in its memory: a new leader is handed it again.
+    const stopForgettingHandedSeeds = onLeaderTabChanged(forgetSeedsHandedToLeader);
 
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
@@ -2076,17 +2104,18 @@
         }, FCM_POLL_INTERVAL)
       : null;
 
-    // ── IndexedDB garbage collection: delete messages older than 90 days ───
+    // ── Local garbage collection: delete messages outside this device's window ───
+    // The window is the store's own default, `deviceWindowMs()`: 5 years on a phone or desktop app,
+    // 90 days in a browser (owner, 2026-11-11) - the coverage the history protocol promises.
     const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
-    const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
     const gcTimer = setInterval(() => {
       if (document.hidden) return;
       const storage = globalSession.storage;
       if (storage) {
         storage
-          .deleteOldMessages(MESSAGE_MAX_AGE)
+          .deleteOldMessages()
           .then((n) => {
-            if (n > 0) appendLog(`[GC] Deleted ${n} old message(s) from IndexedDB`);
+            if (n > 0) appendLog(`[GC] Deleted ${n} message(s) outside the device window`);
           })
           .catch((e: unknown) => appendLog(`[GC] old-message pruning failed: ${String(e)}`));
       }
@@ -2100,6 +2129,8 @@
       unsubscribeTabMessages();
       stopServingConversationCommits();
       stopServingKeyGroupCommits();
+      stopServingFollowerSends();
+      stopForgettingHandedSeeds();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
       stopForegroundHeartbeat?.();

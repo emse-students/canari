@@ -9,13 +9,30 @@
    * names a remedy the screen does not offer leaves the member to find it alone.
    */
   import { Download, LoaderCircle, Settings } from '@lucide/svelte';
-  import { canSaveVideo, saveReel, type SaveableReel } from '$lib/reels/saveReel';
+  import {
+    canSaveVideo,
+    saveReel,
+    type ReelSaveOutcome,
+    type SaveableReel,
+  } from '$lib/reels/saveReel';
   import { openAppSettings } from '$lib/reels/gallery';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
-  /** `rail`: drawn as the reel rail's plain icon (no disc), the settings remedy as an icon too. */
-  let { reel, rail = false }: { reel: SaveableReel; rail?: boolean } = $props();
+  /**
+   * `rail`: drawn as the reel rail's plain icon (no disc), the settings remedy as an icon too.
+   * `save`: what the press does INSTEAD of `saveReel` - a live replay has no file to read, its save
+   * is built segment by segment (`replaySaveFlow`); the button, its states and its remedy are the same.
+   */
+  let {
+    reel,
+    rail = false,
+    save: saveOverride,
+  }: {
+    reel: SaveableReel;
+    rail?: boolean;
+    save?: () => Promise<ReelSaveOutcome | null>;
+  } = $props();
 
   let saving = $state(false);
   let denied = $state(false);
@@ -23,7 +40,7 @@
   async function save() {
     saving = true;
     try {
-      const outcome = await saveReel(reel);
+      const outcome = await (saveOverride ? saveOverride() : saveReel(reel));
       console.debug(`[reel-save] ${reel.id}: ${outcome}`);
       if (outcome === 'saved') showToast(m.reels_save_done(), 'info');
       if (outcome === 'denied') {
@@ -57,8 +74,8 @@
   <button
     type="button"
     class={rail
-      ? 'ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
-      : 'inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-amber-500'}
+      ? 'ui-icon-button focus-visible:ring-accent-icon rounded-full text-white outline-none focus-visible:ring-2'
+      : 'focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2'}
     aria-label={rail ? m.reels_open_settings() : undefined}
     title={rail ? m.reels_open_settings() : undefined}
     onclick={settings}
@@ -74,7 +91,7 @@
 {:else}
   <button
     type="button"
-    class="ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-60 {rail
+    class="ui-icon-button focus-visible:ring-accent-icon rounded-full text-white outline-none focus-visible:ring-2 disabled:opacity-60 {rail
       ? ''
       : 'bg-black/40 hover:bg-black/60'}"
     aria-label={m.reels_save()}

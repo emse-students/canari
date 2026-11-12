@@ -2,9 +2,10 @@
  * THE SHARP FIRST FRAME OF THE REELS THIS DEVICE HAS DECRYPTED, FOR THE SESSION (owner, 2026-10-31:
  * a loading reel showed a yellow play glyph on a neutral box; it must show its first frame).
  *
- * A reel becomes a poster here when its video is in the decrypted pool - the NEXT reel once its
- * preload is in (`ReelPreload`), the reel on screen once its file is whole - so a swipe, forward
- * or back, lands on the frame the player is about to draw. A reel never decrypted here has only
+ * A reel becomes a poster here when its first bytes are on this device - the next pages' heads,
+ * fetched ahead by the viewer (`reelAhead.ts`), the NEXT reel once its preload is in
+ * (`ReelPreload`), the reel on screen once its file is whole - so a swipe, forward or back, lands on
+ * the frame the player is about to draw. A reel never decrypted here has only
  * the publisher's ThumbHash (`MediaRef.placeholder`), and an old reel without one a dark box.
  *
  * BOUNDED: {@link REEL_POSTER_MAX} JPEGs of a few tens of kB, least recently made revoked first.
@@ -36,12 +37,14 @@ export function reelPosterUrl(mediaId: string): string | null {
 }
 
 /**
- * Decodes the first frame of `mediaId` from `videoUrl` (a decrypted blob URL from the media pool)
- * and keeps it. Does nothing when the poster exists or is being made. Never throws.
+ * Decodes the first frame of `mediaId` from `video` and keeps it: a decrypted blob URL from the
+ * media pool, or the decrypted HEAD of the file the reel viewer fetched ahead (`reelAhead.ts` - a
+ * prefix of the file, enough for its first frame). Does nothing when the poster exists or is being
+ * made. Never throws.
  */
 export function captureReelPoster(
   mediaId: string,
-  videoUrl: string,
+  video: string | Blob,
   capture: FrameCapture = defaultCapture
 ): Promise<void> {
   if (posters.has(mediaId)) return Promise.resolve();
@@ -50,8 +53,8 @@ export function captureReelPoster(
   const started = performance.now();
   const work = (async () => {
     try {
-      const video = await (await fetch(videoUrl)).blob();
-      const jpeg = await capture(video);
+      const bytes = typeof video === 'string' ? await (await fetch(video)).blob() : video;
+      const jpeg = await capture(bytes);
       if (!jpeg) {
         console.warn(
           `[reel-poster] ${mediaId}: no frame decoded - the slide keeps its placeholder`

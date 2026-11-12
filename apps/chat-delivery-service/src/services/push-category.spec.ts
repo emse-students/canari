@@ -3,10 +3,16 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
+  CATEGORY_MIN_CLIENT,
+  categoriesNameableBy,
   categoryOfDataPush,
+  effectiveDisabledCategories,
   isNotificationCategory,
   NOTIFICATION_CATEGORIES,
+  OPT_IN_CATEGORIES,
+  storedSwitches,
 } from './push-category';
+import { appVersionAtLeast, HEADERLESS_CLIENT_VERSION } from '../utils/app-version';
 
 /**
  * The map from a push's own fields to the switch that governs it. Every kind of server push that
@@ -26,6 +32,13 @@ describe('categoryOfDataPush', () => {
     ['social_repost_personal_requested', 'posts'],
     ['social_coorganise_proposed', 'events'],
     ['social_live_started', 'posts'],
+    ['social_friend_reaction', 'posts'],
+    ['social_friend_comment', 'posts'],
+    // A campus trend is a suggestion, its own switch independent of posts (owner, 2026-11-10).
+    ['social_campus_trend', 'suggestions'],
+    ['social_campus_trend_photo', 'suggestions'],
+    ['social_campus_trend_video', 'suggestions'],
+    ['social_live_mention', 'mentions'],
     ['social_follow_request', 'follows'],
     ['social_follow_accepted', 'follows'],
     ['social_birthday', 'birthdays'],
@@ -97,7 +110,10 @@ describe('categoryOfDataPush', () => {
     const union = source.match(/export type PushContentKey =([\s\S]*?);/);
     const declared = [...(union?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(
-      declared.filter((k) => k.startsWith('social_live_') && k !== 'social_live_started')
+      declared.filter(
+        (k) =>
+          k.startsWith('social_live_') && k !== 'social_live_started' && k !== 'social_live_mention'
+      )
     ).toEqual(LIVE_MODERATION_KEYS);
   });
 
@@ -116,5 +132,88 @@ describe('categoryOfDataPush', () => {
     for (const id of NOTIFICATION_CATEGORIES) expect(isNotificationCategory(id)).toBe(true);
     expect(isNotificationCategory('calls')).toBe(false);
     expect(isNotificationCategory(undefined)).toBe(false);
+  });
+});
+
+/**
+ * THE FLOOR OF EVERY CATEGORY: a save from a build that cannot name a category keeps its stored
+ * choice. A new category whose floor does not sit above every headerless build would let a `1.6.9`
+ * phone's save switch it back on - so the table is pinned here.
+ */
+describe('CATEGORY_MIN_CLIENT', () => {
+  it('declares a floor for every category and for no other', () => {
+    expect(Object.keys(CATEGORY_MIN_CLIENT).sort()).toEqual([...NOTIFICATION_CATEGORIES].sort());
+  });
+
+  it('writes every floor as a version or null', () => {
+    const unreadable = Object.values(CATEGORY_MIN_CLIENT).filter(
+      (floor) => floor !== null && appVersionAtLeast('1.0.0', floor) === null
+    );
+    expect(unreadable).toEqual([]);
+  });
+
+  it('puts suggestions above every headerless build, and lets 1.6.10 name everything', () => {
+    expect(appVersionAtLeast(HEADERLESS_CLIENT_VERSION, CATEGORY_MIN_CLIENT.suggestions!)).toBe(
+      false
+    );
+    expect(categoriesNameableBy(undefined)).not.toContain('suggestions');
+    expect(categoriesNameableBy('1.6.10')).toEqual([...NOTIFICATION_CATEGORIES]);
+  });
+
+  it('names for each build what its settings screen drew (read from the release tags)', () => {
+    expect(categoriesNameableBy('1.5.0')).toEqual([
+      'messages',
+      'channels',
+      'posts',
+      'comments',
+      'mentions',
+      'reactions',
+      'events',
+      'forms',
+    ]);
+    expect(categoriesNameableBy('1.6.8')).not.toContain('birthdays');
+    expect(categoriesNameableBy('1.6.9')).toContain('birthdays');
+  });
+});
+
+/** "Nos principes" (owner, 2026-11-10): a suggestion is something the reader asks for. */
+describe('effectiveDisabledCategories', () => {
+  it('names suggestions as the one opt-in category', () => {
+    expect(OPT_IN_CATEGORIES).toEqual(['suggestions']);
+  });
+
+  it('answers suggestions off, and nothing else, for an account with no row', () => {
+    expect(effectiveDisabledCategories(null)).toEqual(['suggestions']);
+  });
+
+  it('turns an opt-in category on only from the enabled set, never from its absence', () => {
+    expect(effectiveDisabledCategories({ disabledCategories: [] })).toEqual(['suggestions']);
+    expect(
+      effectiveDisabledCategories({
+        disabledCategories: ['posts'],
+        enabledCategories: ['suggestions'],
+      })
+    ).toEqual(['posts']);
+  });
+
+  it('pushes an opt-in category only when it is on in the app AND its push is on ("Deux niveaux")', () => {
+    expect(
+      effectiveDisabledCategories({
+        disabledCategories: ['suggestions', 'retired'],
+        enabledCategories: ['suggestions', 'retired'],
+      })
+    ).toEqual(['suggestions']);
+  });
+});
+
+describe('storedSwitches', () => {
+  it('answers the two sets as stored, unknown ids dropped and only opt-in ids enabled', () => {
+    expect(storedSwitches(null)).toEqual({ disabled: [], enabled: [] });
+    expect(
+      storedSwitches({
+        disabledCategories: ['posts', 'retired'],
+        enabledCategories: ['suggestions', 'posts'],
+      })
+    ).toEqual({ disabled: ['posts'], enabled: ['suggestions'] });
   });
 });

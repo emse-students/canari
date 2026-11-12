@@ -2,6 +2,7 @@ import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
 import { reconcileAbsentLocalGroup, type AbsentLocalGroupVerdict } from './groupLifecycle';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { forEachBounded, NETWORK_READ_CONCURRENCY } from '$lib/utils/boundedConcurrency';
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -187,8 +188,8 @@ export async function forgetGroupsAbsentFromServer(
     return false;
   }
 
-  let mutated = false;
   let keptOnThisPass = 0;
+  const toAsk: string[] = [];
   for (const groupId of snapshot.localGroups) {
     if (snapshot.serverGroupIds.has(groupId)) continue;
     // ONLY A `keep` THE SERVER ACTUALLY GAVE IS REUSED, and only those are recorded. A `forget` was
@@ -201,7 +202,40 @@ export async function forgetGroupsAbsentFromServer(
       keptOnThisPass++;
       continue;
     }
-    const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
+    toAsk.push(groupId);
+  }
+
+  // THE QUESTIONS ARE ASKED TOGETHER, THE ANSWERS ACTED ON ONE BY ONE. Every key-distribution group
+  // this device holds is absent from `getUserGroups` by construction, so this list is one entry per
+  // community and private salon at EVERY connection - and each `GET /api/mls/groups/:id` used to
+  // wait for the previous one: four in a row cost 2.6 s at 500 ms RTT on dev (2026-11-10), a
+  // ten-community account five seconds. The read decides nothing and touches no MLS state, so the
+  // reads are independent; the forgets below mutate the WASM and stay sequential, in the snapshot's
+  // order.
+  const fates = new Map<string, AbsentLocalGroupVerdict>();
+  const failures = await forEachBounded(
+    toAsk,
+    NETWORK_READ_CONCURRENCY,
+    async (groupId) => {
+      fates.set(groupId, await reconcileAbsentLocalGroup(mlsService, groupId));
+    },
+    (groupId) => `${groupId.slice(0, 8)}…`
+  );
+  // A READ THAT THREW DECIDED NOTHING, so its group is KEPT: forgetting is destructive and is only
+  // done on an answer. One line for the pass, not one per group - the same cause (a dropped link)
+  // answers every group alike.
+  if (failures.length > 0) {
+    log(
+      `[SYNC] WASM kept ${failures.length} absent group(s) whose read threw: ${failures
+        .map((f) => `${f.item.slice(0, 8)}… ${String(f.error)}`)
+        .join('; ')}`
+    );
+  }
+
+  let mutated = false;
+  for (const groupId of toAsk) {
+    const fate = fates.get(groupId);
+    if (!fate) continue;
     if (fate.action === 'keep' && fate.serverAnswered) verdicts?.set(groupId, fate);
     if (fate.action === 'keep') {
       log(`[SYNC] WASM kept ${groupId.slice(0, 8)}… - ${fate.reason}`);

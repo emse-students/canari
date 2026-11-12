@@ -1,10 +1,19 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
-  import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
+  import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
+  import { untrack } from 'svelte';
+  import {
+    fetchUserProfile,
+    isAbsentUserError,
+    type UserProfile,
+    getSavedUserId,
+  } from '$lib/stores/user';
+  import { forgetProfileCopy, readProfileCopy, rememberProfile } from '$lib/profile/profileCopies';
+  import { localCopiesOpenFor } from '$lib/localCopies/localCopyStore.svelte';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
   import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
   import {
@@ -14,6 +23,7 @@
     recordPersonStatus,
     withdrawPerson,
   } from '$lib/follows/followState.svelte';
+  import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
@@ -28,7 +38,10 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import { requestDirectConversationWith } from '$lib/utils/chat/pendingChatOpening';
+  import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
+  import ProfileOverflowMenu from '$lib/components/profile/ProfileOverflowMenu.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     GraduationCap,
     CalendarDays,
@@ -39,8 +52,6 @@
     UserCheck,
     UserRoundCheck,
     Users,
-    Flag,
-    Ban,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -48,26 +59,28 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
-  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
-  import {
-    fetchUserMemberships,
-    fetchUserRoleHistory,
-    fetchUserParrainage,
-    type UserMembershipRow,
-    type UserRoleHistoryRow,
-    type SkyEntourage,
-  } from '$lib/profile/api';
+  import type { UserMembershipRow, UserRoleHistoryRow, SkyEntourage } from '$lib/profile/api';
+  import { readProfileWithExtras } from '$lib/profile/profileExtras';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
+  /**
+   * What is on screen is the device's COPY of this profile (slow-link chantier, gap 2), drawn before
+   * the read answers. It holds no verdict about the reader, so the follow and block gestures wait
+   * for the answer.
+   */
+  let fromCopy = $state(false);
+  /** The server ANSWERED that this account is gone: the only failure that withholds a copy. */
+  let absent = $state(false);
   let error = $state('');
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
   let followLoading = $state(false);
+  /** The person the reader followed or asked on THIS visit: "Suivez aussi..." follows it (WP-6). */
+  let followedHereId = $state<string | null>(null);
   let memberships = $state<UserMembershipRow[]>([]);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
   let parrainage = $state<SkyEntourage | null>(null);
@@ -87,8 +100,10 @@
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
     const readAt = followEpoch();
-    try {
-      const [prof, status, blocks] = await Promise.all([
+    // THE EXTRAS LEAVE WITH THE PROFILE, NOT AFTER IT (`readProfileWithExtras`): they used to wait
+    // for the profile's answer and then for each other. They are APPLIED once the profile is in.
+    const { profile: profileRead, extras } = readProfileWithExtras(userId, () =>
+      Promise.all([
         fetchUserProfile(userId),
         getFollowStatus(userId)
           .then((read) => {
@@ -108,35 +123,65 @@
           Log.d('profile.loadBlocks failed', e);
           return [];
         }),
-      ]);
+      ])
+    );
+    try {
+      const [prof, status, blocks] = await profileRead;
       if (token !== loadToken) return;
+      // The copy's lists are on screen: a section whose read FAILED keeps them (typed, not `[]`).
+      const heldCopy = fromCopy;
       profile = prof;
+      fromCopy = false;
       followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
-      try {
-        const rows = await fetchUserMemberships(userId);
-        if (token === loadToken) memberships = rows;
-      } catch {
-        if (token === loadToken) memberships = [];
-      }
-      try {
-        const rows = await fetchUserRoleHistory(userId);
-        if (token === loadToken) roleHistory = rows;
-      } catch {
-        if (token === loadToken) roleHistory = [];
-      }
-      try {
-        const entourage = await fetchUserParrainage(userId);
-        if (token === loadToken) parrainage = entourage;
-      } catch {
-        if (token === loadToken) parrainage = null;
-      } finally {
-        if (token === loadToken) extrasLoading = false;
+      const [rows, history, entourage] = await Promise.all([
+        extras.memberships.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) memberships = r.value;
+          return r;
+        }),
+        extras.roleHistory.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) roleHistory = r.value;
+          return r;
+        }),
+        extras.parrainage.then((r) => {
+          if (token === loadToken) parrainage = r.value;
+          return r;
+        }),
+      ]);
+      Log.d(
+        'profile.extras',
+        `${rows.value.length} membership(s), ${history.value.length} role(s), entourage ${entourage.value ? 'read' : 'none'}`
+      );
+      if (token === loadToken) extrasLoading = false;
+      // Kept for the next visit, whatever the link: sealed on the device, never in clear. The lists
+      // are those ON SCREEN; with no copy behind them and a failed section there is nothing true to
+      // seal, so nothing is.
+      if (token === loadToken && ((rows.answered && history.answered) || heldCopy)) {
+        void rememberProfile({
+          profile: prof,
+          memberships: $state.snapshot(memberships),
+          roleHistory: $state.snapshot(roleHistory),
+        });
       }
     } catch (err) {
       Log.d('profile.load failed', err);
       if (token !== loadToken) return;
+      if (fromCopy && !isAbsentUserError(err)) {
+        // THE COPY STAYS: a failed revalidation says nothing about the profile. Logged, not shown.
+        console.warn(
+          `[PROFILE-COPIES] ${userId.slice(0, 8)} not refreshed, the device copy stays: ${String(err)}`
+        );
+        extrasLoading = false;
+        return;
+      }
+      if (isAbsentUserError(err)) {
+        // An ANSWER: the account is gone, its copy goes with it.
+        forgetProfileCopy(userId);
+        absent = true;
+        fromCopy = false;
+        profile = null;
+      }
       error = m.profile_public_load_error();
     } finally {
       if (token === loadToken) loading = false;
@@ -153,7 +198,9 @@
     // profile's content is never shown while the new one loads.
     const token = ++loadToken;
     profile = null;
+    fromCopy = false;
     error = '';
+    absent = false;
     memberships = [];
     roleHistory = [];
     parrainage = null;
@@ -178,6 +225,36 @@
     void loadProfile(userId, token);
   });
 
+  /**
+   * DRAWS THE PROFILE FROM THE DEVICE while its read is on the wire (slow-link chantier, gap 2).
+   * Re-runs when the device's copies open (the key may arrive after the first frame). Never over
+   * anything already drawn - an answer that won the race is newer. ONLY AN ANSWER (the account is
+   * gone) withholds it: a transport failure that lands before the slower copy read must not beat it
+   * (the feed's `storedCopyMayDraw` rule), offline being the case the copy exists for.
+   */
+  $effect(() => {
+    const userId = page.params.id;
+    const open = localCopiesOpenFor();
+    if (!userId || !open) return;
+    const token = untrack(() => loadToken);
+    if (untrack(() => profile !== null || absent)) return;
+    let cancelled = false;
+    void readProfileCopy(userId).then((copy) => {
+      if (cancelled || !copy || token !== loadToken || profile !== null || absent) return;
+      profile = copy.profile;
+      memberships = copy.memberships;
+      roleHistory = copy.roleHistory;
+      fromCopy = true;
+      loading = false;
+      extrasLoading = false;
+      error = '';
+      Log.d('profile.copy', `${userId.slice(0, 8)} drawn from the device, no network`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   function formatYear(year: number | null): string {
     if (!year) return m.profile_promo_unknown();
     return m.profile_promo_value({ year });
@@ -190,10 +267,18 @@
   });
 
   function handleSendMessage() {
-    if (profile?.id) {
-      sessionStorage.setItem('canari_pending_contact', profile.id);
-      goto(resolve('/chat'));
+    // A PERSON, not a conversation: the chat page finds the DM with them or creates it
+    // (`pendingChatOpening.ts`). Handed over as a conversation key, this user id opened nothing.
+    if (!profile?.id) return;
+    // The ask names who made it, so an account signed in after this tap never acts on it.
+    const owner = getSavedUserId();
+    if (!owner) {
+      console.warn('[PROFILE] "Message" pressed with no signed-in account - nothing is asked');
+      return;
     }
+    Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+    requestDirectConversationWith(owner, profile.id, sessionStorage);
+    goto(resolve('/chat'));
   }
 
   /**
@@ -221,7 +306,10 @@
     actionMessage = '';
     Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (action === 'ask') followStatus = await askPerson(profile.id);
+      if (action === 'ask') {
+        followStatus = await askPerson(profile.id);
+        followedHereId = profile.id;
+      }
       // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
       else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
       else await leavePerson(profile.id);
@@ -305,7 +393,7 @@
   <div class="space-y-6 md:space-y-8">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-        <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+        <LoaderCircle size={32} class="text-accent-icon animate-spin" strokeWidth={2.5} />
         <span class="text-sm font-bold">{m.profile_public_loading()}</span>
       </div>
     {:else if error}
@@ -321,94 +409,64 @@
       </div>
     {:else if profile}
       <!--
-        Public profile header. SAME SHAPE AS `/profile`, DELIBERATELY - a column on a phone, a row
-        from `sm`, and the stacked column centred. Someone else's profile and your own are the same
-        screen with different buttons, and centring only one of them would have made them two.
+        Public profile header: `ProfileHeader` is the layout of this page and of `/profile` both
+        (someone else's profile and your own are the same screen with different actions). Report and
+        block are two separate gestures, deliberately - a block is private and stays between the two
+        people, a report asks a moderator to look - so they stay two entries of the "..." menu and
+        never one control: one control would have made every block a moderation event.
       -->
-      <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
-      >
-        <div
-          class="relative h-24 w-24 shrink-0 overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
-        >
-          <Avatar userId={profile.id} fill shape="circle" />
-        </div>
-
-        <div class="min-w-0 flex-1 text-center sm:text-left">
-          <h1 class="text-text-main mb-1 text-2xl font-bold sm:text-3xl">
-            {displayFallbackName}
-          </h1>
-          <ProfileMinesweeperBadge userId={profile.id} />
-          <ProfileChips {profile} />
-          <ProfileBirthdayLine userId={profile.id} />
-        </div>
-
-        <!-- Actions -->
-        <div class="mt-2 flex w-full shrink-0 flex-col gap-2 sm:mt-0 sm:w-auto sm:flex-row">
-          <button
+      {@const p = profile}
+      <ProfileHeader userId={p.id} name={displayFallbackName}>
+        {#snippet details()}
+          <ProfileSummaryLine userId={p.id} profile={p} />
+          <ProfileMinesweeperBadge userId={p.id} />
+        {/snippet}
+        {#snippet actions()}
+          <!-- ONE accent button: "Suivre" until the reader follows, then "Message". -->
+          <Button
+            variant={followStatus ? 'secondary' : 'primary'}
+            class="min-h-11 flex-1 sm:flex-none"
             onclick={handleFollowToggle}
-            disabled={followLoading}
+            disabled={followLoading || fromCopy}
             data-follow-status={followStatus ?? 'none'}
-            class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
-              ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
-              : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
           >
             {#if followStatus === 'accepted'}
-              <UserCheck size={18} strokeWidth={2.5} />
+              <UserCheck size={16} class="shrink-0" />
             {:else if followStatus === 'pending'}
-              <UserRoundCheck size={18} strokeWidth={2.5} />
+              <UserRoundCheck size={16} class="shrink-0" />
             {:else}
-              <UserPlus size={18} strokeWidth={2.5} />
+              <UserPlus size={16} class="shrink-0" />
             {/if}
-            {followLabel(followStatus)}
-          </button>
+            <span class="whitespace-nowrap">{followLabel(followStatus)}</span>
+          </Button>
+          <Button
+            variant={followStatus ? 'primary' : 'secondary'}
+            class="min-h-11 flex-1 sm:flex-none"
+            onclick={handleSendMessage}
+          >
+            <MessageCircle size={16} class="shrink-0" />
+            <span class="whitespace-nowrap">{m.profile_public_message_btn()}</span>
+          </Button>
           <!--
             THE BELL (engagement WP-3, L7): offered once the reader FOLLOWS this person (accepted) -
             a bell on someone whose posts the reader is not told of would be a second, silent follow.
+            A glyph of the level, opening the level menu: a select would not fit the row.
           -->
           {#if followStatus === 'accepted'}
-            <AccountBell kind="user" targetId={profile.id} />
+            <AccountBell kind="user" targetId={p.id} iconOnly />
           {/if}
-          <button
-            onclick={handleSendMessage}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
-          >
-            <MessageCircle size={18} strokeWidth={2.5} />
-            {m.profile_public_message_btn()}
-          </button>
-        </div>
-      </div>
+          <ProfileOverflowMenu
+            {blocked}
+            busy={blockLoading || fromCopy}
+            onReport={() => (reportOpen = true)}
+            onBlockToggle={handleBlockToggle}
+          />
+        {/snippet}
+      </ProfileHeader>
 
-      <!--
-      Reporting and blocking are two separate gestures, deliberately. A block is private and stays
-      between the two people; a report asks a moderator to look. Offering them as one control would
-      have made every block a moderation event, which is the opposite of the intent.
-    -->
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        {#if actionMessage}
-          <span class="text-text-muted mr-auto text-xs font-medium">{actionMessage}</span>
-        {/if}
-        <button
-          type="button"
-          onclick={() => (reportOpen = true)}
-          class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <Flag size={14} strokeWidth={2.5} />
-          {m.profile_report_btn()}
-        </button>
-        <button
-          type="button"
-          onclick={handleBlockToggle}
-          disabled={blockLoading}
-          class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50
- {blocked
-            ? 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5'
-            : 'text-red-600 hover:bg-red-500/10 dark:text-red-400'}"
-        >
-          <Ban size={14} strokeWidth={2.5} />
-          {blocked ? m.profile_unblock_btn() : m.profile_block_btn()}
-        </button>
-      </div>
+      {#if actionMessage}
+        <p class="text-text-muted text-xs font-medium" role="status">{actionMessage}</p>
+      {/if}
 
       {#if blocked}
         <p
@@ -416,6 +474,14 @@
         >
           {m.profile_blocked_notice()}
         </p>
+      {/if}
+
+      <!--
+        "SUIVEZ AUSSI..." (engagement WP-6, L15): right after a follow or a request made here, the
+        READER's own suggestions minus this person - never this person's follows.
+      -->
+      {#if followedHereId === profile.id && followStatus}
+        <FollowAlsoSuggestions exclude={profile.id} />
       {/if}
 
       <!-- Bio section -->
@@ -501,10 +567,11 @@
                 {m.profile_member_since_label()}
               </p>
               <p class="text-text-main text-sm font-bold capitalize">
-                {new Date(profile.createdAt).toLocaleDateString(
-                  getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                  { year: 'numeric', month: 'long', day: 'numeric' }
-                )}
+                {new Date(profile.createdAt).toLocaleDateString(intlLocale(), {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
               </p>
             </div>
           </div>

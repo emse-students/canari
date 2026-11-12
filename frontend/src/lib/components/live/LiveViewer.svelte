@@ -19,6 +19,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import VideoFeedbackGlyph, {
@@ -38,7 +39,7 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
-  import { fetchLiveLimits } from '$lib/live/api';
+  import { fetchLiveLimits, fetchLiveMentionAudience } from '$lib/live/api';
   import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
@@ -260,8 +261,7 @@
   let feedbackCount = 0;
 
   /**
-   * The sound, from the speaker or a tap on the picture (owner, 2026-11-09: the tap is the sound on
-   * every video). A live has no hold: its player resumes a paused element at the next delivery.
+   * The sound, from the speaker or a tap on a muted picture (`onPictureTap`). A live has no hold: its player resumes a paused element at the next delivery.
    */
   function toggleSound() {
     videoSound.toggle();
@@ -272,6 +272,17 @@
       void video.play().catch((e: unknown) => {
         console.warn(`[LIVE] viewer: play() after the sound toggle refused (${String(e)})`);
       });
+  }
+
+  // The app's one volume level, on the live's element too (the slider of the speaker moves it).
+  $effect(() => {
+    const level = videoSound.level;
+    if (video) applyVideoLevel(video, level);
+  });
+
+  /** A tap on the picture only turns the sound ON, never off (owner, 2026-11-10); the speaker mutes. */
+  function onPictureTap() {
+    if (videoSound.muted) toggleSound();
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -309,7 +320,7 @@
     <video
       bind:this={video}
       use:followVideoSound
-      use:videoGestures={{ onTap: toggleSound, enabled: !terminal }}
+      use:videoGestures={{ onTap: onPictureTap, enabled: !terminal }}
       class="absolute inset-0 h-full w-full object-contain [-webkit-touch-callout:none]"
       class:opacity-40={terminal}
       playsinline
@@ -355,12 +366,17 @@
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
-      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
+      <VideoSoundButton
+        muted={videoSound.muted}
+        onToggle={toggleSound}
+        onLevel={(v) => videoSound.setVolume(v)}
+        data-live-sound
+      />
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button
           type="button"
-          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
           aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           aria-pressed={chatOpen}
@@ -377,7 +393,7 @@
       {#if !terminal}
         <button
           type="button"
-          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
           aria-label={m.live_share_label()}
           title={m.live_share_label()}
           onclick={() => shareLiveLink(live.id)}
@@ -389,7 +405,7 @@
       <button
         bind:this={closeButton}
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={m.live_viewer_close()}
         title={m.live_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
@@ -424,6 +440,7 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
+              audienceOf={(ids) => fetchLiveMentionAudience(live.id, ids)}
             />
           {/if}
         </div>
@@ -448,7 +465,7 @@
           <p class="mt-1 text-sm opacity-90">{m.live_viewer_full_body()}</p>
           <button
             type="button"
-            class="bg-cn-yellow text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+            class="bg-accent text-on-accent mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
             bind:this={actionButton}
             onclick={() => player?.retry()}
             data-live-retry

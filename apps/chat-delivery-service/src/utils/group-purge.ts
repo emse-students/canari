@@ -13,6 +13,7 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
 import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
+import { takeSeatLock } from './seat-eviction';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
 const REDIS_DEL_CHUNK = 500;
@@ -239,21 +240,66 @@ export async function tombstoneGroups(
 ): Promise<GroupOwnedRowCounts> {
   if (groupIds.length === 0) return noRowsRemoved();
 
-  const counts = await manager.transaction(async (tx) => {
-    await tx.getRepository(Group).update(
-      { id: In(groupIds) },
-      {
-        deletedAt: new Date(),
-        ...(releaseDistributionScope
-          ? { distributionWorkspaceId: null, distributionChannelId: null }
-          : {}),
-      }
-    );
-    // SOFT, always: the tombstone stays, so the per-user dismissal markers stay with it.
-    return deleteGroupOwnedRows(tx, groupIds, { groupRowSurvives: true });
-  });
+  const counts = await manager.transaction((tx) =>
+    tombstoneInTransaction(tx, groupIds, releaseDistributionScope)
+  );
   await deleteGroupRedisKeys(redis, groupIds);
   return counts;
+}
+
+/**
+ * {@link tombstoneGroups} for an end that was DECIDED ON A READ: each group is ended only if
+ * `confirm` still holds when read again UNDER ITS SEAT LOCK, inside the transaction that ends it.
+ *
+ * A predicate read before the transaction is a check-then-act: a seat written or a device joined
+ * between the read and the tombstone would be purged with a conversation it now belongs to (review
+ * of #3383, 2026-11-12). Every seat writer takes the seat lock first ({@link takeSeatLock}), so
+ * under it the roster `confirm` reads cannot move until the tombstone commits. The locks are taken
+ * in sorted id order, so two callers ending overlapping sets never wait on each other in a cycle.
+ *
+ * @param manager a NON-transactional manager - this opens the transaction itself
+ * @param confirm re-reads the condition through `tx`; false leaves that group untouched
+ * @returns the rows removed and the ids actually ended - a group `confirm` refused is not in it
+ */
+export async function tombstoneGroupsIf(
+  manager: EntityManager,
+  redis: Redis,
+  groupIds: string[],
+  confirm: (tx: EntityManager, groupId: string) => Promise<boolean>
+): Promise<{ counts: GroupOwnedRowCounts; ended: string[] }> {
+  const candidates = [...new Set(groupIds)].sort();
+  if (candidates.length === 0) return { counts: noRowsRemoved(), ended: [] };
+
+  const result = await manager.transaction(async (tx) => {
+    const ended: string[] = [];
+    for (const groupId of candidates) {
+      await takeSeatLock(tx, groupId);
+      if (await confirm(tx, groupId)) ended.push(groupId);
+    }
+    if (ended.length === 0) return { counts: noRowsRemoved(), ended };
+    return { counts: await tombstoneInTransaction(tx, ended, false), ended };
+  });
+  if (result.ended.length > 0) await deleteGroupRedisKeys(redis, result.ended);
+  return result;
+}
+
+/** The SQL half of a tombstone, inside the caller's transaction `tx`. */
+async function tombstoneInTransaction(
+  tx: EntityManager,
+  groupIds: string[],
+  releaseDistributionScope: boolean
+): Promise<GroupOwnedRowCounts> {
+  await tx.getRepository(Group).update(
+    { id: In(groupIds) },
+    {
+      deletedAt: new Date(),
+      ...(releaseDistributionScope
+        ? { distributionWorkspaceId: null, distributionChannelId: null }
+        : {}),
+    }
+  );
+  // SOFT, always: the tombstone stays, so the per-user dismissal markers stay with it.
+  return deleteGroupOwnedRows(tx, groupIds, { groupRowSurvives: true });
 }
 
 /**

@@ -20,6 +20,7 @@ describe('VersionService', () => {
       callsMode: 'audio',
       livesMode: 'on',
       checkpointSkipMode: 'on',
+      liveReplaysMode: 'on',
     }),
   } as unknown as PlatformService;
 
@@ -47,6 +48,12 @@ describe('VersionService', () => {
     expect(out.checkpointSkip).toEqual({ mode: 'on' });
   });
 
+  it('publishes the live replays switch, which social-service enforces at the start of a live', async () => {
+    const out = await service.getVersion();
+
+    expect(out.liveReplays).toEqual({ mode: 'on' });
+  });
+
   it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
     const out = await service.getVersion();
 
@@ -69,6 +76,7 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.formDrafts).toBe(true);
+    expect(out.rankedFeeds).toBe(true);
   });
 
   it('reports no build when the environment was not given one', async () => {

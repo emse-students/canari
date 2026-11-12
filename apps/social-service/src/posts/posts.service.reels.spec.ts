@@ -11,6 +11,7 @@
 import { pinnedForViewerSql } from './space-pins';
 import {
   BadRequestException,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -26,13 +27,9 @@ import type { PostNotificationsService } from './post-notifications.service';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
-import {
-  LINKED_MEDIA_POST_SQL,
-  MULTI_MEDIA_POST_SQL,
-  SINGLE_MEDIA_POST_SQL,
-  SINGLE_PHOTO_POST_SQL,
-} from './full-screen-post-sql';
+import { FULL_SCREEN_POST_SQL } from './full-screen-post-sql';
 import { republishedFeedAtSql } from './republished-feed-sql';
+import { derivePosterKey } from '../lives/live-poster-key';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -52,6 +49,8 @@ function makeService(opts: {
   claim?: () => Promise<{ refused: string[] }>;
   purge?: () => Promise<Record<string, string>>;
   saveFails?: boolean;
+  /** A working page cache (MGET/SETEX over a map) - off by default, so every list reads the database. */
+  cache?: Map<string, string>;
 }) {
   const saved: Array<Record<string, unknown>> = [];
   const queries: Array<{ sql: string; params: unknown[] }> = [];
@@ -75,6 +74,7 @@ function makeService(opts: {
     },
   };
   const retention = {
+    assertOwnMedia: jest.fn(() => Promise.resolve()),
     release: jest.fn(() => Promise.resolve()),
     claimReelFor: jest.fn(opts.claim ?? (() => Promise.resolve({ refused: [] }))),
     purgeReelBlobs: jest.fn(opts.purge ?? (() => Promise.resolve({}))),
@@ -82,7 +82,17 @@ function makeService(opts: {
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
     {
-      setex: jest.fn(),
+      setex: jest.fn((key: string, _ttl: number, value: string) => {
+        opts.cache?.set(key, value);
+        return Promise.resolve('OK');
+      }),
+      ...(opts.cache
+        ? {
+            mget: jest.fn((...keys: string[]) =>
+              Promise.resolve(keys.flat().map((k) => opts.cache!.get(k) ?? null))
+            ),
+          }
+        : {}),
       get: jest.fn(),
       deleteByPattern: jest.fn(() => Promise.resolve(0)),
       incr: jest.fn(() => Promise.resolve(1)),
@@ -163,12 +173,12 @@ describe('reads exclude a reel past its month', () => {
       const { service, queries } = makeService({});
       await service.listPosts({ limit: 10, offset: 0, feed, kind: 'reel', viewerUserId: 'alice' });
       const feedQuery = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql));
-      expect(feedQuery?.sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
-      expect(feedQuery?.sql).toContain(`posts.kind = 'reel'`);
+      expect(feedQuery?.sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
+      expect(feedQuery?.sql).toContain(`posts.kind IN ('reel', 'replay')`);
     }
   });
 
-  it('with singlePhotos, reels AND one-picture posts, in EVERY feed arm', async () => {
+  it('with multiMedia, reels AND the full-screen posts (a link allowed), in EVERY feed arm', async () => {
     for (const feed of ['all', 'associations', 'custom'] as const) {
       const { service, queries } = makeService({});
       await service.listPosts({
@@ -176,14 +186,16 @@ describe('reads exclude a reel past its month', () => {
         offset: 0,
         feed,
         kind: 'reel',
-        singlePhotos: true,
+        multiMedia: true,
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(SINGLE_PHOTO_POST_SQL);
+      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(FULL_SCREEN_POST_SQL);
+      // ONE SWITCH since the floor 1.6.6: no list keeps a post with a link out any more.
+      expect(sql).not.toContain(`!~* 'https?://'`);
       // The visibility of a post is still asked of every row the arm serves.
-      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
+      expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
     }
   });
 
@@ -195,7 +207,7 @@ describe('reads exclude a reel past its month', () => {
         offset: 0,
         feed,
         kind: 'reel',
-        singlePhotos: true,
+        multiMedia: true,
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
@@ -218,156 +230,25 @@ describe('reads exclude a reel past its month', () => {
     }
   });
 
-  it('singlePhotos means nothing without kind=reel', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singlePhotos: true });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
-  });
-
-  it('with singleMedia, reels AND one-picture-or-video posts, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        singleMedia: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-      expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
-      // A plain post has no expiry: the live-reel clause still spares it.
-      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
-    }
-  });
-
-  it('singleMedia wins over singlePhotos, and singlePhotos alone stays pictures only', async () => {
-    const both = makeService({});
-    await both.service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      singlePhotos: true,
-      singleMedia: true,
-    });
-    const bothSql = both.queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(bothSql).toContain(SINGLE_MEDIA_POST_SQL);
-    const photos = makeService({});
-    await photos.service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      singlePhotos: true,
-    });
-    const photosSql = photos.queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(photosSql).toContain(SINGLE_PHOTO_POST_SQL);
-    expect(photosSql).not.toContain(SINGLE_MEDIA_POST_SQL);
-  });
-
-  it('with multiMedia, reels AND single AND 2..10-media posts, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        multiMedia: true,
-        singleMedia: true,
-        singlePhotos: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(MULTI_MEDIA_POST_SQL);
-      expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    }
-  });
-
-  it('singleMedia alone never answers a carousel: an installed client cannot draw one', async () => {
+  it('the retired switches turn nothing on: singlePhotos, singleMedia and withLinks are not read', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({
       limit: 10,
       offset: 0,
       feed: 'all',
       kind: 'reel',
-      singleMedia: true,
-      singlePhotos: true,
+      ...({ singlePhotos: true, singleMedia: true, withLinks: true } as object),
     });
     const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
-  });
-
-  it('with withLinks (owner, 2026-11-06), a post with a link comes too, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        withLinks: true,
-        multiMedia: true,
-        singleMedia: true,
-        singlePhotos: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(LINKED_MEDIA_POST_SQL);
-      expect(sql).not.toContain(`!~* 'https?://'`);
-    }
-  });
-
-  it('withLinks without multiMedia keeps the old rule: an installed client drops a link', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      withLinks: true,
-      singleMedia: true,
-    });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
-  });
-
-  it('multiMedia alone keeps the link out: a client built before withLinks cannot draw one', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      multiMedia: true,
-      singleMedia: true,
-      singlePhotos: true,
-    });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(MULTI_MEDIA_POST_SQL);
-    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
+    expect(sql).not.toContain(FULL_SCREEN_POST_SQL);
+    expect(sql).toContain(`posts.kind IN ('reel', 'replay')`);
   });
 
   it('multiMedia means nothing without kind=reel', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', multiMedia: true });
     const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
-  });
-
-  it('singleMedia means nothing without kind=reel', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singleMedia: true });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(SINGLE_MEDIA_POST_SQL);
+    expect(sql).not.toContain(FULL_SCREEN_POST_SQL);
   });
 
   it('absent kind means both: no kind clause, but the live-reel clause stays', async () => {
@@ -379,6 +260,35 @@ describe('reads exclude a reel past its month', () => {
     expect(sql).not.toContain(`posts.kind = 'post'`);
   });
 
+  it('A LIVE REPLAY comes only to a client that says withReplays, in the CanaReels list with the reels, never to a removed viewer (docs/wiki/live-replays.md)', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      viewerUserId: 'alice',
+    });
+    const without = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    // The page-wide exclusion (`AND posts.kind <> 'replay'` on its own line), never the removed-viewer term.
+    expect(without).toMatch(/AND posts\.kind <> 'replay'\s*\n/);
+    expect(without).not.toContain('live_removed_viewers');
+
+    queries.length = 0;
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      viewerUserId: 'alice',
+      withReplays: true,
+    });
+    const withThem = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(withThem).not.toMatch(/AND posts\.kind <> 'replay'\s*\n/);
+    expect(withThem).toContain(`posts.kind IN ('reel', 'replay')`);
+    expect(withThem).toContain('live_removed_viewers');
+  });
+
   it('selects the kind, the duration and the expiry on every row it serves', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all' });
@@ -387,12 +297,12 @@ describe('reads exclude a reel past its month', () => {
     );
   });
 
-  it('searches with the live-reel clause too', async () => {
+  it('searches with the live-row clause too, and never finds a live replay', async () => {
     const { service, queries } = makeService({});
     await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
-    expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
-      `posts.kind <> 'reel' OR posts."expiresAt" > NOW()`
-    );
+    const sql = queries.find((q) => /ILIKE/.test(q.sql))?.sql;
+    expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
+    expect(sql).toContain(`posts.kind <> 'replay'`);
   });
 
   it('search pages and the event post pick in a TOTAL order: id breaks a publishedAt tie', async () => {
@@ -416,6 +326,35 @@ describe('reads exclude a reel past its month', () => {
     );
   });
 
+  it('answers 404 for a live replay by id to a client that did not say withReplays, and serves it to one that did', async () => {
+    const replay = {
+      id: 'r1',
+      authorId: 'alice',
+      kind: 'replay',
+      durationMs: 60_000,
+      expiresAt: new Date(NOW + DAY_MS),
+      liveId: 'l1',
+      associationId: null,
+      hiddenByModeration: false,
+      scheduledAt: null,
+    } as unknown as Post;
+    await expect(
+      makeService({ existing: replay }).service.getById('r1', { viewerId: 'bob' })
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      makeService({ existing: replay }).service.getById('r1', {
+        viewerId: 'bob',
+        withReplays: true,
+      })
+    ).resolves.toMatchObject({ kind: 'replay' });
+    // Past its three days, withReplays or not.
+    await expect(
+      makeService({
+        existing: { ...replay, expiresAt: new Date(NOW - 1) } as Post,
+      }).service.getById('r1', { viewerId: 'alice', withReplays: true })
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('still serves a live reel, with its three fields', async () => {
     const { service } = makeService({
       existing: {
@@ -433,6 +372,161 @@ describe('reads exclude a reel past its month', () => {
       kind: 'reel',
       durationMs: 5000,
     });
+  });
+});
+
+describe('a live replay row, as served: its cover and the server clock (docs/wiki/live-replays.md)', () => {
+  const LIVE = '11111111-1111-4111-8111-111111111111';
+  const KEY = 'ab'.repeat(32);
+  const SERVER_NOW = new Date('2026-11-01T12:00:05Z');
+  /** The facts read: the live's poster and its key (the previous, plaintext format opens as-is). */
+  const answerFacts = (posterName: string | null) =>
+    jest.fn((sql: string) => {
+      if (sql.includes('unnest($1::uuid[])')) {
+        return Promise.resolve([
+          {
+            liveId: LIVE,
+            serverNow: SERVER_NOW,
+            posterName,
+            posterAgeMs: 1234,
+            liveKey: KEY,
+            liveKeyCiphertext: null,
+            liveKeyVersion: null,
+          },
+        ]);
+      }
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      return Promise.resolve([]);
+    });
+  const replay = {
+    id: 'r1',
+    authorId: 'alice',
+    kind: 'replay',
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    liveId: LIVE,
+    associationId: null,
+    hiddenByModeration: false,
+    scheduledAt: null,
+  } as unknown as Post;
+
+  it('serves the live last preview, its POSTER key (never the live key) and serverNow by id', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts('poster-1');
+    const served = await service.getById('r1', { viewerId: 'bob', withReplays: true });
+    expect(served).toMatchObject({
+      kind: 'replay',
+      poster: { name: 'poster-1', ageMs: 1234 },
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(JSON.stringify(served)).not.toContain(KEY);
+  });
+
+  it('serves no cover for a live that stored no preview, and still the clock', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts(null);
+    await expect(
+      service.getById('r1', { viewerId: 'bob', withReplays: true })
+    ).resolves.toMatchObject({ poster: null, posterKey: null, serverNow: SERVER_NOW });
+  });
+
+  it('adds the facts to a listed replay AFTER the page is cached, fresh on every serve from the cache', async () => {
+    const cache = new Map<string, string>();
+    const { service, postRepo } = makeService({ cache });
+    let listReads = 0;
+    let factsAnswer: (sql: string) => Promise<any[]> = answerFacts('poster-1');
+    postRepo.manager.query = jest.fn((sql: string) => {
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        listReads++;
+        return Promise.resolve([
+          { id: 'r1', kind: 'replay', liveId: LIVE, authorId: 'alice', mentions: '' },
+          { id: 'p2', kind: 'post', liveId: null, authorId: 'alice', mentions: '' },
+        ]);
+      }
+      return factsAnswer(sql);
+    });
+    const ask = () =>
+      service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed: 'all',
+        viewerUserId: 'bob',
+        withReplays: true,
+      });
+
+    const first = await ask();
+    expect(first[0]).toMatchObject({
+      liveId: LIVE,
+      poster: { name: 'poster-1', ageMs: 1234 },
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(first[1]).not.toHaveProperty('serverNow');
+    expect(first[1]).not.toHaveProperty('posterKey');
+    // The STORED page carries none of the facts: no clock, no cover, no key.
+    expect(cache.size).toBe(1);
+    const stored = [...cache.values()][0];
+    expect(stored).toContain(LIVE);
+    for (const word of ['serverNow', 'posterKey', '"poster"', derivePosterKey(KEY, LIVE)]) {
+      expect(stored).not.toContain(word);
+    }
+
+    // Served from the cache: the list is not read again, and the clock is THIS read's.
+    const later = new Date(SERVER_NOW.getTime() + 20_000);
+    factsAnswer = (sql) =>
+      answerFacts('poster-1')(sql).then((rows) =>
+        sql.includes('unnest($1::uuid[])') ? rows.map((r) => ({ ...r, serverNow: later })) : rows
+      );
+    const second = await ask();
+    expect(listReads).toBe(1);
+    expect(second[0]).toMatchObject({ posterKey: derivePosterKey(KEY, LIVE), serverNow: later });
+
+    // The facts read fails on a cache hit: the rows go out without cover or clock, said at ERROR,
+    // and the page is neither recomputed nor failed.
+    const errors = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    factsAnswer = (sql) =>
+      sql.includes('unnest($1::uuid[])')
+        ? Promise.reject(new Error('connection reset'))
+        : Promise.resolve([]);
+    const third = await ask();
+    expect(listReads).toBe(1);
+    expect(third).toHaveLength(2);
+    expect(third[0]).toMatchObject({ id: 'r1', liveId: LIVE });
+    expect(third[0]).not.toHaveProperty('serverNow');
+    expect(third[0]).not.toHaveProperty('posterKey');
+    expect(
+      errors.mock.calls.some(
+        (c) => String(c[0]).includes('[LIVE_REPLAY]') && String(c[0]).includes('connection reset')
+      )
+    ).toBe(true);
+  });
+
+  it('reads nothing for a page without a replay', async () => {
+    const { service, postRepo, queries } = makeService({});
+    postRepo.manager.query = jest.fn((sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        return Promise.resolve([{ id: 'p2', kind: 'post', liveId: null, mentions: '' }]);
+      }
+      return Promise.resolve([]);
+    });
+    await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'bob' });
+    expect(queries.some((q) => q.sql.includes('unnest($1::uuid[])'))).toBe(false);
+  });
+
+  it('serves no cover for a preview name without its time - never an age of 0', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    const facts = answerFacts('poster-1');
+    postRepo.manager.query = jest.fn((sql: string) =>
+      (facts(sql) as Promise<any[]>).then((rows) =>
+        sql.includes('unnest($1::uuid[])') ? rows.map((r) => ({ ...r, posterAgeMs: null })) : rows
+      )
+    );
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    await expect(
+      service.getById('r1', { viewerId: 'bob', withReplays: true })
+    ).resolves.toMatchObject({ poster: null, posterKey: null, serverNow: SERVER_NOW });
   });
 });
 
@@ -498,6 +592,49 @@ describe('updatePost - a reel', () => {
   it('allows an empty caption on a reel at the service (the DTO owns text-or-media for a post)', async () => {
     const { service } = makeService({ existing: { ...live } });
     await expect(service.updatePost('r1', 'alice', { markdown: '' }, false)).resolves.toBeDefined();
+  });
+});
+
+describe('updatePost - a live replay (docs/wiki/live-replays.md, review of #3248)', () => {
+  const replay = {
+    id: 'p1',
+    authorId: 'alice',
+    kind: 'replay',
+    liveId: 'l1',
+    markdown: 'Gala live',
+    media: [],
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    associationId: null,
+    studentsOnly: false,
+  } as unknown as Post;
+
+  it('is edited by its caption alone, as a reel: no media, poll, form, event or schedule', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', media: [{ mediaId: 'other' }] }, false)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.updatePost(
+        'p1',
+        'alice',
+        { markdown: 'x', scheduledAt: '2099-01-01T00:00:00Z' },
+        false
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(postRepo.save).not.toHaveBeenCalled();
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'new' }, false)
+    ).resolves.toBeDefined();
+    expect((postRepo.save.mock.calls[0][0] as unknown as Post).markdown).toBe('new');
+  });
+
+  it('refuses the "Entre etudiants" switch: a replay keeps the audience of its live (D8)', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', studentsOnly: true }, false)
+    ).rejects.toMatchObject({ response: { code: 'students_only_not_offered' } });
+    expect(postRepo.save).not.toHaveBeenCalled();
   });
 });
 

@@ -4,6 +4,7 @@ mod census;
 mod handlers;
 mod log_repeat;
 mod models;
+mod origin;
 mod presence;
 mod state;
 mod subscribers;
@@ -183,7 +184,28 @@ async fn main() {
     }
     let audience = PresenceAudience::new(delivery_url, social_url, internal_secret);
 
-    let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret, audience));
+    // An UNSET variable means someone is running the binary by hand. Every compose file names the
+    // variable, so reaching this branch under compose means the declaration was lost - it is logged
+    // as an accusation, not as a mode. `*` is what the CORS layer then answers with; a socket
+    // upgrade never takes it for a list (`crate::origin`).
+    let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| {
+        tracing::warn!(
+            "ALLOW_ORIGIN is not set - falling back to '*', which accepts EVERY origin. Under \
+             docker compose this variable is always declared, so this line means the declaration \
+             was lost."
+        );
+        "*".to_string()
+    });
+    let mut app_state = AppState::new(redis_client.clone(), jwt_secret, audience);
+    app_state.upgrade_origins = origin::UpgradeOrigins::parse(&allow_origin);
+    if app_state.upgrade_origins == origin::UpgradeOrigins::Wildcard {
+        tracing::error!(
+            "ALLOW_ORIGIN is '*': there is no list to match a page against, so every socket \
+             upgrade that names an Origin will be REFUSED. Set ALLOW_ORIGIN to the origins this \
+             estate serves its clients from."
+        );
+    }
+    let app_state = Arc::new(app_state);
 
     // ── Redis pub/sub subscriber ──────────────────────────────────────────
     subscribers::spawn_redis_subscriber(
@@ -196,18 +218,6 @@ async fn main() {
     census::spawn_sampler(app_state.clone());
 
     // ── CORS configuration ────────────────────────────────────────────────
-    // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that
-    // working. Every compose file names the variable, so reaching this branch under compose means
-    // the policy this service is supposed to enforce silently became "anyone" - it is logged as an
-    // accusation, not as a mode.
-    let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| {
-        tracing::warn!(
-            "ALLOW_ORIGIN is not set - falling back to '*', which accepts EVERY origin. Under \
-             docker compose this variable is always declared, so this line means the declaration \
-             was lost."
-        );
-        "*".to_string()
-    });
     tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
     let cors = chat_gateway_cors_layer(&allow_origin);
 

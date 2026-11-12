@@ -82,11 +82,13 @@ describe('parseServerVersionInfo', () => {
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
   });
 
@@ -120,6 +122,10 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
+    const ranked = parseServerVersionInfo({ version: '1.6.9', rankedFeeds: true });
+    expect(ranked?.rankedFeeds).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(ranked!))?.rankedFeeds).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.6.8' })?.rankedFeeds).toBe(false);
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -220,11 +226,13 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
       livesMode: 'on',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: true,
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -241,11 +249,13 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -310,11 +320,13 @@ describe('fetchServerAppVersionReliable', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
@@ -468,5 +480,27 @@ describe('buildUpdateTarget', () => {
     expect(buildUpdateTarget(null, android, 'sideload').url).toBe(
       'https://github.com/emse-students/canari/releases/latest/download/app-universal-release.apk'
     );
+  });
+});
+
+describe('the live replays switch of /api/version', () => {
+  it.each(['off', 'on'] as const)('reads %s', (mode) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', liveReplays: { mode } })?.liveReplaysMode
+    ).toBe(mode);
+  });
+  it.each([undefined, 'on', { mode: 'ON' }, { mode: true }])(
+    'reads %j as CLOSED - a switch that cannot be read fails closed',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', liveReplays: raw })?.liveReplaysMode).toBe(
+        'off'
+      );
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', liveReplays: { mode: 'on' } });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.liveReplaysMode).toBe('on');
   });
 });

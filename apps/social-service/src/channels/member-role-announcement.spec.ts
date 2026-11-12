@@ -125,6 +125,8 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
       canManage: true,
       canManageChannels: true,
       canModerate: true,
+      // The write verdict per salon policy: the client redraws each composer from its salon's policy.
+      canWriteByPolicy: { everyone: true, admins_moderators: true, admins: true },
       changedBy: ACTOR,
     });
   });

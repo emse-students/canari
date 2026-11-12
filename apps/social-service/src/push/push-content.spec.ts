@@ -33,10 +33,14 @@ import {
   followedPostContent,
   associationRepostContent,
   memberRepostContent,
+  friendReactionContent,
+  friendCommentContent,
+  campusTrendContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveMentionContent,
   followRequestContent,
   followAcceptedContent,
   birthdayContent,
@@ -82,6 +86,7 @@ describe('push content', () => {
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire', '')],
+    ['liveMention', liveMentionContent('Claire', '')],
     ['followRequest', followRequestContent('Claire')],
     ['followAccepted', followAcceptedContent('Claire')],
     ['liveCut', liveCutContent()],
@@ -115,6 +120,20 @@ describe('push content', () => {
       actorName: '',
       contentArg: '',
     });
+  });
+
+  it('a live mention names the writer, and the live title is the body, or the fixed sentence (owner, 2026-11-09)', () => {
+    const titled = liveMentionContent('Claire', 'Gala');
+    expect(pushContentData(titled)).toEqual({
+      contentKey: 'social_live_mention',
+      actorName: 'Claire',
+      contentArg: 'Gala',
+    });
+    expect([titled.legacyTitle, titled.legacyBody]).toEqual([
+      'Claire vous a mentionné dans un live',
+      'Gala',
+    ]);
+    expect(liveMentionContent('Claire', '').legacyBody).toBe('Appuyez pour rejoindre le live');
   });
 
   it("a live's title is the body of its push; without one, the fixed sentence (owner, 2026-11-07)", () => {
@@ -403,10 +422,17 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_followed_post', followedPostContent(ACTOR, '')],
     ['social_association_repost', associationRepostContent(ACTOR, '')],
     ['social_member_repost', memberRepostContent(ACTOR, '')],
+    ['social_friend_reaction', friendReactionContent(ACTOR, '')],
+    ['social_friend_comment', friendCommentContent(ACTOR, '')],
+    // The title names the post's opening ("Suggestion : %1$s"); the body is a fixed sentence.
+    ['social_campus_trend', campusTrendContent(ARG)],
+    ['social_campus_trend_photo', campusTrendContent('', 'photo')],
+    ['social_campus_trend_video', campusTrendContent('', 'video')],
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR, '')],
+    ['social_live_mention', liveMentionContent(ACTOR, '')],
     ['social_follow_request', followRequestContent(ACTOR)],
     ['social_follow_accepted', followAcceptedContent(ACTOR)],
     ['social_birthday', birthdayContent(ACTOR)],
@@ -458,6 +484,30 @@ describe('the legacy sentence and the Android resource say the same thing', () =
       title: androidSlot(fr.get(`notif_${key}_title`) ?? ''),
       body: androidSlot(fr.get(`notif_${key}_body`) ?? ''),
     });
+  });
+
+  // A campus trend naming a followed account who liked it (owner, 2026-11-10): one sentence per
+  // count form, the device choosing by `contentCount` - the legacy body says the same, per form.
+  it.each([
+    [0, 'notif_social_campus_trend_liked_by'],
+    [1, 'notif_social_campus_trend_liked_by_one'],
+    [7, 'notif_social_campus_trend_liked_by_many'],
+  ])('a trend liked by a followed account and %i others reads the same on both', (others, res) => {
+    const fr = androidStrings();
+    for (const media of [null, 'photo', 'video'] as const) {
+      const content = campusTrendContent(media ? '' : ARG, media, { name: ACTOR, others });
+      expect(content.actorName).toBe(ACTOR);
+      expect(pushContentData(content).contentCount).toBe(String(others));
+      expect(content.legacyBody).toBe(
+        (fr.get(res) ?? '').replace('%1$s', ACTOR).replace('%2$d', String(others))
+      );
+    }
+  });
+
+  it('a trend that names nobody carries no count, and its fixed sentence', () => {
+    const content = campusTrendContent(ARG);
+    expect(content.actorName).toBe('');
+    expect('contentCount' in pushContentData(content)).toBe(false);
   });
 });
 

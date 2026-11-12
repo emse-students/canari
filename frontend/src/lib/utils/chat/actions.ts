@@ -1,3 +1,4 @@
+import { Log } from '$lib/utils/Log';
 import { exportBackup, importBackup } from '$lib/backup';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -50,6 +51,7 @@ import {
   readGroupSweepSnapshot,
   type AbsentGroupVerdicts,
 } from '$lib/utils/chat/groupSweep';
+import { forEachBounded, NETWORK_READ_CONCURRENCY } from '$lib/utils/boundedConcurrency';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isCommitRaceRefusal, refusedAdmits } from '$lib/mls-client/CommitRefusedError';
@@ -181,7 +183,7 @@ async function admissionOfSeat(deps: {
 }
 
 /** What every automatic Add of one group rests on, as one read of the server gives it. */
-interface PendingAddFacts {
+export interface PendingAddFacts {
   /** The tree, confirmed at the server's epoch - or not. */
   tree: TreeReading;
   /** The pending rows the server still holds, or why they could not be read. */
@@ -197,28 +199,41 @@ interface PendingAddFacts {
  * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
  * rebuilds without moving it.
  *
+ * AN UNCONFIRMED TREE IS NEVER KEPT FOR THE PASS (2026-11-11): it is the absence of an answer, not
+ * an answer, so caching it aborted every later row of the group `tree-unconfirmed` in the same
+ * sweep. The next row reads afresh; a CONFIRMED reading is still shared by the pass.
+ *
  * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
  * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
  * B, staged after row A, that a device being removed is "still pending", and re-admit it.
  */
-function pendingAddFactsOf(deps: {
+export function pendingAddFactsOf(deps: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
   myDeviceId: string;
+  /** The sweep's own log, so the re-read line sits at the sweep's level beside its other lines. */
+  log: (msg: string) => void;
 }): (fresh: boolean) => Promise<PendingAddFacts> {
-  const { mlsService, groupId, userId, myDeviceId } = deps;
-  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  const { mlsService, groupId, userId, myDeviceId, log } = deps;
+  let pass: { epoch: number; tree: Promise<TreeReading>; unconfirmed?: true } | null = null;
   return async (fresh) => {
     const epoch = mlsService.getEpoch(groupId);
-    if (fresh || pass === null || pass.epoch !== epoch) {
+    if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
+      if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
+        log(
+          `[PENDING] Group ${groupId.slice(0, 8)}...: the pass tree was unconfirmed - this row reads it afresh`
+        );
+      }
       // Always confirmed: the one read serves every row, whichever user each names.
       pass = {
         epoch,
         tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
       };
     }
-    const tree = await pass.tree;
+    const current = pass;
+    const tree = await current.tree;
+    if (tree.status === 'unconfirmed') current.unconfirmed = true;
     const rows = await mlsService
       .getPendingInvitations(userId, myDeviceId)
       .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
@@ -691,7 +706,7 @@ export async function processPendingInvitations(params: {
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
       // The server state every Add of this group is judged against, read once per pass.
-      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId, log });
 
       for (const inv of currentPending) {
         const deviceKey = `${inv.userId}:${inv.deviceId}`;
@@ -1127,6 +1142,13 @@ export async function discoverMissingGroups(params: {
   // verdict on whether absence from the list may be believed. Both were written out here and in
   // `initializeConnection`, and the two copies disagreed on four points - including the guard that
   // refuses an empty list, which this side did not have. See `groupSweep.ts`.
+  //
+  // THE DISMISSED LIST LEAVES WITH THE GROUP LIST, not one round trip after it: the two reads are
+  // independent, and the second used to wait for the first's answer (weak-network audit,
+  // 2026-11-10). It never rejects and never logs (a typed `DismissedGroupsRead`): it is only
+  // CONSULTED when the group list may be believed, exactly as before, and a failure is said there -
+  // never on a dead-link boot whose group list failed too, where nothing reads it.
+  const dismissedRead = mlsService.getDismissedGroups();
   const snapshot = await readGroupSweepSnapshot(mlsService, userId, log);
   const uniqueServerGroups = snapshot.serverGroups;
 
@@ -1142,13 +1164,25 @@ export async function discoverMissingGroups(params: {
     const serverGroupIds = snapshot.serverGroupIds;
     // Groups dismissed by THIS user (manual deletion/leave on one device): must be purged
     // on ALL their devices (rules 3 & 5), not shown with the banner.
-    // Best-effort (`[]` on error -> never purge on doubt; `getDismissedGroups` logs the failure).
+    // Best-effort: a failed read is nothing dismissed (never purge on a doubt), said HERE, where the
+    // list is used - a refusal at warn, a dropped link at debug (the link's own lines say it).
     //
     // NOT CONSULTED BY THE PLACEHOLDER LOOP BELOW, AND THAT IS CONSISTENT RATHER THAN A GAP: that
     // loop only builds rows for groups the server still lists this user in, and "dismissed AND a
     // member" is the RE-INVITE case, which this loop answers by lifting the dismiss and KEEPING the
     // conversation. A device with no row ends in the same state as one with a row.
-    const dismissedGroupIds = new Set(await mlsService.getDismissedGroups());
+    const dismissed = await dismissedRead;
+    if (dismissed.kind === 'refused') {
+      Log.w('Discovery', `dismissed-groups read answered ${dismissed.status} - treated as none`);
+    } else if (dismissed.kind === 'failed' && !dismissed.transport) {
+      Log.w(
+        'Discovery',
+        `dismissed-groups read failed - treated as none: ${String(dismissed.error)}`
+      );
+    } else if (dismissed.kind === 'failed') {
+      Log.d('Discovery', 'dismissed-groups read did not reach the server - treated as none');
+    }
+    const dismissedGroupIds = new Set(dismissed.kind === 'listed' ? dismissed.groupIds : []);
 
     if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log, params.verdicts)) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -1158,6 +1192,45 @@ export async function discoverMissingGroups(params: {
     // error or a captive portal answers every group alike, and a line per group was that one fact
     // repeated (`getGroupServerStatus` keeps the per-group status at debug).
     const unansweredStatus: string[] = [];
+
+    // THE STATUS READS OF THIS SWEEP ARE ASKED TOGETHER, BEFORE THE LOOP THAT ACTS ON THEM. The loop
+    // awaited one `GET /api/mls/groups/:id` per absent conversation, so a device holding N of them
+    // paid N round trips in a row at every discovery - on a weak link, N x 500 ms (weak-network
+    // audit, 2026-11-10). The read is a pure question; every purge and retirement below stays
+    // sequential and in the map's order. Exactly the conversations the loop would ask about: a
+    // listed one, a dismissed one (purged unasked), a never-admitted one and a removed one are
+    // decided without the server.
+    const statusAnswers = new Map<
+      string,
+      Awaited<ReturnType<IMlsService['getGroupServerStatus']>>
+    >();
+    const toAsk = new Set<string>();
+    for (const [key, convo] of conversations.entries()) {
+      if (
+        !isChannelConversationId(key) &&
+        !serverGroupIds.has(convo.id) &&
+        !dismissedGroupIds.has(convo.id) &&
+        !isNeverAdmitted(convo) &&
+        convo.lifecycle !== 'removed'
+      ) {
+        toAsk.add(convo.id);
+      }
+    }
+    // A read that THREW (rather than answering `'error'`) is thrown again at its conversation's turn
+    // in the loop, exactly where the sequential loop would have thrown it - after the purges before
+    // it, and before any after it.
+    const statusThrew = new Map<string, unknown>();
+    for (const failure of await forEachBounded(
+      [...toAsk],
+      NETWORK_READ_CONCURRENCY,
+      async (groupId) => {
+        statusAnswers.set(groupId, await mlsService.getGroupServerStatus(groupId));
+      },
+      (groupId) => `${groupId.slice(0, 8)}…`
+    )) {
+      statusThrew.set(failure.item, failure.error);
+    }
+
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
 
@@ -1223,7 +1296,12 @@ export async function discoverMissingGroups(params: {
         // already `deletedRemotely` short-circuits without a network call.
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
         if (convo.lifecycle !== 'removed') {
-          serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
+          // Read above with the rest of the sweep; a row that arrived since (a placeholder made
+          // during the reads) is asked here, the way the loop always did.
+          if (statusThrew.has(convo.id)) throw statusThrew.get(convo.id);
+          serverStatus = classifyServerStatus(
+            statusAnswers.get(convo.id) ?? (await mlsService.getGroupServerStatus(convo.id))
+          );
         }
 
         // THE KIND OF GROUP IS DECIDED BEFORE ITS ROSTER IS ASKED FOR, from the row already in hand.

@@ -5,7 +5,7 @@
     eurosInputToCents,
   } from '$lib/payments/lydiaFees';
   import { fetchActivePaymentProvider, type PaymentProviderId } from '$lib/associations/api';
-  import { formatPriceCents } from '$lib/utils/canariLinkPreviewFormat';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -58,27 +58,27 @@
     return Math.max(0, cents - computeFeeCents(cents));
   }
 
-  const feeLabel = $derived(`${formatPriceCents(feeFixedCents, currency)} + ${feePercent} %`);
+  const feeLabel = $derived(`${formatAmount(feeFixedCents, currency)} + ${feePercent} %`);
 
   function lineFor(cents: number, label: string): string {
     const net = computeNetPayoutCents(cents);
     const fee = computeFeeCents(cents);
     return m.payout_line_for({
       label,
-      payment: formatPriceCents(cents, currency),
-      net: formatPriceCents(net, currency),
-      fee: formatPriceCents(fee, currency),
+      payment: formatAmount(cents, currency),
+      net: formatAmount(net, currency),
+      fee: formatAmount(fee, currency),
     });
   }
 </script>
 
 {#if provider === 'lydia' && (grossCents || memberCents || minCents || maxCents)}
   <div
-    class="space-y-1 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-xs text-amber-950/90 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-100/90"
+    class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text space-y-1 rounded-xl border px-4 py-3 text-xs"
     role="note"
   >
     <p class="font-semibold">{m.payout_hint_title()}</p>
-    <p class="text-amber-900/80 dark:text-amber-200/80">
+    <p class="text-amber-warn-text">
       {m.payout_hint_fees_note({ feeLabel })}
     </p>
     {#if grossCents}
@@ -90,29 +90,29 @@
     {#if minCents && maxCents}
       <p>
         {m.payout_free_amount_range({
-          min: formatPriceCents(computeNetPayoutCents(minCents), currency),
-          max: formatPriceCents(computeNetPayoutCents(maxCents), currency),
-          minPayment: formatPriceCents(minCents, currency),
-          maxPayment: formatPriceCents(maxCents, currency),
+          min: formatAmount(computeNetPayoutCents(minCents), currency),
+          max: formatAmount(computeNetPayoutCents(maxCents), currency),
+          minPayment: formatAmount(minCents, currency),
+          maxPayment: formatAmount(maxCents, currency),
         })}
       </p>
     {:else if minCents}
       <p>
         {m.payout_free_amount_min({
-          payment: formatPriceCents(minCents, currency),
-          net: formatPriceCents(computeNetPayoutCents(minCents), currency),
+          payment: formatAmount(minCents, currency),
+          net: formatAmount(computeNetPayoutCents(minCents), currency),
         })}
       </p>
     {:else if maxCents}
       <p>
         {m.payout_free_amount_max({
-          payment: formatPriceCents(maxCents, currency),
-          net: formatPriceCents(computeNetPayoutCents(maxCents), currency),
+          payment: formatAmount(maxCents, currency),
+          net: formatAmount(computeNetPayoutCents(maxCents), currency),
         })}
       </p>
     {/if}
     {#if showOptionSupplementNote && (grossCents || memberCents)}
-      <p class="text-amber-900/70 dark:text-amber-200/60">
+      <p class="text-amber-warn-text">
         {m.payout_option_note()}
       </p>
     {/if}

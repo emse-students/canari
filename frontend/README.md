@@ -64,14 +64,6 @@ Client HTTP dédié aux formulaires (`http://…/api/forms`).
 - `onToggleLogs`: () => void
 - `onLogout`: () => void
 
-#### `StatusPill.svelte`
-
-Indicateur de statut de connexion.
-
-**Props:**
-
-- `isConnected`: boolean
-
 #### `EmptyState.svelte`
 
 Composant réutilisable pour afficher un état vide.

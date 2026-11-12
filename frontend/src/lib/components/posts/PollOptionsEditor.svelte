@@ -54,7 +54,7 @@
         bind:value={option.label}
         maxlength="150"
         placeholder={m.poll_option_placeholder({ position: index + 1 })}
-        class="border-cn-border/70 bg-cn-surface text-text-main focus:border-cn-yellow focus:ring-cn-yellow/25 w-full rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
+        class="border-cn-border/70 bg-cn-surface text-text-main focus:border-accent-icon focus:ring-accent/25 w-full rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
       />
       <button
         type="button"
@@ -72,7 +72,7 @@
     <button
       type="button"
       onclick={addOption}
-      class="text-cn-yellow hover:bg-cn-yellow/10 flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold transition-colors"
+      class="text-accent-text hover:bg-accent/10 flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold transition-colors"
     >
       <Plus size={16} strokeWidth={2.5} />
       {m.poll_add_option()}

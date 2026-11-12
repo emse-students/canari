@@ -3,13 +3,13 @@
  * A FEED VIDEO THAT STREAMS IS PACED, AND GIVES EVERYTHING BACK WHEN ITS CARD LEAVES THE BAND
  * (reels audit, 2026-10-11: every reel scrolled near was downloaded whole and kept its decoder).
  *
- * Pinned: the feed opens the stream PACED and hands it the inline `<video>`; the viewer opens it
- * unpaced; a card deferred again closes the stream (its segment in flight aborted) and unmounts the
+ * Pinned: the feed opens the stream PACED and hands it the inline `<video>`; the viewer
+ * forks it (its own element, the same segments); a card deferred again closes the stream (its segment in flight aborted) and unmounts the
  * `<video>`; coming back opens a new one; and a deferred video takes no warm blob.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
-import { FEED_STREAM_PACING } from '$lib/utils/segmentedMediaStream';
+import { FEED_STREAM_PACING, VIEWER_STREAM_PACING } from '$lib/utils/segmentedMediaStream';
 import { m } from '$lib/paraglide/messages';
 
 const cache = vi.hoisted(() => ({
@@ -26,6 +26,8 @@ const streams = vi.hoisted(
       attached: unknown[];
       closed: boolean;
       fetchAll: ReturnType<typeof vi.fn>;
+      fork: ReturnType<typeof vi.fn>;
+      forks: Array<{ attached: unknown[]; closed: boolean }>;
     }>
 );
 
@@ -36,7 +38,29 @@ vi.mock('$lib/utils/segmentedMediaStream', async (importOriginal) => {
     ...original,
     chooseSegmentedPlayback: () => ({ kind: 'stream', MediaSourceCtor: class {}, managed: false }),
     openSegmentedStream: (_ref: unknown, _base: string, _playback: unknown, pacing?: unknown) => {
-      const record = { pacing, attached: [] as unknown[], closed: false, fetchAll: vi.fn() };
+      const forks: Array<{ attached: unknown[]; closed: boolean }> = [];
+      const record = {
+        pacing,
+        attached: [] as unknown[],
+        closed: false,
+        fetchAll: vi.fn(),
+        forks,
+        fork: vi.fn(() => {
+          const fork = { attached: [] as unknown[], closed: false };
+          forks.push(fork);
+          return {
+            url: `blob:viewer-${forks.length}`,
+            done: new Promise<Blob>(() => {}),
+            attach: (el: unknown) => {
+              fork.attached.push(el);
+              return () => {};
+            },
+            fetchAll: vi.fn(),
+            fork: vi.fn(),
+            close: () => (fork.closed = true),
+          };
+        }),
+      };
       streams.push(record);
       return {
         url: `blob:mse-${streams.length}`,
@@ -46,6 +70,7 @@ vi.mock('$lib/utils/segmentedMediaStream', async (importOriginal) => {
           return () => {};
         },
         fetchAll: record.fetchAll,
+        fork: record.fork,
         close: () => (record.closed = true),
       };
     },
@@ -144,10 +169,11 @@ describe('PostMedia - a streamed feed video', () => {
 
   /**
    * THE TAP OF THE REVIEW (#1744): the viewer waited for the whole file, which a paced stream builds
-   * only at the end - so a tap did nothing, then the viewer popped up unasked. It opens AT THE TAP,
-   * lifts the pacing, and goes away with the card if the card leaves.
+   * only at the end - so a tap did nothing, then the viewer popped up unasked. It opens AT THE TAP
+   * on a FORK of the card's stream (its own element, the same segments, never the whole-file wait),
+   * and goes away with the card if the card leaves.
    */
-  it('a tap opens the viewer at once on a paced stream, lifts the pacing, and leaving closes it', async () => {
+  it('a tap opens the viewer at once on a fork of the stream, and leaving closes it', async () => {
     const props = $state({ media: REEL, authToken: 'token', letterbox: true, deferred: false });
     const target = document.createElement('div');
     document.body.appendChild(target);
@@ -157,17 +183,29 @@ describe('PostMedia - a streamed feed video', () => {
     const dialog = () => document.querySelector('[role="dialog"]');
     expect(dialog()).toBeNull();
 
+    // The feed card has no expand button: its tap opens the viewer, and Enter on the focused card
+    // (which carries the label) is the keyboard twin.
     target
-      .querySelector<HTMLButtonElement>(`button[aria-label="${m.post_fullscreen_label()}"]`)!
-      .click();
+      .querySelector<HTMLElement>(
+        `[data-video-player="feed"][aria-label="${m.post_fullscreen_label()}"]`
+      )!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await settle();
 
     expect(dialog()).not.toBeNull();
-    expect(streams[0].fetchAll).toHaveBeenCalled();
+    // A fork over the card's feed, never the pacing lifted and the whole file awaited.
+    expect(streams[0].fork).toHaveBeenCalledTimes(1);
+    expect(streams[0].fetchAll).not.toHaveBeenCalled();
+    // The viewer's `<video>` plays the FORK's URL and is handed to it, so it starts on its head.
+    const viewerVideo = document.querySelector<HTMLVideoElement>('[role="dialog"] video');
+    expect(viewerVideo?.getAttribute('src')).toBe('blob:viewer-1');
+    expect(streams[0].forks[0].attached).toContain(viewerVideo);
+    expect(streams[0].forks[0].closed).toBe(false);
 
     props.deferred = true;
     await settle();
     expect(dialog()).toBeNull();
+    expect(streams[0].forks[0].closed).toBe(true);
   });
 
   it('takes no warm blob while deferred: a card outside the band holds no decoder', async () => {
@@ -186,7 +224,7 @@ describe('PostMedia - a streamed feed video', () => {
     expect(streams).toHaveLength(0);
   });
 
-  it('opens the viewer stream unpaced: the reader asked for that video', async () => {
+  it('opens the gallery viewer stream paced further ahead: it never waits for the whole file', async () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const component = mount(PostMedia, {
@@ -197,6 +235,6 @@ describe('PostMedia - a streamed feed video', () => {
     await settle();
 
     expect(streams).toHaveLength(1);
-    expect(streams[0].pacing).toBeUndefined();
+    expect(streams[0].pacing).toBe(VIEWER_STREAM_PACING);
   });
 });

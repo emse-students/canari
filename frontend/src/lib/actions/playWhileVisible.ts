@@ -6,9 +6,12 @@ import {
   onPlaybackIdle,
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
+import { applyVideoLevel, readVideoLevel } from '$lib/utils/videoVolume';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
+import { playRejectionName } from '$lib/utils/videoAutoplay';
+import { feedAutoplayAllowed } from '$lib/video/autoplayPolicy';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -49,7 +52,20 @@ const readerPaused = new WeakSet<HTMLVideoElement>();
 export function markReaderPaused(video: HTMLVideoElement): void {
   Log.d('VIDEO', 'playWhileVisible: the reader paused a feed video - the feed will not replay it');
   readerPaused.add(video);
+  readerStarted.delete(video);
 }
+
+/** Feed videos this file is starting itself: their next `play` event is ambient, not the reader's. */
+const ambientStarts = new WeakSet<HTMLVideoElement>();
+
+/**
+ * Feed videos the READER started (a tap on the play button) - review of #3329: with "Lecture
+ * automatique" at Jamais (or Wi-Fi off Wi-Fi), the ambient gate kept such a video paused when a
+ * viewer opened over it closed, though the reader had it playing. Their resume is the reader's
+ * choice, not an autoplay, so the gate does not apply to it. Spent when the video leaves the screen
+ * or the reader pauses it.
+ */
+const readerStarted = new WeakSet<HTMLVideoElement>();
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
 
@@ -95,12 +111,53 @@ export function holdPlayback(reason: string): () => void {
   };
 }
 
+/**
+ * WHETHER A REJECTED feed `play()` WAS INTERRUPTED BY A DECISION, classified at the throw from facts
+ * the caller reads when the rejection lands (owner's console export, 2026-11-10: ten `AbortError`
+ * lines on a slow link, each a video scrolled past before its first bytes arrived).
+ *
+ * An `AbortError` is the engine saying "a `pause()` or a new load came while this was pending". The
+ * feed itself pauses a video that leaves the screen, and on a weak link a play stays pending for
+ * seconds, so scrolling on aborts it. That is the feed's own decision, not a refusal:
+ * - the video left the viewport (`!stillVisible`) or is paused: the leave (or the arbiter) did it;
+ * - the element's `src` changed: a new load replaced the one asked on.
+ * An `AbortError` with none of those facts is unexplained and stays a warning.
+ */
+export function isExpectedPlayInterruption(
+  name: string,
+  facts: { stillVisible: boolean; paused: boolean; sourceChanged: boolean }
+): boolean {
+  return name === 'AbortError' && (!facts.stillVisible || facts.paused || facts.sourceChanged);
+}
+
+/**
+ * The ONE ambient start - a video come into view, or the last one resumed - so the reader's
+ * "Lecture automatique des vidéos" (`video/autoplayPolicy.ts`) is asked here and nowhere else: when
+ * it says no, the video stays on its first frame and the player draws its play button. A video the
+ * READER had started ({@link readerStarted}) resumes whatever the setting says.
+ */
 function tryPlay(video: HTMLVideoElement) {
+  if (readerStarted.has(video)) {
+    Log.d('VIDEO', 'playWhileVisible: resuming a video the reader started - not an autoplay');
+  } else if (!feedAutoplayAllowed()) {
+    return;
+  }
+  ambientStarts.add(video);
+  const askedSrc = video.currentSrc || video.src;
   video.play().catch((err: unknown) => {
-    console.warn('[video] playWhileVisible: play() refused', {
-      name: err instanceof Error ? err.name : String(err),
-      muted: video.muted,
-    });
+    ambientStarts.delete(video);
+    const name = playRejectionName(err);
+    if (
+      isExpectedPlayInterruption(name, {
+        stillVisible: visibleInline.has(video),
+        paused: video.paused,
+        sourceChanged: (video.currentSrc || video.src) !== askedSrc,
+      })
+    ) {
+      Log.d('VIDEO', `playWhileVisible: play() interrupted (${name}) by a pause or a new load`);
+      return;
+    }
+    console.warn('[video] playWhileVisible: play() refused', { name, muted: video.muted });
   });
 }
 
@@ -119,8 +176,13 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
   if (typeof IntersectionObserver === 'undefined') return {};
 
   const registration = arbitratePlayback(video, { ambient: true });
-  // The reader's own play (or a hold released) ends their pause.
-  const onPlay = () => readerPaused.delete(video);
+  // The reader's own play (or a hold released) ends their pause; a play this file did not start is
+  // the reader's, and is resumed as theirs after a viewer.
+  const onPlay = () => {
+    readerPaused.delete(video);
+    if (ambientStarts.has(video)) ambientStarts.delete(video);
+    else readerStarted.add(video);
+  };
   video.addEventListener('play', onPlay);
 
   const observer = new IntersectionObserver(
@@ -141,8 +203,10 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
           tryPlay(video);
       } else {
         visibleInline.delete(video);
-        // Gone from the screen: the reader's pause is spent, coming back plays it as any other.
+        // Gone from the screen: the reader's pause - and their start - is spent, coming back plays it
+        // as any other.
         readerPaused.delete(video);
+        readerStarted.delete(video);
         if (!video.paused) video.pause();
       }
     },
@@ -186,13 +250,18 @@ export type VideoSoundScope = 'app' | 'local' | 'silent';
 export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
   Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : `its ${scope}`} sound`);
   openViewers += 1;
-  const onVolumeChange = () => videoSound.setMuted(video.muted);
+  const onVolumeChange = () => {
+    videoSound.setMuted(video.muted);
+    // A native control that dragged the volume BECOMES the app's level too (never 0: that is mute).
+    if (!video.muted) videoSound.setLevel(readVideoLevel(video));
+  };
   const registration = arbitratePlayback(video);
   /** Puts the element on `next`'s answer; callable again when the scope changes under a live element. */
   const apply = (next: VideoSoundScope) => {
     video.removeEventListener('volumechange', onVolumeChange);
     if (next === 'app') {
       video.muted = videoSound.muted;
+      applyVideoLevel(video, videoSound.level);
       video.addEventListener('volumechange', onVolumeChange);
     } else {
       video.muted = next === 'silent';
@@ -210,6 +279,8 @@ export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope
     destroy() {
       openViewers -= 1;
       video.removeEventListener('volumechange', onVolumeChange);
+      // A native drag ticked the level in memory; the viewer closing is that gesture's end.
+      videoSound.commitLevel();
       // Back to the feed: unregistering says the viewer is quiet, and `resumeVisible` picks up the
       // video last come into view there. What the reader had playing inline stays paused.
       registration.destroy();

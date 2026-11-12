@@ -248,13 +248,13 @@
     onfocus={handleFocus}
     {placeholder}
     autocomplete="off"
-    class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
+    class="border-cn-border focus:border-accent/60 focus:ring-accent/45 w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:ring-2"
   />
 
   {#if isLoading}
     <div class="absolute top-1/2 right-3 -translate-y-1/2">
       <svg
-        class="h-4 w-4 animate-spin text-amber-500"
+        class="text-accent-text h-4 w-4 animate-spin"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -293,9 +293,9 @@
           id={optionId(index)}
           role="option"
           aria-selected={index === selectedIndex}
-          class="cursor-pointer px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-amber-100/50 dark:hover:bg-amber-900/30 {index ===
+          class="hover:bg-accent/20 cursor-pointer px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {index ===
           selectedIndex
-            ? 'bg-amber-100/50 dark:bg-amber-900/30'
+            ? 'bg-accent/20'
             : ''}"
           onmousedown={() => selectUser(user)}
         >

@@ -152,7 +152,7 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if events.length === 0}
@@ -214,7 +214,7 @@
             <button
               type="button"
               onclick={() => (previewEvent = ev)}
-              class="text-text-main hover:text-cn-yellow block text-left font-bold transition-colors"
+              class="text-text-main hover:text-accent-text block text-left font-bold transition-colors"
             >
               {ev.title}
             </button>

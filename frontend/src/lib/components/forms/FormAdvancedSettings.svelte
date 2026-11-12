@@ -274,7 +274,7 @@
         <!-- Nothing here asks for an expiry: a cotisation's validity comes from the association's
              own lifetime/yearly setting, and a per-form date could only contradict it. -->
         <p
-          class="border-cn-yellow/30 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2.5 text-xs"
+          class="border-accent/30 bg-accent/5 text-text-muted rounded-xl border px-3 py-2.5 text-xs"
         >
           {m.form_grant_cotisation_expiry_note()}
         </p>

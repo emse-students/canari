@@ -30,6 +30,8 @@ export function createEditSession(deps: EditSessionDeps) {
   let current = $state<{
     messageId: string;
     original: string;
+    /** A media message's caption may be emptied; a text message may not. */
+    emptyAllowed: boolean;
     draft: string;
     giveBack: (text: string) => void;
   } | null>(null);
@@ -39,12 +41,26 @@ export function createEditSession(deps: EditSessionDeps) {
     get original(): string | null {
       return current?.original ?? null;
     },
-    /** Loads `text` into the composer for editing `messageId`. */
-    begin(messageId: string, text: string) {
-      Log.d('editSession', `begun on ${messageId}`);
+    /** Whether the edit under way may save an empty text: a media message's caption may be removed. */
+    get emptyAllowed(): boolean {
+      return current?.emptyAllowed ?? false;
+    },
+    /**
+     * Loads `text` into the composer for editing `messageId`. `captionOnly` says the message carries
+     * a media and the text is its caption (owner, 2026-11-11): the photo is not touched by an edit,
+     * and the caption may be emptied.
+     */
+    begin(messageId: string, text: string, captionOnly = false) {
+      Log.d('editSession', `begun on ${messageId}${captionOnly ? ' (caption)' : ''}`);
       current = current
-        ? { ...current, messageId, original: text }
-        : { messageId, original: text, draft: deps.getText(), giveBack: deps.bindDraftWriter() };
+        ? { ...current, messageId, original: text, emptyAllowed: captionOnly }
+        : {
+            messageId,
+            original: text,
+            emptyAllowed: captionOnly,
+            draft: deps.getText(),
+            giveBack: deps.bindDraftWriter(),
+          };
       deps.setText(text);
     },
     /** Abandons the edit and gives the draft back. */
@@ -56,16 +72,17 @@ export function createEditSession(deps: EditSessionDeps) {
       deps.setText(draft);
     },
     /**
-     * Saves the edit and gives the draft back. An empty or unchanged text saves nothing: the
-     * composer disables Save for both, and this is the same rule held where the state lives.
+     * Saves the edit and gives the draft back. An unchanged text saves nothing, nor does an empty
+     * one unless it removes a caption: the composer disables Save for the same cases, and this is
+     * the same rule held where the state lives.
      */
     confirm() {
       if (!current) return;
-      const { messageId, original, draft } = current;
+      const { messageId, original, draft, emptyAllowed } = current;
       const text = deps.getText().trim();
       current = null;
       deps.setText(draft);
-      if (!text || text === original.trim()) {
+      if ((!text && !emptyAllowed) || text === original.trim()) {
         Log.d('editSession', `nothing to save on ${messageId}`);
         return;
       }

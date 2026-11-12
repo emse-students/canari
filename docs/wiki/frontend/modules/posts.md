@@ -5,7 +5,7 @@
 
 ## Responsibilities
 
-- News feed with three tabs: all posts, followed associations, by category.
+- News feed with three tabs: Organisations (renamed from "Associations", 2026-11-10: the tab mixes associations, lists and institutions), Pour toi (ranked) and Campus (since 1.6.9).
 - Post creation with rich content: Markdown, image, poll, embedded form.
 - Reactions (emoji), comments, post sharing.
 - Search within the feed.
@@ -16,9 +16,154 @@
 
 | Tab (`feed=`) | Content |
 |---|---|
-| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
-| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
-| Mon espace (`all`, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button, [guided-help](../guided-help.md)) |
+| Organisations (`associations`, was "Associations", the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
+| Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | What PEOPLE the reader follows write or repost - an association's or an entity's post a followed person reposted included, with its "X a repartage" header (decision A) - and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
+| Campus (`all`, "Mon espace" until 1.6.9, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. Chronological, pins on top, NOTHING inserted between posts (no suggestion, no carousel) |
+
+The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button,
+[guided-help](../guided-help.md)). **The feed opens on the last tab the reader opened** (remembered
+per device, `settings.preferredPostFeed`; first run = Associations) - unchanged since 2026-09-10, and
+a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`parsePostFeed`).
+
+### The owner's decisions of 2026-11-10
+
+1. **"Mon espace" is renamed Campus.** Campus and Associations stay STRICTLY chronological with pins
+   on top - no ranking, nothing interleaved (*"un des problemes de Facebook est de trouver les
+   informations"*; *"ca n'a pas de sens dans Campus, parce que tout y est deja"*).
+2. **Pour toi replaces Suivis**: what the people the reader follows publish or repost, PLUS the
+   suggested posts (WP-7's rules: popular, last 7 days, not followed; the header's meta line reads
+   `19 h . Suggestion . Suivre`, "Suggestion" a muted word and "Suivre" a quiet text link - no yellow
+   badge, no button, only the "..." on the right, owner 2026-11-10 -
+   [engagement](../../engagement.md#wp-2---suivre-everywhere-built)). Suggestions leave Campus
+   entirely. **Switching feed tab opens the new list at its top** (`resetPageScroll`, before and after
+   the navigation; re-pressing the open tab leaves the scroll alone).
+3. **Pour toi is ordered by freshness and popularity**, not by date alone.
+4. **Tab order**: Associations (default) / Pour toi / Campus.
+5. **The feed opens on the last tab the reader opened** (per device; first run = Associations).
+6. **Suggestions in Pour toi have no quota**: ranked by the same score (L13's one-in-eight is gone
+   there); the badge and Suivre stay.
+7. **Pins lead Associations and Campus only**, never Pour toi.
+8. **Pour toi is PEOPLE only**: what followed people write or repost, and suggestions of people -
+   an entity's post nobody the reader follows reposted never appears there. Amended by decision A.
+9. **Associations** = the associations of the reader's spaces plus the entities they follow outside
+   them, chronological, pins on top. Campus unchanged.
+10. **CanaReels has no tabs**: its set is every reel the reader may see, ordered by the SAME score as
+    Pour toi, with the same `asOf` paging ([reels](reels.md)).
+11. **The order inside Pour toi**: a followed person's post under 48 h comes first (ranked by score
+    among themselves), then the suggestions (by score), then everything else by score. "Not yet
+    seen" was asked too: the estate keeps NO durable, cheap fact of what a reader has seen (the
+    "Nouveau" marker is a per-device client set), so the age alone decides - no clock stands in.
+12. **The "Comptes a suivre" carousel appears in Pour toi only**, and suggests PEOPLE only (lead's
+    decision, reversible: Pour toi shows no entity's post, so an entity card there would offer what
+    the tab never shows - `feedSuggestionCards` drops the entities; `me/suggestions` is unchanged).
+13. **The product principle above every engagement choice** ([engagement](../../engagement.md#the-product-principle-owner-2026-11-10)).
+
+Two more the same day, after the review of #3299:
+
+- **A. A followed person's repost of an association's or an entity's post IS in Pour toi**, drawn
+  with its "X a repartage" header (`repostedBy`). Pour toi = the posts written OR reposted by the
+  people the reader follows. `forYouFollowedSql` admits any post a followed person's repost carries
+  (`MEMBER_REPOSTED_BY_FOLLOWED_SQL`); the authorship disjunct alone stays personal and
+  non-anonymous. Before it, such a repost was in no tab (Associations shows no member repost).
+- **B. "Seen up to" (after 1.6.9, not built)**: one server-side date per account syncs the
+  "Nouveau" badge across devices, and Pour toi then leads with what is really unseen instead of
+  "under 48 h" ([backlog.d](../../backlog.d/seen-up-to-one-date-per-account.md)).
+  **Before it is built, check it against principle 1 of the charter (keep the least data
+  possible, [Nos principes](../../../principes.md)): a per-account server-side date is a new stored datum.**
+
+### Pour toi - the ranked tab (owner, 2026-11-10)
+
+Server: `apps/social-service/src/posts/for-you-feed.ts` (the design note), `PostsService.listRankedRows`
+and `rankWindow`, `republished-feed-sql.ts` `forYouFollowedSql`, `suggested-posts.ts` (`peopleOnly`).
+Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams` (`wireFeed`).
+
+- **The candidates.** A non-anonymous personal post of an account the reader follows (accepted), or
+  any post a followed person reposted (WP-F6), an entity's included (decision A) - never an entity's
+  post nobody they follow reposted, never what an association republished (both are
+  Associations'). Placed at its latest followed repost made by `asOf`, else its publication.
+  Plus the suggested posts of people (`suggestedPostIds(..., { peopleOnly: true })`, at most 10).
+  Every filter of the other arms applies, on every page: moderation hide, live-reel expiry, the review
+  cohort, the block filter, the promo cutoff, the whole visibility predicate.
+- **The score, ONE SQL definition** (`forYouScoreSql`): `(1 + engaged) / (age_hours + 2) ^ 1.5`,
+  `engaged` being `engagement-sql.ts` `engagedAccountsSql` (THE popularity, WP-7's and WP-10's), the
+  age read from `asOf`, never from `now()`. Why: the gravity rule news aggregators use - one line,
+  monotone in both terms, no constant learnt from data the estate does not have. A post an hour old
+  with nobody engaged (0.19) is above a day-old one with 10 accounts (0.08), itself above a 3-day-old
+  one with 20 (0.04): freshness leads, popularity reorders within a day or two.
+- **The bands** (`forYouBandSql`, decision 11): 0 - a followed post placed within 48 h of `asOf`;
+  1 - a suggestion; 2 - every other followed post of the window. The score orders each band; the
+  placement time then the id break ties, so the order is total.
+- **The window.** The followed posts placed within 14 days of `asOf` (at most 200, the most recent -
+  `PostsService.rankedWindowMax`, a field so the spec proves the cut with three rows), with the
+  suggestions, are RANKED, one row per post (the repost lateral aggregates; a post both followed and
+  suggested is the followed one). Below them, **the tail**: the older followed posts, newest first,
+  below a fixed boundary (the window's first instant, or its oldest row when the cap cut it) - so a
+  reader still scrolls down to everything their follows ever published.
+- **Deterministic paging - the snapshot.** A reaction carries no date (`posts.reactions` maps a reader
+  to an emoji), so "the engagement as of `asOf`" cannot be read back later, and a ranking recomputed
+  for page 2 would repeat or skip posts. So the window is ranked ONCE, at the first page, and kept in
+  Redis as a snapshot of ids. **Bounded per reader**: ONE hash per (list, reader)
+  (`posts:ranked:v2:<list>:<reader>`, the list naming the feed, the kind, the single-media mode and
+  replays), a field per `asOf`, at most the 3 newest kept - trimmed in the same Lua step as the
+  write - and the key's 2 h renewed by `EXPIRE` on every read, never a rewrite. The two scripts
+  (`RANKED_SNAPSHOT_WRITE_SCRIPT`, `RANKED_SNAPSHOT_READ_SCRIPT`) were run against `redis:7` on
+  2026-11-10 (five writes keep the three newest, a read renews the TTL, an absent field is null);
+  the specs run them by meaning (`ranked-snapshots.it-fixture.ts`).
+- **The pages.** Every row served carries `feedAsOf`, `feedPosition` (its place in the WHOLE list),
+  for a suggestion `feedSuggested`, for a tail row `feedCursor`. The client asks the next page as
+  `asOf=<feedAsOf>&offset=<last feedPosition + 1>` and, below the window, `&cursor=<last
+  feedCursor>` (`rankedFeeds.ts` `nextListPage`), never from the count on screen. **The window's
+  slice** reads in two steps: the ids left that still pass every filter (ids only), then the full
+  rows of the first `limit` of them, under the same filters again - a row withdrawn between two pages (deleted, hidden, blocked)
+  takes no place, and a short page still means the end. **The tail** is a KEYSET below the cursor
+  (never an OFFSET, which a withdrawn row would shift), excludes every id of the snapshot (`<> ALL`:
+  a post ranked through a repost withdrawn since is not served a second time from the tail), and
+  counts only the followed reposts made by `asOf` (`followedRepostLateralSql`'s `asOf`): a repost
+  written between two pages neither admits a row nor moves one across the cursor. The feed cache
+  key carries `asOf` and `cursor` (`postListCacheKey`).
+- **Every failure is an ANSWER, never an empty page** (an empty page reads as "Vous avez tout vu"):
+  - `410 RANKING_GONE` - the snapshot a page names is gone (2 h with no page, pushed out by 3 newer
+    rankings, or lost by Redis: a TTL key is evictable under `volatile-lru`). The client ranks anew
+    (a first page, a new `asOf`), appends only the posts not on screen - a post already drawn stays
+    where it is and takes its new place, so the next page starts after it - and logs a warning
+    (`Log.w('RANKED', ...)`, `readNextPage`). ONCE per read: a second 410 is thrown and shown as the
+    retry line, never an endless re-rank. And the re-rank is always a LIVE ranking: **a ranked first
+    page (no `asOf`) is never read from or written to the 30 s list cache** (`listPosts`), since a
+    cached one could name a snapshot the trim already pushed out - its snapshot write is the point of
+    the request. Later pages are cached under their `asOf` and `cursor`.
+  - `503 RANKING_UNAVAILABLE` - Redis did not answer the read, or the write of a FIRST page: a first
+    page whose snapshot could not be kept is never served, since its page 2 would have nothing to be
+    a slice of. The feed shows "La suite n'a pas pu etre chargee" with a retry (`loadMoreFailed`),
+    never the end of the list; the CanaReels viewer keeps its toast.
+  - `400 RANKING_PAGE_INVALID` - a later page without `asOf`, a cursor inside the window, or an
+    offset past it without a cursor: a client that mixed two shapes of one list. The client fixes a
+    list's shape from its FIRST page (`nextListPage` returns `rankedFeeds: false` for rows served
+    without ranking facts - a first launch that asked before `/api/version` was read), and keeps it
+    until a refresh.
+- **Proven on PostgreSQL** by `for-you-feed.integration.spec.ts` (17 cases, 2026-11-10): the order
+  against a hand computation; three pages that neither repeat nor skip while a post gains 80
+  reactions, a new post appears and a ranked post is hidden; a block between pages; a students-only
+  post (a student follower only) and an anonymous one (no follower); the cap and its tail; a served
+  tail row withdrawn and a repost written between pages; scenario (a), a repost withdrawn after a
+  post ranked through it; a post both reposted and suggested; Redis refusing the read and the write;
+  the three 400s; two readers with the same `asOf`; and one walk through `listPosts` itself (the
+  feed cache and the decorated rows keep the facts). The client half: `rankedFeeds.test.ts`,
+  `allReels.test.ts`, `page.forYou.svelte.test.ts` (the next page asked, the 503 retry, the 410
+  re-rank drawing no post twice).
+- **What the tail still does not freeze**: a followed repost DELETED between two pages lowers its
+  row's placement (Pour toi's placement reads no republication) - an unserved row stays below the
+  cursor, a served one may come again and is dropped by the client as already shown
+  (`mergeListPage`). A post that gains a followed repost after `asOf` waits for the next ranking.
+- **A follow or an unfollow between two pages** does not change the snapshot: the ranked rows are
+  re-read under the visibility filters only; the tail reads the follows of the page's own request.
+
+### What the installed clients see (1.6.8 and older)
+
+Nothing changes for them: `feed=followed` (their Suivis) and `feed=all` (their Mon espace) answer
+exactly as before, `GET /posts/me/suggested-posts` still serves the suggestions they interleave in
+Mon espace, `feed=reels` without `ranked` is still newest first. A 1.6.9 client facing an estate older
+than the `rankedFeeds` capability asks Pour toi as `followed` and the CanaReels list in its older shape
+([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---a-feed-client-newer-than-its-server---rankedfeeds-2026-11-10)).
 
 **A republication is an association publishing, so the feeds of what associations publish carry it
 (user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`
@@ -172,7 +317,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
 ### The composer's layout: full screen, the text taking the height, the actions under the thumb (2026-09-29)
 
 Compared on the Mi 9T with Facebook's and Instagram's composers (the user's decisions C1-C10, and
-the stages still open, are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+the stages still open, are in [reels](reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 What it was: a modal over the feed holding three nested bordered boxes, three titles saying the
 same thing, a full-width "Publier en tant que" select, eight Markdown buttons on two rows above an
 empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it was taken from:
@@ -1513,6 +1658,17 @@ the console line separates the causes the shared message cannot: a refused conne
 `TypeError`, a served error throws `HTTP <status>`. Before that, a failed attachment was a
 `console.error` and nothing else, which is why a blocked host read as a dead button for weeks.
 
+## Reply with an imported image (2026-11-09)
+
+Owner, 2026-11-09: *"Est-ce qu'on pourrait repondre a un post avec une image ? Comme un gif, mais importe."* The comment already carried one image or GIF (above), so the lead's decisions (reversible) were small:
+
+- **One image per comment, optional text, no video.** An image button (`ImagePlus`, 44 px, label `post_comment_add_image_label`) sits beside "GIF" in `CommentComposer`. On the iOS app it opens the native library (`pickNatively('library')`, as the post composer does); elsewhere a hidden `<input accept="image/*">`. Both feed the SAME `stageMediaFile` as paste, the GIF picker and the keyboard: `IMAGE_COMPRESS_PRESETS.comment`, client-side CEK, class `archive`, shown in the thread exactly where a GIF shows (`CommentMedia`, same media viewer).
+- **Not published before its picture is up**: the send button waits on `uploadingMedia`. A failed upload keeps its file and shows a row with "Retry" (`comment-media-failed`), no second pick.
+- **No camera button** in this step: the in-app `CameraOverlay` is bound to the post destinations; a photo is taken in the OS camera app and picked from the library.
+- **Server**: `AddCommentDto.media` was `@IsObject()` alone, so any shape was stored. It is now `CommentMediaDto` (`dto/post.dto.ts`): optional `type` that must be `image`, `mimeType` matching `image/*`, `size` 1..16 MiB (`COMMENT_MEDIA_MAX_BYTES`), bounded `mediaId`/`key`/`iv`/`fileName`, integer dimensions, base64 `placeholder`; `encoding` is not declared so `whitelist` drops it. Pinned by `comment-media-dto.spec.ts`. The uploader is NOT checked at write, as for a post's media (only a reel's blob is claimed); the media service deletes only an object whose recorded uploader matches (`commentMediaOwners`), so a cited foreign blob cannot be deleted through a comment.
+- **Deletion and moderation need nothing new**: a deleted comment, its tombstone and its subtree release their media (`commentMediaIds` in `deleteComment`), the idle sweep and erasure already count a comment's media, and a reported comment is served with its `media` like any other. No migration.
+- **The picture must be the writer's own upload** (review, 2026-11-09): ids are not secrets, and deleting a row that cites a blob releases it to the idle sweep, so a comment or a post citing SOMEBODY ELSE'S id could get that blob deleted under its owner. `PostMediaRetentionService.assertOwnMedia` asks the media service (`POST media/internal/owned`, read-only, `MediaService.ownedBy`: unknown, purged, public, form-file and pre-ownership objects are refused like a reel claim) before `addComment` and the non-reel branch of `createPost`: `400` when refused, `503` when the media service cannot say. `updatePost` checks the same way, for the editor (the post's author alone may edit) and only the media ids the edit adds (ones already on the post are not asked again).
+
 ## Routes
 
 | Route | Description |
@@ -1644,7 +1800,7 @@ question or an option, a form with a choice - and `isPostComposerDraftWorthKeepi
 for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
 restored. Pinned by `postComposerDraft.test.ts`.
 
-**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Pinned by `postComposerDraft.test.ts`.
+**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Not `canari_pending_direct_peer`: it STARTS a conversation, so it carries the account that asked and is dropped for any other ([chat](chat.md#opening-from-another-page-a-conversation-or-the-dm-with-a-person-fixed-2026-11-11)). Pinned by `postComposerDraft.test.ts`.
 
 ## The blocks preflight erases
 
@@ -2115,7 +2271,9 @@ merges over it.
   `feedPages` object store on IndexedDB, a `feed_pages` table on SQLite (`IStorage.saveFeedPage`,
   `getFeedPage`, `deleteFeedPages`). The payload repeats its owner, and a page naming another
   account is deleted, never drawn. `IStorage.clear()` empties it with the rest; a backup export does
-  not carry it.
+  not carry it. One further slot, `peer-names`, holds the sealed peer-name directory
+  ([offline-and-weak-network](../offline-and-weak-network.md#the-connection-ring-owner-2026-11-11));
+  the four-page bound is the feed pages'.
 - **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
   `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
   `canUnrepublishAs`, `canRequestRepublication`) is removed before the page is sealed, and so is

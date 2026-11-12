@@ -62,7 +62,7 @@ describe('the speaker', () => {
     flushSync();
     expect(button.getAttribute('aria-pressed')).toBe('true');
     const on = target.querySelector('[data-video-sound="on"]')!;
-    expect(on.getAttribute('class')).toContain('text-cn-yellow');
+    expect(on.getAttribute('class')).toContain('text-accent');
   });
 
   it("toggles on a click and keeps the press from the player's tap", () => {
@@ -90,6 +90,15 @@ describe('the speaker', () => {
     expect(target.querySelector('.glass-video'), 'the rail draws no chip').toBeNull();
   });
 
+  it('is a bare white glyph on a feed card: no chip, no yellow, a 44px target', () => {
+    const target = render(VideoSoundButton, { muted: false, onToggle: vi.fn(), quiet: true });
+    expect(target.querySelector('.glass-video')).toBeNull();
+    const on = target.querySelector('[data-video-sound="on"]')!;
+    expect(on.getAttribute('class')).not.toContain('text-accent');
+    expect(on.getAttribute('class')).toContain('drop-shadow');
+    expect(target.querySelector('button')!.className).toContain('ui-icon-button');
+  });
+
   it('draws its own glass chip alone, and no second blur inside a glass bar', () => {
     const alone = render(VideoSoundButton, { muted: true, onToggle: vi.fn() });
     expect(alone.querySelector('.glass-video')).not.toBeNull();
@@ -105,7 +114,7 @@ describe('the play glyph and the expand chip', () => {
     const onParent = listenAbove();
     const button = target.querySelector('button')!;
     // The glass is the SHAPE: the button itself draws no chip, no circle, no yellow.
-    expect(button.className).not.toMatch(/glass-video|rounded-full|bg-cn-yellow/);
+    expect(button.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
     expect(button.querySelector('.glass-video-shape')).not.toBeNull();
     expect(button.querySelector('[data-video-glass-glyph="play"]')).not.toBeNull();
     expect(button.getAttribute('aria-label')).toBeTruthy();
@@ -172,7 +181,7 @@ describe('the scrubber', () => {
 
   it('spends the yellow on the played part only, and draws buffered in the bar', () => {
     const line = scrubber('line').target;
-    expect(line.querySelector('[data-video-played]')!.className).toContain('bg-cn-yellow');
+    expect(line.querySelector('[data-video-played]')!.className).toContain('bg-accent');
     const bar = scrubber('bar').target;
     expect(bar.querySelectorAll('[data-video-line] > div').length, 'buffered + played').toBe(2);
   });

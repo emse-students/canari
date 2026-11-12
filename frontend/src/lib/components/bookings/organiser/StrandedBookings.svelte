@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount } from 'svelte';
   import { RotateCcw, X } from '@lucide/svelte';
   import { cancelBooking, namedSpaceBookings, type BookingView } from '$lib/bookings/api';
@@ -7,7 +8,6 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -36,7 +36,7 @@
   let error = $state('');
   let cancelling = $state<string | null>(null);
 
-  const locale = $derived(getLocale() === 'en' ? 'en-GB' : 'fr-FR');
+  const locale = $derived(intlLocale());
   const asked = $derived(ids.slice(0, STRANDED_PAGE));
   const more = $derived(Math.max(ids.length - asked.length, 0));
   const live = $derived(rows.filter((r) => !r.cancelled));
@@ -92,7 +92,7 @@
   {#if loading}
     <div class="flex justify-center py-3">
       <div
-        class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
+        class="border-accent-icon h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -130,7 +130,7 @@
         <button
           type="button"
           onclick={onRetry}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
         >
           <RotateCcw size={15} />
           {m.bookings_stranded_retry()}

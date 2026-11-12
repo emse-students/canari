@@ -5,7 +5,10 @@ FROM rust:slim-bookworm AS builder
 # with cmake and a C++ compiler. `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev` and `zlib1g-dev`
 # were here for rdkafka and left with it - the lockfile carries no `openssl-sys`, `curl-sys`,
 # `libz-sys` or `pkg-config` crate at all, so nothing remains to probe them.
-RUN apt-get update && apt-get install -y cmake g++ && rm -rf /var/lib/apt/lists/*
+# `--no-install-recommends` (Trivy DS-0029): the recommends add nothing these stages use (measured
+# 2026-11-11: krb5-locales, libldap-common, libsasl2-modules, publicsuffix) - except `make`, which
+# cmake only RECOMMENDS and the builder therefore names itself.
+RUN apt-get update && apt-get install -y --no-install-recommends cmake make g++ && rm -rf /var/lib/apt/lists/*
 
 # Reproduce the path layout `build.rs` expects: it compiles the protobufs from `libs/proto`,
 # resolved relative to the crate root.
@@ -23,10 +26,14 @@ FROM debian:bookworm-slim
 
 # `curl` is the healthcheck's command, `ca-certificates` the trust store reqwest needs. `libssl3`
 # and `zlib1g` were what rdkafka linked against dynamically and went with it.
-RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/apps/chat-gateway/target/release/chat-gateway /usr/local/bin/chat-gateway
 
 EXPOSE 3000
+
+# NON-ROOT: `nobody` (65534), present in every Debian image. The binary writes nothing to disk,
+# mounts no volume and listens above 1024, so it needs no account of its own (Trivy DS-0002).
+USER 65534:65534
 
 CMD ["chat-gateway"]

@@ -796,7 +796,7 @@ never one line each; the key and segment bytes never.
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
 with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
-(read on the iPhone in check Y); **a live now has its own page, `/lives/<id>`** (2026-10-31): the Share button of both screens shares it (`live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device), it is claimed as an app link (`/lives/*` in `appSiteAssociation.ts`, `tauri.conf.json`, the Android manifest) and it is where `fr.emse.canari://live/<id>`, the "X est en live" push, lands. The page opens the viewer; a 404/410 (ended, or not visible to the reader - the server answers both alike) reads "Ce live est terminé", never a raw error (`live/liveRoute.ts`). **The push skips devices known to run a build below `1.5.4`** (the lives floor): social-service puts `minAppVersion` in the push data, chat-delivery's `sendPushToUser` drops tokens whose `key_package.deviceAppVersion` is below it and strips the key; a device whose build was never reported is kept (and counted in the log). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
+(read on the iPhone in check Y); **a live now has its own page, `/lives/<id>`** (2026-10-31): the Share button of both screens shares it (`live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device), it is claimed as an app link (`/lives/*` in `appSiteAssociation.ts`, `tauri.conf.json`, the Android manifest) and it is where `fr.emse.canari://live/<id>`, the "X est en live" push, lands. The page opens the viewer; a 404/410 (ended, or not visible to the reader - the server answers both alike) reads "Ce live est terminé", never a raw error (`live/liveRoute.ts`). **The push skips devices known to run a build below `1.5.4`** (the lives floor): social-service puts `minAppVersion` in the push data (since 2026-11-10 from the key's floor in `notification-client-floor.ts`, [one table for every key](../../legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)), chat-delivery's `sendPushToUser` drops tokens whose `key_package.deviceAppVersion` is below it and strips the key; a device whose build was never reported is kept (and counted in the log). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
 
 ## The broadcaster (as built)
 
@@ -1077,7 +1077,7 @@ and drops the rest; **with reduced motion nothing moves** - one static counter p
 since the viewer opened.
 
 **What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
-never a link, never a mention; the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
+never a link; a mention is the one exception ([below](#mentions-in-the-chat-owner-2026-11-09)); the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
 (read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
 sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
 
@@ -1362,3 +1362,22 @@ The microphone of a live or a reel is asked for ONE channel (`REEL_AUDIO_CONSTRA
 (the transcode keeps the source's channel count, the player uses no Web Audio splitter or panner). Every capture logs one
 line, `audio layout: mono|stereo|... (ch=N)` (`utils/audioLayout.ts`); a `stereo` answer to the mono request is the case to read
 on the bench phones, see [the backlog entry](../../backlog.d/p2-a-phone-microphone-may-answer-two-channels-with-one-silent.md).
+
+## Mentions in the chat (owner, 2026-11-09)
+
+The composer of `LiveChatPanel` is the shared `MentionComposerInput` (`singleLine`, Enter sends) instead
+of a plain input. `@` opens the ONE picker of the app: its roster is `liveMentionRoster` (the people the
+chat shows, latest speaker first, then the broadcaster) and its `audienceFilter` (`liveAudienceFilter`,
+from the `audienceOf` prop the viewer and the broadcaster's chat pass) tops it up from the name search
+with accounts the server's `mention-audience` lets through; a failed ask offers nobody from the
+directory and warns. The text carries `@[id]` tokens; `LiveChatSession.deliver` reads them from the line
+it drew and sends them as `mentions` beside the sealed text, the same ones on a retry. A line draws
+through `LiveChatLineText` and `LiveChatMention`; `mentionsViewer` tints the line of the account it names.
+Server: [lives](../../services/lives.md#mentions-in-the-live-chat-owner-2026-11-09). Owed: a phone
+reading of the picker over a playing live (the keyboard and the dropdown above the composer), and the
+push on both phones.
+
+**A defect found on the way.** `useMentionAutocomplete.suggestLocally` wrote `suggestions` and read it
+back to set `open`, inside the effect that follows the roster prop: the first `@` of any roster-backed
+picker ended in `effect_update_depth_exceeded` when the component was MOUNTED (no existing test did).
+Fixed by reading the local value; pinned by `MentionComposerInput.roster.svelte.test.ts`.

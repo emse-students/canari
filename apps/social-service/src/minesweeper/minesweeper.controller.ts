@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -43,15 +44,31 @@ export class MinesweeperController {
   leaderboard(
     @Headers('x-user-id') userId: string,
     @Query('limit') limit?: string,
-    @Query('offset') offset?: string
+    @Query('offset') offset?: string,
+    @Query('promo') promo?: string
   ) {
     const n = limit ? Number.parseInt(limit, 10) : undefined;
     const o = offset ? Number.parseInt(offset, 10) : undefined;
+    let promoYear: number | undefined;
+    if (promo !== undefined && promo !== '') {
+      promoYear = Number.parseInt(promo, 10);
+      // A promo is an entry year: anything else is a client defect, refused rather than ignored.
+      if (!Number.isInteger(promoYear) || promoYear < 1816 || promoYear > 3000) {
+        throw new BadRequestException('promo must be an entry year');
+      }
+    }
     return this.minesweeperService.leaderboard(
       Number.isFinite(n) ? n : undefined,
       userId,
-      Number.isFinite(o) ? o : undefined
+      Number.isFinite(o) ? o : undefined,
+      promoYear
     );
+  }
+
+  /** The promos that have a ranking, and the caller's own, for the per-promo tab. */
+  @Get('promos')
+  promos(@Headers('x-user-id') userId: string) {
+    return this.minesweeperService.promos(userId);
   }
 
   /** The caller's own ranked record: played, won, best / average / median, recent wins, rank. */

@@ -57,6 +57,10 @@ vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
+    startCommunityBootReads = vi.fn(() => ({
+      listChannels: (id: string) => listChannels(id),
+      release: () => {},
+    }));
     createWorkspace = createWorkspace;
     createChannel = createChannel;
   },
@@ -108,7 +112,7 @@ function mls(overrides: Record<string, unknown> = {}) {
     persistCheckpoint: vi.fn(async () => {}),
     undismissGroup: vi.fn(async () => {}),
     isDistributionGroup: vi.fn(() => false),
-    getDismissedGroups: vi.fn(async () => []),
+    getDismissedGroups: vi.fn(async () => ({ kind: 'listed' as const, groupIds: [] })),
     ...overrides,
   } as never;
 }

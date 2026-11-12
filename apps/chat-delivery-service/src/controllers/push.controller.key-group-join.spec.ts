@@ -5,6 +5,8 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { PushController } from './push.controller';
@@ -48,6 +50,10 @@ describe('PushController - key-group join from a push', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })

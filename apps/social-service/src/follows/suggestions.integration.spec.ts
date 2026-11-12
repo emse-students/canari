@@ -16,6 +16,10 @@ import type { DataSource } from 'typeorm';
 import { SuggestionsService, SUGGESTION_DISMISS_INVALID } from './suggestions.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { REVIEW_COHORT_ENV } from '../review-cohort';
+import {
+  createNotificationPreferenceTable,
+  turnSuggestionsOffInApp,
+} from '../posts/post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -141,6 +145,9 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
       [E7, GA]
     );
     await q(migration('155_follow_suggestion_dismissals.sql'));
+    // "Suggestions dans l'app" is on by default (owner, "Deux niveaux", 2026-11-11): p2 switched it off.
+    await createNotificationPreferenceTable((sql) => q(sql));
+    await turnSuggestionsOffInApp(q, ['p2']);
 
     for (const f of ['f1', 'f2', 'f3', 'f4', 'f5']) await follow('v', f);
     await follow('v', 'f6', 'pending');
@@ -179,6 +186,16 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
     await admin.end();
   });
 
+  it('serves nothing to a reader who switched Suggestions off in the app, but still counts their follows', async () => {
+    await follow('p2', 'p3');
+    expect(await service.suggestionsFor('p2')).toEqual({
+      people: [],
+      entities: [],
+      followingCount: 1,
+    });
+    await q(`DELETE FROM user_follows WHERE "followerUserId" = 'p2'`);
+  });
+
   it('ranks by L10 and excludes everything decision 2 excludes', async () => {
     const { people } = await service.suggestionsFor('v');
     // c1 16 (4 mutual), m 3 (one shared association), p3 3 (tier 3; m < p3 by id), p2 2, then
@@ -205,6 +222,12 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
     } finally {
       await q(`DELETE FROM user_blocks WHERE "blockerId" = 'v' AND "blockedId" = 'f1'`);
     }
+  });
+
+  it('counts what the viewer follows for the onboarding banner: accepted persons and entities (L12)', async () => {
+    // f1..f5 and x accepted, f6 and pend only asked; E3 followed.
+    expect((await service.suggestionsFor('v')).followingCount).toBe(7);
+    expect((await service.suggestionsFor('p1')).followingCount).toBe(0);
   });
 
   it('a review account is suggested to nobody outside the cohort, and sees no member', async () => {

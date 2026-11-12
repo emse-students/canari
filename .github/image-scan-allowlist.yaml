@@ -267,6 +267,94 @@ vulnerabilities:
       - "pkg:apk/alpine/libcurl@8.22.0-r0"
     statement: "curl 8.22.0-r0 (adminer, nginx:1.31.8-alpine, nginx:stable-alpine) and libcurl 8.22.0-r0 (postgres:18-alpine): HTTP/2 upload use-after-free in a client library none of these servers uses to send uploads - nginx and postgres do not call curl on request data, and adminer's curl is a PHP build dependency; which processes load it was not verified. No patched upstream image yet (Alpine ships 8.23.0-r0); remove when the pins are rebuilt."
 
+  # --- krb5-libs 1.22.2-r1 and libxslt 1.1.43-r3, Alpine 3.24 (2026-11-10) ---------------------
+  # Reported HIGH with a fix in Alpine (krb5 1.22.3-r0, libxslt 1.1.43-r4) but in no official image:
+  # on 2026-11-10 the newest postgres:18-alpine (sha256:123b1799...), nginx:1.31.8-alpine
+  # (sha256:713fc2eb...) and nginx:stable-alpine (sha256:583b7f2f...) still carry the vulnerable
+  # builds, and no Dockerfile of ours sits between compose and these images. Scoped by purl, so the
+  # rescan retires each entry the day its pin moves. Allowed by the owner, 2026-11-10.
+  - id: CVE-2026-107364
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112315
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112316
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112317
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112318
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112319
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112320
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112321
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112322
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-112323
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-118380
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-119079
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-40355
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-40356
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-71199
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-71200
+    purls:
+      - "pkg:apk/alpine/krb5-libs@1.22.2-r1"
+    statement: "krb5-libs 1.22.2-r1 in postgres:18-alpine: the advisories are in the KDC and kadmind, which the image does not ship (it carries the client library only), and no pg_hba rule uses GSSAPI (production and dev answer scram-sha-256 only, read 2026-11-10). No patched upstream image yet (Alpine ships 1.22.3-r0; postgres:18-alpine sha256:123b1799 still carries 1.22.2-r1); remove when the pin is rebuilt."
+  - id: CVE-2026-87636
+    purls:
+      - "pkg:apk/alpine/libxslt@1.1.43-r3"
+    statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
+  - id: CVE-2026-9947
+    purls:
+      - "pkg:apk/alpine/libxslt@1.1.43-r3"
+    statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
+  # CVE-2026-125350 (2026-11-12): a third advisory on the same libxslt build, same reach. Read that
+  # day: nginx:1.31.8-alpine (sha256:713fc2eb...) and nginx:stable-alpine (sha256:583b7f2f...) are
+  # the digests measured on 2026-11-10, not rebuilt; postgres:18-alpine has a newer digest
+  # (sha256:9ba53c7d..., pushed 2026-11-11) whose content is NOT measured here - moving that pin is
+  # its own change, and this purl stops covering it the day it carries 1.1.43-r4.
+  - id: CVE-2026-125350
+    purls:
+      - "pkg:apk/alpine/libxslt@1.1.43-r3"
+    statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
+
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
   # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:
@@ -302,3 +390,8 @@ vulnerabilities:
     statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."
   - id: CVE-2026-76844
     statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."
+  # Published 2026-11-09, aiohttp 3.14.3 in authentik server 2026.8.5's Python environment, fixed in
+  # 3.14.4 - which only an authentik release can carry (2026.8.5 is still the latest on 2026-11-10).
+  # Retires with the next upgrade, like the zlib pair above.
+  - id: CVE-2026-123817
+    statement: "aiohttp 3.14.3 in authentik server 2026.8.5, fixed in 3.14.4; no authentik release ships it yet (2026.8.5 is the latest, 2026-11-10). Upstream image."

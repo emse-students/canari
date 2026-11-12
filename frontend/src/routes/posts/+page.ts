@@ -4,6 +4,8 @@ import type { PageLoad } from './$types';
 import { isOutsideFeedAudience, redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 import { FEED_FIRST_PAGE_SIZE } from '$lib/posts/feedPageSize';
 import { dropRetiredFeedKind } from '$lib/posts/retiredFeedKind';
+import { currentUserId } from '$lib/stores/userState.svelte';
+import { ensureBlocksLoaded } from '$lib/follows/followState.svelte';
 
 export const load: PageLoad = async ({ url }) => {
   // THE URL WINS, THEN THE REMEMBERED TAB, THEN THE DEFAULT (user, 2026-09-10: *"L'onglet du fil
@@ -37,6 +39,11 @@ export const load: PageLoad = async ({ url }) => {
   // Attach a handler so a refused fetch is not an unhandled rejection on the redirect path. The
   // promise itself is still handed over, so `{#await}` sees the same failure it always did.
   posts.catch((err) => void isOutsideFeedAudience(err));
+  // THE READER'S BLOCKS LEAVE WITH THE FEED, not after it (weak-network audit, C2). Every card's
+  // follow chip draws nothing until that list is known, and the chips used to ask for it only when
+  // they mounted - one round trip behind the posts, for a read that needs nothing from them. The
+  // list is cached for the session, so a later chip joins this read.
+  if (currentUserId()) ensureBlocksLoaded();
 
   if (await redirectIfNotFeedAudience()) return;
 

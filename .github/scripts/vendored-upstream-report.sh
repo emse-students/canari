@@ -11,9 +11,13 @@
 #
 # WHAT IS COMPARED WITH WHAT. For each crate on the allowlist below: the version the fork was taken
 # from (the `[package]` version of `patches/<crate>/Cargo.toml`, which must equal the `=` pin in
-# `frontend/src-tauri/Cargo.toml`) against crates.io's `max_stable_version`. Pre-releases are not
-# compared: `tauri-plugin-websocket` has a `3.0.0-alpha` line on crates.io the day this was written,
-# and a fork of a stable release owes no rebase to an alpha.
+# `frontend/src-tauri/Cargo.toml`) against crates.io. A fork of a STABLE release is compared with
+# `max_stable_version` only: `tauri-plugin-websocket` has a `3.0.0-alpha` line on crates.io the day
+# this was written, and a fork of a stable release owes no rebase to an alpha. A fork of a
+# PRE-release (`tauri-plugin-keystore`, taken from `2.1.0-alpha.1`, a crate with no stable release
+# at all) is compared with `max_version`, upstream's newest release of ANY kind, in semver
+# precedence: the next alpha is exactly what such a fork owes a look at (lead decision, 2026-11-11,
+# reversible - docs/wiki/cicd.md).
 #
 # AN ALLOWLIST, NOT A DERIVATION, and every entry is asserted against the tree: a crate listed here
 # that is no longer patched fails (the entry is stale - delete it), so the list cannot rot into a
@@ -21,6 +25,9 @@
 # that asked for this named one crate; adding one is adding a line. `wry` joined on 2026-11-03: it
 # is not a direct dependency, so its `=` pin in `[dependencies]` exists ONLY to hold the fork in
 # place (a newer registry release would otherwise out-resolve the path patch and drop it silently).
+# `tauri-plugin-system-components` joined on 2026-11-11 (its `=0.1.8` pin sits in the iOS target
+# table), and `tauri-plugin-keystore` the same day, under the pre-release rule above: every
+# `[patch.crates-io]` entry is watched.
 #
 # HOW IT REPORTS. `gh run list` shows 1 and 75 alike - both are an ordinary failed run - so what
 # tells them apart is the `::error` annotation TITLE, legible in the run summary without opening the
@@ -47,7 +54,9 @@ MANIFEST="$TAURI_DIR/Cargo.toml"
 # THE ALLOWLIST. One crate per line; each must be a `[patch.crates-io]` entry of `$MANIFEST` whose
 # path is `patches/<crate>`. The self-test narrows it to the one crate its fixture trees carry.
 readonly WATCHED="${VENDORED_WATCHED:-tauri-plugin-websocket
-wry}"
+wry
+tauri-plugin-system-components
+tauri-plugin-keystore}"
 
 # crates.io refuses an anonymous client (its crawler policy asks for a contact in the User-Agent).
 readonly USER_AGENT='canari-ci vendored-upstream-report (https://github.com/emse-students/canari)'
@@ -76,8 +85,65 @@ package_version() {
   ' "$1"
 }
 
-# is_stable_semver <v> - plain X.Y.Z, the only shape compared.
+# is_stable_semver <v> - plain X.Y.Z.
 is_stable_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# is_semver <v> - X.Y.Z with an optional pre-release (`-alpha.1`); build metadata is not read.
+is_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; }
+
+# prerelease_cmp <a> <b> - prints -1, 0 or 1 for two pre-release strings (`alpha.1`), by semver's
+# rule: identifier by identifier, numbers numerically and below any text, text in ASCII order, and
+# a list that is a prefix of the other is lower.
+prerelease_cmp() {
+  local -a a b
+  local i x y
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  for ((i = 0; i < ${#a[@]} && i < ${#b[@]}; i++)); do
+    x="${a[i]}"
+    y="${b[i]}"
+    [ "$x" = "$y" ] && continue
+    if [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]]; then
+      if ((10#$x < 10#$y)); then echo -1; else echo 1; fi
+    elif [[ "$x" =~ ^[0-9]+$ ]]; then
+      echo -1
+    elif [[ "$y" =~ ^[0-9]+$ ]]; then
+      echo 1
+    elif [[ "$x" < "$y" ]]; then
+      echo -1
+    else
+      echo 1
+    fi
+    return
+  done
+  if ((${#a[@]} < ${#b[@]})); then
+    echo -1
+  elif ((${#a[@]} > ${#b[@]})); then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+# version_cmp <a> <b> - prints -1, 0 or 1 in semver precedence; both pass `is_semver`. A release
+# ranks above every pre-release of the same X.Y.Z.
+version_cmp() {
+  local core_a="${1%%-*}" core_b="${2%%-*}" pre_a="" pre_b="" c
+  [ "$1" != "$core_a" ] && pre_a="${1#*-}"
+  [ "$2" != "$core_b" ] && pre_b="${2#*-}"
+  c="$(semver_cmp "$core_a" "$core_b")"
+  if [ "$c" != 0 ]; then
+    echo "$c"
+  elif [ -z "$pre_a" ] && [ -z "$pre_b" ]; then
+    echo 0
+  elif [ -z "$pre_a" ]; then
+    echo 1
+  elif [ -z "$pre_b" ]; then
+    echo -1
+  else
+    prerelease_cmp "$pre_a" "$pre_b"
+  fi
+}
 
 # semver_cmp <a> <b> - prints -1, 0 or 1. Both must be plain X.Y.Z.
 semver_cmp() {
@@ -128,8 +194,14 @@ while IFS= read -r crate; do
       "frontend/src-tauri/Cargo.toml pins $crate to '=${pin:-<no exact pin>}' but $fork_dir is version $vendored. A patch whose version does not match the requirement is not applied, so the app builds against crates.io's copy without the CANARI PATCH hunks."
     continue
   fi
-  if ! is_stable_semver "$vendored"; then
-    report 'Vendored-fork watch is broken' "$crate's fork is $vendored, not a plain X.Y.Z: this report compares stable releases only and has no rule for a fork of a pre-release."
+  # Which of upstream's releases this fork is compared with: a stable fork, the stable ones only; a
+  # fork of a pre-release, every release.
+  if is_stable_semver "$vendored"; then
+    upstream_field=max_stable_version
+  elif is_semver "$vendored"; then
+    upstream_field=max_version
+  else
+    report 'Vendored-fork watch is broken' "$crate's fork is $vendored, neither X.Y.Z nor X.Y.Z-<pre-release>: this report has no rule for that shape."
     continue
   fi
 
@@ -161,17 +233,17 @@ while IFS= read -r crate; do
       continue
       ;;
   esac
-  latest="$(printf '%s' "$body" | jq -r '.crate.max_stable_version // empty' 2>/dev/null || true)"
-  if ! is_stable_semver "$latest"; then
-    report 'Vendored-fork watch is broken' "crates.io's answer for $crate carries no usable crate.max_stable_version ('${latest}'). The response shape changed; fix this reader rather than believing the silence."
+  latest="$(printf '%s' "$body" | jq -r --arg f "$upstream_field" '.crate[$f] // empty' 2>/dev/null || true)"
+  if ! is_semver "$latest" || { [ "$upstream_field" = max_stable_version ] && ! is_stable_semver "$latest"; }; then
+    report 'Vendored-fork watch is broken' "crates.io's answer for $crate carries no usable crate.$upstream_field ('${latest}'). The response shape changed; fix this reader rather than believing the silence."
     continue
   fi
 
   # --- 3. the verdict ------------------------------------------------------------------------------
   hunks="$(grep -rIo 'CANARI PATCH' "$TAURI_DIR/$fork_dir" 2>/dev/null | wc -l | tr -d ' ')"
-  case "$(semver_cmp "$latest" "$vendored")" in
+  case "$(version_cmp "$latest" "$vendored")" in
     0)
-      echo "ok: $crate - the fork in $fork_dir is $vendored, upstream's latest stable release."
+      echo "ok: $crate - the fork in $fork_dir is $vendored, upstream's latest ${upstream_field/max_stable_version/stable} release."
       ;;
     1)
       report "Upstream $crate released past the vendored fork" \
@@ -179,7 +251,7 @@ while IFS= read -r crate; do
       ;;
     -1)
       report "Upstream withdrew the release $crate was forked from" \
-        "crates.io's latest stable $crate is $latest, OLDER than the $vendored that $fork_dir was taken from - $vendored was yanked. Read upstream's reason before the next release: a yank is usually a defect, and the fork carries it."
+        "crates.io's latest ${upstream_field/max_stable_version/stable} $crate is $latest, OLDER than the $vendored that $fork_dir was taken from - $vendored was yanked. Read upstream's reason before the next release: a yank is usually a defect, and the fork carries it."
       ;;
   esac
 done <<<"$WATCHED"

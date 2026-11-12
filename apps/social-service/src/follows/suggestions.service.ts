@@ -7,6 +7,7 @@ import {
   sameSideOfReviewCohortSql,
 } from '../spaces/reader-spaces';
 import { acceptedFollowSql } from './follow-status';
+import { suggestionsOn } from '../push/notification-category';
 import { short } from './follows.service';
 
 /**
@@ -59,6 +60,11 @@ export interface SuggestedEntity {
 export interface Suggestions {
   people: SuggestedPerson[];
   entities: SuggestedEntity[];
+  /**
+   * How many accounts the viewer follows: accepted person follows plus entity follows (L12). The
+   * client shows the onboarding banner below its threshold (decision 7, WP-6).
+   */
+  followingCount: number;
 }
 
 /** An association id as the database stores it: anything else names no entity. */
@@ -167,6 +173,11 @@ export const entitySuggestionsSql = (): string => `SELECT a.id, a.name, a.slug, 
  ORDER BY (SELECT count(*) FROM association_follows sg_n WHERE sg_n."associationId" = a.id) DESC, a.id
  LIMIT $2`;
 
+/** L12's count: the viewer's ACCEPTED person follows plus their entity follows. */
+export const FOLLOWING_COUNT_SQL = `SELECT
+  (SELECT count(*) FROM user_follows sg_c WHERE sg_c."followerUserId" = $1 AND ${acceptedFollowSql('sg_c')})
+  + (SELECT count(*) FROM association_follows sg_a WHERE sg_a."followerUserId" = $1) AS n`;
+
 /** The write of the X: one row, idempotent. */
 export const DISMISS_SQL = `INSERT INTO follow_suggestion_dismissals ("userId", "targetKind", "targetId")
   VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`;
@@ -190,15 +201,27 @@ export class SuggestionsService {
       Math.max(opts.peopleLimit ?? SUGGESTED_PEOPLE_MAX, 1),
       SUGGESTED_PEOPLE_MAX
     );
+    // ONE SWITCH, "Suggestions dans l'app", on by default and off in one gesture (owner, "Deux
+    // niveaux", 2026-11-11): the
+    // carousel, the onboarding banner and "Suivez aussi..." all read this route, so none is drawn.
+    // The follow count still answers: it is the reader's own fact, not a suggestion.
+    if (!(await suggestionsOn(this.db, viewerId))) {
+      const [following] = await this.db.query<{ n: string | number }[]>(FOLLOWING_COUNT_SQL, [
+        viewerId,
+      ]);
+      this.logger.debug(`[SUGGESTIONS] ${short(viewerId)} Suggestions off - none served`);
+      return { people: [], entities: [], followingCount: Number(following?.n ?? 0) };
+    }
     // One more than asked when a person is to be dropped, so dropping them never shortens the page.
     const fetch = opts.exclude ? limit + 1 : limit;
     const started = Date.now();
-    const [rows, entities] = await Promise.all([
+    const [rows, entities, [following]] = await Promise.all([
       this.db.query<{ userId: string; mutual: number; faces: string[] }[]>(personSuggestionsSql(), [
         viewerId,
         fetch,
       ]),
       this.db.query<SuggestedEntity[]>(entitySuggestionsSql(), [viewerId, SUGGESTED_ENTITIES_MAX]),
+      this.db.query<{ n: string | number }[]>(FOLLOWING_COUNT_SQL, [viewerId]),
     ]);
     const people = rows
       .filter((r) => r.userId !== opts.exclude)
@@ -207,7 +230,7 @@ export class SuggestionsService {
     this.logger.debug(
       `[SUGGESTIONS] ${short(viewerId)} people=${people.length} entities=${entities.length} in ${Date.now() - started} ms`
     );
-    return { people, entities };
+    return { people, entities, followingCount: Number(following?.n ?? 0) };
   }
 
   /**

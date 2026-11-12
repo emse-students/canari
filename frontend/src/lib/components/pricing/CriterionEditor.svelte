@@ -9,6 +9,7 @@
     bucketValues,
     remainingValues,
     removeBucketValue,
+    takesOneGroup,
     type CriterionSources,
     type CriterionValue,
   } from '$lib/pricing/bucketValues';
@@ -44,6 +45,8 @@
 
   const title = $derived(criterionTitle(dimension.kind));
   const remaining = $derived(remainingValues(dimension, sources));
+  /** A multiple-choice question divides into one group and "Tous les autres", never two. */
+  const oneGroupOnly = $derived(takesOneGroup(dimension, sources.items));
 
   /** Only questions offering options can divide anybody. */
   const questionOptions = $derived(
@@ -219,14 +222,20 @@
     <li class="text-text-muted flex items-center gap-2 py-1.5 text-sm">
       <span class="w-28 shrink-0 px-1 font-bold">{m.form_criterion_others()}</span>
       <span class="min-w-0 flex-1 text-xs">{m.form_criterion_others_hint()}</span>
-      <button
-        type="button"
-        onclick={addGroup}
-        class="tap-target border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
-      >
-        <Plus size={13} />
-        {m.form_criterion_add_group_short()}
-      </button>
+      {#if oneGroupOnly && dimension.buckets.length >= 1}
+        <span class="shrink-0 text-xs" data-testid="one-group-only"
+          >{m.form_criterion_multiple_choice_one_group()}</span
+        >
+      {:else}
+        <button
+          type="button"
+          onclick={addGroup}
+          class="tap-target border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
+        >
+          <Plus size={13} />
+          {m.form_criterion_add_group_short()}
+        </button>
+      {/if}
     </li>
   </ul>
 </div>

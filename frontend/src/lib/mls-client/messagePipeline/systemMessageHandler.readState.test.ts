@@ -222,6 +222,38 @@ describe('handleSystemEvent - history_bundle read state', () => {
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(2);
   });
 
+  // THE RECOUNT ASKS THE READ POINT A LOAD DERIVES FROM (`derivedUnreadCount`, 2026-11-11), so the
+  // badge a bundle leaves is the one the next cold start re-derives. Both fail on the saved-mark
+  // recount it replaced, which kept the add path's 2.
+  const bundleOf = (...ids: Array<[string, number]>) => ({
+    messages: ids.map(([id, at]) => ({ id, senderId: 'peer', content: id, timestamp: at })),
+  });
+
+  it('with no saved mark, counts nothing the server holds before my own newest reply', async () => {
+    const myReply = {
+      id: 'r1',
+      senderId: 'me',
+      content: 'r1',
+      isOwn: true,
+      timestamp: new Date(2500),
+      serverTimestamp: 2500,
+    };
+    const ctx = seed(2, [peerMsg('m1', 1000), peerMsg('m2', 2000), myReply]);
+
+    await handleSystemEvent('history_bundle', bundleOf(['m1', 1000], ['m2', 2000]), ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
+  });
+
+  it("counts nothing the upgrade's local seed covers", async () => {
+    const ctx = seed(2, [peerMsg('m1', 1000), peerMsg('m2', 2000)]);
+    (ctx.conversations.get('g1') as any).localReadSeed = 2000;
+
+    await handleSystemEvent('history_bundle', bundleOf(['m1', 1000], ['m2', 2000]), ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
+  });
+
   it('never raises the badge of a conversation the add-path already zeroed', async () => {
     // unreadCount 0 = the conversation was open while the bundle landed.
     const ctx = seed(0, [peerMsg('m1', 1000), peerMsg('m2', 2000)]);

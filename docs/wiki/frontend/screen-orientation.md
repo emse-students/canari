@@ -58,8 +58,22 @@ is `matchMedia('(orientation: landscape)')`, reactive; layouts use Tailwind's `l
 `portrait:` variants. **The safe area of the SIDES**: Android's WebView answers
 `env(safe-area-inset-left/right)`; on iOS WebKit answers 0 for every `env()` in this WebView
 ([mobile](mobile.md)), so `canari_ios.mm` publishes `--safe-area-inset-left/right` beside the top and
-bottom ones, again after every turn of the scene. A turned screen therefore pads with
-`var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+bottom ones, again at every change of the root controller's safe area. A turned screen therefore pads
+with `var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+
+### Who pads a full-screen place
+
+**One rule: on a full-screen place (`isFullScreenPlace`, today `/camera`), the shell pads NO side and
+the page pads its own controls; everywhere else the shell pads and the page does not.** The camera's
+preview is the page and runs under the status bar and, turned, under the notch; its controls carry
+the inset themselves (`CameraScreen`, `ReelReview`, `ReelPublishSheet`). The overlays (the composers'
+camera, the live broadcaster) are portalled and `fixed`, outside the shell, so they are the same case.
+In `app.css`, `.fullscreen-place-open .app-shell` gives back the top AND the two sides (the sides added
+2026-11-09: the shell's `env()` side padding was a strip beside the turned preview and doubled the
+controls' `sideSafePadding` on Android). The one exception is a minimised call: the bar must clear the
+notch, so the shell pads the top again (`--app-status-top`, resolved on the root) and zeroes
+`--safe-area-inset-top` for its subtree, so the controls below the bar do not add the status bar a
+second time. Pinned by `callBarLayer.test.ts`.
 
 ## Android
 
@@ -128,6 +142,10 @@ posts nothing and logs nothing.
 
 ## What a turn does to each screen
 
+The rotate button is the kit's `ui/player/RotateButton.svelte` (a `VideoChipButton`, 44 px target,
+its label from Paraglide `screen_rotate_landscape` / `screen_rotate_portrait`), and a row of controls
+pads its sides with `utils/sideSafeArea.ts`.
+
 - **The camera** (`CameraScreen`, the reel tab and both composers' overlays): the frame follows the
   screen - 9:16 upright, 16:9 turned (`ReelFrame`'s `ratio`) - so a capture is cropped to what the
   preview showed in either orientation (`framedCapture.ts` already sizes the output from the box). The
@@ -137,7 +155,10 @@ posts nothing and logs nothing.
 - **The live broadcaster**: the recorder records the camera track as it comes (no 9:16 canvas, no
   rotation metadata), so a live filmed in landscape IS a 16:9 stream; the viewer's player already
   takes a new initialization segment whose resolution differs ([live](modules/live.md)). The
-  orientation is chosen in the preview and frozen from `starting` to the end.
+  orientation is chosen in the preview and frozen from `starting` to the end. The pre-live sheet takes
+  the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
+  A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
+  offered - the sheet and the chat are out of it (`data-no-double-tap`).
 - **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
   being rewritten by the video-player stack).
 
@@ -160,3 +181,34 @@ Found by the adversarial review of 2026-11-09 and accepted as they are (no code)
 
 Native is verified by COMPILING, which proves nothing about running. Each row on a pre-release, on the
 Mi 9T and the iPhone 12, is in [the backlog entry](../backlog.d/rotation-on-video-and-camera-screens.md#readings-owed-on-a-pre-release).
+
+## A turned phone is still a phone, and a full-screen place draws no chrome (2026-11-11)
+
+**Defect (owner, Android `1.6.10`):** turned to landscape, the camera showed the DESKTOP shell - the
+top bar ("Canari", status, apps, avatar) and the left rail - with the camera shrunk into what was
+left. **Cause:** the root layout hid only `MobileHeader`, `BottomNav` and the native tab bar on a
+full-screen place; `Navbar` and `AppSidebar` are `md:` pieces (`hidden md:block` / `md:flex`) and the
+shell reserved `md:pl-24` for the rail. A phone turned is 800+ px wide, so it crossed `md` and the
+two came back. **Fix, at the one place that decides it:** `routes/+layout.svelte` renders `AppSidebar`,
+`Navbar`, `MobileHeader`, the tab bars and the gutter only when `!isFullScreen` - chrome follows the
+PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays (reel viewer, video
+and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
+above every shell layer, so they were never affected.
+
+**The phone question (decided, and left alone):** `PHONE_VIEWPORT_QUERY` is NOT changed. A first cut
+added a rotated-phone term (`(max-height: 500px) and (pointer: coarse)`) and was dropped in review:
+rotation exists only on the camera and video screens, where chrome is now gone through `isFullScreen`,
+so nothing needs it; and it was harmful - the guide's `phone` fact (`guideTypes.ts`, the welcome-tour
+and booking-week wording) would no longer match the chrome drawn on a turned phone, and a coarse
+tablet with a short viewport (keyboard open, split-screen) would be classed as a phone. **The layout
+never asks the width whether a place is full screen.** The reel viewer's prev/next rail was `md:flex`
+("a pointer has no swipe") and showed on a turned phone; it is `any-pointer-fine:flex`, so an iPad
+with a trackpad keeps it and a phone, with no fine pointer at all, does not.
+
+**A desktop browser on `/camera` has no shell either** (lead decision, 2026-11-11): the camera is a
+full-screen place on every device, with its own close button.
+
+**The rotate button** was the video kit's 28 px chip (`VideoChipButton`, glass), a bordered circle
+turned, beside 44 px circles. It is now `ui/CameraControlButton.svelte` - the ONE round control of the
+camera and the broadcaster (close, flip, flash, rotate, share, chat) - with the siblings' 22 px glyph.
+The ratchet of hand-built controls went down by the buttons it replaced.

@@ -78,6 +78,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // reader's dismissal OF this person - the second names the erased account as a `user` target.
   'follow_suggestion_dismissals.userId': { action: 'delete' },
   'follow_suggestion_dismissals.targetId': { action: 'delete' },
+  'engagement_push_days.userId': { action: 'delete' },
+  'campus_trend_weeks.userId': { action: 'delete' },
+  'user_activity_settings.userId': { action: 'delete' },
+  'post_engagement_notices.recipientId': { action: 'delete' },
   // The member's birthday and visibility (migration 148), and when they last set a date.
   'profile_birthdays.userId': { action: 'delete' },
   'birthday_changes.userId': { action: 'delete' },
@@ -102,9 +106,14 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
-  // A booking notice's place and slot (migration 117): holds no account id itself, and goes with
-  // the row the recipient's (or the actor's) statement above deletes - never kept past its person.
-  'post_notifications.meta': { action: 'delete', via: 'recipientId' },
+  // A notice's structured facts (migration 117): a booking's place and slot, a trend's media - and
+  // ONE account id, a campus trend's named account (`meta.likedBy.userId`, owner 2026-11-10), which
+  // sits on ANOTHER reader's row: that key is removed from every row naming the account (the row
+  // stays, naming nobody). `meta->'likedBy'->>'userId'` has no index, so that statement scans
+  // `post_notifications` - acceptable at today's size, and an erasure is rare; an expression index is
+  // the answer if the table grows. The rest goes with the row the recipient's (or the actor's)
+  // statement deletes - never kept past its person.
+  'post_notifications.meta': { action: 'anonymise', via: 'likedBy' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },
@@ -215,6 +224,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'posts.links': NO_ACCOUNT('link previews (URL, title, image) of a post'),
   'posts.images': NO_ACCOUNT('media references of a post: media ids and dimensions'),
   'posts.forms': NO_ACCOUNT('form references a post embeds'),
+  'posts.reachSpaces': NO_ACCOUNT(
+    "the formation x campus pairs an institution's post targets (migration 162)"
+  ),
   'channel_messages.attachments': NO_ACCOUNT('encrypted attachment references of a salon message'),
   'channel_members.readMarks': NO_ACCOUNT('channel id -> read time of one member'),
   'channel_members.clearedMarks': NO_ACCOUNT('channel id -> clear time of one member'),
@@ -293,8 +305,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'booking_spaces.poster': NO_ACCOUNT("the encrypted media reference of a space's poster"),
 
   // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
-  // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
-  // it in one statement, and the live sweep then deletes its segments and its row.
+  // A live is its broadcaster's content: the erasure ENDS it and anonymises it in one statement, and
+  // the live sweep then deletes its segments and its row. Its REPLAY post (docs/wiki/live-replays.md)
+  // is deleted with the account's posts, or - published as an association - ended and emptied.
   'lives.broadcasterId': { action: 'anonymise' },
   'live_removed_viewers.viewerId': { action: 'delete' },
   'live_starts.broadcasterId': { action: 'delete' },
@@ -305,6 +318,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'live_rules_acceptances.userId': { action: 'delete' },
   // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
   'live_chat_messages.authorId': { action: 'delete' },
+  // Who a line told of a mention (migration 154): ids of OTHER accounts on a row that dies with its
+  // live (C2, an hour at most plus the purge); the author's erasure deletes the row above.
+  'live_chat_messages.mentionedUserIds': {
+    action: 'kept',
+    reason:
+      'ephemeral: the row goes with its live (C2), and the ids are only the addressees of a one-minute notice window',
+  },
   'live_reaction_bursts.userId': { action: 'delete' },
   // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
   // moderator who decided is anonymised, as a cut's.
@@ -425,6 +445,10 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
  *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
  *   because every read of an ended live is a 410.
+ * - A REPLAY of one of its lives still standing (an association's: a personal one went with the
+ *   account's posts) is ended now and loses the title it copied (`live_replays`), BEFORE the live
+ *   forgets its broadcaster. The lives were locked first ({@link ERASURE_LIVES_LOCK_SQL}), so a
+ *   replay published concurrently is either seen here or never published.
  * - The account's place on another live's removed-viewer list is deleted.
  * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
  * - The cuts of its lives (`live_cuts`, WP-L8) and its first-live rules acceptance are deleted; a
@@ -442,6 +466,16 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
 export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  // BEFORE lives_broadcaster, which forgets whose lives they were: a replay of the account's lives
+  // still standing (one published as an association, whose post the erasure keeps) is ended NOW -
+  // every read refuses it, the hourly worker deletes it - and the live's title it copied as its
+  // text, what the member wrote, goes with the live's own (docs/wiki/live-replays.md).
+  {
+    label: 'live_replays',
+    sql: `UPDATE posts SET "expiresAt" = LEAST("expiresAt", now()), markdown = ''
+           WHERE kind = 'replay'
+             AND "liveId" IN (SELECT id FROM lives WHERE "broadcasterId" = $1)`,
+  },
   {
     label: 'lives_broadcaster',
     sql: `UPDATE lives
@@ -564,6 +598,27 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'follow_suggestion_dismissals',
     sql: `DELETE FROM follow_suggestion_dismissals WHERE "userId" = $1 OR "targetId" = $1`,
   },
+  // The daily engagement push counters (engagement WP-8): the recipient's own rows.
+  {
+    label: 'engagement_push_days',
+    sql: `DELETE FROM engagement_push_days WHERE "userId" = $1`,
+  },
+  // The weekly campus-trend counters (migration 163): the reader's own rows.
+  {
+    label: 'campus_trend_weeks',
+    sql: `DELETE FROM campus_trend_weeks WHERE "userId" = $1`,
+  },
+  // Friends' activity (engagement WP-9): the person's "share my activity" choice, and every ledger
+  // row telling them of a post. A row of another reader about the erased person's post goes with
+  // the post (ON DELETE CASCADE); the ledger never names the actor.
+  {
+    label: 'user_activity_settings',
+    sql: `DELETE FROM user_activity_settings WHERE "userId" = $1`,
+  },
+  {
+    label: 'post_engagement_notices',
+    sql: `DELETE FROM post_engagement_notices WHERE "recipientId" = $1`,
+  },
   // The birthday (migration 148): the date, its visibility, the day it was last announced, and
   // when a date was last set. The followers' notices name the member as their actor and go with
   // `post_notifications` below.
@@ -590,6 +645,12 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   { label: 'opening_reminders', sql: `DELETE FROM opening_reminders WHERE "userId" = $1` },
   // Before the submissions are anonymised: a file row is found by its uploader.
   { label: 'form_files', sql: `DELETE FROM form_files WHERE "uploaderId" = $1` },
+  // A campus trend on another reader's bell that names the account (`meta.likedBy`): the key goes,
+  // the row stays and names nobody.
+  {
+    label: 'post_notifications_liked_by',
+    sql: `UPDATE post_notifications SET meta = meta - 'likedBy' WHERE meta->'likedBy'->>'userId' = $1`,
+  },
   {
     label: 'post_notifications',
     sql: `DELETE FROM post_notifications WHERE "recipientId" = $1 OR "actorId" = $1`,
@@ -903,6 +964,17 @@ export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
   ORDER BY a.id
   FOR NO KEY UPDATE OF a`;
 
+/**
+ * The account's LIVES, locked right after its associations and before any post is touched - the
+ * order a live replay's publication and a cut take them (the live's row, then its replay post,
+ * docs/wiki/live-replays.md). A replay being published for one of these lives commits BEFORE this
+ * read returns, so every later statement sees its post; one asked after waits for the erasure and
+ * then finds an erased broadcaster, which publishes nothing.
+ */
+export const ERASURE_LIVES_LOCK_SQL = `SELECT l.id FROM lives l WHERE l."broadcasterId" = $1
+  ORDER BY l.id
+  FOR UPDATE OF l`;
+
 /** Every statement, in the order {@link eraseSocialRows} runs them around the scrub. */
 export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   ...ERASURE_ROW_STATEMENTS,
@@ -1173,6 +1245,7 @@ export async function runErasureStatements(
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
+  const livesLocked = await db.read<{ id: string }>(ERASURE_LIVES_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
   const liveCashiersErased = await db.read<{ associationId: string; vendorToken: string }>(
     LIVE_CASHIERS_SQL,
@@ -1182,6 +1255,7 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
   // In the log line's `rows=`: how many associations the erasure held while it ran.
   if (locked.length > 0) counts.associations_locked = locked.length;
+  if (livesLocked.length > 0) counts.lives_locked = livesLocked.length;
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;

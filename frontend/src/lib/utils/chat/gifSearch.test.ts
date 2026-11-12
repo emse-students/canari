@@ -9,6 +9,7 @@ import {
   fetchGifPage,
   GIF_SEARCH_NOT_CONFIGURED,
   GifSearchUnavailableError,
+  mergeGifPages,
   readGifPage,
 } from './gifSearch';
 import { dropRetiredKlipyCustomerId } from './retiredKlipyCustomerId';
@@ -113,5 +114,20 @@ describe('the rendition picked for a use', () => {
     const { commentGifRendition } = await import('./gifSearch');
     expect(commentGifRendition(gif).width).toBe(200);
     expect(commentGifRendition({ ...gif, preview: r(120) }).width).toBe(400);
+  });
+});
+
+describe('mergeGifPages', () => {
+  const G = (id: string) => ({ id, preview: R(id), full: R(id) });
+
+  it('keeps the first occurrence of an id repeated across pages or inside one', () => {
+    const merged = mergeGifPages([G('a'), G('b')], [G('b'), G('c'), G('c')]);
+    expect(merged.map((g) => g.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns a new array and leaves the first page untouched', () => {
+    const first = [G('a')];
+    expect(mergeGifPages(first, [G('b')])).not.toBe(first);
+    expect(first).toHaveLength(1);
   });
 });

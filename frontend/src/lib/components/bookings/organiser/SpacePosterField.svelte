@@ -156,13 +156,13 @@
     {/if}
     <label
       data-poster-zone
-      class="text-text-main focus-within:ring-cn-yellow flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed text-sm font-semibold transition-colors focus-within:ring-2 {poster
+      class="text-text-main focus-within:ring-accent-icon flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed text-sm font-semibold transition-colors focus-within:ring-2 {poster
         ? 'bg-control-fill hover:bg-cn-border/60 border-transparent px-4 py-2.5'
-        : 'bg-cn-yellow/5 hover:bg-cn-yellow/10 min-h-32 flex-col px-4 py-6 text-center'} {over
-        ? 'border-cn-yellow bg-cn-yellow/15'
+        : 'bg-accent/5 hover:bg-accent/10 min-h-32 flex-col px-4 py-6 text-center'} {over
+        ? 'border-accent-icon bg-accent/15'
         : poster
           ? ''
-          : 'border-cn-yellow/50'} {busy ? 'cursor-not-allowed opacity-40' : ''}"
+          : 'border-accent/50'} {busy ? 'cursor-not-allowed opacity-40' : ''}"
     >
       <input
         type="file"

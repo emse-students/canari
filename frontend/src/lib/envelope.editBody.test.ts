@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyEditToBody,
+  editFitsBody,
   envelopeBodyText,
   mkMediaEnvelope,
   mkTextEnvelope,
@@ -62,6 +63,26 @@ describe('applyEditToBody', () => {
     expect(after.kind === 'media' && after.replyTo).toEqual(quote);
   });
 
+  it('removes a media caption on an EMPTY text, the attachment untouched (owner, 2026-11-11)', () => {
+    const media = {
+      type: 'video' as const,
+      mediaId: 'md2',
+      key: 'ab',
+      iv: 'cd',
+      mimeType: 'video/mp4',
+      size: 99,
+    };
+    const before = serializeEnvelope(mkMediaEnvelope(media, 'to remove', quote));
+
+    const after = parseEnvelope(applyEditToBody(before, ''));
+
+    expect(after.kind).toBe('media');
+    expect(after.kind === 'media' && after.caption).toBeUndefined();
+    expect(after.kind === 'media' && after.media).toEqual(media);
+    expect(after.kind === 'media' && after.replyTo).toEqual(quote);
+    expect(envelopeBodyText(applyEditToBody(before, ''))).toBe('');
+  });
+
   it('is idempotent, which is what a replayed log asks of it', () => {
     const before = serializeEnvelope(mkTextEnvelope('first', quote));
 
@@ -85,5 +106,19 @@ describe('envelopeBodyText', () => {
         )
       )
     ).toBe('caption');
+  });
+});
+
+describe('editFitsBody', () => {
+  const photo = serializeEnvelope(
+    mkMediaEnvelope({ type: 'image', mediaId: 'm', key: 'a', iv: 'b', mimeType: '', size: 0 }, 'c')
+  );
+
+  it('lets an empty text remove a caption and refuses it on anything else', () => {
+    expect(editFitsBody(photo, '')).toBe(true);
+    expect(editFitsBody(photo, 'new caption')).toBe(true);
+    expect(editFitsBody(serializeEnvelope(mkTextEnvelope('hello')), '')).toBe(false);
+    expect(editFitsBody('legacy plain text', '')).toBe(false);
+    expect(editFitsBody(serializeEnvelope(mkTextEnvelope('hello')), 'bye')).toBe(true);
   });
 });
