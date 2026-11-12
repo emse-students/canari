@@ -319,92 +319,6 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
-## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
-
-- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
-  the target is measured from the gaps already seen, so a gap longer than all of them can still run
-  the buffer dry once before the target grows.
-- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
-  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
-  keeps its contract exactly.
-- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
-  this row asks only which rule the board judges by.
-- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
-  the first gap (stricter than the contract), and align the row's definition and its judge in
-  `liverows.mjs` with that decision. Neither is changed until it is taken.
-- **The first reading with #2679** (`1.5.1-alpha.7`, dev.a062d13, 2026-10-29: `FAIL`, nothing
-  forgiven). The figures come from the new `delivery of N appended of M taken` line, in
-  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T11-27-53-820Z-W4.log`:
-  - W4 took 20 deliveries, 11 of two segments. Gaps were 1.2-4.4 s, and the target buffer rose 3663,
-    3790, 4118, 4223, then 4383 ms, once at each new longest gap.
-  - "Ahead" fell to 0.53-1.10 s before each two-segment delivery and rose to about 4-5 s after it.
-  - ONE stall, at 31.55 s with the target at 4118 ms: the next gap was 4223 ms, longer than the
-    3.99 s ahead after the delivery before it. The following delivery then seeked to the live edge.
-  - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
-    zero-after-first-gap rule. That is this decision.
-  - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
-- **The owner decided (2026-10-29): the viewer must NOT stall; fix the cause.** So the contract
-  moved, not the row: branch `fix/live-buffer-from-cadence` bounds the longest wait from the shape
-  of the deliveries (a pair shows its ~5 s wait AT the pair) and re-anchors a buffer shorter than
-  it at once ([buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); W4's
-  trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
-  new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
-  carries it, then delete this entry.
-- **The rerun on `1.5.1-alpha.8` (#2689) still FAILS, and the stall now has a different shape**
-  (dev.7a83364, 2026-10-29; console
-  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T22-23-33-788Z-W4.log`).
-  - W4 had 23 deliveries. Its targets were 4011, then 6023, then 6025 ms. It re-anchored by itself
-    and never ran short.
-  - It stalled ONCE, at 55.56 s, at 23:23:04.085. The delivery before (23:23:00.541) had left it at
-    52.03 s with the buffer ending at 58.19 s, so 6.17 s were ahead. At the stall, 2.6 s of
-    buffered media were still ahead of the play position.
-  - So this is not a buffer running dry over a gap: the player stopped with media in hand. The next
-    delivery's stall seek is what resumed it.
-  - W2 took 0 stalls and 2 seeks. Its targets reached 6015 ms, and it held one short re-anchor
-    (`5.98 s buffered, under the 6015 ms target - no seek`).
-  - The row's failure: "W4 stalled 1 time(s) and seeked 1 time(s) after its first delivery gap".
-- Owed: read why a viewer with 2.6 s buffered reports `waiting` - a hole in the buffered ranges or
-  a decoder wait at a fragment boundary, for example. The delivery line records only the buffer's
-  end, not its ranges. Then rerun LIVE-STALL-1.
-
-## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
-
-- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
-  devices enter its key groups by external commit, and every member's client logs this line once per
-  device at `log::error!`.
-- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
-  - The line fires when a device makes its first entry into a group, by its own commit, under a key
-    that another group pinned, while another device of the same user is already in the tree.
-  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
-  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
-    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
-    <group> - not a conversation, nothing to say`).
-  - The Rust observer does not know the group's kind, so it accuses the normal path.
-- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
-- Owed: give the observer the group's kind where it is already known, so that it does not log the
-  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
-  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
-
-## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
-
-- Run 1 on dev.a062d13, the peer seat (W2). The console was not kept, because that run predates the
-  rig's kept consoles; these are the run's notable lines from the ledger, with ids replaced:
-
-  ```
-  [12:02:20.450] [RUST::INFO] forget_group: <kg>…, min_epoch=0
-  [12:02:20.451] [MLS] dropped local state for <kg>... (the server refused the external commit, minEpoch=0)
-  [12:02:20.451] [MLS] externalJoin REFUSED for <kg>... (base 0, reason epoch_mismatch, group at 1) - attempt 1/3
-  [12:02:21.045] [GRAINE] could not join the distribution group of community <ws> (refused)
-  ```
-
-- The attempt says "1/3", but no attempt 2 is logged before the give-up 0.6 s later. Either the
-  bounded retry did not run, or it ran without a line, which leaves the give-up unexplained.
-- A refused join on the community's key group leaves the device out of its seed distribution.
-- Related: the two-devices race in the P3 "Two devices of one account joining a community at once"
-  ends in the same give-up line, after three logged attempts.
-- Owed: read which path gave up after one attempt, and log every attempt or the reason the retry
-  stopped. Then rerun SALON-REVOKE-COMMIT with consoles kept.
-
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
 - Audited after the revoked-leaves 400 ([durable-rules](durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
@@ -1799,6 +1713,8 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
 | iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
+| LIVE-STALL-1, after the owner's "the viewer must not stall" (2026-10-29): the longest wait bounded from the deliveries' shape, and a wait of the engine's own with media ahead held, not seeked, within `LIVE_PLAYER_HELD_WAIT_BUDGET_MS` ([live](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); the rig judge imports the same constant | LIVE-STALL-1 rerun on the current pre-release, consoles kept: no viewer stall and no hold over the budget after the first delivery gap |
+| a key-group join reads its seat after the base it builds on (#2721), and a refused external join logs every attempt and gives up as `refused` only after its third logged refusal (`BaseMlsService.ts`, `externalJoin`: every other exit names its own reason) | SALON-REVOKE-COMMIT and RM-4, RM-4b, RM-5 rerun on the current pre-release with consoles kept: no `already held - redelivered Welcome ignored` line in either spelling (key group, conversation), and any `could not join ... (refused)` preceded by attempts 1/3, 2/3 and 3/3 |
 | a waiting share is locked with the device on iOS (built 2026-10-27; the mechanism and the seven steps are in [sharing](frontend/sharing.md), "At rest", iOS path item 5) | on the iPhone 12 with a passcode, waiting over 10 s after each lock, Console on `[CanariShare]` / `[SHARE]`: (1) cold launch, a `launch sweep:` line and no `deferred`; (2) a text and a photo, `moved copy protection = NSFileProtectionCompleteUnlessOpen`; (3) Canari killed, locked, a push: `locked with the device`, the share kept, no `dropped`/`unreadable` (a bare `NSCocoaErrorDomain 513` is a finding to record, not a regression); (4) unlock, offered at once; (5) already imported, offered with no new launch; (6) a large iCloud video locked mid-capture, the older share kept and the new one refused on the card; (7) sign-out while locked, the old share dropped as stale |
 | legacy tier tags without a consistent issuer ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)) | `tools/read-only-sql/tier-tags-without-a-consistent-issuer.sql`, read-only, on dev then production with the owner: 0 in every column closes it |
 | a member's new device enters with no tap (built 2026-10-31; [mls-protocol](protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)) | a rig row: a member's second device enrolled, added with no ask, the "X a ajouté un appareil" line on every member and on the owner's other device, no line in the list preview (`DEVREVOKE-KEYGROUP` narrates a device ask as dirt); and the production rate of device enrolments per week |
