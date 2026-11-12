@@ -129,7 +129,15 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
 
   it('waits on the gate - nothing sealed meanwhile - and answers its refusal as a value', async () => {
     let decide: (outcome: SalonGateOutcome) => void = () => {};
-    whenSalonSendable.mockReturnValue(new Promise<SalonGateOutcome>((r) => (decide = r)));
+    // The executor reaches the gate only after it opens the payload (a real AES-GCM decrypt), so the
+    // test waits on the gate's CALL, never on a turn of the event loop: one `setTimeout(0)` was not
+    // always enough in a loaded shard, and the late call then landed in the next test.
+    let gateAsked: () => void = () => {};
+    const asked = new Promise<void>((r) => (gateAsked = r));
+    whenSalonSendable.mockImplementation(() => {
+      gateAsked();
+      return new Promise<SalonGateOutcome>((r) => (decide = r));
+    });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let answered = false;
     const answer = salonSealExecutors['seal-salon-message']({
@@ -138,7 +146,7 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
       payload: await sealForHandover(new Uint8Array([3])),
     }).finally(() => (answered = true));
 
-    await new Promise((r) => setTimeout(r, 0));
+    await asked;
     // A main tab that has not listed its salons yet HOLDS the message, as a single tab does.
     expect(answered).toBe(false);
     expect(whenSalonSendable).toHaveBeenCalledWith('abcdef123456');
