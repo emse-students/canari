@@ -108,6 +108,7 @@
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
+  import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
   import { loadCommunityNicknames } from '$lib/utils/chat/nicknameActions';
 
@@ -1693,7 +1694,11 @@
         <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
       {/if}
 
-      <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
+      <!-- A crash, so it ACCUSES (`console.error`), and it names the error: `${e}` printed
+           `[object Object]` in the one log that reported a looping chat (Android 1.6.6, 2026-11-12). -->
+      <svelte:boundary
+        onerror={(e) => console.error(`[UI] ChatArea error recovered: ${describeCaughtError(e)}`)}
+      >
         {#snippet failed(_error, reset)}
           <div
             class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
