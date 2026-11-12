@@ -172,7 +172,27 @@ pads its sides with `utils/sideSafeArea.ts`.
   whole mount, the rotate button beside the sound and share buttons, the top bar and the bottom row
   padded by the side safe areas, the chat panel `landscape:max-w-md` with the reaction bar a column
   at its right. The `<video>` was already `object-contain`.
-- **The reel viewer** requests nothing and stays portrait; a landscape CanaReel is letterboxed.
+- **The reel pager** (`ReelViewer`, built 2026-11-12, issue #3407) **stays portrait, EXCEPT while the
+  item on show is a LANDSCAPE VIDEO** (owner, 2026-11-12, replacing "the pager stays portrait" - a
+  video opened from a feed post lands here, not in the lightbox). Then it requests `auto` and draws
+  the rotate button (forces landscape under the lock, and back); a vertical or square video, a photo,
+  a replay and a media of unknown size change nothing.
+  - **Landscape is the media's own STORED shape** (`isLandscapeVideo`, `reels/fullScreenPost.ts`:
+    width > height, from the `width`/`height` the upload recorded - the same numbers `ReelFrame`
+    letterboxes with), never read from the decoded video: the answer exists before the player mounts
+    and cannot flip under it. A video with no recorded size stays portrait.
+  - **One request per run of landscape items**: the effect reads a `$derived` boolean ("the item on
+    show - the page's media, or a carousel's visible one - is a landscape video"), so a swipe from one
+    landscape video to the next keeps the SAME request (the lightbox's `videoShown` pattern); a swipe
+    to a vertical item, a photo, and the close release it, which hands the turn back to portrait.
+  - **Turned, the frame fills the screen** (`ReelFrame` contain, the media's ratio against a landscape
+    stage). The slide's caption and rail pad their sides by the safe area, the caption drops to one
+    line and loses its tall gradient top, and the viewer's top scrim pads its sides - all keyed on
+    "landscape video AND the viewport is landscape" (`turnedOverVideo`), never on the bare `landscape:`
+    variant, which a desktop window always matches.
+  - **Vertical swipes keep working turned**: the track and its gestures are untouched, so a swipe up
+    or down still pages to the next or previous post (the 100 % track offset is the new viewport
+    height). Chosen as the simplest defined behaviour; a landscape-only paging model was not built.
 
 ## Known and accepted
 

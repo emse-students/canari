@@ -81,3 +81,28 @@ export function fullScreenMediaListOf(
 ): PostMediaRef[] {
   return mediaOf(post);
 }
+
+/**
+ * Whether the media on show is a LANDSCAPE VIDEO - the one case where the pager turns with the phone
+ * (owner, 2026-11-12, issue #3407; screen-orientation.md). Landscape is the media's OWN stored shape,
+ * width > height: a square or vertical video, a photo, a replay and a media whose size was never
+ * recorded are all `false`, so the pager stays portrait for them. Deliberately not read from the
+ * decoded video: the answer must be known before the player mounts and must not change under it.
+ */
+export function isLandscapeVideo(media: PostMediaRef | undefined): boolean {
+  if (!media || fullScreenMediaKindOf(media) !== 'video') return false;
+  return (media.width ?? 0) > (media.height ?? 0) && (media.height ?? 0) > 0;
+}
+
+/**
+ * The media of `post` that is on show: the page's one media, or a carousel's visible one (clamped).
+ * `undefined` for a replay, which carries no media of its own.
+ */
+export function visibleMediaOf(
+  post: Partial<Pick<PostEntity, 'media' | 'images'>> | undefined,
+  mediaIndex: number
+): PostMediaRef | undefined {
+  if (!post) return undefined;
+  const list = mediaOf(post);
+  return list[Math.min(Math.max(mediaIndex, 0), Math.max(list.length - 1, 0))];
+}

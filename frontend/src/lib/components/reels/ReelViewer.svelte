@@ -59,7 +59,21 @@
     type MediaPosition,
     type ReelSwipeVerdict,
   } from '$lib/reels/reelViewerNav';
-  import { fullScreenMediaListOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
+  import {
+    fullScreenMediaListOf,
+    fullScreenPageOf,
+    isLandscapeVideo,
+    visibleMediaOf,
+  } from '$lib/reels/fullScreenPost';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
+  import {
+    orientationCanBeForced,
+    requestOrientation,
+    rotateTarget,
+    viewportOrientation,
+    type OrientationRequest,
+  } from '$lib/mobile/screenOrientation.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
     GESTURE,
@@ -216,6 +230,46 @@
     if (!post || fullScreenPageOf(post) !== 'carousel') return { index: 0, count: 1 };
     const count = fullScreenMediaListOf(post).length;
     return { index: Math.min(list.mediaIndexById[post.id] ?? 0, count - 1), count };
+  }
+
+  // ---- Rotation: the pager is portrait, EXCEPT over a LANDSCAPE VIDEO (owner, 2026-11-12, #3407) ----
+  /** The hold on the orientation while a landscape video is on show, or null. */
+  let landscapeOrientation: OrientationRequest | null = null;
+  // A DERIVED boolean: a swipe from one landscape video to the next flips nothing, so the SAME
+  // request lives on instead of posting portrait and auto back to back (the lightbox's `videoShown`).
+  const landscapeVideoShown = $derived.by(() => {
+    // Outside the `svelte:boundary` (like the look-ahead): a post that throws when read costs the
+    // rotation, never the page - the slide that reads it trips the boundary itself.
+    try {
+      const post = list.reels[list.index];
+      return isLandscapeVideo(visibleMediaOf(post, mediaPositionOf(post).index));
+    } catch (err) {
+      console.error(
+        '[reel-viewer] the item on show could not be read - the pager stays portrait',
+        err
+      );
+      return false;
+    }
+  });
+  const showRotate = $derived(landscapeVideoShown && orientationCanBeForced());
+  $effect(() => {
+    if (!landscapeVideoShown) return;
+    const held = requestOrientation('auto', 'reel-landscape-video');
+    landscapeOrientation = held;
+    console.debug(
+      '[reel-viewer] a landscape video is on show - the pager follows the phone (auto)'
+    );
+    return () => {
+      held.release();
+      if (landscapeOrientation === held) landscapeOrientation = null;
+      console.debug('[reel-viewer] no landscape video on show - the pager is portrait again');
+    };
+  });
+  /** The rotate button: the other orientation, kept until the landscape video leaves. */
+  function rotateLandscapeVideo() {
+    const target = rotateTarget(viewportOrientation.landscape);
+    console.info(`[reel-viewer] the rotate button asks ${target}`);
+    landscapeOrientation?.set(target);
   }
 
   /**
@@ -977,6 +1031,7 @@
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
       <div
         class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        style={sideSafePadding('0.5rem')}
         data-reel-top-scrim
       >
         <button
@@ -1003,7 +1058,16 @@
               class="w-56"
             />
           </div>
-          <span class="w-11 shrink-0" aria-hidden="true"></span>
+          {#if !showRotate}
+            <span class="w-11 shrink-0" aria-hidden="true"></span>
+          {/if}
+        {/if}
+        {#if showRotate}
+          <!-- Over a landscape video only: landscape past the rotation lock, and back. It takes the
+             place of the empty box that balances the X, so the order tabs stay centred. -->
+          <div class="pointer-events-auto ml-auto shrink-0" data-reel-rotate>
+            <RotateButton onrotate={rotateLandscapeVideo} />
+          </div>
         {/if}
       </div>
 
