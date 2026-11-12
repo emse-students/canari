@@ -101,6 +101,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name: the nginx entry, the Vite dev server and the Tauri
+      # WebViews. A page served from anywhere else is named through CANARI_LOCAL_ALLOW_ORIGIN.
+      ALLOW_ORIGIN: "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}

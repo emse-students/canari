@@ -276,7 +276,7 @@ export interface PreparedOutboxMedia {
   width?: number;
   height?: number;
   durationMs?: number;
-  /** The video's measured sound - see `MediaRef.loudness`. */
+  /** The video's or voice note's measured sound - see `MediaRef.loudness`. */
   loudness?: MediaLoudness;
 }
 

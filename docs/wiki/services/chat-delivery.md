@@ -1490,7 +1490,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
 | PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
 | PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member, or its creator while nobody holds a seat; never a key-distribution group) |
 
 **A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
 says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
@@ -1510,7 +1510,16 @@ and never one in a key-distribution group. The condition rides the delete itself
 after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
 locking the device row first would invert it and can deadlock; a row left behind is active and is the
 403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
-sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. One
+exception lets a delete through without a seat (2026-11-12): the group's recorded creator
+(`createdBy`) may end a live conversation that has NO seat at all and no device of another account -
+the row a creation leaves when it fails between `POST mls/groups` and the creator's `registerMember`,
+whose cleanup delete used to meet the 403 and leave the row for ever. A seat of ANY account counts,
+one awaiting admission included. The condition is read twice: once to choose the path, then again
+under the group's seat lock inside the transaction that tombstones it (`tombstoneGroupsIf` in
+`utils/group-purge.ts`), and a seat or a device written in between turns it into the 403 - an
+unlocked check followed by a tombstone would end a conversation someone had just entered (review of
+#3383). Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 

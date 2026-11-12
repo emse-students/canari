@@ -77,7 +77,7 @@ INTERNAL_SHARED_SECRET	required	required	secret:INTERNAL_SHARED_SECRET	inter-ser
 CALL_ROOM_SECRET	required	required	secret:CALL_ROOM_SECRET	WebRTC room access control is disabled, which is a security hole
 AGENDA_SIGNING_KEY	required	required	secret:AGENDA_SIGNING_KEY	calendar subscription links cannot be signed and every campus / formation feed is refused
 LIVE_REPORT_SIGNING_KEY	required	required	secret:LIVE_REPORT_SIGNING_KEY	a reported live chat line cannot be signed, so every chat-line report is refused 503 and nothing is kept for staff
-ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
+ALLOW_ORIGIN	computed	computed	computed	the chat-gateway and the call-service refuse every client's socket, or the gateway's CORS accepts every origin on earth
 CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
 QUEUED_PAYLOAD_SHARED_WRITES	literal	literal	literal:false	nothing - a key-group frame is queued inline per seat; turned true only in a release AFTER the one shipping its readers (docs/wiki/services/chat-delivery.md)
 INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled, and an owner's device delete answers 503 (chat-delivery cannot ask core-service to end the device's sessions)
