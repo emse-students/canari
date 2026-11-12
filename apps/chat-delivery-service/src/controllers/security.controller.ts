@@ -796,6 +796,12 @@ export class SecurityController {
         );
         return { response, servedFrom: currentUrl };
       }
+      // A redirect's own body is never read: cancel it so its connection is released now.
+      await response.body?.cancel().catch((e: unknown) => {
+        this.logger.debug(
+          `[LINK_PREVIEW] ${currentUrl.hostname} redirect body cancel: ${String(e)}`
+        );
+      });
       // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
       currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
     }

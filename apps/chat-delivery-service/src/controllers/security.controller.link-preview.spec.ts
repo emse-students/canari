@@ -43,10 +43,11 @@ jest.mock('../utils/url-guard', () => {
 });
 
 import { SecurityController } from './security.controller';
-import { ssrfSafeFetch } from '../utils/url-guard';
+import { assertSafeExternalUrl, ssrfSafeFetch } from '../utils/url-guard';
 import { mintPreviewTicket } from '../utils/previewTicket';
 
 const fetchMock = ssrfSafeFetch as jest.MockedFunction<typeof ssrfSafeFetch>;
+const guardMock = assertSafeExternalUrl as jest.MockedFunction<typeof assertSafeExternalUrl>;
 
 /** `@Res({ passthrough: true })` only ever has `setHeader` called on it here. */
 const makeRes = () => {
@@ -255,6 +256,25 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
       expect(seen.status).toBe(502);
       expect(seen.body).toBeUndefined();
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      // It is the guard that refused the hop, not a fetch that happened to fail: the hop was
+      // handed to it, and its answer was a refusal.
+      const hopCheck = guardMock.mock.calls.findIndex(([asked]) => String(asked) === hop);
+      expect(hopCheck).toBeGreaterThan(-1);
+      await expect(guardMock.mock.results[hopCheck].value).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+    });
+
+    it('cancels the body of each redirect it follows', async () => {
+      const cancel = jest.fn(async () => undefined);
+      const hop = { ...(redirectTo('https://cdn.example/a.png') as object), body: { cancel } };
+      fetchMock.mockResolvedValueOnce(hop as never).mockResolvedValueOnce(png());
+      const { seen, res } = makeImageRes();
+
+      await controller.getLinkPreviewImage('https://img.example/d', ticket, res as never);
+
+      expect(seen.status).toBe(200);
+      expect(cancel).toHaveBeenCalledTimes(1);
     });
 
     it('stops after five redirects', async () => {
