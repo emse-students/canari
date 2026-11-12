@@ -67,7 +67,10 @@
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import ReelFrame from './ReelFrame.svelte';
-  import { viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import {
+    orientationCanBeForced,
+    viewportOrientation,
+  } from '$lib/mobile/screenOrientation.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
   import ReelMediaPane from './ReelMediaPane.svelte';
   import ReplayPane from './ReplayPane.svelte';
@@ -81,8 +84,6 @@
     fullScreenMediaListOf,
     fullScreenMediaOf,
     fullScreenPageOf,
-    isLandscapeVideo,
-    visibleMediaOf,
   } from '$lib/reels/fullScreenPost';
   import { carouselMediaRole } from '$lib/reels/reelViewerNav';
   import { GESTURE } from '$lib/utils/viewerGestures';
@@ -122,6 +123,8 @@
     onMediaGone?: () => void;
     /** On a carousel page: the visible media (the viewer's, kept per post). 0 elsewhere. */
     mediaIndex?: number;
+    /** The viewer's verdict: this slide is on show and its visible media is a landscape video. */
+    turnedOverVideo?: boolean;
     /** Where a held horizontal drag has taken the carousel's strip, in px; 0 at rest. */
     mediaDragX?: number;
     /** A drag holds the strip: it follows the finger with no transition. */
@@ -140,6 +143,7 @@
     onReady,
     onMediaGone,
     mediaIndex = 0,
+    turnedOverVideo: turnedOverVideoOnShow = false,
     mediaDragX = 0,
     mediaDragging = false,
     onMediaStep,
@@ -221,10 +225,11 @@
   /**
    * A LANDSCAPE VIDEO is on show and the phone is turned (owner, 2026-11-12, #3407): the frame fills the
    * screen and the caption and the rail make room for the picture and the notch's side. Scoped to
-   * this, never the bare `landscape:` variant, which a desktop window always matches.
+   * this AND the native app (`orientationCanBeForced`): a desktop window is always wider than tall and
+   * never turns, and the bare `landscape:` variant would match it too.
    */
   const turnedOverVideo = $derived(
-    viewportOrientation.landscape && isLandscapeVideo(visibleMediaOf(post, visibleIndex))
+    turnedOverVideoOnShow && viewportOrientation.landscape && orientationCanBeForced()
   );
   /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
   let frameReachesBottom = $state(true);
@@ -346,6 +351,7 @@
             <div
               class="h-full w-full shrink-0"
               data-reel-pane={i}
+              data-media-id={pane.ref.mediaId}
               data-backdrop-ignore={i === visibleIndex ? undefined : ''}
             >
               <ReelMediaPane

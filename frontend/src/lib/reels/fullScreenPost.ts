@@ -1,6 +1,7 @@
 import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
 import { isReplay } from '$lib/live/replayTimeline';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
+import { resolveMediaSize, type MediaSize } from '$lib/utils/mediaFrame';
 
 /**
  * WHAT THE CANAREELS VIEWER DRAWS AS A FULL-SCREEN PAGE (user, 2026-10-19; videos and carousels
@@ -84,14 +85,20 @@ export function fullScreenMediaListOf(
 
 /**
  * Whether the media on show is a LANDSCAPE VIDEO - the one case where the pager turns with the phone
- * (owner, 2026-11-12, issue #3407; screen-orientation.md). Landscape is the media's OWN stored shape,
- * width > height: a square or vertical video, a photo, a replay and a media whose size was never
- * recorded are all `false`, so the pager stays portrait for them. Deliberately not read from the
- * decoded video: the answer must be known before the player mounts and must not change under it.
+ * (owner, 2026-11-12, issue #3407; screen-orientation.md). Landscape is the media's own shape,
+ * width > height, from `resolveMediaSize`: the DECLARED size first (it wins, and exists before the
+ * player mounts), else `measured` - what this device measured of an older post (videos posted before
+ * 2026-09-29 declare no size): the shared size cache, then the decoded video's own size once it
+ * reported. A square or vertical video, a photo, a replay and a media of unknown size are `false`,
+ * so the pager stays portrait for them.
  */
-export function isLandscapeVideo(media: PostMediaRef | undefined): boolean {
+export function isLandscapeVideo(
+  media: PostMediaRef | undefined,
+  measured: MediaSize | null = null
+): boolean {
   if (!media || fullScreenMediaKindOf(media) !== 'video') return false;
-  return (media.width ?? 0) > (media.height ?? 0) && (media.height ?? 0) > 0;
+  const size = resolveMediaSize({ width: media.width, height: media.height }, measured);
+  return size !== null && size.width > size.height;
 }
 
 /**

@@ -36,7 +36,11 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 
 import ReelViewer from './ReelViewer.svelte';
 import type { PostEntity } from '$lib/posts/api';
-import { resetScreenOrientationForTest } from '$lib/mobile/screenOrientation.svelte';
+import {
+  resetScreenOrientationForTest,
+  viewportOrientation,
+} from '$lib/mobile/screenOrientation.svelte';
+import { recordMeasuredMediaSize, resetMediaSizeCacheForTests } from '$lib/utils/mediaSizeCache';
 
 type Win = Window & { canariOrientation?: { set: (m: string) => void } };
 
@@ -107,6 +111,7 @@ const rotateButton = () => document.querySelector('[data-rotate-button]');
 
 beforeEach(() => {
   resetScreenOrientationForTest();
+  resetMediaSizeCacheForTests();
   runtime.android = true;
   sent = [];
   (window as Win).canariOrientation = { set: (m) => sent.push(m) };
@@ -171,5 +176,59 @@ describe('the reel pager turns over a landscape video only', () => {
     runtime.android = false;
     await render(LAND_A);
     expect(rotateButton()).toBeNull();
+  });
+
+  describe('a video that declared no size (posted before 2026-09-29)', () => {
+    /** A decoded `<video>` in the pane of `mediaId` reports its own size, as `loadedmetadata` would. */
+    function report(mediaId: string, width: number, height: number) {
+      const pane = document.querySelector(`[data-media-id="${mediaId}"]`)!;
+      const video = document.createElement('video');
+      Object.defineProperty(video, 'videoWidth', { value: width });
+      Object.defineProperty(video, 'videoHeight', { value: height });
+      pane.appendChild(video);
+      video.dispatchEvent(new Event('loadedmetadata'));
+      flushSync();
+    }
+
+    it('turns once the decoded video reports a landscape size', async () => {
+      await render(UNKNOWN);
+      expect(sent).toEqual([]);
+      report('m-un', 1920, 1080);
+      expect(sent).toEqual(['auto']);
+      expect(rotateButton()).not.toBeNull();
+    });
+
+    it('stays portrait when the decoded video is vertical', async () => {
+      await render(UNKNOWN);
+      report('m-un', 720, 1280);
+      expect(sent).toEqual([]);
+    });
+
+    it('turns at once from the size this device already measured', async () => {
+      recordMeasuredMediaSize('m-un', 1920, 1080);
+      await render(UNKNOWN);
+      expect(sent).toEqual(['auto']);
+    });
+
+    it('lets a declared size win over a measurement', async () => {
+      recordMeasuredMediaSize('m-p', 1920, 1080);
+      await render(PORTRAIT);
+      expect(sent).toEqual([]);
+    });
+  });
+
+  describe('the chrome adapts only in the native app', () => {
+    it('turns the caption layout on a turned native phone', async () => {
+      viewportOrientation.landscape = true;
+      await render(LAND_A);
+      expect(document.querySelector('[data-reel-turned]')).not.toBeNull();
+    });
+
+    it('leaves a wide desktop window alone', async () => {
+      runtime.android = false;
+      viewportOrientation.landscape = true;
+      await render(LAND_A);
+      expect(document.querySelector('[data-reel-turned]')).toBeNull();
+    });
   });
 });

@@ -74,6 +74,8 @@
     type OrientationRequest,
   } from '$lib/mobile/screenOrientation.svelte';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import { measuredMediaSize } from '$lib/utils/mediaSizeCache';
+  import type { MediaSize } from '$lib/utils/mediaFrame';
   import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
     GESTURE,
@@ -237,19 +239,50 @@
   let landscapeOrientation: OrientationRequest | null = null;
   // A DERIVED boolean: a swipe from one landscape video to the next flips nothing, so the SAME
   // request lives on instead of posting portrait and auto back to back (the lightbox's `videoShown`).
+  /**
+   * What the decoded videos reported (`loadedmetadata`), by media id: the last resort for a video
+   * posted before 2026-09-29, which declares no size and which this device never measured. A
+   * `$state`, so the boolean below turns true once the video reports - and stays ONE boolean.
+   */
+  let decodedSizes = $state<Record<string, MediaSize>>({});
+  /** Items whose read failed, so the accusing line is written once per item, not per recompute. */
+  const unreadable = new Set<string>();
   const landscapeVideoShown = $derived.by(() => {
     // Outside the `svelte:boundary` (like the look-ahead): a post that throws when read costs the
     // rotation, never the page - the slide that reads it trips the boundary itself.
+    const post = list.reels[list.index];
     try {
-      const post = list.reels[list.index];
-      return isLandscapeVideo(visibleMediaOf(post, mediaPositionOf(post).index));
+      const media = visibleMediaOf(post, mediaPositionOf(post).index);
+      const measured = media
+        ? (measuredMediaSize(media.mediaId) ?? decodedSizes[media.mediaId] ?? null)
+        : null;
+      return isLandscapeVideo(media, measured);
     } catch (err) {
-      console.error(
-        '[reel-viewer] the item on show could not be read - the pager stays portrait',
-        err
-      );
+      if (!unreadable.has(post?.id ?? '')) {
+        unreadable.add(post?.id ?? '');
+        console.error(
+          '[reel-viewer] the item on show could not be read - the pager stays portrait',
+          err
+        );
+      }
       return false;
     }
+  });
+  // `loadedmetadata` does not bubble: caught in the capture phase on the viewer, and keyed by the
+  // pane's media id (the same pattern as the lightbox's dimensions line).
+  $effect(() => {
+    const el = viewerEl;
+    if (!el) return;
+    const onMeta = (e: Event) => {
+      const video = e.target;
+      if (!(video instanceof HTMLVideoElement) || video.videoWidth <= 0) return;
+      const id = video.closest('[data-media-id]')?.getAttribute('data-media-id');
+      if (!id || decodedSizes[id]) return;
+      decodedSizes[id] = { width: video.videoWidth, height: video.videoHeight };
+      console.debug(`[reel-viewer] ${id} reported ${video.videoWidth}x${video.videoHeight}`);
+    };
+    el.addEventListener('loadedmetadata', onMeta, true);
+    return () => el.removeEventListener('loadedmetadata', onMeta, true);
   });
   const showRotate = $derived(landscapeVideoShown && orientationCanBeForced());
   $effect(() => {
@@ -1016,6 +1049,7 @@
                 onLike={likerId ? () => likeReel(slot.post) : undefined}
                 rail={railFor(slot.post)}
                 mediaIndex={mediaPositionOf(slot.post).index}
+                turnedOverVideo={slot.i === list.index && landscapeVideoShown}
                 mediaDragX={slot.i === list.index ? list.mediaDragX : 0}
                 mediaDragging={slot.i === list.index && list.mediaDragging}
                 onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
