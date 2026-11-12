@@ -80,9 +80,16 @@ updates:
     # `docs/wiki/ecosystem-convergence.md`, section 9, for the two measurements. Without this
     # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `arm-auto-merge.yml` is sitting
     # right there. Delete this block only after re-running BOTH checks.
+    #
+    # `marked` is held below 18.1.2: from that release (#4145) it draws `x**b *c* d**` with stray
+    # asterisks where CommonMark draws a strong around an em, which the toolbar fuzz caught on #3254.
+    # The gate that lifts it is `composerFormatFuzz.test.ts` ("marked reads an intraword strong
+    # around an em as CommonMark does"): narrow this range to the releases that fail it, or delete it.
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "marked"
+        versions: [">= 18.1.2"]
     labels:
       - "dependencies"
       - "frontend"

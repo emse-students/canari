@@ -224,3 +224,19 @@ describe('the toolbar over random styled lines', () => {
     expect(check(text, s, s + picked.length, kind)).toBeNull();
   });
 });
+
+/**
+ * THE GRAMMAR THE BOUNDS ABOVE WERE MEASURED ON. A strong span opened inside a word and holding an
+ * em is CommonMark's `x<strong>b <em>c</em> d</strong>` (markdown-it agrees). marked 18.1.2 to 18.2.0
+ * (#4145, "rules 9-10 on the whole delimiter run") draws `x*<em>b <em>c</em> d*</em>` instead: stray
+ * asterisks in a sent message, and the toolbar's refusals on the realistic family past their 1 %.
+ * `marked` is held below 18.1.2 in `.github/dependabot.yml` until this passes on a newer release.
+ */
+describe('marked reads an intraword strong around an em as CommonMark does', () => {
+  it.each([
+    ['x**b *c* d**', 'x<strong>b <em>c</em> d</strong>'],
+    ['ab**c *d e* f**', 'ab<strong>c <em>d e</em> f</strong>'],
+  ])('%s', (source, html) => {
+    expect(marked.parseInline(source)).toBe(html);
+  });
+});
