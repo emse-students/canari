@@ -131,6 +131,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | Backlog triage, batch 17 (the entries of 2026-10-30): CLOSED - the decision records of the member's new device (D001, built 2026-10-31, its residual risk and rejected options moved into [mls-protocol](protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)) and of "Envoyer à..." (D010, built, its decisions in [reels-in-chat section 15](frontend/modules/reels-in-chat.md), the flip in section 21); the Pixel log cut to `derived_inert` (D082: the `AbortError`, `pauseSocket` and arrived-twice lines settled or re-read); readings to the verification table (B396, B397); the Lydia chantier unchanged (D085: a production cashier removal, a refund success, then the flip). |
 | 2026-11-12 | Backlog triage, batch 18 (the entries of 2026-10-31): CLOSED with evidence - the follow lists' paging and the unblock severing (B019, B022: WP-F5 #2827, first stable `v1.6.0`) and "should `minClientVersion` move with this stable" (B021: production's floor reads `1.6.6`, past WP-F4's `v1.5.1`); the MiConnect Docker connection's click moved to the user's table (B400); agent briefs for the CallKit Decline through the page (D033) and the old-PIN recovery's install under the lock (D037); the quick-reply double send's count corrected - the server never sees a `messageId`, the receiver counts (D034); the history stream filter marked one pull request (D062). Unchanged, each already a decision or a plan: group calls (D011), the admission fix-forward (D031, its durable count needs a migration), the device notices' trust (D072), the `sentAt` read-mark shim (D222). |
 | 2026-11-12 | Backlog triage, batch 20 (the entries of 2026-11-02): D025 moved to the verification table as B401 (one production deploy's logs, read-only); D019 pruned of the decisions carried out (`1.6.2`, `1.6.3`, the `1.6.0` floor, the backlog order the 2026-11-11 decisions replaced, the video calls' readings left to queue item 21); D040 unchanged (designed, its reform page carries the plan). |
+| 2026-11-12 | Backlog triage, batch 21 (the entries of 2026-11-03): D020 pruned of the decisions carried out (the wry abort, reform D1 and its approval lines, space pins, `1.6.3-alpha.3` and `1.6.3`, the writer switch on pre-releases, Sky #160) and of the retention answer the owner superseded on 2026-11-11; D038 re-read: phase 1 shipped in `1.6.3` without its cold-avatar reading (AV NOT-READ), now owed before phase 2, and the roster relay already sends the internal secret. |
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
@@ -138,7 +139,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex A - every row of the backlog
 
-317 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+319 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -464,7 +465,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-239 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+237 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
