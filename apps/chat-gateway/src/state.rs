@@ -94,6 +94,11 @@ pub struct AppState {
     /// ([`AppState::note_refusal`]); a subject is forgotten when it is admitted with room to spare
     /// ([`AppState::admit`]), so a later episode is said from its first refusal again.
     pub refused_admissions: crate::log_repeat::RepeatCounter,
+    /// The origins a socket upgrade may come from ([`crate::origin`]). `Wildcard` until `main`
+    /// sets it from `ALLOW_ORIGIN`, so a state nobody configured admits no page.
+    pub upgrade_origins: crate::origin::UpgradeOrigins,
+    /// Says an origin's refused upgrades once, then at each power of ten of their count.
+    pub refused_origins: crate::log_repeat::RepeatCounter,
     /// This process's identity in the shared sessions hash, so two gateway processes - which both
     /// number their connections from 0 - never write the same session field.
     pub instance_id: String,
@@ -129,6 +134,8 @@ impl AppState {
             max_connections: MAX_CONNECTIONS,
             max_connections_per_account: MAX_CONNECTIONS_PER_ACCOUNT,
             refused_admissions: crate::log_repeat::RepeatCounter::new(4_096),
+            upgrade_origins: crate::origin::UpgradeOrigins::Wildcard,
+            refused_origins: crate::log_repeat::RepeatCounter::new(256),
             instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,
