@@ -45,7 +45,36 @@ describe('moveDirectConversationRows', () => {
   it('writes nothing when the source holds nothing', async () => {
     const store = messageRowStore([storedRow('own', JOINED)]);
     const result = await moveDirectConversationRows(OLD, JOINED, store as unknown as IStorage, 'k');
-    expect(result).toEqual({ moved: [], left: 0 });
+    expect(result).toEqual({ moved: [], left: 0, carried: [] });
     expect(store.saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('carries the mutations waiting under the old group to the joined one', async () => {
+    const store = messageRowStore([storedRow('a', OLD)]);
+    const waiting = (messageId: string, conversationId: string) => ({
+      conversationId,
+      messageId,
+      sender: 'peer-user',
+      kind: 'delete' as const,
+      slot: '',
+      rank: 0,
+      at: 1_000,
+    });
+    // One for a moved row, one for a message neither group holds yet, one of another group.
+    await store.putPendingMutation(waiting('a', OLD));
+    await store.putPendingMutation(waiting('later', OLD));
+    await store.putPendingMutation(waiting('x', 'other-group'));
+
+    const { carried } = await moveDirectConversationRows(
+      OLD,
+      JOINED,
+      store as unknown as IStorage,
+      'k'
+    );
+
+    expect(carried.sort()).toEqual(['a', 'later']);
+    expect(
+      [...store.pending.values()].map((e) => `${e.conversationId}:${e.messageId}`).sort()
+    ).toEqual([`${JOINED}:a`, `${JOINED}:later`, 'other-group:x'].sort());
   });
 });

@@ -155,4 +155,84 @@ describe('an own act on a message whose row is still moving', () => {
     expect(store.byId.get('m1')?.reactions?.map((r) => r.emoji)).toEqual(['x']);
     expect(store.pending.size).toBe(0);
   });
+
+  it('a shown key in another case writes the row of the lowercased conversation, keeping nothing', async () => {
+    const store = messageRowStore([
+      storedRow('m1', JOINED, { senderId: 'me', content: body('hello') }),
+      storedRow('m2', JOINED, { senderId: 'me', content: body('to delete') }),
+    ]);
+    // The edit and delete paths hand the shown key as the map holds it.
+    const shown = JOINED.toUpperCase();
+    const conversations = new SvelteMap<string, Conversation>([
+      [
+        shown,
+        {
+          id: JOINED,
+          name: JOINED,
+          unreadCount: 0,
+          lastMessageAt: 0,
+          messages: [
+            { id: 'm1', senderId: 'me', content: body('hello'), timestamp: new Date(1000) },
+            { id: 'm2', senderId: 'me', content: body('to delete'), timestamp: new Date(1000) },
+          ],
+        } as never,
+      ],
+    ]);
+    const ctx = {
+      conversations,
+      selectedContact: shown,
+      userId: 'me',
+      deviceKeyB64: 'k',
+      storage: store,
+      log: vi.fn(),
+      ensureMls: () => ({}),
+    } as unknown as MessagingContext;
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+
+    await messaging.handleEditMessage('m1', 'edited', ctx);
+    await messaging.handleDeleteMessage('m2', ctx);
+
+    expect(store.byId.get('m1')?.content).toContain('edited');
+    expect(store.byId.get('m2')?.isDeleted).toBe(true);
+    expect(store.pending.size).toBe(0);
+  });
+
+  it.each([
+    ['left under the old group by the move', OLD],
+    ['sealed under the shown conversation', JOINED],
+  ])('a row that stands and does not open (%s) keeps nothing, and says why', async (_c, conv) => {
+    const store = messageRowStore([
+      storedRow('m1', conv, { senderId: 'me', content: body('hi'), unreadable: true }),
+    ]);
+    const conversations = new SvelteMap<string, Conversation>([
+      [
+        JOINED,
+        {
+          id: JOINED,
+          name: JOINED,
+          unreadCount: 0,
+          lastMessageAt: 0,
+          messages: [{ id: 'm1', senderId: 'me', content: body('hi'), timestamp: new Date(1000) }],
+        } as never,
+      ],
+    ]);
+    const log = vi.fn();
+    const ctx = {
+      conversations,
+      selectedContact: JOINED,
+      userId: 'me',
+      deviceKeyB64: 'k',
+      storage: store,
+      log,
+      ensureMls: () => ({}),
+    } as unknown as MessagingContext;
+    const { useMessaging } = await import('./useMessaging.svelte');
+    await useMessaging().handleAddReaction('m1', 'x', ctx);
+
+    expect(store.pending.size).toBe(0);
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('cannot open it'))).toHaveLength(1);
+    expect(lines.some((l) => l.includes('not stored yet') || l.includes('kept until'))).toBe(false);
+  });
 });

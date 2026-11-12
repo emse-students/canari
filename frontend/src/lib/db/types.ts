@@ -162,6 +162,16 @@ export interface PageKey {
   provisional: boolean;
 }
 
+/**
+ * Where ONE message row stands, whatever its conversation - the answer of
+ * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
+ * under another key, or damaged): it stands, and nothing this device does can ever be written onto it.
+ */
+export type MessageRowStanding =
+  | { kind: 'absent' }
+  | { kind: 'unreadable'; conversationId: string }
+  | { kind: 'readable'; conversationId: string };
+
 /** The answer of {@link IStorage.getMessagesByIds}. */
 export interface StoredRowsById {
   /** The rows found and opened, by id - only rows of the conversation asked about. */
@@ -861,6 +871,13 @@ export interface IStorage {
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
   /**
+   * Where the row of `id` stands, in ANY conversation, and whether this device opens it - the one
+   * read that tells an absent row from one this key cannot open, which `getMessage` (null for both)
+   * and the scoped reads (a row of another conversation read as absent, said at warn) cannot. Says
+   * nothing itself: the caller knows what the answer means.
+   */
+  getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding>;
+  /**
    * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
    * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
    * never written over. Its cost is the batch's, never the conversation's.
@@ -918,6 +935,13 @@ export interface IStorage {
     messageIds: readonly string[],
     deviceKeyB64: string
   ): Promise<PendingMutationRead>;
+  /**
+   * EVERY entry kept under `conversationId`, whatever message it waits for - what a move of the
+   * conversation's rows onto another conversation carries with them (`moveDirectConversationRows`).
+   * Found by conversation and not by this key's tags, an entry that does not open may be under another
+   * key (a reseal in flight): it is left as it is, never removed nor returned.
+   */
+  getPendingMutationsOf(conversationId: string, deviceKeyB64: string): Promise<PendingMutationRead>;
   /**
    * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
    * later frame raised meanwhile is a different version and stays.

@@ -1791,13 +1791,26 @@ the old conversation, through the boot merge's own move, and logs the count eith
   writes by compare-and-set and, finding no row, keeps the act as a pending mutation (sender = the
   user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
   joined group only after the move, which would have reopened the window at the swap.
+  - **The key is lowercased in `persistLocalMutation`, once**: the edit and delete paths hand the
+    shown key as they hold it, and an entry kept under another case waited for a look - always
+    under the lowercased id - that never came.
+  - **A row that stands and does not open keeps nothing.** One unscoped look
+    (`IStorage.getMessageStanding`) tells the four cases apart: a row of the shown conversation
+    (written in place), one still under another conversation (kept), none (kept), and one this
+    device cannot open (sealed, or left under the old group because it did not open there) - no
+    write will ever land on that one, so the act is said once and not kept. The scoped
+    compare-and-set would have met a moving row as "a message of another conversation" at warn.
+  - **The mutations waiting under the OLD group go with its rows** (`moveDirectConversationRows`,
+    `IStorage.getPendingMutationsOf`): each is kept again under the joined group (its tags are per
+    conversation), then removed from the old one, and the carried ids are settled with the moved
+    ones - by the Welcome's re-key and by the boot merge. An entry that does not open under this
+    key may be under another one mid-reseal, so it is left where it is.
 - **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
   the boot merge's decision. That decision is itself not convergent between the two peers - a
   separate P1 ([backlog](../backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).
 - **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
-  message landing between the read and the write is written over by the stored body; what is
-  keyed by the conversation rather than the message - read watermarks, mutations still waiting for
-  their row (`pendingMutations`) - stays with the old conversation and goes with its row.
+  message landing between the read and the write is written over by the stored body; the old
+  conversation's read watermarks stay with it.
 
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding

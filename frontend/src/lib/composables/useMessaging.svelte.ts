@@ -2842,31 +2842,40 @@ export function useMessaging() {
    * moving onto the joined group (review of #3406), a message shown before its writer stored it - and
    * that writer's own look settles the entry (`settlePendingFor`). Written nowhere, the act was on
    * screen only, and a reload brought the old body back.
+   *
+   * THE KEY IS NORMALIZED HERE, ONCE: every writer settles under the lowercased conversation id, and
+   * the callers hand the shown key as they hold it (`selectedContact`, a map key) - an entry kept
+   * under another case waited for a look that never came.
+   *
+   * A ROW THAT STANDS AND DOES NOT OPEN (sealed under another key, or left under the old group by a
+   * move because it did not open there) is never the target of a kept act: no write will ever land on
+   * it, so the entry would wait forever. Said once, for this act, and not kept.
    */
   async function persistLocalMutation(
-    conversationId: string,
+    shownKey: string,
     msg: ChatMessage,
     ctx: MessagingContext,
     act: Pick<PendingMutation, 'kind' | 'slot' | 'rank' | 'text' | 'removed'>
   ): Promise<void> {
     if (!ctx.storage) return;
+    const conversationId = shownKey.toLowerCase();
     try {
-      // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
-      // one, and a full-row write erased it every time the user reacted.
-      const patch = {
-        content: msg.content,
-        reactions: messageReactions.get(msg.id),
-        isDeleted: msg.isDeleted,
-        isEdited: msg.isEdited,
-        ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
-      };
-      const written = await ctx.storage.mergeMessages(
-        conversationId,
-        [msg.id],
-        (current) => mergeStoredMessage(current, patch),
-        ctx.deviceKeyB64
-      );
-      if (written.has(msg.id)) return;
+      // ONE unscoped look first: it tells a row of this conversation (written in place) from one
+      // still moving here (kept), one that does not open (said, not kept) and none (kept) - and
+      // never meets a row of another conversation through a scoped read, which says so at warn.
+      const standing = await ctx.storage.getMessageStanding(msg.id, ctx.deviceKeyB64);
+      if (standing.kind === 'unreadable') {
+        ctx.log(
+          `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} not stored: its row stands under ${standing.conversationId.slice(0, 8)}... and this device cannot open it - shown only`
+        );
+        return;
+      }
+      if (standing.kind === 'readable' && standing.conversationId === conversationId) {
+        // Written in place - or already carrying the shown state: a merge that changes nothing
+        // writes nothing, and there is nothing to keep.
+        await writeLocalMutation(conversationId, msg, ctx);
+        return;
+      }
       ctx.log(
         `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} found no row under ${conversationId.slice(0, 8)}... - kept until its row is stored`
       );
@@ -2878,6 +2887,30 @@ export function useMessaging() {
     } catch (e) {
       ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
     }
+  }
+
+  /** The in-place half of {@link persistLocalMutation}: the shown state merged onto the stored row. */
+  async function writeLocalMutation(
+    conversationId: string,
+    msg: ChatMessage,
+    ctx: MessagingContext
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
+    // one, and a full-row write erased it every time the user reacted.
+    const patch = {
+      content: msg.content,
+      reactions: messageReactions.get(msg.id),
+      isDeleted: msg.isDeleted,
+      isEdited: msg.isEdited,
+      ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
+    };
+    await ctx.storage.mergeMessages(
+      conversationId,
+      [msg.id],
+      (current) => mergeStoredMessage(current, patch),
+      ctx.deviceKeyB64
+    );
   }
 
   /** Toggles an emoji reaction on a message: adds it if absent, removes it if the user already used that emoji. Updates state optimistically in memory and DB before sending the MLS message. */

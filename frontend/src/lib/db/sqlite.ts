@@ -9,6 +9,7 @@ import {
 import { parseLocalReadSeed, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { OutboxEntryWrittenAloneError } from '$lib/utils/chat/messageWrittenError';
 import type {
+  MessageRowStanding,
   ConversationMeta,
   EncryptedGraineRow,
   EncryptedMessageRow,
@@ -947,6 +948,25 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
+  /** See {@link IStorage.getMessageStanding}: one row by primary key, one open, nothing said. */
+  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+    const rows: any[] = await this.db.select(
+      'SELECT conversation_id, iv, cipher_text FROM messages WHERE id = $1',
+      [id]
+    );
+    if (rows.length === 0) return { kind: 'absent' };
+    const row = rows[0];
+    try {
+      await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
+    } catch (e) {
+      if (e instanceof PayloadUnreadableError) {
+        return { kind: 'unreadable', conversationId: row.conversation_id };
+      }
+      throw e;
+    }
+    return { kind: 'readable', conversationId: row.conversation_id };
+  }
+
   async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
     const rows: any[] = await this.db.select('SELECT * FROM messages WHERE id = $1', [id]);
     if (rows.length === 0) return null;
@@ -1190,6 +1210,26 @@ export class SqliteStorage implements IStorage {
         );
         out.removedUnreadable += removed?.rowsAffected ?? 0;
       }
+    }
+    return out;
+  }
+
+  /**
+   * See {@link IStorage.getPendingMutationsOf}: every row of the conversation, opened; one that does
+   * not open is left as it is - it may be under another key (a reseal in flight).
+   */
+  async getPendingMutationsOf(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM pending_mutations WHERE conversation_id = $1',
+      [conversationId]
+    );
+    const out: PendingMutationRead = { entries: [], removedUnreadable: 0 };
+    for (const row of rows) {
+      const entry = await openPendingRow(row, deviceKeyB64);
+      if (entry) out.entries.push(entry);
     }
     return out;
   }

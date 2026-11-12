@@ -394,9 +394,11 @@ export async function settlePendingFor(
     (conversations.get(conversationId)?.messages ?? []).map((row) => [row.id, row])
   );
   let stored: Map<string, SettleTarget>;
+  let unreadable: Set<string>;
   try {
-    stored = (await storage.getMessagesByIds(conversationId, [...waiting.keys()], deviceKey()))
-      .rows;
+    const read = await storage.getMessagesByIds(conversationId, [...waiting.keys()], deviceKey());
+    stored = read.rows;
+    unreadable = read.unreadable;
   } catch (e) {
     console.error(
       `[PENDING] the store could not say which of ${waiting.size} message(s) of ${short(conversationId)}... it holds - their mutations stay kept:`,
@@ -416,7 +418,9 @@ export async function settlePendingFor(
       const settlement = settleAgainstPending(onScreen, now);
       if (settlement.fields) showSettled(deps, conversationId, id, settlement.fields);
       log(
-        `[PENDING] ${short(id)} is shown and not stored yet - ${entries.length} mutation(s) applied to the screen, kept for its write`
+        unreadable.has(id)
+          ? `[PENDING] ${short(id)} is shown and its stored row does not open on this device - ${entries.length} mutation(s) applied to the screen, kept in case the row opens again`
+          : `[PENDING] ${short(id)} is shown and not stored yet - ${entries.length} mutation(s) applied to the screen, kept for its write`
       );
       continue;
     }

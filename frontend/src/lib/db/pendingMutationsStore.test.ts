@@ -447,6 +447,43 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
     await storage.deleteConversation('conv');
     expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toEqual([]);
   });
+
+  it('reads every entry of ONE conversation, and leaves one under another key as it is', async () => {
+    const { storage } = await rig();
+    await storage.putPendingMutation(entry(), ROOMY, KEY);
+    await storage.putPendingMutation(entry({ messageId: 'm2', kind: 'edit', rank: 3 }), ROOMY, KEY);
+    await storage.putPendingMutation(entry({ conversationId: 'other' }), ROOMY, KEY);
+    await storage.putPendingMutation(entry({ messageId: 'm3' }), ROOMY, OTHER_KEY);
+
+    const read = await storage.getPendingMutationsOf('conv', KEY);
+
+    expect(read.entries.map((e) => e.messageId).sort()).toEqual(['m1', 'm2']);
+    expect(read.removedUnreadable).toBe(0);
+    // A reseal in flight would still find it under its own key.
+    expect((await storage.getPendingMutations('conv', ['m3'], OTHER_KEY)).entries).toHaveLength(1);
+  });
+});
+
+describe.each(backends)('%s - getMessageStanding', (_name, rig) => {
+  it('tells an absent row, one that does not open and one that does, in any conversation, silently', async () => {
+    const { storage } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveConversation({ id: 'conv-b', name: 'b', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('mine', 'opens', 'conv-b'), KEY);
+    await storage.saveMessage(body('sealed'), OTHER_KEY);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await storage.getMessageStanding('none', KEY)).toEqual({ kind: 'absent' });
+    expect(await storage.getMessageStanding('mine', KEY)).toEqual({
+      kind: 'readable',
+      conversationId: 'conv-b',
+    });
+    expect(await storage.getMessageStanding('sealed', KEY)).toEqual({
+      kind: 'unreadable',
+      conversationId: 'conv',
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
 
 describe.each(backends)('%s - saveMessagesIfAbsent', (_name, rig) => {

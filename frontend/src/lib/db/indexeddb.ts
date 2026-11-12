@@ -12,6 +12,7 @@ import type {
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  MessageRowStanding,
   OutboxEntry,
   PageKey,
   PendingGroupExit,
@@ -1182,6 +1183,26 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
+  /** See {@link IStorage.getMessageStanding}: one `get`, one open, nothing said. */
+  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const req = db.transaction('messages', 'readonly').objectStore('messages').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return { kind: 'absent' };
+    try {
+      await decryptData(row.cipherText, row.iv, deviceKeyB64);
+    } catch (e) {
+      if (e instanceof PayloadUnreadableError) {
+        return { kind: 'unreadable', conversationId: row.conversationId };
+      }
+      throw e;
+    }
+    return { kind: 'readable', conversationId: row.conversationId };
+  }
+
   async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
     const db = this.ensureDb();
     const existing: any = await new Promise((resolve, reject) => {
@@ -1396,6 +1417,40 @@ export class IndexedDbStorage implements IStorage {
       tx.oncomplete = () => resolve(found);
       tx.onerror = () => reject(tx.error);
     });
+    return this.openPendingRows(rows, deviceKeyB64, out, true);
+  }
+
+  /** See {@link IStorage.getPendingMutationsOf}: the conversation's whole key range, then opened. */
+  async getPendingMutationsOf(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const req = db
+        .transaction(PENDING_MUTATIONS, 'readonly')
+        .objectStore(PENDING_MUTATIONS)
+        .getAll(conversationMutationsRange(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // Found by conversation, not by this key's tags: a row that does not open may be under another
+    // key (a reseal in flight), so it is left as it is.
+    return this.openPendingRows(rows, deviceKeyB64, { entries: [], removedUnreadable: 0 }, false);
+  }
+
+  /**
+   * Opens the pending-mutation `rows` read, into `out`. With `removeDead` (rows found under this
+   * key's tags, so written under it) the ones that no longer open are removed in a second
+   * transaction - each only while it still holds the bytes read.
+   */
+  private async openPendingRows(
+    rows: any[],
+    deviceKeyB64: string,
+    out: PendingMutationRead,
+    removeDead: boolean
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
     const dead: any[] = [];
     for (const row of rows) {
       let sealed: Record<string, unknown>;
@@ -1405,8 +1460,8 @@ export class IndexedDbStorage implements IStorage {
           unknown
         >;
       } catch (e) {
-        if (e instanceof PayloadUnreadableError) dead.push(row);
-        else throw e;
+        if (!(e instanceof PayloadUnreadableError)) throw e;
+        if (removeDead) dead.push(row);
         continue;
       }
       const joined = joinPendingMutation(row, sealed);
