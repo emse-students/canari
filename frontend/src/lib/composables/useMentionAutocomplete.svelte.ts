@@ -123,8 +123,11 @@ export function useMentionAutocomplete(opts: {
   let indexedKey: string | null = null;
   /** The roster array `refreshRoster` last re-read. */
   let refreshedRoster: MentionRosterMember[] | undefined = opts.roster;
-  /** The ids of the rows a `more` answer added to this mention's list (see `suggestLocally`). */
-  let topUpIds = new Set<string>();
+  /**
+   * The ids of the rows a `more` answer added to this mention's list (see `suggestLocally`) - at most
+   * a list's worth, so an array; not reactive, as nothing draws it.
+   */
+  let topUpIds: string[] = [];
   /** A search failed and none has answered since (see `runSearch`). */
   let searchFailing = false;
   /** Set by `dispose`: nothing on its way may write to a picker whose composer is gone. */
@@ -272,7 +275,7 @@ export function useMentionAutocomplete(opts: {
     });
     const added = matchingWholeQuery(extra, req.q);
     const merged = [...suggestions, ...added].slice(0, MENTION_MAX_ROWS);
-    for (const u of added) topUpIds.add(u.id.toLowerCase());
+    topUpIds = [...topUpIds, ...added.map((u) => u.id.toLowerCase())];
     suggestions = merged;
     open = merged.length > 0;
     if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches', 'no-match');
@@ -312,10 +315,11 @@ export function useMentionAutocomplete(opts: {
     // of #3402): a live chat re-sends its roster on every line, and re-reading it used to wipe the
     // audience top-up and the arrow-key selection under the reader's fingers.
     const selectedId = selectedIdx >= 0 ? suggestions[selectedIdx]?.id.toLowerCase() : undefined;
-    const offeredIds = new Set(offered.map((u) => u.id.toLowerCase()));
-    const kept = suggestions.filter(
-      (u) => topUpIds.has(u.id.toLowerCase()) && !offeredIds.has(u.id.toLowerCase())
-    );
+    const isOffered = (id: string) => offered.some((u) => u.id.toLowerCase() === id);
+    const kept = suggestions.filter((u) => {
+      const id = u.id.toLowerCase();
+      return topUpIds.includes(id) && !isOffered(id);
+    });
     const rows = [...offered, ...kept].slice(0, MENTION_MAX_ROWS);
     suggestions = rows;
     open = rows.length > 0;
@@ -424,7 +428,7 @@ export function useMentionAutocomplete(opts: {
     ended = null;
     if (found.start === start && found.query === query) return;
     generation += 1;
-    topUpIds = new Set();
+    topUpIds = [];
     start = found.start;
     query = found.query;
     const roster = opts.roster;
@@ -453,7 +457,7 @@ export function useMentionAutocomplete(opts: {
   function closeMention() {
     generation += 1;
     waiting = null;
-    topUpIds = new Set();
+    topUpIds = [];
     open = false;
     suggestions = [];
     query = '';
