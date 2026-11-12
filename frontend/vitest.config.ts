@@ -6,6 +6,9 @@ export default defineConfig({
   // No `svelte.config.js` exists any more (SvelteKit 3 reads its options from `vite.config.js`), so
   // the plugin is told not to look for one - it logs "no Svelte config found" otherwise.
   plugins: [svelte({ configFile: false })],
+  // The charter page imports `docs/principes.md?raw` from the repository root, outside `frontend/`;
+  // the dev server (`vite.config.js`, `fs.strict: false`) allows that, so the test runner does too.
+  server: { fs: { allow: [resolve(import.meta.dirname, '..')] } },
   test: {
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.

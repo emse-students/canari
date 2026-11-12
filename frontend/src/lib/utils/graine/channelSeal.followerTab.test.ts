@@ -129,7 +129,16 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
 
   it('waits on the gate - nothing sealed meanwhile - and answers its refusal as a value', async () => {
     let decide: (outcome: SalonGateOutcome) => void = () => {};
-    whenSalonSendable.mockReturnValue(new Promise<SalonGateOutcome>((r) => (decide = r)));
+    const gate = new Promise<SalonGateOutcome>((r) => (decide = r));
+    // The executor reaches the gate only after opening the payload (WebCrypto, whose resolution no
+    // number of ticks bounds - one `setTimeout(0)` lost that race on a loaded runner, and the
+    // executor left running reached the gate inside the NEXT test). The gate's own call says it.
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    whenSalonSendable.mockImplementation(() => {
+      reached();
+      return gate;
+    });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let answered = false;
     const answer = salonSealExecutors['seal-salon-message']({
@@ -138,7 +147,7 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
       payload: await sealForHandover(new Uint8Array([3])),
     }).finally(() => (answered = true));
 
-    await new Promise((r) => setTimeout(r, 0));
+    await atGate;
     // A main tab that has not listed its salons yet HOLDS the message, as a single tab does.
     expect(answered).toBe(false);
     expect(whenSalonSendable).toHaveBeenCalledWith('abcdef123456');

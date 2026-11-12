@@ -72,6 +72,10 @@ import {
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
 import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
+import { createChangeLatch } from '$lib/utils/changeLatch';
+
+/** The `[DISCOVERY] UI group ... kept` verdicts already said, by group - see `createChangeLatch`. */
+export const uiKeptLatch = createChangeLatch();
 
 /**
  * A NEW PERSON asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to
@@ -183,7 +187,7 @@ async function admissionOfSeat(deps: {
 }
 
 /** What every automatic Add of one group rests on, as one read of the server gives it. */
-interface PendingAddFacts {
+export interface PendingAddFacts {
   /** The tree, confirmed at the server's epoch - or not. */
   tree: TreeReading;
   /** The pending rows the server still holds, or why they could not be read. */
@@ -199,28 +203,41 @@ interface PendingAddFacts {
  * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
  * rebuilds without moving it.
  *
+ * AN UNCONFIRMED TREE IS NEVER KEPT FOR THE PASS (2026-11-11): it is the absence of an answer, not
+ * an answer, so caching it aborted every later row of the group `tree-unconfirmed` in the same
+ * sweep. The next row reads afresh; a CONFIRMED reading is still shared by the pass.
+ *
  * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
  * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
  * B, staged after row A, that a device being removed is "still pending", and re-admit it.
  */
-function pendingAddFactsOf(deps: {
+export function pendingAddFactsOf(deps: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
   myDeviceId: string;
+  /** The sweep's own log, so the re-read line sits at the sweep's level beside its other lines. */
+  log: (msg: string) => void;
 }): (fresh: boolean) => Promise<PendingAddFacts> {
-  const { mlsService, groupId, userId, myDeviceId } = deps;
-  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  const { mlsService, groupId, userId, myDeviceId, log } = deps;
+  let pass: { epoch: number; tree: Promise<TreeReading>; unconfirmed?: true } | null = null;
   return async (fresh) => {
     const epoch = mlsService.getEpoch(groupId);
-    if (fresh || pass === null || pass.epoch !== epoch) {
+    if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
+      if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
+        log(
+          `[PENDING] Group ${groupId.slice(0, 8)}...: the pass tree was unconfirmed - this row reads it afresh`
+        );
+      }
       // Always confirmed: the one read serves every row, whichever user each names.
       pass = {
         epoch,
         tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
       };
     }
-    const tree = await pass.tree;
+    const current = pass;
+    const tree = await current.tree;
+    if (tree.status === 'unconfirmed') current.unconfirmed = true;
     const rows = await mlsService
       .getPendingInvitations(userId, myDeviceId)
       .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
@@ -693,7 +710,7 @@ export async function processPendingInvitations(params: {
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
       // The server state every Add of this group is judged against, read once per pass.
-      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId, log });
 
       for (const inv of currentPending) {
         const deviceKey = `${inv.userId}:${inv.deviceId}`;
@@ -1278,6 +1295,26 @@ export async function discoverMissingGroups(params: {
           showToast(m.chat_admission_ended_toast(), 'info');
           continue;
         }
+        // A KEY-DISTRIBUTION GROUP IS NO CONVERSATION, AND THIS DEVICE KNOWS IT WITHOUT ASKING. A row
+        // already `removed` skips the status read below (it is never re-queried), so a seed carrier
+        // that had been marked removed - one id was in BOTH this list and the sweep's `key-distribution
+        // group` list in a 1.6.8 log - was kept "awaiting a manual deletion" on every connection, a
+        // sidebar row nobody can have wanted. The device's own registry answers; the row alone goes,
+        // never the MLS state (the sweep owns that and spares it).
+        if (convo.lifecycle === 'removed' && mlsService.isDistributionGroup(convo.id)) {
+          log(
+            `[DISCOVERY] UI group "${convo.name || convo.id}" is a registered Graine distribution group, not a conversation - removing the removed row`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            userId,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
         // other reconcilers). We only query the server for genuinely undecided cases: a conv
         // already `deletedRemotely` short-circuits without a network call.
@@ -1358,7 +1395,11 @@ export async function discoverMissingGroups(params: {
           unansweredStatus.push(label.slice(0, 8));
           continue;
         }
-        log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
+        // ONCE PER CHANGE: a removed row awaiting its manual deletion was said again on every
+        // connection (300 lines in one 1.6.8 log); the first line is the whole information.
+        if (uiKeptLatch.changed(convo.id, fate.reason)) {
+          log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
+        }
         continue;
       }
     }

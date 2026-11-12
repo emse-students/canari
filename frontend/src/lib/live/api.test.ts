@@ -251,6 +251,15 @@ describe('the routes', () => {
   });
 });
 
+describe('the list declares disabled expected', () => {
+  it('a switched-off estate (404) is debug, not warn, and still throws the typed refusal', async () => {
+    apiFetch.mockResolvedValue(json(404, { statusCode: 404, message: 'Not Found' }));
+    const e = await refusal(listOpenLives());
+    expect(e.kind).toBe('disabled');
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('a poster fetch declares not-found expected', () => {
   it('logs a poster 404 at debug, not warn, and still throws the typed refusal', async () => {
     trackedFetch.mockResolvedValue(json(404, { statusCode: 404, message: 'Not Found' }));

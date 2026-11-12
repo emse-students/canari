@@ -38,9 +38,16 @@
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { useScreenOrientation, viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import {
+    captureTurn,
+    deviceTurn,
+    nextGlyphRotation,
+    useCameraHardware,
+    type CameraKeyPhase,
+    type Quadrant,
+  } from '$lib/mobile/cameraHardware.svelte';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
-  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
@@ -104,6 +111,12 @@
      * it apart (`postCameraOpener`), so their refusal is the camera's alone.
      */
     microphoneAsked?: boolean;
+    /**
+     * A hardware volume key went down or up while this camera's live preview is in front - the
+     * shutter's owner treats it as its own press and release (`hardwareShutterEvent`). Native sends
+     * it only while the flag this screen holds is armed (`cameraHardware.svelte.ts`).
+     */
+    onvolumekey?: (phase: CameraKeyPhase) => void;
   }
 
   let {
@@ -118,24 +131,81 @@
     onBeforeRelease,
     onclose,
     microphoneAsked = true,
+    onvolumekey,
     capture = $bindable(),
   }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
 
   /**
-   * THE CAMERA TURNS WITH THE PHONE (owner, 2026-11-09; screen-orientation.md): auto under the
-   * rotation lock while mounted, the rotate button for landscape with the lock on, and portrait again
-   * at unmount. A take FREEZES the orientation it started in: `FramedStream` records through a canvas
-   * of one size, and a turn mid-take would draw a landscape crop into a portrait canvas.
+   * THE CAMERA KEEPS ITS LAYOUT, AS THE SYSTEM CAMERA APPS DO (owner, 2026-11-11, replacing the
+   * turning camera of 2026-11-09; screen-orientation.md): the screen stays portrait while mounted, so
+   * a phone held sideways moves no control - the shutter stays under the thumb - and only the glyphs
+   * turn in place. A take still FREEZES the orientation on screen: on a tablet, whose `portrait` is
+   * free rotation, `FramedStream`'s one canvas size must not turn under it.
    */
-  const orientation = useScreenOrientation('camera');
+  const orientation = useScreenOrientation('camera', 'portrait');
   $effect(() => orientation.hold(recording));
 
   /**
-   * The frame follows the screen: the reel's 9:16 upright, its 16:9 turned. Every capture is the
-   * preview's crop (`previewBox`), so a photo or a take made turned is a 16:9 file, and the review,
-   * the editor and the reel slide take the MEDIA's own ratio (a landscape reel is letterboxed).
+   * THE FLAG NATIVE HOLDS FOR THE CAMERA IN FRONT: the volume keys are the shutter and the
+   * accelerometer says how the phone is held - armed only while the preview is live and IN FRONT:
+   * not held off by a review (`paused`), and not under the gallery picker or anything the owner
+   * opened over it (`deferOpen`; iOS's PHPicker runs in the app's own process, so a key pressed
+   * behind it would shoot). Released by this effect's teardown (an unmount included).
+   */
+  useCameraHardware(
+    'camera',
+    () => session.phase === 'live' && !paused && !deferOpen,
+    (phase) => onvolumekey?.(phase)
+  );
+
+  /** `screen.orientation.angle`: 0 on a phone locked upright; a tablet's layout may still turn. */
+  function readScreenAngle(): number {
+    return typeof screen !== 'undefined' ? (screen.orientation?.angle ?? 0) : 0;
+  }
+
+  /**
+   * The screen's angle, re-read at every `screen.orientation` change: a tablet's 180-degree flip
+   * between its two landscape sides changes the angle and NOT the viewport's orientation, so the
+   * viewport alone would leave the glyphs on the old turn.
+   */
+  let screenAngle = $state(readScreenAngle());
+  $effect(() => {
+    const orientationApi = typeof screen !== 'undefined' ? screen.orientation : undefined;
+    if (!orientationApi || typeof orientationApi.addEventListener !== 'function') return;
+    const onChange = () => {
+      screenAngle = readScreenAngle();
+      console.debug(`[camera] the screen turned to ${screenAngle}`);
+    };
+    orientationApi.addEventListener('change', onChange);
+    return () => orientationApi.removeEventListener('change', onChange);
+  });
+
+  /**
+   * How far a capture is turned to come out upright: the phone's turn as the sensor reads it, less
+   * what the screen turned itself. A photo or take made with the phone sideways is a LANDSCAPE file.
+   */
+  function currentTurn(): Quadrant {
+    return captureTurn(deviceTurn.quadrant, screenAngle);
+  }
+
+  /**
+   * The glyphs' rotation: the capture's turn, undone, taken the short way from the angle drawn now
+   * (`nextGlyphRotation`), so each round control turns a quarter in place, animated
+   * (`.camera-glyph-turn`).
+   */
+  let glyphRotation = $state(0);
+  $effect(() => {
+    const turn = currentTurn();
+    glyphRotation = untrack(() => nextGlyphRotation(glyphRotation, turn));
+  });
+
+  /**
+   * The frame follows the SCREEN: 9:16 upright (every phone, its layout locked), 16:9 on a tablet or
+   * a browser window that is landscape. A phone held sideways keeps the 9:16 preview, and its capture
+   * is turned into a 16:9 file (`PreviewBox.turn`); the review, the editor and the reel slide take
+   * the MEDIA's own ratio, so a landscape reel is letterboxed in the pager.
    */
   const frameRatio = $derived(
     viewportOrientation.landscape ? 1 / REEL_FRAME_RATIO : REEL_FRAME_RATIO
@@ -185,6 +255,7 @@
       dpr: window.devicePixelRatio || 1,
       mirror: shouldMirrorCapture(session.facing),
       zoom: digitalZoom,
+      turn: currentTurn(),
     };
   }
 
@@ -371,6 +442,8 @@
     enabled: session.phase === 'live' && flipAllowed && session.canSwitch,
   }}
   aria-label={m.reels_camera_title()}
+  style:--camera-glyph-rotation="{glyphRotation}deg"
+  data-camera-glyph-rotation={glyphRotation}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
@@ -509,10 +582,6 @@
               <ZapOff size={22} strokeWidth={2.25} />
             {/if}
           </CameraControlButton>
-        {/if}
-        {#if orientation.canRotate}
-          <!-- Stands down during a take: the take holds the orientation it started in. -->
-          <RotateButton onrotate={orientation.rotate} disabled={recording} />
         {/if}
       </div>
     {/if}

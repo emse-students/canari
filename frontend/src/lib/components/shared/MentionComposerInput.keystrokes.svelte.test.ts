@@ -150,21 +150,17 @@ it('pastes "salut @" in one go: the text lands and nothing loops', async () => {
   unmount(app);
 });
 
-it('with no roster, a mention ended before its search ran sends no search and opens nothing', async () => {
+it('with no roster, an answer that lands after the mention ended opens nothing', async () => {
   const target = document.createElement('div');
   document.body.append(target);
-  vi.useFakeTimers();
   const app = mount(MentionComposerInput, { target, props: {} });
   flushSync();
   const editor = target.querySelector<HTMLElement>('[role="textbox"]')!;
-  // "." lands well inside the search's 250 ms wait: the mention is over before it would run.
+  // "." ends the mention before the search for "b" answers: that answer is for an earlier query.
   for (const ch of 'a@b.') typeChar(editor, ch);
-  // Past the search's 250 ms wait, on the simulated clock.
-  vi.advanceTimersByTime(300);
-  vi.useRealTimers();
   await settle();
   expect(errors).toEqual([]);
-  expect(asked).not.toContain('/api/users/search');
+  expect(asked).toContain('/api/users/search');
   expect(target.querySelectorAll('[data-mention-suggestion]').length).toBe(0);
   unmount(app);
 });

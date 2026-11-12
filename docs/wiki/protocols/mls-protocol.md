@@ -640,6 +640,11 @@ ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
   for people nobody added. A tree holding none of the candidates needs no confirmation (the gate
   decides the commit built on it); one that cannot be confirmed aborts `tree-unconfirmed`, never
   `added`. All three bulk Adds go through it: an invitation, a 1:1 creation, a group's own devices.
+  The pending sweep reads a confirmed tree once per pass of a group (`pendingAddFactsOf`), but never
+  keeps an UNCONFIRMED one: the next row of the group reads afresh (2026-11-11,
+  `pendingAddFacts.test.ts`), so one failed confirmation no longer aborts the rest of the sweep.
+  The cost is paid per row, not per pass: while its tree stays unconfirmed, a group's every row pays
+  one `fetchCommitsSince` and a replay, and the sweep's own log says so for each.
 - **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
   durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
   reason - `commit-race-lost`, `add-lock-busy`, `removed-meanwhile`, `tree-unconfirmed` - and every reason is a sentence the member sees
@@ -1534,13 +1539,50 @@ member as `new-person`. The server takes the report from a member of the group o
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
 
+**The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
+stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with
+nothing to remove - the lift by the accepted commit's `admits` is how every Add admits, and stays.
+
+**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
+every existing row to `false`, so a person who accepted a link before the deploy and had not entered
+yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
+`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+own external commit exactly as before the rule, and the members then report it:
+`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
+population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
+read-only on production, once, right after the deploy - each seat with no trace of an admission:
+
+```sql
+SELECT m."groupId", m."userId" FROM dm_group_members m
+WHERE NOT m."awaitingAdmission"
+  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
+                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
+                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
+```
+
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
+and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
+the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
+line after the floor is the rule failing. The list stays in the private operations notes with the
+deploy date; only this query and the rule live here.
+
 ### A device of a member is added, never asked about (2026-10-31)
 
 **The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un
 appareil d'un utilisateur deja present se fait automatiquement. La confirmation est demandee pour
 un utilisateur pas encore present (donc la barriere est une barriere utilisateur, pas
-appareil)."*). It applies the 2026-10-30 decision
-([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
+appareil)."*). It applies the 2026-10-30 decision, taken on *"je ne veux pas importuner les
+utilisateurs du tout"*: a member's new device enters with no tap and no ask, receives the history
+its person was entitled to (rule 2 of [history-answer-addressing](history-answer-addressing.md)),
+and is made VISIBLE instead of gated - a silent "X a ajouté un appareil" line in each of X's
+conversations and the "Nouvel appareil connecté" alert with "Ce n'est pas moi" on X's other devices.
+**Accepted residual risk, stated plainly:** a device added through a compromised login reads new
+messages and history until X reacts. **Rejected the same day:** one approval per device (a tap,
+account-wide, plus a server row when the owner has no other device); self-entry on revoking old
+devices (it reopens the stolen-session lock-in); an account recovery key (it costs users an action).
+New PERSONS are unchanged: a newcomer receives nothing from before their arrival, and a link join
+waits for a member's Add. **iOS has no background add path**, so a group whose members' devices are
+all shut iPhones waits for one of them to open the app.
 
 - **A member's new device is added automatically**, by the same automatic adders a recovering
   device always had: the pending-invitation sweep and the `welcome_request` handler.
@@ -1643,8 +1685,7 @@ for approval in that DM (owner's screenshot, 2026-10-31).
 
 **A device vouched for by a signature of its own user** (cross-signing, or a user signing key) was
 scoped as the interim's real fix and **rejected on 2026-10-30**: it costs users an action, and the
-owner chose visibility over a gate
-([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
+owner chose visibility over a gate ([the decision](#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ## Key packages
 

@@ -649,7 +649,7 @@ is written until the owner answers. Live replays are not part of the question: t
 ## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
 
 Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
-([backlog](backlog.d/institution-post-reach.md)): the public "Personnel" means "only staff (no
+([profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)): the public "Personnel" means "only staff (no
 cursus)". But a staff account has NO SPACE (a campus and an empty cursus), so an institution's
 audience rules - which reach readers through their spaces - never reached one, and the read-grant
 decision (6) of 2026-10-07 says "staff without a cursus see nothing more by default, the named ones

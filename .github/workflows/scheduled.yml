@@ -557,9 +557,11 @@ jobs:
 
       - name: Empty dev and load the fictional seed
         working-directory: ${{ steps.checkout.outputs.path }}
+        env:
+          RESET_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$RESET_DRY_RUN" = "true" ]; then
             bash infrastructure/dev/reset-dev-to-seed.sh --dry-run
           else
             bash infrastructure/dev/reset-dev-to-seed.sh

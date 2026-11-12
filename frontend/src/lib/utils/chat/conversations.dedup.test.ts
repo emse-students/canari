@@ -40,9 +40,9 @@ function makeMlsService(getGroupMetaImpl: (id: string) => unknown): IMlsService 
 }
 
 describe('mergeDirectConversationDuplicates', () => {
-  it('traite deux groupes du meme pair comme doublons independants (successeurs retires) - garde le plus recent', async () => {
-    // Successors are retired: even a former predecessor/successor pair is now merged as two
-    // independent duplicates, keeping the most recent and removing the older one everywhere.
+  it('decides nothing when the most recent group is not the lowest id', async () => {
+    // SUCC is the more recent, PRED the lower id. Folding into SUCC would delete PRED on the server,
+    // and a peer whose recency keeps PRED deletes SUCC: both gone. So both rows and groups stay.
     const storage = makeStorage();
     const mls = makeMlsService(() => null);
 
@@ -55,24 +55,21 @@ describe('mergeDirectConversationDuplicates', () => {
       mls
     );
 
-    // The most recent (SUCC) is kept, the older (PRED) is removed locally and on the server.
-    expect(result.map((c) => c.id)).toContain(SUCC_ID);
-    expect(result.map((c) => c.id)).not.toContain(PRED_ID);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(PRED_ID);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(PRED_ID);
+    expect(result.map((c) => c.id).sort()).toEqual([PRED_ID, SUCC_ID].sort());
+    expect(storage.deleteConversation).not.toHaveBeenCalled();
+    expect(mls.deleteGroupOnServer).not.toHaveBeenCalled();
   });
 
-  it('actually calls deleteGroupOnServer for a true duplicate with no succession relationship', async () => {
+  it('folds into the lowest id when it is also the most recent, and deletes the other on the server', async () => {
     // Two independent groups for the same peer (two devices opened the conv at the same time).
     const storage = makeStorage();
     const mls = makeMlsService(() => null); // aucune relation successeur
 
-    const older = makeMeta(IND_A, 500);
-    const newer = makeMeta(IND_B, 1000);
+    const lowerAndNewer = makeMeta(IND_A, 1000);
+    const higherAndOlder = makeMeta(IND_B, 500);
 
     const result = await mergeDirectConversationDuplicates(
-      [older, newer],
+      [higherAndOlder, lowerAndNewer],
       ME,
       'pin',
       storage,
@@ -80,13 +77,12 @@ describe('mergeDirectConversationDuplicates', () => {
       mls
     );
 
-    // The most recent is kept
-    expect(result.map((c) => c.id)).toContain(IND_B);
-    expect(result.map((c) => c.id)).not.toContain(IND_A);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(IND_A);
+    expect(result.map((c) => c.id)).toContain(IND_A);
+    expect(result.map((c) => c.id)).not.toContain(IND_B);
+    expect(storage.deleteConversation).toHaveBeenCalledWith(IND_B);
     // deleteGroupOnServer MUST be called to prevent resurrection via discoverMissingGroups
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(IND_A);
+    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(IND_B);
   });
 });
 
@@ -100,7 +96,7 @@ describe('mergeDirectConversationDuplicates', () => {
  * the fresh conversation's messages and deletes the fresh group for BOTH parties.
  *
  * Both orderings are pinned, because `updatedAt` is what decided the outcome and either device may
- * hold either order.
+ * hold either order. Recency still picks the group kept; a fold happens only into the lowest id.
  */
 describe('mergeDirectConversationDuplicates - a record pending deletion', () => {
   const TOMB_ID = 'tomb0000-0000-0000-0000-000000000000';
@@ -161,7 +157,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
     const mls = makeMlsService(() => null);
 
     const result = await mergeDirectConversationDuplicates(
-      [makeMeta(IND_A, 900), makeMeta(IND_B, 1000)],
+      [makeMeta(IND_A, 1000), makeMeta(IND_B, 900)],
       ME,
       'pin',
       storage,
@@ -169,7 +165,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
       mls
     );
 
-    expect(result.map((c) => c.id)).toEqual([IND_B]);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(IND_A);
+    expect(result.map((c) => c.id)).toEqual([IND_A]);
+    expect(storage.deleteConversation).toHaveBeenCalledWith(IND_B);
   });
 });

@@ -14,7 +14,7 @@ vi.mock('$lib/posts/api', async (orig) => ({
 
 const { REEL_PAGE, NO_FURTHER_REELS, listAllReels, allReelsLoader } = await import('./allReels');
 
-const BASE = { kind: 'reel', multiMedia: true, withLinks: true, feed: 'reels', ranked: true };
+const BASE = { kind: 'reel', multiMedia: true, feed: 'reels', ranked: true };
 const row = (id: string, feedPosition?: number) =>
   ({ id, ...(feedPosition === undefined ? {} : { feedAsOf: 'T', feedPosition }) }) as PostEntity;
 

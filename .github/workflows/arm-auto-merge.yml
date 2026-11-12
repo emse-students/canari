@@ -131,6 +131,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
+          IS_DEPENDABOT: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
           # canari-only:begin
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -225,9 +226,10 @@ jobs:
           # canari-only:end
 
           # Dependabot is never a collaborator and never will be - it is the whole population this
-          # escape hatch exists for, same as before. Kept as a GitHub expression (not `$AUTHOR` in
-          # shell) so the exact literal survives for anything that greps this file for it.
-          if [ "${{ github.event.pull_request.user.login == 'dependabot[bot]' }}" = 'true' ]; then
+          # escape hatch exists for, same as before. Decided by a GitHub expression in `env:`
+          # (not `$AUTHOR` compared in shell) so the exact literal survives for anything that
+          # greps this file for it.
+          if [ "$IS_DEPENDABOT" = 'true' ]; then
             echo "armable=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

@@ -6,6 +6,7 @@
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
@@ -158,7 +159,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
-import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
+import { keptVerdictLatch, type AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   beginStartupCatchupBench,
   beginStartupCatchupPhase,
@@ -209,6 +210,7 @@ import {
   handleHistoryRequest,
   processPendingInvitations,
   raiseAnnouncedJoinAsk,
+  uiKeptLatch,
 } from '$lib/utils/chat/actions';
 import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
 import {
@@ -818,6 +820,7 @@ async function eraseAccountRecordsLocally(
   localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
   forgetConversationNicknames(userIdToReset);
+  forgetConversationPins(userIdToReset);
 
   const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];
@@ -3708,6 +3711,10 @@ export function tearDownLiveSession(
   cb.conversations.clear();
   cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
+  // The `kept` verdicts already said belong to the account that leaves: two accounts on one install
+  // share their 1:1 group, and the next one's first sweep would otherwise say nothing about it.
+  keptVerdictLatch.reset();
+  uiKeptLatch.reset();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.

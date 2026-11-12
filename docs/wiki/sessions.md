@@ -874,11 +874,10 @@ and clears the restore key on `SessionExpiredError`) through the unguarded deliv
 `syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
 
 **The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
-every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
-handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
-handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
-would still answer it `duplicate`). Both server-side corrections are a P3 in
-[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+every 401 comes from the guard, before any handler. Social-service's handler-level 401s are
+authentication only (its authorization refusals are 403s); a handler-level 401 added under `/api/mls`
+would turn a commit's resend into a second submission (the gate would still answer it `duplicate`).
+What each server answers a 401 for is below.
 
 `MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
 the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
@@ -895,3 +894,15 @@ The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended a
 its old epoch (TOK-1; what the commit gate makes of each outcome is in
 [mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
 `mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
+
+**What answers a 401 on the servers (2026-11-11, review of #2420).** An unset secret is the
+service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401, and the
+three header guards ask it FIRST, so a request with no header gets the same 500 - in
+chat-delivery's `HeaderAuthGuard` (`header-auth.guard.spec.ts`), the `NginxAuthGuard` of core- and
+social-service (`nginx-auth.guard.spec.ts`, 2026-11-12) and media-service's bearer check on an unset
+`JWT_SECRET` (`media.controller.verify-token.spec.ts`). An internal token that does not
+verify stays a 401 on purpose: the guard cannot tell an nginx fault from a caller that reached the
+container with forged headers, and the forged call is the one the 401 must answer. Social-service's
+two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user
+on a manage action); its authorization refusals are 403s (`refuseModeration`).
+

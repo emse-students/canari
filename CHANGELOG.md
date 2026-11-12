@@ -393,7 +393,7 @@ On a phone the last action (delete) wrapped alone onto a second row; the actions
 
 ### Fixed - a member added to a group receives the nicknames set before them, whichever path delivered their Welcome
 
-"Ajouter" and the owed-Welcome drain delivered Welcomes and sent no join push, the one bundle a nickname register is taken from; the push now follows every delivered Welcome, once, addressed and carrying none of the past - to a device connected at that moment only: a newcomer offline at the delivery still gets nothing, and that is [its own entry](docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md) ([defect](docs/wiki/backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md), [chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
+"Ajouter" and the owed-Welcome drain delivered Welcomes and sent no join push, the one bundle a nickname register is taken from; the push now follows every delivered Welcome, once, addressed and carrying none of the past - to a device connected at that moment only: a newcomer offline at the delivery still gets nothing, and that is [its own entry](docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md) ([defect](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), [chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
 
 ### Fixed - messages received as notifications now show at the first open of the conversation
 
@@ -1448,7 +1448,7 @@ Associations and lists get a governing parent BDE (the owner's validated list, a
 
 ### Changed - the register and the privacy policy re-read against follow requests and member reposts (WP-F7)
 
-Register C5 and the `/legal/privacy` paragraphs were checked against the code, after member reposts reached production (`v1.6.1`, #2859) and were hardened (#2917, #2920, which already amended both in step), and found exact; the backlog, the D37-D41 table and the queue now say so ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+Register C5 and the `/legal/privacy` paragraphs were checked against the code, after member reposts reached production (`v1.6.1`, #2859) and were hardened (#2917, #2920, which already amended both in step), and found exact; the backlog, the D37-D41 table and the queue now say so ([profiles-and-access](docs/wiki/profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)).
 
 ### Changed - a pin is a promotion per space (WP-PIN)
 
@@ -2761,7 +2761,7 @@ Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stabl
 
 ### Documented - the user's decisions on the open pull requests of 2026-10-23
 
-Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---the-night-of-the-open-pull-requests).
+Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Fixed - a declined joiner no longer gets the conversation back as a removed one
 
@@ -3510,7 +3510,7 @@ WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
 
 ### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
 
-A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md).
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22).
 
 ### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
 
@@ -3594,7 +3594,7 @@ The two encryption systems side by side, with the 2026-08-17 sizing premises re-
 
 ### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
 
-Recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-22-what-outlives-the-48-hour-autonomy-w.md).
+Recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Changed - the double tap that likes now logs what reached the card
 

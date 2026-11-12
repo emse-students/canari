@@ -110,7 +110,8 @@ describe('mergeDirectConversationDuplicates - what waits for the moved rows', ()
       ME,
       'k',
       store as unknown as IStorage,
-      () => {}
+      () => {},
+      { deleteGroupOnServer: async () => {} }
     );
 
     expect(kept.map((c) => c.id)).toEqual([JOINED]);

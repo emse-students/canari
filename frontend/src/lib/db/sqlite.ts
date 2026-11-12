@@ -1,7 +1,7 @@
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { deviceWindowMs, parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
@@ -1541,8 +1541,9 @@ export class SqliteStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
-  /** Delete messages older than `maxAgeMs` milliseconds using a single DELETE statement; returns the number of affected rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+  /** Delete messages older than `maxAgeMs` milliseconds (this device's window, `deviceWindowMs()`, unless a caller names another) using a single DELETE statement; returns the number of affected rows. */
+  async deleteOldMessages(maxAgeMs: number = deviceWindowMs()): Promise<number> {
+    appendLog(`[GC] deleteOldMessages maxAgeMs=${maxAgeMs}`);
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
     const cutoff = Date.now() - maxAgeMs;
