@@ -420,6 +420,40 @@ describe('a history read names who asked', () => {
         expect(internals.deviceGroupRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
         // The orphan purge's read, and the arrival facts' one - never one per group.
         expect(internals.groupRepo.find).toHaveBeenCalledTimes(2);
+        const groupRead = internals.groupRepo.find.mock.calls[1][0] as {
+          where: { id: { value: string[] } };
+        };
+        expect(groupRead.where.id.value).toEqual([GROUP, G2]);
+        // The stub answers whatever the chain says, so the chain itself is the assertion: THIS
+        // reader's devices only (another member's older device is not their arrival), the EARLIEST
+        // row, one per group, over exactly the groups asked.
+        const step = (method: string) => qb.calls.filter((c) => c.method === method);
+        expect(step('addSelect')).toEqual([
+          { method: 'addSelect', args: ['MIN(d.createdAt)', 'firstDeviceAt'] },
+        ]);
+        expect(step('where')).toEqual([
+          { method: 'where', args: ['d.groupId IN (:...groupIds)', { groupIds: [GROUP, G2] }] },
+        ]);
+        expect(step('andWhere')).toEqual([
+          { method: 'andWhere', args: ['d.userId = :userId', { userId: USER }] },
+        ]);
+        expect(step('groupBy')).toEqual([{ method: 'groupBy', args: ['d.groupId'] }]);
+      });
+
+      it('an unreadable group read answers every group of the batch empty, never unfiltered', async () => {
+        const internals = service as unknown as { groupRepo: { find: jest.Mock } };
+        // The orphan purge's read succeeds; the arrival facts' group read fails.
+        internals.groupRepo.find = jest
+          .fn()
+          .mockResolvedValueOnce([{ id: GROUP }])
+          .mockRejectedValueOnce(new Error('connection reset'));
+
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }], USER);
+
+        expect(internals.groupRepo.find).toHaveBeenCalledTimes(2);
+        expect(batch.histories[GROUP]).toEqual([]);
+        expect(redis.xrange).not.toHaveBeenCalled();
+        expect(lines()).toContain('arrival facts unreadable - every group answered empty');
       });
 
       it('unreadable arrival facts answer every group of the batch empty, never unfiltered', async () => {
