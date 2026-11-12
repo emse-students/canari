@@ -510,6 +510,10 @@ landscape sheet, rasterised and re-drawn as vector text by `$lib/pdf/searchableR
 preview is rendered **in-document** (not an iframe) so it uses the app's real fonts and matches the
 export pixel-for-pixel.
 
+Each slider of the settings panel is inside the `<label>` that holds its caption, so the caption
+(which carries the value) is its name. `utils/rangeInputNames.guard.test.ts` reads every component
+for a `<input type="range">` with no name - a label around it, an `aria-label`, or a `<label for>`.
+
 ### THE SHEET IS A REPRODUCTION, AND THE THING IT REPRODUCES IS A CANVA
 
 The BDE did not use this export: they rebuilt the month by hand in Canva every month, and the goal

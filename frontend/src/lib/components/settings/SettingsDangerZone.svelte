@@ -96,6 +96,7 @@
           <input
             type="text"
             bind:value={deletionConfirmText}
+            aria-label={m.profile_delete_type_prompt({ word: DELETION_CONFIRM_WORD })}
             placeholder={DELETION_CONFIRM_WORD}
             disabled={deleting}
             class="w-full max-w-xs rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-2.5 font-mono text-sm font-bold text-red-400 placeholder-red-500/30 transition-all outline-none focus:border-red-500/60 focus:ring-2 focus:ring-red-500/20 disabled:opacity-50"
