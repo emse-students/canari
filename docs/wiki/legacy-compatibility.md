@@ -965,19 +965,6 @@ and, on the receiving side, on that receiver's own windows. It is a FALLBACK and
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
 
-### Floor met 2026-10-31 - history answers and asks from clients older than step A
-
-**The condition is MET:** step A (#2270) is first in the stable `v1.5.0` (`v1.4.1` was never cut as
-a stable), and production's `minClientVersion` reads `1.5.1` (`GET /api/version`, 2026-10-31). No
-client below step A can unlock MLS, so none asks without a `requestId` or answers a newcomer by
-broadcast any more.
-**What can go, and what cannot:** the no-id refusal line (a new answerer sends nothing addressed to
-an ask with no id, `sendBundleChunks`) is now dead and goes in its own client pull request. The
-broadcast branch of the `history_bundle` receiver STAYS: it is not only a shim - a current build still
-broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)` in
-`groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the same
-`dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
-
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 
 **Sites:** `open_file` and `open_line` in `frontend/src-tauri/src/native_cache.rs` (the `Plaintext`

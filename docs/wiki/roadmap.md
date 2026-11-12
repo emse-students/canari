@@ -118,6 +118,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-11 | Backlog triage, batch 4 (2026-10-15 to 2026-10-17, the two GDPR entries left to the owner): B112 (shipped and proven, 0 warnings on `v1.2.9-alpha.7`), B201, B209, B210, B211, B214, B218 and B220 removed - moved to the verification table (B368-B373), the dropped-tail proofs to history-reconciliation; D028 removed as stale (production calls are open, its blocker list lives in calls.md, its block question moved to the group-calls entry); one fragment added (D263); B095 re-read. |
 | 2026-11-12 | Backlog triage, batch 15 (the rest of 2026-10-27 and 2026-10-28): "they can still read it" CLOSED (built since, `reportRefusedRemoval` reads the tree after the refusal, tested); the iOS waiting share and the issuer-less tier tags moved to the verification table (B392, B393; the latter with a read-only SQL count); agent briefs written for WP-CHECKPOINT-CAS, the two-device key-group join, the native error codes step 2 and the failing-rotation loop; a count-then-contract plan for the id validators. |
 | 2026-11-12 | Backlog triage, batch 16 (the entries of 2026-10-28 and 2026-10-29): CLOSED with evidence - the reel camera re-opening (D050, #2647 shipped in `v1.5.1`, read PASS), its three loose ends (D075, built by #2655 and the `leaving` guards), the tests timing out under load (D071, superseded by the test-suite reform section 8: per-file timeouts refused, the causes fixed), the two call log lines (D077, both fixed in `CallService.ts`), the `[TRUST]` ERROR on a key-group join (B032, now `info` on the open door); moved to the verification table - LIVE-STALL-1 (B031 -> B394, decided and built) and the refused external join with the redelivered Welcome (B033 + D036 -> B395); the new-device alert cut to its one live item with a plan (D065); a brief for the SSR boot gate (D069). |
+| 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
 
 ## Annex A - every row of the backlog
 
@@ -452,7 +453,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-253 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+252 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -656,7 +657,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D208 | `docs/wiki/legacy-compatibility.md` | OIDC callback with no PKCE verifier (warn instead of refuse) | none | auth-sessions | shim-with-removal-date | 2026-10-23 | a version floor (met) plus a week of silence on the warning |
 | D209 | `docs/wiki/legacy-compatibility.md` | Exclusions route answered without withheld, by a server older than 2026-10-22 | none | mls-messaging | shim-with-removal-date | 2026-10-22 | no date (deploy-order window) |
 | D210 | `docs/wiki/legacy-compatibility.md` | Exclusions route answered without addressedAnswers (server older than step A) | none | mls-messaging | shim-with-removal-date | 2026-10-22 | no date (deploy-order window) |
-| D211 | `docs/wiki/legacy-compatibility.md` | History answers and asks from clients older than step A: floor met | none | mls-messaging | shim-with-removal-date | 2026-10-31; v1.5.0; 1.5.1 | none (condition met) |
 | D212 | `docs/wiki/legacy-compatibility.md` | Plaintext native cache written by a build older than the at-rest seal | none | android | shim-with-removal-date | 2026-10-22 | a version floor (#2271, v1.5.0) |
 | D213 | `docs/wiki/legacy-compatibility.md` | Push registration saying wake: true instead of wakeVersion | none | push-notifications | shim-with-removal-date | 2026-11-07 | named PR (WP-W3c) |
 | D214 | `docs/wiki/legacy-compatibility.md` | Device-notice marker named by the key in hex (build before 1.6.1) | none | android | shim-with-removal-date | 2026-11-01; 1.6.1 | data at rest (every build has migrated its markers) |
