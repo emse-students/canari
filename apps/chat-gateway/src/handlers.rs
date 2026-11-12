@@ -314,28 +314,19 @@ struct Admitted {
     rx: mpsc::Receiver<String>,
 }
 
-/// The subject a full PROCESS is counted under: one line for it, not one per account it refused.
-const PROCESS_REFUSAL_SUBJECT: &str = "process";
-
 /// Answer a request `AppState::admit` refused: 503, before any upgrade.
 ///
-/// Logged once per subject, then at each power of ten: a client that keeps asking is a RATE, and
-/// the count is what says so. The subject is the ACCOUNT for an account at its limit, and the
-/// process itself when the process is full.
+/// Logged once per subject and episode, then at each power of ten (`AppState::note_refusal`): a
+/// client that keeps asking is a RATE, and the count is what says so.
 fn refuse_admission(state: &AppState, user_id: &str, refusal: &AdmissionRefusal) -> Response {
-    let subject = match refusal {
-        AdmissionRefusal::Account { .. } => user_id,
-        AdmissionRefusal::Process { .. } => PROCESS_REFUSAL_SUBJECT,
-    };
-    if let Some(n) = state.refused_admissions.hit(subject) {
+    if let Some(n) = state.note_refusal(user_id, refusal) {
         tracing::warn!(
-            "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} for {}",
+            "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} of this episode",
             user_id,
             refusal,
             state.max_connections_per_account,
             state.max_connections,
-            n,
-            subject
+            n
         );
     }
     (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response()
@@ -928,7 +919,7 @@ mod tests {
 
     // ── Admission, as a client sees it ────────────────────────────────────
 
-    use super::{Admitted, ConnectionGuard, PROCESS_REFUSAL_SUBJECT, refuse_admission, ws_handler};
+    use super::{Admitted, ConnectionGuard, refuse_admission, ws_handler};
     use crate::audience::PresenceAudience;
     use crate::state::{AdmissionRefusal, AppState};
     use axum::{Router, http::StatusCode, routing::get};
@@ -1046,23 +1037,68 @@ mod tests {
         assert!(!state.session_caps.lock().unwrap().contains_key(&7));
     }
 
-    /// A full process says so ONCE, whatever the number of accounts it turns away; an account at
-    /// its own limit is counted under its own name.
     #[test]
-    fn a_full_process_is_one_subject_and_an_account_is_its_own() {
+    fn a_refusal_is_a_503() {
         let state = state();
-        let full = AdmissionRefusal::Process { held: 1_000 };
 
-        let first = refuse_admission(&state, "user-a", &full);
-        refuse_admission(&state, "user-b", &full);
+        let answer = refuse_admission(&state, "user-a", &AdmissionRefusal::Process { held: 1_000 });
 
-        assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
-        // Two refusals already counted under the process: the third prints nothing.
-        assert_eq!(state.refused_admissions.hit(PROCESS_REFUSAL_SUBJECT), None);
-        // Neither account was counted.
-        assert_eq!(state.refused_admissions.hit("user-b"), Some(1));
+        assert_eq!(answer.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
 
-        refuse_admission(&state, "user-c", &AdmissionRefusal::Account { held: 32 });
-        assert_eq!(state.refused_admissions.hit("user-c"), None);
+    /// A raw client that hangs up the moment the server starts answering, without ever speaking
+    /// the protocol: the place taken before the answer comes back. (A client that hangs up BEFORE
+    /// the server reads its request never reaches the handler, so it takes no place at all; the
+    /// upgrade that fails after admission is covered by `a_place_whose_upgrade_never_ran_is_given_back`.)
+    #[tokio::test]
+    async fn a_client_that_hangs_up_as_the_answer_starts_leaves_no_place_taken() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let url = url("user-1", "device-1");
+        let rest = url.strip_prefix("ws://").unwrap();
+        let (host, path) = rest.split_once('/').unwrap();
+
+        let mut link = tokio::net::TcpStream::connect(host).await.unwrap();
+        link.write_all(
+            format!(
+                "GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut first = [0u8; 1];
+        link.read_exact(&mut first).await.unwrap();
+        drop(link);
+
+        // Bounded by a count of turns, so a place that never comes back FAILS instead of hanging.
+        let mut emptied = false;
+        for _ in 0..500 {
+            if state.connected_users.lock().unwrap().is_empty()
+                && state
+                    .next_conn_id
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    == 1
+            {
+                emptied = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            emptied,
+            "the place taken for the upgrade was never given back (ids handed out: {}, keys held: {:?})",
+            state
+                .next_conn_id
+                .load(std::sync::atomic::Ordering::Relaxed),
+            state
+                .connected_users
+                .lock()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>()
+        );
     }
 }

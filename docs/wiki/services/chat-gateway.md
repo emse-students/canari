@@ -85,9 +85,14 @@ A socket's place is counted and registered in ONE step, `AppState::admit`, under
 connection map - so two requests arriving together are judged one after the other and neither limit
 can be passed. Two limits, per process:
 
-- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT` = `2 * MAX_DEVICES_PER_ACCOUNT + 2`): the 15
-  devices an account may enrol (chat-delivery's `MAX_DEVICES_PER_USER`, the source), each with a
-  socket and the one that socket is replacing, plus two for a second tab;
+- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT`), all its devices together. It is the ONLY
+  bound on an account: a socket's `device_id` is chosen by its client, so a limit per device would
+  bound nothing. Only the leader tab of a browser connects, so a device is one socket - plus those
+  it has not released: on a flapping link a device can hold three or four that the heartbeat has
+  not declared dead yet (about a minute each). The busiest account measured (2026-09-12) had 6
+  live devices, so 6 x 4 = 24 fits; and 32 covers the 15 devices an account may enrol
+  (chat-delivery's `MAX_DEVICES_PER_USER`; a gateway test reads both numbers) with one socket and
+  its replacement each;
 - **1000 in all** (`MAX_CONNECTIONS`).
 
 **The place is taken BEFORE the upgrade, and a refusal is a `503`.** A client resets its
@@ -102,11 +107,24 @@ unrun, and the place with it. A frame published between admission and upgrade wa
 connection's channel. The duplicate-connection rule is unchanged - a new socket of a device is
 added beside its siblings, never replaces them.
 
+**What the count is made of.** `admit` counts the connection map, so the map must hold every live
+socket and nothing else. A socket leaves it through its guard, by its own id. The pub/sub loop
+also prunes (`prune_closed_senders`), and ONLY a sender whose socket is gone: a channel that is
+merely FULL belongs to a live socket that is slow to read, which still holds its place - removing
+it would let its account pass the limit while the socket lives.
+
 The refusal is logged at WARN through `RepeatCounter`: the first one says the sentence, then the
-10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... - refusal #N for
-<subject>`). The subject is the ACCOUNT when an account is at its limit, and `process` when the
+10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... - refusal #N of this
+episode`). The subject is the ACCOUNT when an account is at its limit, and `process` when the
 process is full - one line for a full process, not one per account it turned away. A line at #100
-is a client that keeps asking.
+is a client that keeps asking. **An episode ends on a fact, not a delay**: a subject admitted WITH
+ROOM TO SPARE is forgotten, so its next refusal is said as #1 again. "With room to spare" because
+a subject sitting at its limit is admitted each time one of its sockets leaves and refused again
+at once - one episode, not many.
+
+On the client a refused attempt is `[WS] Gateway connection failed` at ERROR, once per rung of the
+reconnection ladder: a browser hides why a WebSocket failed, so the refusal cannot be named there,
+and the line is true - a gateway that answered no.
 
 **Owed reading: the 1000 against a measured peak.** The limit was chosen, not measured. What the
 repository records today suggests roughly 250-350 live sockets at most, so 1000 leaves a wide
