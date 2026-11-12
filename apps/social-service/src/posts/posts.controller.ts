@@ -23,6 +23,7 @@ import { reelLimits } from './reel.constants';
 import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
+import { postPageLimit } from './post-page';
 import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { AssociationsService } from '../associations/associations.service';
 import { withOneEventIcsSig } from '../associations/agenda-signature';
@@ -31,6 +32,7 @@ import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
   CreatePostDto,
   ListPostsQueryDto,
+  SearchPostsQueryDto,
   VotePollDto,
   AddCommentDto,
   ListCommentsQueryDto,
@@ -153,15 +155,14 @@ export class PostsController {
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get('search')
   searchPosts(
-    @Query('q') q: string,
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
+    @Query() query: SearchPostsQueryDto,
     @Headers('x-user-id') xUserId?: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
     // The viewer is carried here for the same reason `listPosts` carries it: every row is stamped
     // with `canManage`, and a search result renders the same card as a feed row.
-    return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0), {
+    const limit = postPageLimit(query.limit, 20);
+    return this.service.searchPosts(query.q ?? '', limit, query.offset ?? 0, {
       viewerUserId: xUserId,
       isAdmin: xGlobalAdmin === 'true',
     });
@@ -221,7 +222,7 @@ export class PostsController {
       throw new UnauthorizedException(`Authentication required for ${feed} feed`);
     }
     return this.service.listPosts({
-      limit: query.limit ?? 30,
+      limit: postPageLimit(query.limit, 30),
       offset: query.offset ?? 0,
       feed,
       viewerUserId: xUserId,

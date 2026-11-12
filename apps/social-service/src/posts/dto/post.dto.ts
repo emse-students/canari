@@ -405,19 +405,33 @@ export class CreatePostDto {
   scheduledAt?: string;
 }
 
-export class ListPostsQueryDto {
+/**
+ * The page a list of posts is read by: `?limit=` and `?offset=`, whole numbers or a 400. The
+ * size asked is held to `POST_PAGE_MAX` by the controller (`postPageLimit`), never refused
+ * for being large - an installed client that asks for more receives the largest page.
+ */
+export class PostPageQueryDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(1)
   limit?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(0)
   offset?: number;
+}
 
+/** `GET /posts/search`: the words, and the page. */
+export class SearchPostsQueryDto extends PostPageQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+}
+
+export class ListPostsQueryDto extends PostPageQueryDto {
   /** Default `all` when omitted; `reels` is the CanaReels viewer's list, not a tab (`list-feed.ts`). */
   @IsOptional()
   @IsIn([...LIST_POST_FEEDS])
