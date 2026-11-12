@@ -3308,11 +3308,13 @@ playing. What changed:
 own ring ([the incoming ring](#the-incoming-ring-canaris-own-owner-2026-11-01)), and the caller's
 ringback before it ([the caller's ringback](#the-callers-ringback-2026-10-31)).
 
-**What a gate holds, and what nothing does.** NO CI gate compiles `CallForegroundService.kt`,
-`CallBridge.kt` or `CanariFirebaseMessagingService.kt`: `android-tests` compiles only the pure
-packages (`call/`, `push/`, `gesture/`, `share/`), which is where `OngoingCallTest` holds
-`pickCallOutput`, `holdsProximityScreenOff` and the spec. The whole app's Kotlin was compiled by
-hand on 2026-10-30 (`:app:compileArm64DebugKotlin`, BUILD SUCCESSFUL); the Objective-C of
+**What a gate holds, and what nothing does.** `CallForegroundService.kt`, `CallBridge.kt` and
+`CanariFirebaseMessagingService.kt` are COMPILED by CI's `compile-android-app` job
+(`:app:compileArm64DebugKotlin`, since 2026-10-30, [cicd](../../cicd.md)) and tested by nothing:
+`android-tests` runs only the pure packages (`call/`, `push/`, `gesture/`, `share/`), which is
+where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec, and
+`CallFocusHoldTest` the focus hold. The compile was also run by hand for the focus hold
+(2026-11-12, BUILD SUCCESSFUL); the Objective-C of
 `canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;
 a video call on the loudspeaker; (B) a wired, then a Bluetooth headset connected BEFORE the call:
