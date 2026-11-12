@@ -308,6 +308,7 @@
           src={lightboxUrl}
           variant="conversation"
           soundScope="local"
+          loudness={current.media.loudness}
           class="h-full w-full"
         />
       {:else}

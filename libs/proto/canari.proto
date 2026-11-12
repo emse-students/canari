@@ -387,6 +387,18 @@ message MediaMsg {
   // sides. Absent (and on every message written before it) is a plain attachment; a reader that does
   // not know the field shows the file without the quote - softer than the promise, never broken.
   ReplyRef reply_to = 17;
+  // A video's sound as the AUTHOR'S DEVICE measured it while preparing it (ITU-R BS.1770 / EBU
+  // R128, frontend/src/lib/video/loudnessMeter.ts): a reader's player brings it toward one loudness
+  // (docs/wiki/frontend/modules/video-player.md#loudness). The server holds ciphertext and could
+  // measure nothing; the file is never altered. Absent on every message written before it and on a
+  // silent video: played as it is. A reader that does not know the field plays the video as it is.
+  MediaLoudness loudness = 18;
+}
+
+// What a video's sound measured, at send (see `MediaMsg.loudness`).
+message MediaLoudness {
+  float integrated_lufs  = 1; // gated integrated loudness, LUFS
+  float sample_peak_dbfs = 2; // largest absolute decoded sample, dBFS
 }
 
 enum MediaIntent {

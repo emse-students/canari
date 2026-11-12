@@ -11,6 +11,8 @@
    The Android twin is app/src/main/res/values/strings.xml. */
 "notif.reaction.body" = "a réagi %@ à votre message";
 "notif.message.from" = "Nouveau message de %@";
+"notif.message.new" = "Nouveau message";
+"notif.group.unnamed" = "Conversation de groupe";
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";

@@ -17,6 +17,7 @@
   import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
   import VideoPlayGlyph from '$lib/components/ui/player/VideoPlayGlyph.svelte';
   import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import VideoExpandButton from '$lib/components/ui/player/VideoExpandButton.svelte';
   import VideoFeedbackGlyph, {
@@ -31,6 +32,8 @@
   } from '$lib/actions/playWhileVisible';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { feedAutoplayPermitted } from '$lib/video/autoplayPolicy';
+  import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
   import BlurredBackdrop from './BlurredBackdrop.svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -214,6 +217,12 @@
      * next reel preloads.
      */
     onPlaybackBlocked?: (cause: AutoplayBlockCause | 'unplayable') => void;
+    /**
+     * The video's sound as its author's device measured it (`MediaRef.loudness`): the player brings
+     * it toward one loudness through Web Audio (`loudnessPlayback.ts`, owner 2026-11-11). Absent (a
+     * video sent before, a live replay) it plays exactly as it always did.
+     */
+    loudness?: MediaLoudness | null;
   }
 
   let {
@@ -237,6 +246,7 @@
     onVideo,
     backdrop = false,
     positionKey,
+    loudness = null,
   }: Props = $props();
 
   /** The key positions travel under (`positionKey`, else the URL). */
@@ -293,6 +303,32 @@
   $effect(() => {
     if (!video || !onVideo) return;
     return onVideo(video) ?? undefined;
+  });
+
+  // ONE LOUDNESS FOR EVERY VIDEO (owner, 2026-11-11): the wiring lives as long as the ELEMENT (an
+  // element takes one source node in its life), and the measurement is applied to it - keyed on its
+  // two NUMBERS, so a parent handing a new object with the same values changes nothing.
+  let loudnessHandle: LoudnessHandle | null = null;
+  $effect(() => {
+    if (!video) return;
+    const handle = loudnessAudio.attach(video, { streamed: untrack(() => streamed) });
+    loudnessHandle = handle;
+    return () => {
+      handle.destroy();
+      if (loudnessHandle === handle) loudnessHandle = null;
+    };
+  });
+  const loudnessLufs = $derived(loudness?.integratedLufs);
+  const loudnessPeak = $derived(loudness?.samplePeakDbfs);
+  $effect(() => {
+    const integratedLufs = loudnessLufs;
+    const samplePeakDbfs = loudnessPeak;
+    if (!video) return;
+    untrack(() => loudnessHandle)?.setLoudness(
+      integratedLufs === undefined || samplePeakDbfs === undefined
+        ? null
+        : { integratedLufs, samplePeakDbfs }
+    );
   });
 
   /**
@@ -451,6 +487,29 @@
     }
   });
 
+  // THE APP'S ONE VOLUME LEVEL (owner, 2026-11-11), on every video that follows the app or a chat's
+  // own mute: a newly bound element starts at the stored level, the slider moves them all at once.
+  $effect(() => {
+    const level = videoSound.level;
+    if (scope !== 'silent' && video) applyVideoLevel(video, level);
+  });
+
+  /**
+   * The volume slider's answer. `app`: the app's one volume (0 is mute, a drag up unmutes, for every
+   * video at once); `local` (a chat's video): the shared level, with the mute of this element only.
+   */
+  function changeLevel(next: number) {
+    if (!video || scope === 'silent') return;
+    showControls();
+    if (scope === 'app') {
+      videoSound.setVolume(next);
+    } else {
+      videoSound.setLevel(next);
+    }
+    video.muted = scope === 'app' ? videoSound.muted : next <= 0;
+    muted = video.muted;
+  }
+
   function showControls() {
     controlsVisible = true;
     poke += 1;
@@ -561,6 +620,8 @@
     showControls();
     if (scope === 'silent') return;
     video.muted = !video.muted;
+    // The unmute is the reader's GESTURE: a measured video's AudioContext is resumed inside it.
+    if (!video.muted) loudnessHandle?.prime();
     // Drawn from the element at once, not at its `volumechange`: the speaker is the answer.
     muted = video.muted;
     if (inline && scope === 'app') videoSound.setMuted(video.muted);
@@ -990,6 +1051,7 @@
         <VideoSoundButton
           {muted}
           onToggle={toggleMute}
+          onLevel={changeLevel}
           quiet={variant === 'feed'}
           class="absolute right-0.5 bottom-0.5 z-20"
         />
@@ -1036,6 +1098,7 @@
       <VideoSoundButton
         {muted}
         onToggle={toggleMute}
+        onLevel={changeLevel}
         disabled={scope === 'silent'}
         class="absolute right-1 z-40 {safeBottom
           ? 'bottom-[calc(var(--safe-area-inset-bottom,0px)+2rem)]'
@@ -1117,8 +1180,9 @@
           <VideoSoundButton
             {muted}
             onToggle={toggleMute}
+            onLevel={changeLevel}
             glass={false}
-            disabled={soundScope === 'silent'}
+            disabled={scope === 'silent'}
           />
 
           {#if canFullscreen}

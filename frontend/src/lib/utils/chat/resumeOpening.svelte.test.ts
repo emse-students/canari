@@ -9,6 +9,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import type { Conversation } from '$lib/types';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
 import { isReadingConversationNow } from './arrivalRuntime';
+import { windowAttention } from '$lib/utils/windowAttention.svelte';
 import { resolveConversationKey } from './openConversationFromId';
 import { routePageNotificationTap } from './pageNotificationTap';
 import {
@@ -229,6 +230,8 @@ describe('a resume that opens a chat link for Y, with X left open (keys are not 
   it('an arrival in X during the hold is not read on arrival', () => {
     window.history.replaceState(null, '', '/chat');
     const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    // A person at the window (`windowAttention.svelte.ts`): the hold is what is under test.
+    windowAttention.noteGesture();
     try {
       const r = open(X.key);
       expect(isReadingConversationNow(X.key, X.key)).toBe(true);

@@ -362,6 +362,7 @@
               <VideoPlayer
                 variant="chat"
                 src={blobUrl}
+                loudness={mediaRef?.loudness}
                 onOpen={() => (showLightbox = true)}
                 {onActions}
                 onMetadata={frame.onLoad}
@@ -709,7 +710,13 @@
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else}
-      <VideoPlayer src={blobUrl} variant="conversation" soundScope="local" class="h-full w-full" />
+      <VideoPlayer
+        src={blobUrl}
+        variant="conversation"
+        soundScope="local"
+        loudness={mediaRef?.loudness}
+        class="h-full w-full"
+      />
     {/if}
   </MediaLightbox>
 {/if}

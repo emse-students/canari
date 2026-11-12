@@ -39,6 +39,10 @@ interface Script {
   decodedChunks?: { timestamp: number; duration: number }[];
   /** The audio decoder throws (an engine with none, a corrupt packet). */
   decoderThrows?: boolean;
+  /** The decoded sound: a 1 kHz sine at this PEAK level on both channels (default -20 dBFS). */
+  toneDbfs?: number;
+  /** What the audio track's `canDecode()` answers (`true` unless a test says otherwise). */
+  canDecodeAudio?: boolean;
 }
 
 const FRAME = 1024 / 48_000;
@@ -50,11 +54,14 @@ const state: {
   cancelled: boolean;
   /** Every window the audio was decoded over, before the conversion. */
   decodes: [number, number | undefined][];
+  /** Every window the LOUDNESS was measured over, beside the conversion. */
+  loudnessDecodes: [number, number | undefined][];
 } = {
   script: { video: true, audio: true, duration: 20, width: 1080, height: 1920, fps: 60 },
   init: null,
   cancelled: false,
   decodes: [],
+  loudnessDecodes: [],
 };
 
 // The muxer here is a stand-in writing zeros: the duration patch reads real bytes in its own test
@@ -83,6 +90,7 @@ vi.mock('mediabunny', () => {
       if (!state.script.audio) return null;
       return {
         getCodecParameterString: async () => state.script.audioCodec ?? 'opus',
+        canDecode: async () => state.script.canDecodeAudio ?? true,
         computePacketStats: async () => ({ averageBitrate: state.script.audioBitrate ?? 96_000 }),
         getNumberOfChannels: async () => 2,
         getSampleRate: async () => 48_000,
@@ -123,8 +131,10 @@ vi.mock('mediabunny', () => {
     },
     AudioSampleSink: class {
       async *samples(start: number, end?: number) {
-        state.decodes.push([start, end]);
+        // Once the conversion is set up, the decode is the loudness pass that runs beside it.
+        (state.init ? state.loudnessDecodes : state.decodes).push([start, end]);
         if (state.script.decoderThrows) throw new Error('no decoder for mp4a.40.2');
+        const amplitude = Math.pow(10, (state.script.toneDbfs ?? -20) / 20);
         const chunks =
           state.script.decodedChunks ??
           contiguous(3).map((timestamp) => ({ timestamp, duration: FRAME }));
@@ -132,7 +142,19 @@ vi.mock('mediabunny', () => {
         for (const c of chunks) {
           if (c.timestamp + c.duration <= start) continue;
           if (end !== undefined && c.timestamp >= end) break;
-          yield { ...c, close() {} };
+          yield {
+            ...c,
+            sampleRate: 48_000,
+            numberOfChannels: 2,
+            numberOfFrames: 1024,
+            copyTo(dest: Float32Array) {
+              const first = Math.round(c.timestamp * 48_000);
+              for (let i = 0; i < 1024; i++) {
+                dest[i] = amplitude * Math.sin((2 * Math.PI * 1000 * (first + i)) / 48_000);
+              }
+            },
+            close() {},
+          };
         }
       }
     },
@@ -193,6 +215,7 @@ beforeEach(() => {
   state.init = null;
   state.cancelled = false;
   state.decodes = [];
+  state.loudnessDecodes = [];
 });
 
 describe('videoSpanTrim', () => {
@@ -576,5 +599,62 @@ describe('chooseAudioRoute', () => {
     expect(quality.options.bitrate).toBe(
       Math.floor((maxBytes * 8 * VIDEO_BUDGET_SHARE) / 200 - AUDIO_BITRATE)
     );
+  });
+});
+
+describe('the loudness measured at send (owner, 2026-11-11)', () => {
+  /** 50 decoded chunks of 1024 frames: 1.07 s, enough for gated 400 ms blocks. */
+  const second = Array.from({ length: 50 }, (_, i) => ({ timestamp: i * FRAME, duration: FRAME }));
+
+  it('measures the kept window beside the conversion and returns it with the file', async () => {
+    state.script.decodedChunks = second;
+    state.script.audioCodec = 'mp4a.40.2';
+    const prepared = await prepareVideoForUpload(SOURCE);
+    // A -20 dBFS sine on both channels: -20 LUFS (mono -23, +3 for the pair).
+    expect(prepared.loudness!.integratedLufs).toBeCloseTo(-20, 0);
+    expect(prepared.loudness!.samplePeakDbfs).toBeCloseTo(-20, 1);
+    // Copied AAC (no holes): nothing is decoded BEFORE the conversion, one pass beside it.
+    expect(state.decodes).toEqual([]);
+    expect(state.loudnessDecodes).toEqual([[0, undefined]]);
+  });
+
+  it('measures a reel over its trimmed window only', async () => {
+    Object.assign(state.script, { videoStart: 0.25, videoEnd: 0.9, duration: 1.07 });
+    state.script.decodedChunks = second;
+    await prepareVideoForUpload(SOURCE, { trimToVideo: true });
+    expect(state.loudnessDecodes).toEqual([[0.25, 0.9]]);
+  });
+
+  it('has no loudness for silence, and none for a removed sound', async () => {
+    state.script.decodedChunks = second;
+    state.script.toneDbfs = -200;
+    expect((await prepareVideoForUpload(SOURCE)).loudness).toBeNull();
+    state.script.toneDbfs = -20;
+    state.loudnessDecodes = [];
+    expect((await prepareVideoForUpload(SOURCE, { removeAudio: true })).loudness).toBeNull();
+    expect(state.loudnessDecodes).toEqual([]);
+  });
+
+  it('a decoder that fails costs the measurement, never the video', async () => {
+    state.script.decoderThrows = true;
+    state.script.audioCodec = 'mp4a.40.2';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const prepared = await prepareVideoForUpload(SOURCE);
+    expect(prepared.loudness).toBeNull();
+    expect(prepared.file.size).toBeGreaterThan(0);
+    expect(warn.mock.calls.flat().join('\n')).toContain('loudness NOT measured');
+    warn.mockRestore();
+  });
+
+  it('asks the engine first: no decoder is said ONCE per session, and no decode is attempted', async () => {
+    state.script.decodedChunks = second;
+    state.script.canDecodeAudio = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await prepareVideoForUpload(SOURCE)).loudness).toBeNull();
+    expect((await prepareVideoForUpload(SOURCE)).loudness).toBeNull();
+    expect(state.loudnessDecodes).toEqual([]);
+    const said = warn.mock.calls.flat().filter((l) => String(l).includes('cannot decode'));
+    expect(said).toHaveLength(1);
+    warn.mockRestore();
   });
 });
