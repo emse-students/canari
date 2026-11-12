@@ -14,7 +14,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { EntityManager, IsNull, Not, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
@@ -22,8 +22,12 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
-import { assertCallerActsOnGroup, isKeyDistributionGroup } from '../utils/group-membership';
+import { tombstoneGroups, tombstoneGroupsIf, totalGroupOwnedRows } from '../utils/group-purge';
+import {
+  assertCallerActsOnGroup,
+  isKeyDistributionGroup,
+  refuseNotAMember,
+} from '../utils/group-membership';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { cutUserId } from '../utils/log-repeat';
 import {
@@ -89,20 +93,23 @@ export class GroupsController {
   }
 
   /**
-   * Whether [groupId] is a live conversation the caller CREATED and nobody else ever entered: no
-   * seat at all in `dm_group_members` - the creator's own `registerMember` never landed - and no
-   * device of another account in it. The allowlist a destructive shortcut needs: the recorded
-   * creator (`Group.createdBy`, written from the authenticated caller), a group nothing else
-   * names, never a key-distribution group. Any other shape takes the ordinary member check.
+   * Whether [groupId] is a live conversation [caller] CREATED and nobody else ever entered: no
+   * seat at all in `dm_group_members` - not the creator's, whose `registerMember` never landed, and
+   * not another account's, admitted or awaiting admission - and no device of another account in it.
+   * The allowlist a destructive shortcut needs: the recorded creator (`Group.createdBy`, written
+   * from the authenticated caller), a group nothing else names, never a key-distribution group.
+   * Any other shape takes the ordinary member check.
+   *
+   * Read through `m`, because it is read TWICE: once to choose the path, then again under the seat
+   * lock inside the transaction that ends the group ({@link tombstoneGroupsIf}), where no seat
+   * writer can move the roster before the tombstone commits.
    */
   private async isCreatorsUnseatedGroup(
+    m: EntityManager,
     groupId: string,
-    headerUserId: string | undefined
+    caller: string
   ): Promise<boolean> {
-    const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    if (!header) return false;
-    const caller = canonicalUserId(header);
-    const group = await this.groupRepo.findOne({
+    const group = await m.getRepository(Group).findOne({
       where: { id: groupId, deletedAt: IsNull() },
       select: {
         id: true,
@@ -112,9 +119,9 @@ export class GroupsController {
       },
     });
     if (!group || group.createdBy !== caller || isKeyDistributionGroup(group)) return false;
-    const seats = await this.groupMemberRepo.count({ where: { groupId } });
+    const seats = await m.getRepository(GroupMember).count({ where: { groupId } });
     if (seats > 0) return false;
-    const othersDevices = await this.deviceGroupRepo.count({
+    const othersDevices = await m.getRepository(DeviceGroupMembership).count({
       where: { groupId, userId: Not(caller) },
     });
     return othersDevices === 0;
@@ -395,15 +402,36 @@ export class GroupsController {
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    if (await this.isCreatorsUnseatedGroup(safeGroupId, headerUserId)) {
-      this.logger.log(
-        `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… ended by its creator before any seat was written - a failed creation's cleanup`
+    const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const caller = header ? canonicalUserId(header) : null;
+    const manager = this.groupRepo.manager;
+    if (caller && (await this.isCreatorsUnseatedGroup(manager, safeGroupId, caller))) {
+      // RE-READ UNDER THE SEAT LOCK, in the transaction that ends it: a seat or a device written
+      // since the read above makes this group someone's conversation, and the shortcut is refused.
+      const { counts, ended } = await tombstoneGroupsIf(
+        manager,
+        this.redis,
+        [safeGroupId],
+        (tx, id) => this.isCreatorsUnseatedGroup(tx, id, caller)
       );
-    } else {
-      await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
+      if (ended.length === 0) {
+        throw refuseNotAMember(
+          this.logger,
+          'DELETE_GROUP',
+          safeGroupId,
+          caller,
+          ' - a seat or a device entered between the creator check and the tombstone'
+        );
+      }
+      this.logger.log(
+        `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… ended by its creator before any seat was written - a failed creation's cleanup, ` +
+          `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)}`
+      );
+      return { status: 'deleted' };
     }
 
-    const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [safeGroupId]);
+    await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
+    const counts = await tombstoneGroups(manager, this.redis, [safeGroupId]);
 
     this.logger.log(
       `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… soft-deleted, ` +

@@ -1514,7 +1514,12 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 exception lets a delete through without a seat (2026-11-12): the group's recorded creator
 (`createdBy`) may end a live conversation that has NO seat at all and no device of another account -
 the row a creation leaves when it fails between `POST mls/groups` and the creator's `registerMember`,
-whose cleanup delete used to meet the 403 and leave the row for ever. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+whose cleanup delete used to meet the 403 and leave the row for ever. A seat of ANY account counts,
+one awaiting admission included. The condition is read twice: once to choose the path, then again
+under the group's seat lock inside the transaction that tombstones it (`tombstoneGroupsIf` in
+`utils/group-purge.ts`), and a seat or a device written in between turns it into the 403 - an
+unlocked check followed by a tombstone would end a conversation someone had just entered (review of
+#3383). Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 

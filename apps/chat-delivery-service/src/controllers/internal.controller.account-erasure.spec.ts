@@ -6,6 +6,9 @@ import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
+import { Group } from '../entities/group.entity';
+import { GroupMember } from '../entities/group-member.entity';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { memoryRedis } from '../testing/memoryRedis';
 
@@ -38,8 +41,14 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       lateKeyPackages?: number;
       /** 1:1 DMs the discovery finds, tombstoned whole. */
       dmGroups?: string[];
-      /** Other people on a flagged 1:1's roster, by group - a third makes it a group to leave. */
+      /** Other people with a SEAT on a flagged 1:1's roster, by group - a third makes it a group to leave. */
       dmRosterOthers?: Record<string, string[]>;
+      /** Other people with only a DEVICE row in a flagged 1:1, by group - they count as much as a seat. */
+      dmRosterDevices?: Record<string, string[]>;
+      /** People whose seat is written while the erasure waits for that DM's seat lock, by group. */
+      dmJoinsUnderLock?: Record<string, string[]>;
+      /** Flagged 1:1s the account is found in through an eviction row only: nothing names anyone. */
+      dmNoRoster?: string[];
       /** The DMs the account's erasure marker still names: a run that died after a tombstone. */
       marked?: string[];
       /** Items per SCAN/SSCAN/HSCAN page, so a reader of one page only is caught. */
@@ -58,9 +67,37 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     });
     let keyPackageDeletes = 0;
     const txQuery = jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([{ n: 1 }]));
+    // The flagged 1:1s' rosters, read through a manager: seats and device rows, by group.
+    const rosterSeats = [
+      ...(opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER })),
+      ...Object.entries(opts.dmRosterOthers ?? {}).flatMap(([groupId, others]) =>
+        others.map((userId) => ({ groupId, userId }))
+      ),
+    ];
+    const rosterDevices = Object.entries(opts.dmRosterDevices ?? {}).flatMap(([groupId, others]) =>
+      others.map((userId) => ({ groupId, userId }))
+    );
+    const rosterRead = (rows: Array<{ groupId: string; userId: string }>) =>
+      jest.fn(async ({ where }: { where: { groupId: { value: string[] } } }) =>
+        rows.filter((r) => where.groupId.value.includes(r.groupId))
+      );
+    const rosterRepo = (entity: unknown) =>
+      entity === GroupMember
+        ? { find: rosterRead(rosterSeats) }
+        : entity === DeviceGroupMembership
+          ? { find: rosterRead(rosterDevices) }
+          : {};
+    /** A DM seat lock granted: whoever held it to write a seat has committed. */
+    const lockGranted = (groupId: string) => {
+      steps.push(`lock ${groupId}`);
+      for (const userId of opts.dmJoinsUnderLock?.[groupId] ?? []) {
+        rosterSeats.push({ groupId, userId });
+      }
+    };
     const manager = {
       // The key packages, deleted on their own before anything is read, and again by the sweep.
       getRepository: (entity: unknown) => ({
+        ...rosterRepo(entity),
         delete: () => {
           steps.push(entity === KeyPackage ? 'keyPackages' : 'other');
           keyPackageDeletes += 1;
@@ -73,25 +110,35 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       query: jest.fn((sql: string) =>
         Promise.resolve(
           sql.includes('SELECT "groupId" FROM dm_seat_evictions')
-            ? (opts.evictionGroups ?? []).map((groupId) => ({ groupId }))
+            ? [...(opts.evictionGroups ?? []), ...(opts.dmNoRoster ?? [])].map((groupId) => ({
+                groupId,
+              }))
             : [[], 2]
         )
       ),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       // A DM's tombstone: one unit of work over its rows. The push registrations' delete is the
       // other unit of work, the only one issuing raw SQL (`txQuery`); it is not a step.
-      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
-        const before = txQuery.mock.calls.length;
-        const out = await cb({
-          getRepository: () => ({
-            update: jest.fn().mockResolvedValue({ affected: 1 }),
+      // The seat lock a DM's tombstone takes is not raw SQL of that kind: it is the `lock` step.
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({
+          getRepository: (entity: unknown) => ({
+            ...rosterRepo(entity),
+            update: jest.fn(async (where: { id: { value: string[] } }) => {
+              if (entity === Group) steps.push(`tombstone ${where.id.value.join(',')}`);
+              return { affected: 1 };
+            }),
             delete: jest.fn().mockResolvedValue({ affected: 0 }),
           }),
-          query: txQuery,
-        });
-        if (txQuery.mock.calls.length === before) steps.push('tombstone');
-        return out;
-      }),
+          query: jest.fn((sql: string, params?: unknown[]) => {
+            if (sql.includes('pg_advisory_xact_lock')) {
+              lockGranted(String(params?.[0]).replace(/^seat:/, ''));
+              return Promise.resolve([]);
+            }
+            return txQuery(sql, params);
+          }),
+        })
+      ),
     };
     const repos = {
       pushToken: repo(),
@@ -135,7 +182,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
         id,
         isGroup: true,
       })),
-      ...(opts.dmGroups ?? []).map((id) => ({ id, isGroup: false })),
+      ...[...(opts.dmGroups ?? []), ...(opts.dmNoRoster ?? [])].map((id) => ({
+        id,
+        isGroup: false,
+      })),
     ]);
     repos.groupMember.find.mockImplementation(async () => [
       ...(opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER })),
@@ -389,8 +439,9 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     const keys = 'history:g-dm,group:members:g-dm,pending_welcome:g-dm,group:parting:g-dm';
     const at = (s: string) => steps.indexOf(s);
     expect(at('mark g-dm')).toBeGreaterThanOrEqual(0);
-    expect(at('mark g-dm')).toBeLessThan(at('tombstone'));
-    expect(steps.lastIndexOf(`del ${keys}`)).toBeGreaterThan(at('tombstone'));
+    expect(at('lock g-dm')).toBeLessThan(at('mark g-dm'));
+    expect(at('mark g-dm')).toBeLessThan(at('tombstone g-dm'));
+    expect(steps.lastIndexOf(`del ${keys}`)).toBeGreaterThan(at('tombstone g-dm'));
     expect(at('unmark')).toBeGreaterThan(steps.lastIndexOf(`del ${keys}`));
   });
 
@@ -403,10 +454,54 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     await controller.deleteUserData(USER, SECRET);
 
     expect(steps).toContain('mark g-dm');
-    expect(steps).not.toContain('mark g-dm,g-three');
+    expect(steps).toContain('tombstone g-dm');
+    expect(steps.some((x) => x.startsWith('mark') && x.includes('g-three'))).toBe(false);
     expect(steps).toContain('cut g-three');
     expect(steps).not.toContain('cut g-dm');
     expect(warn.mock.calls.flat().join(' ')).toContain('flagged one-to-one');
+  });
+
+  it('counts a person with only a DEVICE row in a flagged 1:1: a third that way keeps the conversation', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, steps } = make({
+      dmGroups: ['g-dev'],
+      dmRosterOthers: { 'g-dev': ['peer'] },
+      dmRosterDevices: { 'g-dev': ['third'] },
+    });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps.some((x) => x.startsWith('tombstone'))).toBe(false);
+    expect(steps).toContain('cut g-dev');
+  });
+
+  it('never ends a flagged 1:1 whose roster nothing names any more: the account alone is removed', async () => {
+    // Found through an eviction row only - no seat, no device. An unknown roster is not "two people
+    // or fewer", it is a conversation this route cannot see the people of.
+    const { controller, steps } = make({ dmNoRoster: ['g-empty'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps.some((x) => x.startsWith('tombstone') || x.startsWith('mark'))).toBe(false);
+    expect(steps).toContain('cut g-empty');
+  });
+
+  it('reads the roster again under the seat lock: a member who joined meanwhile keeps the conversation alive', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, steps, redis } = make({
+      dmGroups: ['g-race'],
+      dmRosterOthers: { 'g-race': ['peer'] },
+      dmJoinsUnderLock: { 'g-race': ['third'] },
+      // An earlier run named it before dying: the refusal must take it back out.
+      marked: ['g-race'],
+    });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps).toContain('lock g-race');
+    expect(steps.some((x) => x.startsWith('tombstone'))).toBe(false);
+    expect(steps).toContain('cut g-race');
+    expect(steps).not.toContain(
+      'del history:g-race,group:members:g-race,pending_welcome:g-race,group:parting:g-race'
+    );
+    expect(redis.srem).toHaveBeenCalledWith(`erasure:dms:${USER}`, 'g-race');
   });
 
   it("deletes a DM's Redis keys on a RETRY that finds no row naming it, through the account's erasure marker", async () => {
