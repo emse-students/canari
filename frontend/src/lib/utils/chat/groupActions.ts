@@ -869,7 +869,7 @@ function bundleFrame(
  * Which ask a bundle answers: the asker's `requestId`, or `join` for the inviter's push, which nobody
  * asked an id for - the receiver's own admission solicited it (`historyAddressing.ts`).
  */
-type BundleAnswer = { requestId?: string; join?: boolean };
+type BundleAnswer = { requestId: string; join?: never } | { join: true; requestId?: never };
 
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
@@ -1157,9 +1157,9 @@ export type HistoryStoreDeps = HistorySendDeps & {
  *
  * **AND WHERE IT IS ADDRESSED** (step A, docs/wiki/protocols/history-answer-addressing.md): when the
  * server routes addressed answers, every chunk goes to `to` alone (`recipientDevices`) and is filtered
- * on that reader's windows. An addressed answer that names no ask (`requestId`, or `join` on the
- * push) is not sent - the receiver would refuse it, and the sender's ratchet would have spent a
- * generation every other member skips for nothing. A device the server cannot address (a session of
+ * on that reader's windows. Every answer names its ask - a `requestId`, or `join` on the push - by
+ * TYPE ({@link BundleAnswer}): an ask with no id is refused where it is parsed (`historyAskId`), so
+ * no answer to one is ever built (D211). A device the server cannot address (a session of
  * it predates the capability) is sent nothing: an addressed answer is never turned into a broadcast.
  *
  * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
@@ -1179,7 +1179,7 @@ async function sendBundleChunks(
     to: string;
     state?: ConversationHistoryState;
     /** The ask this answers - see {@link BundleAnswer}. */
-    answer?: BundleAnswer;
+    answer: BundleAnswer;
     /** The inviter's push - its legacy broadcast form adds the reader's span to the union. */
     push?: boolean;
   }
@@ -1229,12 +1229,6 @@ async function sendBundleChunks(
         `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
       );
       return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
-    }
-    if (addressed && !answer?.requestId && !answer?.join) {
-      log(
-        `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`
-      );
-      return { kind: 'refused' };
     }
     if (chosen.kept.length === 0) continue;
     const payload = chosen.kept.map(serializeForBundle);
@@ -1710,7 +1704,7 @@ export async function sendHistoryBundleForIds(
     chunkSize?: number;
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
-    requestId?: string;
+    requestId: string;
     /**
      * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
      * not - the answer to a digest. The digest names ids only, while the state key that asked for
@@ -1813,7 +1807,7 @@ export async function sendHistoryRangeBundle(
     limit: number;
     since?: number;
     /** The `requestId` of the range ask this answers. */
-    requestId?: string;
+    requestId: string;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
