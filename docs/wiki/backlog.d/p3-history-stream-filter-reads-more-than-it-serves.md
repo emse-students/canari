@@ -16,3 +16,7 @@ trim, so nothing breaks:
 (one `GROUP BY "groupId"`), and drop a window whose `until` is at or before the instant of `after`
 before filtering - a reader whose cursor is past their arrival then reads exactly what it asked for.
 Mechanism: [history-reconciliation](../protocols/history-reconciliation.md).
+
+**Triage (batch 18, 2026-11-12): one pull request, no agent needed** - server only
+(`chat-delivery`, `readHistoryStreamPage` and `ownWithheldWindows`), with a spec that a batch of N
+groups makes two SQL reads in all and that a cursor past the arrival reads exactly the page asked.
