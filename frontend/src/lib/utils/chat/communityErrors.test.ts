@@ -47,4 +47,19 @@ describe('describeCommunityRefusal', () => {
     expect(describeCommunityRefusal(undefined)).toBeNull();
     expect(describeCommunityRefusal(null)).toBeNull();
   });
+
+  it('names each refusal of a community creation', () => {
+    expect(describeCommunityRefusal('COMMUNITY_NAME_INVALID')).toBe(
+      m.chat_community_name_invalid_error()
+    );
+    expect(describeCommunityRefusal('COMMUNITY_SLUG_INVALID')).toBe(
+      m.chat_community_slug_invalid_error()
+    );
+    expect(describeCommunityRefusal('COMMUNITY_CREATION_RATE')).toBe(
+      m.chat_community_creation_rate_error()
+    );
+    expect(describeCommunityRefusal('COMMUNITY_OWNED_LIMIT')).toBe(
+      m.chat_community_owned_limit_error()
+    );
+  });
 });

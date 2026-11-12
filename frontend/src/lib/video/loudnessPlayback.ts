@@ -1,0 +1,507 @@
+/**
+ * EVERY VIDEO PLAYS NEAR ONE LOUDNESS (owner, 2026-11-11): the gain a player applies, from the
+ * measurement the author's device made at send (`loudnessMeter.ts`, `MediaRef.loudness`).
+ *
+ * THE LAW ({@link loudnessGainDb}), toward {@link LOUDNESS_TARGET_LUFS} (-14 LUFS, YouTube's and
+ * Spotify's reference):
+ *
+ * - a loud video is LOWERED by what it is over the target, without floor;
+ * - a quiet one is RAISED, by at most {@link MAX_BOOST_DB} (+6 dB), and never so far that its
+ *   measured sample peak would pass {@link PEAK_CEILING_DBFS} (-1 dBFS) - the peak clamp is what keeps
+ *   a raise from clipping, decided from a measured fact rather than by a limiter's guess. The clamp
+ *   only limits a RAISE: a quiet video whose peak is already over the ceiling plays at 0 dB, never
+ *   lower than it always has;
+ * - a gain within {@link GAIN_DEADBAND_DB} of zero is no gain: no graph is built for an inaudible
+ *   change;
+ * - NO MEASUREMENT, NO GAIN: every video uploaded before this, a live replay, a video whose sound is
+ *   silence, plays exactly as it did.
+ *
+ * WHY NO `DynamicsCompressorNode` AS A LIMITER: the Web Audio compressor applies an automatic
+ * make-up gain (spec's "makeup gain", `(1 / fullRangeGain) ^ 0.6`) that would move every routed
+ * video's level by a fraction of a dB, and it colours transients. The peak clamp already proves the
+ * raise cannot clip on the samples measured; the 1 dB of headroom absorbs what a re-encode moves.
+ *
+ * THE ROUTE ({@link LoudnessAudio.attach}): `MediaElementAudioSourceNode -> GainNode -> destination`
+ * on ONE `AudioContext` for the whole app. What it must respect, each handled here:
+ *
+ * - **A context starts only after a gesture** (autoplay policy). A MUTED element never needs it: the
+ *   graph is built the first time the element is AUDIBLE (unmuted and playing). The reader's unmute
+ *   PRIMES the context synchronously inside the gesture ({@link primeLoudnessAudio}, called by
+ *   `videoSound.setMuted` and the player's own speaker) - WebKit honours a `resume()` only there. A
+ *   context that will not run leaves the element UNROUTED (so it is never silenced) and takes the
+ *   fallback below; a `resume()` still unanswered when the element is audible again is said.
+ * - **THE APP HOLDS NO AUDIO OUTPUT WHEN NOTHING ROUTED PLAYS** (the Pixel 6a AAudio defect,
+ *   `utils/toneOutput.ts`: a context left running kept a platform stream `started` in the background,
+ *   and a push thawing the frozen process replayed its buffer as looping noise). The context is
+ *   SUSPENDED when no routed element plays (`pause`, `ended`, unmount, the app leaving the screen),
+ *   resumed on a routed `play`, and CLOSED when no routed element is mounted any more. Never closed
+ *   under a mounted routed element: an element takes ONE source node in its life, so a closed
+ *   context would strand it silent for good.
+ * - **Once routed, an element sounds only through the graph** (Web Audio's rule). A context that is
+ *   not `running` after the `resume()` of a routed `play` is an element routed and SILENT, and the
+ *   line says so at `error`.
+ * - **`element.volume` and `muted` keep their meaning**: the engine applies both BEFORE the source
+ *   node (Chromium, Firefox, WebKit), so the reader's mute silences the graph and the shared volume
+ *   level (PR #3372) multiplies with this gain. Nothing here writes them on the Web Audio route.
+ * - **A STREAM ON WEBKIT IS NOT ROUTED** (review of #3378): a `ManagedMediaSource` / MSE element
+ *   through `createMediaElementSource` may play SILENT on WebKit with no exception. It keeps only the
+ *   fallback's attenuation until the iPhone 12 reading proves sound, said once per element. A blob
+ *   is same-origin and is routed.
+ * - **Unmount frees the nodes**: the source and the gain are disconnected, so the graph holds no
+ *   element alive.
+ *
+ * THE FALLBACK, AND IT IS ONE: no Web Audio, a source node the engine refuses, a context that does
+ * not reach `running`, a WebKit stream. The element then gets the gain through `element.volume` when
+ * the gain LOWERS (a volume cannot exceed 1) and the engine honours a written volume - iOS ignores
+ * it, which is read back, not assumed. It is logged at `warn`, with its cause, once per element.
+ */
+
+import { Log } from '$lib/utils/Log';
+import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
+import { isMediaLoudness, type MediaLoudness } from './loudnessMeter';
+
+/** The loudness every measured video is brought toward. */
+export const LOUDNESS_TARGET_LUFS = -14;
+/** The most a quiet video is raised. */
+export const MAX_BOOST_DB = 6;
+/** Where a raise stops, measured against the video's sample peak. */
+export const PEAK_CEILING_DBFS = -1;
+/** A gain this close to 0 dB is not applied: no audible difference, no graph. */
+export const GAIN_DEADBAND_DB = 0.5;
+
+/**
+ * The gain, in dB, that brings `loudness` to the target under the law above; 0 for no measurement
+ * (an old video), for a measurement a reader cannot trust, and inside the dead band.
+ */
+export function loudnessGainDb(loudness: MediaLoudness | null | undefined): number {
+  if (!isMediaLoudness(loudness)) return 0;
+  let gain = LOUDNESS_TARGET_LUFS - loudness.integratedLufs;
+  if (gain > 0) {
+    const headroom = Math.max(0, PEAK_CEILING_DBFS - loudness.samplePeakDbfs);
+    gain = Math.min(gain, MAX_BOOST_DB, headroom);
+  }
+  return Math.abs(gain) < GAIN_DEADBAND_DB ? 0 : gain;
+}
+
+/** dB to a linear amplitude factor. */
+export function dbToGain(db: number): number {
+  return Math.pow(10, db / 20);
+}
+
+/** What the wiring needs from the platform - the real one in the app, a fake in a test. */
+export interface LoudnessEnvironment {
+  /** A NEW `AudioContext`; null where the engine has no Web Audio. */
+  createContext(): AudioContext | null;
+  /** Whether the engine is WebKit, whose MSE elements may play silent through Web Audio. */
+  isWebKit(): boolean;
+  /** Subscribes to the app leaving or regaining the screen; returns the unsubscribe. */
+  onScreenChange(onChange: (onScreen: boolean) => void): () => void;
+  /** Whether the app is on screen now: off it, the output stays suspended. */
+  onScreen(): boolean;
+}
+
+/** A video's loudness wiring, for as long as its element is mounted. */
+export interface LoudnessHandle {
+  /** The element's measurement (null: none) - applied now, or when it is first audible. */
+  setLoudness(loudness: MediaLoudness | null | undefined): void;
+  /** The reader's unmute gesture: makes and resumes the context INSIDE the gesture (WebKit). */
+  prime(): void;
+  /** The element is going away: nodes released, the context suspended or closed if unused. */
+  destroy(): void;
+}
+
+/**
+ * Each element that has been routed, with its source node: an element accepts one source node in
+ * its life, and from then on sounds only through the graph of THAT node's context.
+ */
+const routedSources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
+
+/** The factor the fallback put on an element's `volume`, so a level written later keeps it. */
+const fallbackFactors = new WeakMap<HTMLMediaElement, number>();
+
+/**
+ * The `volume` an element should carry for the reader's `level` (0..1): the level itself, times the
+ * loudness factor where the fallback route applied one. THE ONE PLACE a level reaches an element
+ * that may be on the fallback - the shared volume level (PR #3372, `applyVideoLevel`) writes through
+ * this, and reads back through {@link readerLevelOf}, so it never erases the attenuation.
+ */
+export function elementVolumeFor(video: HTMLMediaElement, level: number): number {
+  return Math.min(1, Math.max(0, level * (fallbackFactors.get(video) ?? 1)));
+}
+
+/** The reader's level behind an element's `volume`, the fallback's factor divided out. */
+export function readerLevelOf(video: HTMLMediaElement): number {
+  return Math.min(1, video.volume / (fallbackFactors.get(video) ?? 1));
+}
+
+/**
+ * THE APP'S ONE AUDIO OUTPUT FOR VIDEO LOUDNESS: one context, made on first need, suspended while no
+ * routed element plays and closed once none is mounted (see the module comment).
+ */
+export class LoudnessAudio {
+  #context: AudioContext | null = null;
+  #unavailable = false;
+  /** Handles whose element is routed through the current context. */
+  readonly #routed = new Set<RouteHandle>();
+  /** Routed elements playing right now. */
+  readonly #playing = new Set<HTMLMediaElement>();
+  /** Handles that want a route (a gain to apply), for the unmute gesture's prime. */
+  readonly #wanting = new Set<RouteHandle>();
+  #unsubscribeScreen: (() => void) | null = null;
+
+  constructor(readonly env: LoudnessEnvironment) {}
+
+  /** Starts the wiring of `video`; `streamed` says its source is a MediaSource. */
+  attach(video: HTMLMediaElement, options: { streamed: boolean }): LoudnessHandle {
+    return new RouteHandle(this, video, options.streamed && this.env.isWebKit());
+  }
+
+  /** The unmute gesture, for every handle that wants a route: the context resumed INSIDE it. */
+  prime(): void {
+    if (this.#wanting.size > 0) this.resumeInGesture();
+  }
+
+  /** Makes the context if needed and calls `resume()` synchronously - inside the caller's gesture. */
+  resumeInGesture(): void {
+    const ctx = this.context();
+    if (!ctx || ctx.state === 'running') return;
+    Log.d('LOUDNESS', `the reader's unmute resumes the shared AudioContext (${ctx.state})`);
+    ctx.resume().catch((e: unknown) => {
+      console.warn('[LOUDNESS] the unmute gesture could not resume the AudioContext', e);
+    });
+  }
+
+  /** The current context, made on first need; null where the engine has no Web Audio. */
+  context(): AudioContext | null {
+    if (this.#context || this.#unavailable) return this.#context;
+    try {
+      this.#context = this.env.createContext();
+    } catch (e) {
+      console.warn('[LOUDNESS] the shared AudioContext could not be made', e);
+      this.#context = null;
+    }
+    if (!this.#context) {
+      this.#unavailable = true;
+      return null;
+    }
+    Log.d('LOUDNESS', `the shared AudioContext is made, ${this.#context.state}`);
+    this.#unsubscribeScreen ??= this.env.onScreenChange((onScreen) => {
+      if (!onScreen) this.suspendIfIdle('the app left the screen', true);
+      else for (const video of this.#playing) this.playing(video);
+    });
+    return this.#context;
+  }
+
+  /** Whether `ctx` is the live context (a closed one is never handed a new node). */
+  isCurrent(ctx: AudioContext): boolean {
+    return this.#context === ctx;
+  }
+
+  want(handle: RouteHandle, wants: boolean): void {
+    if (wants) this.#wanting.add(handle);
+    else this.#wanting.delete(handle);
+  }
+
+  routed(handle: RouteHandle): void {
+    this.#routed.add(handle);
+  }
+
+  /** A routed element plays: the context is resumed; not running after it is a SILENT element. */
+  playing(video: HTMLMediaElement): void {
+    this.#playing.add(video);
+    const ctx = this.#context;
+    if (!ctx || ctx.state === 'running') return;
+    if (!this.env.onScreen()) return;
+    Log.d('LOUDNESS', `a routed video plays, the context ${ctx.state}: resumed`);
+    ctx.resume().then(
+      () => {
+        if (ctx.state !== 'running' && this.#playing.has(video)) {
+          console.error(
+            `[LOUDNESS] a video routed and SILENT: its AudioContext is ${ctx.state} after resume()`
+          );
+        }
+      },
+      (e: unknown) => {
+        console.error('[LOUDNESS] a video routed and SILENT: its AudioContext refused resume()', e);
+      }
+    );
+  }
+
+  /** A routed element stopped playing: the output is suspended once none plays. */
+  stopped(video: HTMLMediaElement, why: string): void {
+    if (!this.#playing.delete(video)) return;
+    this.suspendIfIdle(why, false);
+  }
+
+  /** A routed handle released: suspended if idle, CLOSED once no routed element is mounted. */
+  released(handle: RouteHandle, video: HTMLMediaElement): void {
+    this.#routed.delete(handle);
+    this.#wanting.delete(handle);
+    this.#playing.delete(video);
+    const ctx = this.#context;
+    if (!ctx) return;
+    if (this.#routed.size > 0) {
+      this.suspendIfIdle('a routed video unmounted', false);
+      return;
+    }
+    Log.d('LOUDNESS', 'no routed video is mounted: the shared AudioContext is closed');
+    this.#context = null;
+    this.#unsubscribeScreen?.();
+    this.#unsubscribeScreen = null;
+    ctx.close().catch((e: unknown) => console.warn('[LOUDNESS] the AudioContext did not close', e));
+  }
+
+  /** Suspends the running context when nothing routed plays (or the app left the screen). */
+  suspendIfIdle(why: string, leavingScreen: boolean): void {
+    const ctx = this.#context;
+    if (!ctx || ctx.state !== 'running') return;
+    if (!leavingScreen && this.#playing.size > 0) return;
+    Log.d('LOUDNESS', `the shared AudioContext is suspended: ${why}`);
+    ctx.suspend().catch((e: unknown) => console.warn('[LOUDNESS] suspend() failed', e));
+  }
+}
+
+/** One element's wiring. */
+class RouteHandle implements LoudnessHandle {
+  #gainDb = 0;
+  #measured = false;
+  #gainNode: GainNode | null = null;
+  #resumePending = false;
+  #pendingSaid = false;
+  #fellBack = false;
+  #streamSaid = false;
+  #disposed = false;
+  readonly #ensure = () => this.#ensureRoute();
+  readonly #onPlay = () => {
+    if (this.#gainNode) this.audio.playing(this.video);
+    else this.#ensureRoute();
+  };
+  readonly #onPause = () => this.audio.stopped(this.video, 'no routed video plays');
+  readonly #onEnded = () => this.audio.stopped(this.video, 'a routed video ended');
+
+  constructor(
+    readonly audio: LoudnessAudio,
+    readonly video: HTMLMediaElement,
+    /** A MediaSource element on WebKit: never routed (see the module comment). */
+    readonly webkitStream: boolean
+  ) {
+    video.addEventListener('volumechange', this.#ensure);
+    video.addEventListener('play', this.#onPlay);
+    video.addEventListener('pause', this.#onPause);
+    video.addEventListener('ended', this.#onEnded);
+  }
+
+  setLoudness(loudness: MediaLoudness | null | undefined): void {
+    if (this.#disposed) return;
+    this.#gainDb = loudnessGainDb(loudness);
+    this.#measured = isMediaLoudness(loudness);
+    const factor = dbToGain(this.#gainDb);
+    if (this.#gainNode) {
+      this.#gainNode.gain.value = factor;
+      Log.d('LOUDNESS', `gain now ${this.#describe()}`);
+      return;
+    }
+    this.#undoFallback();
+    if (this.#gainDb === 0) {
+      this.audio.want(this, false);
+      Log.d(
+        'LOUDNESS',
+        this.#measured
+          ? 'measured within the dead band: played as is'
+          : 'no measurement: played as is'
+      );
+      return;
+    }
+    if (this.webkitStream) {
+      this.audio.want(this, false);
+      if (!this.#streamSaid) {
+        this.#streamSaid = true;
+        console.warn(
+          '[LOUDNESS] a stream on WebKit is not routed (MSE through Web Audio may play silent, ' +
+            'owed an iPhone 12 reading)'
+        );
+      }
+      this.#fallBack('a WebKit stream');
+      return;
+    }
+    this.audio.want(this, true);
+    this.#ensureRoute();
+  }
+
+  prime(): void {
+    if (this.#disposed || this.#gainNode || this.#gainDb === 0 || this.webkitStream) return;
+    this.audio.resumeInGesture();
+  }
+
+  destroy(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.video.removeEventListener('volumechange', this.#ensure);
+    this.video.removeEventListener('play', this.#onPlay);
+    this.video.removeEventListener('pause', this.#onPause);
+    this.video.removeEventListener('ended', this.#onEnded);
+    if (this.#gainNode) {
+      routedSources.get(this.video)?.disconnect();
+      this.#gainNode.disconnect();
+      this.#gainNode = null;
+      Log.d('LOUDNESS', 'nodes released');
+    }
+    this.audio.released(this, this.video);
+    this.#undoFallback();
+  }
+
+  #describe(): string {
+    return `${this.#gainDb >= 0 ? '+' : ''}${this.#gainDb.toFixed(1)} dB`;
+  }
+
+  /**
+   * Builds the graph the first time the element is AUDIBLE - unmuted AND playing. A `resume()` still
+   * unanswered when the element is audible again is said once: it plays, without its gain.
+   */
+  #ensureRoute(): void {
+    if (this.#disposed || this.#gainNode || this.#fellBack || this.webkitStream) return;
+    if (this.#gainDb === 0) return;
+    // A muted element needs no context - muted autoplay must never ask for one.
+    if (this.video.muted || this.video.paused) return;
+    const ctx = this.audio.context();
+    if (!ctx) {
+      this.#fallBack('this engine has no Web Audio');
+      return;
+    }
+    if (ctx.state === 'running') {
+      this.#connect(ctx);
+      return;
+    }
+    if (this.#resumePending) {
+      if (!this.#pendingSaid) {
+        this.#pendingSaid = true;
+        console.warn(
+          `[LOUDNESS] the AudioContext's resume() has not answered (${ctx.state}): the video plays` +
+            ' unrouted, without its gain'
+        );
+      }
+      void ctx.resume();
+      return;
+    }
+    this.#resumePending = true;
+    Log.d('LOUDNESS', `the shared AudioContext is ${ctx.state}: resumed`);
+    ctx.resume().then(
+      () => {
+        this.#resumePending = false;
+        if (this.#disposed || this.#gainNode || this.#fellBack) return;
+        // READ AFTER the resume: a resolved promise is not a running context.
+        if (ctx.state === 'running') this.#connect(ctx);
+        else this.#fallBack(`the AudioContext stayed ${ctx.state}`);
+      },
+      (e: unknown) => {
+        this.#resumePending = false;
+        this.#fallBack(`the AudioContext refused to resume (${String(e)})`);
+      }
+    );
+  }
+
+  #connect(ctx: AudioContext): void {
+    if (this.#gainNode) return;
+    if (!this.audio.isCurrent(ctx)) {
+      this.#fallBack('the AudioContext was closed meanwhile');
+      return;
+    }
+    let source = routedSources.get(this.video);
+    if (source && source.context !== ctx) {
+      // Never reached by design (a context is closed only once no routed element is mounted).
+      console.error(
+        '[LOUDNESS] a video routed and SILENT: its source node belongs to a closed AudioContext'
+      );
+      return;
+    }
+    try {
+      if (!source) {
+        source = ctx.createMediaElementSource(this.video);
+        routedSources.set(this.video, source);
+      }
+      const node = ctx.createGain();
+      node.gain.value = dbToGain(this.#gainDb);
+      source.connect(node);
+      node.connect(ctx.destination);
+      this.#gainNode = node;
+    } catch (e) {
+      this.#fallBack(`the engine refused the source node (${String(e)})`);
+      return;
+    }
+    this.audio.routed(this);
+    if (!this.video.paused) this.audio.playing(this.video);
+    Log.d('LOUDNESS', `routed through Web Audio at ${this.#describe()}`);
+  }
+
+  /** The fallback, said for what it is. */
+  #fallBack(cause: string): void {
+    if (this.#fellBack || this.#disposed) return;
+    this.#fellBack = true;
+    this.audio.want(this, false);
+    const factor = dbToGain(this.#gainDb);
+    if (factor >= 1) {
+      console.warn(
+        `[LOUDNESS] FALLBACK: ${cause} - a raise of ${this.#describe()} cannot go through the` +
+          ' element volume: played as is'
+      );
+      return;
+    }
+    const wanted = this.video.volume * factor;
+    fallbackFactors.set(this.video, factor);
+    this.video.volume = wanted;
+    // iOS ignores a written volume (read-only, always 1): read back, never assumed.
+    if (Math.abs(this.video.volume - wanted) > 1e-3) {
+      fallbackFactors.delete(this.video);
+      console.warn(
+        `[LOUDNESS] FALLBACK: ${cause} - and this engine ignores the element volume: played as is`
+      );
+      return;
+    }
+    console.warn(
+      `[LOUDNESS] FALLBACK: ${cause} - ${this.#describe()} applied through the element volume`
+    );
+  }
+
+  /** Gives back the volume the fallback took, so a new measurement starts from the reader's level. */
+  #undoFallback(): void {
+    const applied = fallbackFactors.get(this.video);
+    this.#fellBack = false;
+    if (applied === undefined) return;
+    fallbackFactors.delete(this.video);
+    this.video.volume = Math.min(1, this.video.volume / applied);
+  }
+}
+
+/** Whether this engine is WebKit (iOS, iPadOS, Safari, a WKWebView): every browser on iOS is. */
+function engineIsWebKit(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;
+  return /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android|Edg\//.test(ua);
+}
+
+/** The app's environment: the engine's own `AudioContext`. */
+const appEnvironment: LoudnessEnvironment = {
+  createContext() {
+    if (typeof window === 'undefined') return null;
+    const Ctor =
+      window.AudioContext ??
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    return Ctor ? new Ctor() : null;
+  },
+  isWebKit: engineIsWebKit,
+  onScreenChange: onAppScreenChange,
+  onScreen: isAppOnScreen,
+};
+
+/** THE APP'S ONE loudness output. */
+export const loudnessAudio = new LoudnessAudio(appEnvironment);
+
+/**
+ * The reader's unmute gesture, app-wide (`videoSound.setMuted(false)`): the context made and resumed
+ * synchronously inside the gesture, when a mounted video has a gain to apply.
+ */
+export function primeLoudnessAudio(): void {
+  loudnessAudio.prime();
+}

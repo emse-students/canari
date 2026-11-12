@@ -21,6 +21,7 @@
   } from '$lib/calendar/feedEvents';
   import { CalendarDays, ClipboardList, Newspaper, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -59,7 +60,7 @@
 
   function formatEventRange(ev: AssociationCalendarFeedEvent): string {
     const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat('fr-FR', {
+    const fmt = new Intl.DateTimeFormat(intlLocale(), {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
@@ -68,7 +69,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(intlLocale(), { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   /**
