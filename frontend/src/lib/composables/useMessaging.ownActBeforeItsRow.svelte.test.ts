@@ -201,10 +201,60 @@ describe('an own act on a message whose row is still moving', () => {
   it.each([
     ['left under the old group by the move', OLD],
     ['sealed under the shown conversation', JOINED],
-  ])('a row that stands and does not open (%s) keeps nothing, and says why', async (_c, conv) => {
+  ])(
+    'a row that stands and does not open (%s) keeps the act, as for a peer, and says why once',
+    async (_c, conv) => {
+      const store = messageRowStore([
+        storedRow('m1', conv, { senderId: 'me', content: body('hi'), unreadable: true }),
+      ]);
+      const conversations = new SvelteMap<string, Conversation>([
+        [
+          JOINED,
+          {
+            id: JOINED,
+            name: JOINED,
+            unreadCount: 0,
+            lastMessageAt: 0,
+            messages: [
+              { id: 'm1', senderId: 'me', content: body('hi'), timestamp: new Date(1000) },
+            ],
+          } as never,
+        ],
+      ]);
+      const log = vi.fn();
+      const ctx = {
+        conversations,
+        selectedContact: JOINED,
+        userId: 'me',
+        deviceKeyB64: 'k',
+        storage: store,
+        log,
+        ensureMls: () => ({}),
+      } as unknown as MessagingContext;
+      const { useMessaging } = await import('./useMessaging.svelte');
+      await useMessaging().handleAddReaction('m1', 'x', ctx);
+
+      // Kept for the row, which a key change in flight (a PIN reseal) may open again.
+      expect([...store.pending.values()].map((e) => [e.conversationId, e.messageId])).toEqual([
+        [JOINED, 'm1'],
+      ]);
+      const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[PENDING]'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('cannot open');
+    }
+  );
+
+  it('a row that leaves the shown conversation between the write and the look: the act is kept, not lost', async () => {
     const store = messageRowStore([
-      storedRow('m1', conv, { senderId: 'me', content: body('hi'), unreadable: true }),
+      storedRow('m1', JOINED, { senderId: 'me', content: body('hi') }),
     ]);
+    // The write reads the row gone: it moved to another conversation just before.
+    const merge = store.mergeMessages;
+    store.mergeMessages = vi.fn(async (...args: Parameters<typeof merge>) => {
+      const row = store.byId.get('m1');
+      if (row) store.byId.set('m1', { ...row, conversationId: 'elsewhere-group' });
+      return merge(...args);
+    }) as typeof store.mergeMessages;
     const conversations = new SvelteMap<string, Conversation>([
       [
         JOINED,
@@ -217,22 +267,21 @@ describe('an own act on a message whose row is still moving', () => {
         } as never,
       ],
     ]);
-    const log = vi.fn();
     const ctx = {
       conversations,
       selectedContact: JOINED,
       userId: 'me',
       deviceKeyB64: 'k',
       storage: store,
-      log,
+      log: vi.fn(),
       ensureMls: () => ({}),
     } as unknown as MessagingContext;
     const { useMessaging } = await import('./useMessaging.svelte');
     await useMessaging().handleAddReaction('m1', 'x', ctx);
 
-    expect(store.pending.size).toBe(0);
-    const lines = log.mock.calls.map((c) => String(c[0]));
-    expect(lines.filter((l) => l.includes('cannot open it'))).toHaveLength(1);
-    expect(lines.some((l) => l.includes('not stored yet') || l.includes('kept until'))).toBe(false);
+    expect(store.byId.get('m1')?.reactions).toBeUndefined();
+    expect([...store.pending.values()].map((e) => [e.conversationId, e.kind, e.slot])).toEqual([
+      [JOINED, 'reaction', 'x'],
+    ]);
   });
 });

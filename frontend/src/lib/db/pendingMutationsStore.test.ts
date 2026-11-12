@@ -546,6 +546,24 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     expect(await storage.getMessage('b1', KEY)).toMatchObject({ content: 'in B' });
   });
 
+  it('leaves a row of another conversation alone SILENTLY when the caller expects one', async () => {
+    const { storage } = await rig();
+    await twoConversations(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const written = await storage.mergeMessages(
+      'conv',
+      ['b1'],
+      (row) => ({ ...row, content: 'rewritten through A' }),
+      KEY,
+      { foreignExpected: true }
+    );
+
+    expect(written.size).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(await storage.getMessage('b1', KEY)).toMatchObject({ content: 'in B' });
+  });
+
   it('raises the revision on every write', async () => {
     const { storage, revisionOf } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });

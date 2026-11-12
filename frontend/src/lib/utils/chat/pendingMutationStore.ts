@@ -83,9 +83,28 @@ export interface DeferredMutation {
 export async function keepPendingMutation(
   deps: PendingMutationDeps,
   entry: Omit<PendingMutation, 'at'>,
-  frameAt: number | undefined
+  frameAt: number | undefined,
+  why?: string
 ): Promise<void> {
-  await keepPendingMutations(deps, entry.conversationId, [{ entry, frameAt }]);
+  if (await parkPendingMutation(deps, entry, frameAt, why)) {
+    await settlePendingFor(deps, entry.conversationId, [entry.messageId]);
+  }
+}
+
+/**
+ * Keeps `entry` for a target that STANDS and does not open on this device (sealed under another key,
+ * or left under another conversation by a move) - as {@link settlePendingFor} keeps a peer's entry
+ * for such a row: a key change in flight may open it again (a PIN reseal), and an act dropped here is
+ * gone for good. Held to the same bounds as every entry, and said ONCE, here, with that reason. No
+ * look follows: no write can land on a row this device cannot open, and the look would only say again
+ * what this line says.
+ */
+export async function keepPendingMutationForUnreadable(
+  deps: PendingMutationDeps,
+  entry: Omit<PendingMutation, 'at'>,
+  frameAt: number
+): Promise<void> {
+  await parkPendingMutation(deps, entry, frameAt, 'targets a row this device cannot open');
 }
 
 /**
@@ -108,8 +127,11 @@ export async function keepPendingMutations(
 async function parkPendingMutation(
   deps: PendingMutationDeps,
   entry: Omit<PendingMutation, 'at'>,
-  frameAt: number | undefined
+  frameAt: number | undefined,
+  why = 'arrived before its message'
 ): Promise<boolean> {
+  // `why` is what the log says of the entry: a peer's frame "arrived before its message"; the
+  // user's own act says what its write met.
   const { storage, deviceKey, conversations, log } = deps;
   const what = `${entry.kind} of ${short(entry.messageId)} by ${short(entry.sender)}`;
   if (frameAt === undefined || !Number.isFinite(frameAt)) {
@@ -142,10 +164,10 @@ async function parkPendingMutation(
   if (write.evicted > 0) countEvictions(entry.conversationId, write.evicted);
   log(
     !write.written
-      ? `[PENDING] ${what} arrived before its message - a later one of the same sender is already kept`
+      ? `[PENDING] ${what} ${why} - a later one of the same sender is already kept`
       : write.kept
-        ? `[PENDING] ${what} arrived before its message - kept for it`
-        : `[PENDING] ${what} arrived before its message - written, then evicted by the same write (its sender is over the bound and this was its lowest)`
+        ? `[PENDING] ${what} ${why} - kept for it`
+        : `[PENDING] ${what} ${why} - written, then evicted by the same write (its sender is over the bound and this was its lowest)`
   );
   return write.written;
 }

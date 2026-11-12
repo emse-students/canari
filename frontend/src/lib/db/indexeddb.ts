@@ -12,6 +12,7 @@ import type {
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  MergeMessagesOptions,
   MessageRowStanding,
   OutboxEntry,
   PageKey,
@@ -1053,9 +1054,17 @@ export class IndexedDbStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts: MergeMessagesOptions = {}
   ): Promise<Set<string>> {
-    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+    return casMergeMessages(
+      this.revisedRows(),
+      conversationId,
+      ids,
+      merge,
+      deviceKeyB64,
+      opts.foreignExpected === true
+    );
   }
 
   /**
@@ -1065,8 +1074,12 @@ export class IndexedDbStorage implements IStorage {
    */
   private revisedRows() {
     return {
-      read: (conversationId: string | null, ids: readonly string[], deviceKeyB64: string) =>
-        this.readRows(conversationId, ids, deviceKeyB64),
+      read: (
+        conversationId: string | null,
+        ids: readonly string[],
+        deviceKeyB64: string,
+        foreignExpected: boolean
+      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
       writeIfUnchanged: async (
         conversationId: string | null,
         writes: ReadonlyArray<RevisedWrite>,
@@ -1114,12 +1127,14 @@ export class IndexedDbStorage implements IStorage {
 
   /**
    * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn.
+   * a row of another conversation is never opened, and is said at warn unless the caller handles it
+   * (`foreignExpected`).
    */
   private async readRows(
     conversationId: string | null,
     ids: readonly string[],
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    foreignExpected = false
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
@@ -1140,7 +1155,7 @@ export class IndexedDbStorage implements IStorage {
     });
     for (const existing of found) {
       if (conversationId !== null && existing.conversationId !== conversationId) {
-        warnForeignRow(existing.id, conversationId);
+        if (!foreignExpected) warnForeignRow(existing.id, conversationId);
         continue;
       }
       try {
@@ -1182,7 +1197,6 @@ export class IndexedDbStorage implements IStorage {
     };
   }
 
-  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
   /** See {@link IStorage.getMessageStanding}: one `get`, one open, nothing said. */
   async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
     const db = this.ensureDb();
@@ -1203,6 +1217,7 @@ export class IndexedDbStorage implements IStorage {
     return { kind: 'readable', conversationId: row.conversationId };
   }
 
+  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
   async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
     const db = this.ensureDb();
     const existing: any = await new Promise((resolve, reject) => {

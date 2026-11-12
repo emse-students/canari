@@ -1,6 +1,6 @@
 /** The one move of a duplicate 1:1's rows (review of #3406). Group ids are fixed fakes. */
 import { describe, expect, it } from 'vitest';
-import { moveDirectConversationRows } from './conversations';
+import { mergeDirectConversationDuplicates, moveDirectConversationRows } from './conversations';
 import type { IStorage } from '$lib/db';
 import {
   messageRowStore,
@@ -76,5 +76,47 @@ describe('moveDirectConversationRows', () => {
     expect(
       [...store.pending.values()].map((e) => `${e.conversationId}:${e.messageId}`).sort()
     ).toEqual([`${JOINED}:a`, `${JOINED}:later`, 'other-group:x'].sort());
+  });
+});
+
+describe('mergeDirectConversationDuplicates - what waits for the moved rows', () => {
+  it('settles the mutations carried from the duplicate against the rows moved to the canonical', async () => {
+    const ME = 'aaaa0000-0000-4000-8000-000000000000';
+    const PEER = 'bbbb0000-0000-4000-8000-000000000000';
+    const name = `${ME}::${PEER}`;
+    const store = messageRowStore([storedRow('d1', OLD), storedRow('r1', OLD)]);
+    const waiting = { conversationId: OLD, sender: 'peer-user', at: 1_000 };
+    // Kept under the duplicate while its rows were not there yet (unreadable at the time, say).
+    await store.putPendingMutation({
+      ...waiting,
+      messageId: 'd1',
+      kind: 'delete',
+      slot: '',
+      rank: 0,
+    });
+    await store.putPendingMutation({
+      ...waiting,
+      messageId: 'r1',
+      kind: 'reaction',
+      slot: 'x',
+      rank: 5,
+    });
+
+    const kept = await mergeDirectConversationDuplicates(
+      [
+        { id: OLD, name, lifecycle: 'active', updatedAt: 500 },
+        { id: JOINED, name, lifecycle: 'active', updatedAt: 1000 },
+      ],
+      ME,
+      'k',
+      store as unknown as IStorage,
+      () => {}
+    );
+
+    expect(kept.map((c) => c.id)).toEqual([JOINED]);
+    expect(placement(store)).toEqual({ d1: JOINED, r1: JOINED });
+    expect(store.byId.get('d1')?.isDeleted).toBe(true);
+    expect(store.byId.get('r1')?.reactions?.map((r) => r.emoji)).toEqual(['x']);
+    expect(store.pending.size).toBe(0);
   });
 });

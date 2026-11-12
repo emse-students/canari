@@ -162,6 +162,12 @@ export interface PageKey {
   provisional: boolean;
 }
 
+/** What {@link IStorage.mergeMessages} is told about its call. */
+export interface MergeMessagesOptions {
+  /** The caller handles a row of another conversation itself: left alone, and not said at warn. */
+  foreignExpected?: boolean;
+}
+
 /**
  * Where ONE message row stands, whatever its conversation - the answer of
  * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
@@ -839,12 +845,17 @@ export interface IStorage {
    * in between is read again and merged again; each retry means another writer COMMITTED, so the
    * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
    * ids written.
+   *
+   * A row of another conversation is said at warn, unless `opts.foreignExpected`: a caller that
+   * handles that case itself (a row still moving onto the conversation it shows) is not told at warn
+   * what it is about to look at.
    */
   mergeMessages(
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts?: MergeMessagesOptions
   ): Promise<Set<string>>;
   /**
    * Remove one message row outright. No-op when the row is absent.

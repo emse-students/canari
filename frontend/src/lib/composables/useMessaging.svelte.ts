@@ -158,6 +158,7 @@ import {
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
   keepPendingMutation,
+  keepPendingMutationForUnreadable,
   logDiscarded,
   pendingFor,
   settledChatMessage,
@@ -2847,9 +2848,16 @@ export function useMessaging() {
    * the callers hand the shown key as they hold it (`selectedContact`, a map key) - an entry kept
    * under another case waited for a look that never came.
    *
+   * WRITE FIRST, LOOK SECOND - the protocol of `pendingMutationStore.ts`. The compare-and-set is
+   * tried first (the common case costs that one write); only when it wrote nothing does one unscoped
+   * look (`getMessageStanding`) say why, and EVERY outcome but a written row keeps the act: a row still
+   * moving here, none yet, or one the merge left because it already carried the shown state - kept,
+   * then settled at once by the keep's own look. A row that left between the write and the look is
+   * therefore kept, never lost.
+   *
    * A ROW THAT STANDS AND DOES NOT OPEN (sealed under another key, or left under the old group by a
-   * move because it did not open there) is never the target of a kept act: no write will ever land on
-   * it, so the entry would wait forever. Said once, for this act, and not kept.
+   * move) keeps the act too, as a peer's act is kept for such a row: a key change in flight (a PIN
+   * reseal) may open it again, and the act would be gone for good. Said once, with that reason.
    */
   async function persistLocalMutation(
     shownKey: string,
@@ -2860,42 +2868,43 @@ export function useMessaging() {
     if (!ctx.storage) return;
     const conversationId = shownKey.toLowerCase();
     try {
-      // ONE unscoped look first: it tells a row of this conversation (written in place) from one
-      // still moving here (kept), one that does not open (said, not kept) and none (kept) - and
-      // never meets a row of another conversation through a scoped read, which says so at warn.
+      if (await writeLocalMutation(conversationId, msg, ctx)) return;
+      const entry = {
+        conversationId,
+        messageId: msg.id,
+        sender: canonicalUserId(ctx.userId),
+        ...act,
+      };
       const standing = await ctx.storage.getMessageStanding(msg.id, ctx.deviceKeyB64);
       if (standing.kind === 'unreadable') {
-        ctx.log(
-          `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} not stored: its row stands under ${standing.conversationId.slice(0, 8)}... and this device cannot open it - shown only`
-        );
+        await keepPendingMutationForUnreadable(pendingDeps(ctx), entry, Date.now());
         return;
       }
-      if (standing.kind === 'readable' && standing.conversationId === conversationId) {
-        // Written in place - or already carrying the shown state: a merge that changes nothing
-        // writes nothing, and there is nothing to keep.
-        await writeLocalMutation(conversationId, msg, ctx);
-        return;
-      }
-      ctx.log(
-        `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} found no row under ${conversationId.slice(0, 8)}... - kept until its row is stored`
-      );
+      const here = standing.kind === 'readable' && standing.conversationId === conversationId;
       await keepPendingMutation(
         pendingDeps(ctx),
-        { conversationId, messageId: msg.id, sender: canonicalUserId(ctx.userId), ...act },
-        Date.now()
+        entry,
+        Date.now(),
+        here
+          ? 'was not written onto its row (unchanged, or it arrived after the write)'
+          : `found no row under ${conversationId.slice(0, 8)}... yet (its row is ${standing.kind === 'absent' ? 'not stored' : 'still under another conversation'})`
       );
     } catch (e) {
       ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
     }
   }
 
-  /** The in-place half of {@link persistLocalMutation}: the shown state merged onto the stored row. */
+  /**
+   * The in-place half of {@link persistLocalMutation}: the shown state merged onto the stored row of
+   * `conversationId`; whether it was written. A row of another conversation is expected here (one
+   * still moving onto the shown one) and handled by the caller, so the store does not say it at warn.
+   */
   async function writeLocalMutation(
     conversationId: string,
     msg: ChatMessage,
     ctx: MessagingContext
-  ): Promise<void> {
-    if (!ctx.storage) return;
+  ): Promise<boolean> {
+    if (!ctx.storage) return false;
     // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
     // one, and a full-row write erased it every time the user reacted.
     const patch = {
@@ -2905,12 +2914,14 @@ export function useMessaging() {
       isEdited: msg.isEdited,
       ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
     };
-    await ctx.storage.mergeMessages(
+    const written = await ctx.storage.mergeMessages(
       conversationId,
       [msg.id],
       (current) => mergeStoredMessage(current, patch),
-      ctx.deviceKeyB64
+      ctx.deviceKeyB64,
+      { foreignExpected: true }
     );
+    return written.has(msg.id);
   }
 
   /** Toggles an emoji reaction on a message: adds it if absent, removes it if the user already used that emoji. Updates state optimistically in memory and DB before sending the MLS message. */

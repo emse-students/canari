@@ -819,18 +819,21 @@ export async function mergeDirectConversationDuplicates(
   for (const { canonical, duplicate } of duplicatesToMerge) {
     if (canonical.id === duplicate.id) continue;
     try {
-      // The move and its window: {@link moveDirectConversationRows}. Landing after the move, a
-      // mutation handled by the duplicate's group finds no row there, keeps it under the duplicate,
-      // and `deleteConversation` below removes that entry; this boot-time merge runs once per
-      // duplicate, before its conversation is shown.
+      // The move and its window: {@link moveDirectConversationRows} takes the duplicate's rows AND
+      // the mutations waiting under it to the canonical. One landing after that carry, handled by
+      // the duplicate's group, finds no row there, is kept under the duplicate, and
+      // `deleteConversation` below removes it; this boot-time merge runs once per duplicate, before
+      // its conversation is shown.
       const { moved, left, carried } = await moveDirectConversationRows(
         duplicate.id,
         canonical.id,
         storage,
         deviceKeyB64
       );
-      // Nothing is shown yet at boot: the carried entries settle against the store alone.
-      if (carried.length > 0) {
+      // Nothing is shown yet at boot: what waits for the moved rows - carried with them, or kept
+      // under the canonical already - settles against the store alone.
+      const lookFor = [...new Set([...moved, ...carried])];
+      if (lookFor.length > 0) {
         await settlePendingFor(
           {
             storage,
@@ -840,7 +843,7 @@ export async function mergeDirectConversationDuplicates(
             log,
           },
           canonical.id,
-          carried
+          lookFor
         );
       }
       if (left > 0) {

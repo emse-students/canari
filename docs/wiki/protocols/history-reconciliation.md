@@ -1794,16 +1794,19 @@ the old conversation, through the boot merge's own move, and logs the count eith
   - **The key is lowercased in `persistLocalMutation`, once**: the edit and delete paths hand the
     shown key as they hold it, and an entry kept under another case waited for a look - always
     under the lowercased id - that never came.
-  - **A row that stands and does not open keeps nothing.** One unscoped look
-    (`IStorage.getMessageStanding`) tells the four cases apart: a row of the shown conversation
-    (written in place), one still under another conversation (kept), none (kept), and one this
-    device cannot open (sealed, or left under the old group because it did not open there) - no
-    write will ever land on that one, so the act is said once and not kept. The scoped
-    compare-and-set would have met a moving row as "a message of another conversation" at warn.
+  - **Write first, look second.** The scoped compare-and-set is tried first, told that a row of
+    another conversation is expected (`mergeMessages(..., { foreignExpected: true })`, so the store
+    does not warn about a row still moving). Only when it wrote nothing does one unscoped look
+    (`IStorage.getMessageStanding`) say why, and every outcome but a written row keeps the act, then
+    looks once more: a row that left between the write and the look is kept, never lost.
+  - **A row that stands and does not open keeps the act too, as a peer's act is kept**
+    (`keepPendingMutationForUnreadable`, the same bounds, said once with that reason): a key change in
+    flight - a PIN reseal - may open the row again, and an act dropped there would be gone for good.
   - **The mutations waiting under the OLD group go with its rows** (`moveDirectConversationRows`,
     `IStorage.getPendingMutationsOf`): each is kept again under the joined group (its tags are per
     conversation), then removed from the old one, and the carried ids are settled with the moved
-    ones - by the Welcome's re-key and by the boot merge. An entry that does not open under this
+    ones - by the Welcome's re-key and by the boot merge (`mergeDirectConversationDuplicates`, against
+    the store alone, since nothing is shown yet). An entry that does not open under this
     key may be under another one mid-reseal, so it is left where it is.
 - **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
   the boot merge's decision. That decision is itself not convergent between the two peers - a
