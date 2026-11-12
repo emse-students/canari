@@ -1525,7 +1525,7 @@ request held by a live document is waited for; a pending request whose tab close
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
 fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
-**Owed: the two-tab readings on dev** ([backlog](../../backlog.d/p2-follower-tab-commits-run-by-the-leader-readings-owed.md)).
+**Owed: the two-tab readings on dev**, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else).
 
 ### The flusher resolves its token, and does not run while offline
 

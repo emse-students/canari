@@ -1,8 +1,11 @@
 # Birthdays on profiles
 
-Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 2026-11-09. The
-queue entry and the readings still owed are in
-[backlog.d/birthdays-on-profiles.md](backlog.d/birthdays-on-profiles.md); the GDPR row is C26 of the
+Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 2026-11-09. Shipped in
+`1.6.9` (#3180). Read on `1.6.9-alpha.1` (2026-11-09, dev): the prompt card PASSED on both phones
+(shown once, "Ajouter mon anniversaire" opening the section, gone after "Passer" and a cold
+restart); the settings PARTIAL (the "counts from tomorrow" note and no ring on the day of the save
+seen, the locked state not, since a same-day correction is accepted by design). The readings still
+owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else); the GDPR row is C26 of the
 [register](compliance/register-of-processing.md), whose public face is `/legal/privacy`.
 
 ## The four decisions
