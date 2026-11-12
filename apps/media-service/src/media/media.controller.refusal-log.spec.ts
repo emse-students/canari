@@ -6,7 +6,7 @@
  * the token.
  */
 import * as crypto from 'crypto';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { InternalServerErrorException, Logger, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { MediaController } from './media.controller';
 
@@ -64,13 +64,21 @@ describe('a refused request', () => {
     expect(String(warn.mock.calls[0][0])).not.toContain(jwt ?? 'no token was sent');
   });
 
-  it('is logged when the secret is missing', () => {
+  it('is logged at ERROR, as a 500, when the secret is missing - a fault of the service, never a 401', () => {
     delete process.env.JWT_SECRET;
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-    expect(() => verify(`Bearer ${token({ sub: 'a', exp: 4_000_000_000 })}`)).toThrow(
-      UnauthorizedException
-    );
-    expect(warn).toHaveBeenCalledWith('[auth] request refused, 401: JWT_SECRET not configured');
+    try {
+      expect(() => verify(`Bearer ${token({ sub: 'a', exp: 4_000_000_000 })}`)).toThrow(
+        InternalServerErrorException
+      );
+      expect(error).toHaveBeenCalledWith(
+        '[AUTH] JWT_SECRET is not configured - refusing the request'
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

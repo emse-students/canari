@@ -58,14 +58,8 @@ export interface ListPostsParams {
   formation?: string;
   /** Restricts the page to one kind; absent means posts AND reels. Always `reel` on `reels`. */
   kind?: PostKind;
-  /** With `kind: 'reel'`, the posts whose only content is ONE picture come too (`full-screen-post-sql.ts`). */
-  singlePhotos?: boolean;
-  /** With `kind: 'reel'`, the posts whose only content is ONE picture OR ONE video come too; wins over `singlePhotos`. */
-  singleMedia?: boolean;
-  /** With `kind: 'reel'`, the posts of 2..10 pictures and videos come too, with the single ones; wins over both. */
+  /** With `kind: 'reel'`, the full-screen posts come too: pictures and videos only, a link allowed (`full-screen-post-sql.ts`). */
   multiMedia?: boolean;
-  /** With `multiMedia`, a post with a link in its text comes too. */
-  withLinks?: boolean;
   /** A live replay comes too; never without it (docs/wiki/live-replays.md). */
   withReplays?: boolean;
   /** The CanaReels viewer only: ranked like Pour toi (`for-you-feed.ts`) rather than newest first. */

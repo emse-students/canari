@@ -46,4 +46,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
+# NON-ROOT: the image's own `node` user (uid 1000); the SSR server writes nothing and mounts nothing.
+USER node
+
 CMD ["node", "index.js"]

@@ -15,7 +15,11 @@ Canari is the one variant, deliberately: its 1 h access token is a signed JWT th
 look up. The row backs the REFRESH token, and carries `sid` + `jti`
 (`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the verifier every
 `auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
-locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
+locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). The
+verifier's other read, the platform config for the maintenance check, is ONE query and shared by
+every request in flight at once IN THIS PROCESS (`PlatformService.getConfig`, 2026-11-11: never a
+TTL cache, and a config write drops the shared read - another replica of core-service may still
+answer from a read it started before the write, for the time of that one query). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -487,7 +491,7 @@ it stays queued, and no drain-waiter line. A Decline that wins the race against 
 only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
 
 **The cases this record does not reach** are a design limit, listed with what covers them in
-[backlog](backlog.md#a-revoked-device-whose-refresh-cannot-name-its-revocation). Tests:
+[the verification table](backlog.md#owed-a-verification-and-nothing-else). Tests:
 `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,
 `auth.deviceRevoked.test.ts` (the named body, an HTML and an edge 401), `BaseMlsService.revokedFrame.test.ts`,
 `session/revokedDeviceReset.test.ts` (both orderings, the offline return, a late discoverer, a
@@ -870,11 +874,10 @@ and clears the restore key on `SessionExpiredError`) through the unguarded deliv
 `syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
 
 **The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
-every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
-handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
-handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
-would still answer it `duplicate`). Both server-side corrections are a P3 in
-[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+every 401 comes from the guard, before any handler. Social-service's handler-level 401s are
+authentication only (its authorization refusals are 403s); a handler-level 401 added under `/api/mls`
+would turn a commit's resend into a second submission (the gate would still answer it `duplicate`).
+What each server answers a 401 for is below.
 
 `MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
 the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
@@ -891,3 +894,15 @@ The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended a
 its old epoch (TOK-1; what the commit gate makes of each outcome is in
 [mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
 `mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
+
+**What answers a 401 on the servers (2026-11-11, review of #2420).** An unset secret is the
+service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401, and the
+three header guards ask it FIRST, so a request with no header gets the same 500 - in
+chat-delivery's `HeaderAuthGuard` (`header-auth.guard.spec.ts`), the `NginxAuthGuard` of core- and
+social-service (`nginx-auth.guard.spec.ts`, 2026-11-12) and media-service's bearer check on an unset
+`JWT_SECRET` (`media.controller.verify-token.spec.ts`). An internal token that does not
+verify stays a 401 on purpose: the guard cannot tell an nginx fault from a caller that reached the
+container with forged headers, and the forged call is the one the 401 must answer. Social-service's
+two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user
+on a manage action); its authorization refusals are 403s (`refuseModeration`).
+

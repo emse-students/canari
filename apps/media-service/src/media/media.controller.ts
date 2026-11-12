@@ -213,7 +213,10 @@ export class MediaController {
       }
       const secret = process.env.JWT_SECRET;
       if (!secret) {
-        throw new UnauthorizedException('JWT_SECRET not configured');
+        // THIS service's misconfiguration, never the caller's: a 500, not a 401 a client would read
+        // as its session ending (the same as every guard on an unset secret, 2026-11-12).
+        this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
+        throw new InternalServerErrorException('JWT_SECRET is not configured');
       }
       return subjectOfAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
     } catch (err) {

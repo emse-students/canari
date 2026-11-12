@@ -35,10 +35,12 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
   const pushTokenRepo = { findOne: jest.fn(), update: jest.fn() };
   const groupMemberRepo = { findOne: jest.fn() };
   const validateCommit = jest.fn();
+  const answerIfAlreadyAccepted = jest.fn();
   const sendWelcome = jest.fn();
   const sendMessage = jest.fn();
   const messagingService = {
     validateCommit,
+    answerIfAlreadyAccepted,
     sendWelcome,
     sendMessage,
   } as unknown as MessagingService;
@@ -62,6 +64,7 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     pushTokenRepo.findOne.mockResolvedValue({ pushSecret: STORED_SECRET });
     groupMemberRepo.findOne.mockResolvedValue({ groupId: 'g1', userId: 'u2' });
     validateCommit.mockResolvedValue({ accepted: true, newEpoch: 8, currentEpoch: 7 });
+    answerIfAlreadyAccepted.mockResolvedValue(null);
     sendWelcome.mockResolvedValue(undefined);
     sendMessage.mockResolvedValue(undefined);
 
@@ -252,6 +255,29 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
 
     expect(refusal).toEqual({ status: 409, body: { status: 'rejected', reason: 'not_a_member' } });
+    // The commit log was asked for THESE bytes from THIS device at THIS base, and held none.
+    expect(answerIfAlreadyAccepted).toHaveBeenCalledWith(
+      'g1',
+      7,
+      'Q09NTUlU',
+      'd1',
+      expect.stringMatching(/^bg-wlc-/)
+    );
+    expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('answers a RETRY of an accepted commit as accepted, though the target was removed in between', async () => {
+    // The first POST landed (the Add, the Welcome), its answer was lost, the target was removed,
+    // and the connection retried the same bytes: `not_a_member` here would make the phone clear a
+    // stage the group holds.
+    groupMemberRepo.findOne.mockResolvedValue(null);
+    answerIfAlreadyAccepted.mockResolvedValue({ accepted: true, newEpoch: 8, duplicate: true });
+
+    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+
+    expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
+    // Nothing is validated, advanced or fanned out again: the first acceptance did all of it.
     expect(validateCommit).not.toHaveBeenCalled();
     expect(sendWelcome).not.toHaveBeenCalled();
   });
@@ -273,6 +299,37 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     });
     expect(validateCommit).not.toHaveBeenCalled();
     expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('answers a RETRY of an accepted commit as accepted, though the target was removed and re-invited by link in between', async () => {
+    // The first POST landed, its answer was lost, the target was removed and asked back by link
+    // (the seat now awaits admission): `awaiting_admission` here would make the phone clear a stage
+    // the group holds, exactly as `not_a_member` would.
+    groupMemberRepo.findOne.mockResolvedValue({
+      groupId: 'g1',
+      userId: 'u2',
+      awaitingAdmission: true,
+    });
+    answerIfAlreadyAccepted.mockResolvedValue({ accepted: true, newEpoch: 8, duplicate: true });
+
+    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+
+    expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
+    expect(answerIfAlreadyAccepted).toHaveBeenCalledWith(
+      body.groupId,
+      body.baseEpoch,
+      body.commitPayload,
+      body.deviceId,
+      expect.any(String)
+    );
+    expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('asks the commit log nothing for a seat that may be added, and lets the gate decide', async () => {
+    await controller.sendWelcomeAndCommitPush(AUTH, body);
+    expect(answerIfAlreadyAccepted).not.toHaveBeenCalled();
+    expect(validateCommit).toHaveBeenCalled();
   });
 
   it("answers the gate's own awaiting_admission (a link ask written after the route's read) as a typed 409", async () => {

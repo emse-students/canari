@@ -373,8 +373,15 @@ describe('the group routes enforce membership', () => {
   it('an unauthenticated call never reaches a route: the guard answers 401', () => {
     const request = { headers: {}, url: '/mls/groups/g-1', method: 'DELETE' };
     const context = { switchToHttp: () => ({ getRequest: () => request }) } as never;
-
-    expect(() => new HeaderAuthGuard().canActivate(context)).toThrow(UnauthorizedException);
+    // A configured service: an unset secret is the guard's own 500, asked before any header.
+    const previous = process.env.INTERNAL_SHARED_SECRET;
+    process.env.INTERNAL_SHARED_SECRET = 'secret-for-the-guard-test';
+    try {
+      expect(() => new HeaderAuthGuard().canActivate(context)).toThrow(UnauthorizedException);
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+      else process.env.INTERNAL_SHARED_SECRET = previous;
+    }
   });
 });
 

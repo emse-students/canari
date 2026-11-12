@@ -478,7 +478,14 @@
   // other says this device cannot fetch. They were one value until 2026-09-21, and a brand-new
   // conversation was told no device could serve its history because nothing had asked whether
   // there was any.
-  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'complete' | 'unavailable';
+  type ScrollbackState =
+    | 'idle'
+    | 'asking'
+    | 'asked'
+    | 'no-peer'
+    | 'complete'
+    | 'unavailable'
+    | 'main-tab';
   let scrollbackState = $state<ScrollbackState>('idle');
   /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
   let scrollbackAskedAt = $state<number | null>(null);
@@ -1863,6 +1870,15 @@
             >
               <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
               {m.chat_scrollback_no_peer()}
+            </div>
+          {:else if scrollbackState === 'main-tab'}
+            <div
+              class="text-muted-foreground flex items-center justify-center gap-2 px-4 py-2 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_main_tab()}
             </div>
           {/if}
           <ChatMessageGroups
