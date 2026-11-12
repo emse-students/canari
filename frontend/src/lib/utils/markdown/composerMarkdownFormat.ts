@@ -862,10 +862,12 @@ export async function applyComposerMarkdownFormat(
     return;
   }
 
-  history?.record(
-    { text: before, start, end },
-    { text: result.text, start: result.selStart, end: result.selEnd }
-  );
+  // A no-op leaves nothing to undo: an entry for it would take the browser's Ctrl+Z for nothing.
+  if (result.text !== before)
+    history?.record(
+      { text: before, start, end },
+      { text: result.text, start: result.selStart, end: result.selEnd }
+    );
   setText(result.text);
   await tick();
   composer.focusEditor();

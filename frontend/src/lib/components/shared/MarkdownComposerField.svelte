@@ -87,7 +87,8 @@
 
   /** Ctrl/Cmd+Z and redo over a toolbar action; anything else goes on to the caller. */
   function handleKeydown(e: KeyboardEvent) {
-    const action = historyKeyAction(e);
+    // An IME composition owns its own keys: its Ctrl+Z is the composition's, never the toolbar's.
+    const action = e.isComposing ? null : historyKeyAction(e);
     if (action) {
       const snapshot = action === 'undo' ? history.undo(value) : history.redo(value);
       if (snapshot) {
