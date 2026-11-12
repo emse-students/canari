@@ -83,6 +83,7 @@
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
   import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface ReplyTo {
     id: string;
@@ -144,7 +145,8 @@
      * the clock and lifting the finger away from the bin IS the send. Staging it asked for the
      * same consent twice, behind a "files pending" banner.
      */
-    onSendVoiceNote?: (file: File) => void;
+    /** A finished recording, and its sound measured while recorded (null: unmeasured). */
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -778,7 +780,7 @@
     return file.type.startsWith('audio/');
   }
 
-  function handleVoiceRecording(audioBlob: Blob) {
+  function handleVoiceRecording(audioBlob: Blob, loudness: MediaLoudness | null) {
     if (!onSendVoiceNote) return;
 
     const mimeType = audioBlob.type || 'audio/webm';
@@ -794,7 +796,7 @@
       type: mimeType,
     });
 
-    onSendVoiceNote(audioFile);
+    onSendVoiceNote(audioFile, loudness);
   }
 
   $effect(() => {

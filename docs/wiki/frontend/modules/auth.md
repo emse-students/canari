@@ -1314,8 +1314,10 @@ now, not before. What the exits do with it:
   `revokedWipeScope` makes: `otherAccountOnInstall` in `installAccounts.ts`) - nobody else can need
   it;
 - **the wipe of one account among several** leaves it (`Unattributed::Keep`): it may be the other
-  account's. That residue is the one open item
-  ([backlog](../../backlog.d/p3-unlabelled-seeds-outlive-an-account-on-a-shared-install.md));
+  account's. That residue - sealed under the install key and never read as anybody's - drains
+  only by the per-channel bound (20 sessions), the remaining account's own wipe once it is alone,
+  or a factory wipe; nothing is built unless a measurement shows it lasting, one reading owed
+  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else));
 - **a community leaving the device and the retention sweep** drop it in the channel or sessions they
   name, as they did before the label: the worst it costs another account is the generic banner it
   had then.

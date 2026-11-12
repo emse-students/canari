@@ -149,11 +149,12 @@ export interface MediaRef {
    */
   expiresAtMs?: number;
   /**
-   * A video's sound as its AUTHOR'S DEVICE measured it at send (`loudnessMeter.ts`: BS.1770
-   * integrated LUFS and sample peak, `MediaMsg.loudness`, a post's media JSON): what a reader's
-   * player normalises to (`loudnessPlayback.ts`, owner 2026-11-11). The file itself is never
-   * altered. Absent on every video sent before it, on a silent one and on a live replay: those play
-   * exactly as they always did. An older client ignores it and plays the video as it is.
+   * A video's or a voice note's sound as its AUTHOR'S DEVICE measured it at send (`loudnessMeter.ts`:
+   * BS.1770 integrated LUFS and sample peak, `MediaMsg.loudness`, a post's media JSON): what a
+   * reader's player normalises to (`loudnessPlayback.ts`, owner 2026-11-11; voice notes through
+   * `recordingLoudness.ts`, 2026-11-12). The file itself is never altered. Absent on everything
+   * sent before it, on a silent one and on a live replay: those play exactly as they always did. An
+   * older client ignores it and plays the media as it is.
    */
   loudness?: MediaLoudness;
 }
@@ -187,7 +188,7 @@ export interface PendingMediaFile {
    * byte arrives, and a stream can be sought in before it is whole (owner, 2026-11-10).
    */
   durationMs?: number;
-  /** A prepared video's measured sound - see {@link MediaRef.loudness}. */
+  /** A prepared video's or a recording's measured sound - see {@link MediaRef.loudness}. */
   loudness?: MediaLoudness;
 }
 

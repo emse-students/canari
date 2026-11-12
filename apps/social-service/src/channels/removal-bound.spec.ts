@@ -439,6 +439,29 @@ describe('removals bounded by the actor', () => {
     });
   });
 
+  describe('the "made private" line (RM-6, 2026-10-26)', () => {
+    const madePrivateLines = () =>
+      (Logger.prototype.log as jest.Mock).mock.calls.filter((c) =>
+        String(c[0]).includes('[CHANNEL_ACCESS] made private')
+      );
+
+    it('is not written for a flip the removal bound refuses', async () => {
+      const { service } = makeService({ isPrivate: false });
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, [], undefined, 0))
+      ).toBe(BOUND);
+      expect(madePrivateLines()).toHaveLength(0);
+    });
+
+    it('is written once the flip is saved', async () => {
+      const { service } = makeService({ isPrivate: false });
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-admin', true, [], undefined, 0))
+      ).toBe('allowed');
+      expect(madePrivateLines()).toHaveLength(1);
+    });
+  });
+
   describe('by creating a private salon', () => {
     const create = (service: ChannelService, actorUserId: string) =>
       service.createChannel({ workspaceId: WS, name: 'cache', visibility: 'private', actorUserId });

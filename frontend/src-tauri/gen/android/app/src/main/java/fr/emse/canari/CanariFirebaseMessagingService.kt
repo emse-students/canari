@@ -51,6 +51,7 @@ import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
 import fr.emse.canari.push.WakeAnswer
@@ -59,8 +60,10 @@ import fr.emse.canari.push.FixedNotifIds
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -1839,18 +1842,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                    if (code != 200 && code != 201) return null
                     // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
-                    // app orders this message by it (messageOrder.ts). An answer without it (an older
-                    // server, an unreadable body) still counts as sent, undated: 0.
-                    val receivedAt = try {
-                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
-                        0L
+                    // app orders this message by it (messageOrder.ts). Only a JSON 2xx counts as sent;
+                    // a non-JSON body and a body the transport lost are both kept (QueuedSendAnswer),
+                    // and each is logged as what it is.
+                    val outcome = QueuedSendAnswer.classify(code) {
+                        try {
+                            val text = conn.inputStream.bufferedReader().use { it.readText() }
+                            try {
+                                QueuedSendAnswer.BodyRead.Json(JSONObject(text).optLong("receivedAt", 0L))
+                            } catch (e: JSONException) {
+                                QueuedSendAnswer.BodyRead.NotJson
+                            }
+                        } catch (e: IOException) {
+                            QueuedSendAnswer.BodyRead.TransportFailed(e.message)
+                        }
                     }
-                    if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
-                    receivedAt.coerceAtLeast(0L)
+                    when (outcome) {
+                        is QueuedSendAnswer.Outcome.Sent -> {
+                            if (outcome.receivedAt == 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
+                            outcome.receivedAt
+                        }
+                        is QueuedSendAnswer.Outcome.Kept -> {
+                            when (outcome.cause) {
+                                QueuedSendAnswer.KeptCause.NOT_ACCEPTED_STATUS -> Unit
+                                QueuedSendAnswer.KeptCause.BODY_NOT_JSON ->
+                                    Log.w(TAG, "sendQueuedMessagePush: HTTP $code with a body that is not JSON - no answer from the server, kept msg=${messageId.take(8)}")
+                                QueuedSendAnswer.KeptCause.BODY_READ_FAILED ->
+                                    Log.w(TAG, "sendQueuedMessagePush: HTTP $code and the body was lost in transport - the server may have taken it, kept for a deduplicated retry msg=${messageId.take(8)}: ${outcome.detail}")
+                            }
+                            null
+                        }
+                    }
                 } finally {
                     conn.disconnect()
                 }

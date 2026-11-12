@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount } from 'svelte';
   import {
     listAssociationForms,
@@ -16,7 +17,6 @@
   import { ClipboardList, TriangleAlert, Pencil, Trash2, Plus } from '@lucide/svelte';
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { submitterName } from '$lib/forms/submissionTable';
   import { isDraftForm } from '$lib/forms/publish';
 
@@ -287,7 +287,7 @@
                       <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
                           sub.createdAt
-                        ).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
+                        ).toLocaleDateString(intlLocale())}
                       </p>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">

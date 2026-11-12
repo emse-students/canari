@@ -1,6 +1,12 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+  type DelegatedCommitOp,
+} from '$lib/utils/chat/tabCommitDelegation';
 import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
@@ -166,6 +172,12 @@ export type DischargeReason =
 const historyAsked = new Set<string>();
 
 /**
+ * The history ask of each community that is running now, so a second trigger waits for it instead
+ * of racing it ({@link requestCommunityHistory}).
+ */
+const historyAskRunning = new Map<string, Promise<void>>();
+
+/**
  * Communities there was nobody to ask, and the distribution epoch at which that was true.
  *
  * **"Nobody to ask" is a statement about a ROSTER, and a roster has a version.** It used to be
@@ -300,6 +312,13 @@ export function noteMissingSeed(
   reason: AskReason = 'unreadable-row'
 ): void {
   if (!sessionId || asked.has(sessionId)) return;
+  // A FOLLOWER TAB ASKS NOBODY ITSELF (2026-11-11): the ask is an MLS frame on the key group, which
+  // only the leader's copy sends, and the answer reaches the leader's socket. The want is handed to
+  // the leader, whose own repair asks, records and receives it; the seed lands in the shared store.
+  if (refusesCommitsHere()) {
+    handMissingSeedToLeader(channelId, { sessionId, senderId, sentAt, reason });
+    return;
+  }
   const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
   const sender = senderId.toLowerCase();
   const dated = typeof sentAt === 'number' && Number.isFinite(sentAt) ? sentAt : Infinity;
@@ -1262,12 +1281,47 @@ export async function requestCommunityHistory(
    * the frames of the epochs it skipped were acknowledged unreadable, so what it holds is no longer
    * evidence that it holds the past.
    */
-  { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
+  options: { evenIfSeedsHeld?: boolean } = {}
+): Promise<void> {
+  // ONE ASK OF A COMMUNITY RUNS AT A TIME. "Asked" is recorded only once the send returns, so two
+  // triggers 46 ms apart (RM-4, 2026-10-26: a key-group epoch move and the join path) both passed
+  // the check, both asked the same member the same question, and the second replaced the first -
+  // discarding the answers already on their way. Run in turn, the second reads the first's outcome
+  // ("asked", "nobody to ask", "final") and asks only if that outcome still leaves a question.
+  const before = historyAskRunning.get(workspaceId);
+  if (before) {
+    console.debug(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is already being asked - this trigger waits for that ask`
+    );
+  }
+  const run = (before ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => askCommunityHistory(workspaceId, options));
+  historyAskRunning.set(workspaceId, run);
+  try {
+    await run;
+  } finally {
+    if (historyAskRunning.get(workspaceId) === run) historyAskRunning.delete(workspaceId);
+  }
+}
+
+/** The body of {@link requestCommunityHistory}, run one at a time per community. */
+async function askCommunityHistory(
+  workspaceId: string,
+  { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean }
 ): Promise<void> {
   // A WIDENED PAST IS ASKED FOR AGAIN TOO, whatever is held (see {@link historyWidening}): what
   // this device holds was handed over floored at its member's arrival, so it is no evidence that it
   // holds the past it may now read. The FIRST sight of the widening re-arms the ask even if this
   // session already asked (under the floor); later passes follow the ordinary once-per-session rule.
+  // A follower tab asks nothing (the ask is a frame only the leader sends); the leader runs the same
+  // triggers for this device - its own join, its re-join, a widening it receives.
+  if (refusesCommitsHere()) {
+    console.debug(
+      `[GRAINE] history of community ${workspaceId.slice(0, 8)} not asked from a follower tab - the leader tab asks for this device`
+    );
+    return;
+  }
   const widening = historyWidening(workspaceId);
   if (historyAsked.has(workspaceId) && !evenIfSeedsHeld && widening !== 'first') return;
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
@@ -1897,6 +1951,8 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
 /** Test seam: drops every in-memory trace of what has been asked. */
 export function resetGraineRepairState(): void {
   asked.clear();
+  handedToLeader.clear();
+  handoverLanes.clear();
   askedOn.clear();
   askedRequest.clear();
   heldForKeyGroup.clear();
@@ -1905,6 +1961,7 @@ export function resetGraineRepairState(): void {
   declined.clear();
   outstanding.clear();
   historyAsked.clear();
+  historyAskRunning.clear();
   historyUnanswerableAt.clear();
   historyRequest.clear();
   for (const { cancel } of parked.values()) cancel();
@@ -1913,3 +1970,108 @@ export function resetGraineRepairState(): void {
   historyParked.clear();
   flushing = false;
 }
+
+/**
+ * The sessions this follower tab has handed to the CURRENT leader: one handover per session. Emptied
+ * when the leader changes ({@link forgetSeedsHandedToLeader}) - what the previous leader was asked
+ * lived in its memory and went with it, so the next row naming such a seed hands it again.
+ */
+const handedToLeader = new Set<string>();
+
+/** One missing seed as handed to the leader. */
+type HandedSeed = Extract<DelegatedCommitOp, { kind: 'note-missing-seeds' }>['seeds'][number];
+
+/**
+ * ONE HANDOVER PER CHANNEL AT A TIME: the seeds a channel's rows name while its handover is in flight
+ * wait in `next` and leave together, as ONE record, when it is answered - a page of N unreadable rows
+ * is one or two records, never N.
+ */
+const handoverLanes = new Map<string, { next: Map<string, HandedSeed> }>();
+
+/**
+ * The leader tab changed (the election said so): every seed handed to the previous one is handed
+ * again by the next row naming it. Wired by the session to the election's `onLeaderTabChanged`.
+ */
+export function forgetSeedsHandedToLeader(): void {
+  if (handedToLeader.size === 0) return;
+  console.info(
+    `[GRAINE] the leader tab changed - ${handedToLeader.size} missing seed(s) handed to the previous one are handed again on their next row`
+  );
+  handedToLeader.clear();
+}
+
+/** The follower half of {@link noteMissingSeed}: the leader asks for the seed. Never rejects. */
+function handMissingSeedToLeader(
+  channelId: string,
+  want: { sessionId: string; senderId: string; sentAt: number | undefined; reason: AskReason }
+): void {
+  if (handedToLeader.has(want.sessionId)) return;
+  if (promotedSinceLoad()) {
+    // This tab leads on a follower's copy, its reload owed: nobody would run the request, and the
+    // reloaded page reads the row again on its own state.
+    console.debug(
+      `[GRAINE] missing seed ${want.sessionId} of channel ${channelId.slice(0, 8)} not handed: this tab reloads as the leader`
+    );
+    return;
+  }
+  handedToLeader.add(want.sessionId);
+  const seed: HandedSeed = {
+    sessionId: want.sessionId,
+    senderId: want.senderId,
+    ...(typeof want.sentAt === 'number' && Number.isFinite(want.sentAt)
+      ? { sentAt: want.sentAt }
+      : {}),
+    reason: want.reason,
+  };
+  const lane = handoverLanes.get(channelId);
+  if (lane) {
+    lane.next.set(seed.sessionId, seed);
+    return;
+  }
+  const opened = { next: new Map([[seed.sessionId, seed]]) };
+  handoverLanes.set(channelId, opened);
+  void runHandoverLane(channelId, opened);
+}
+
+/** Hands a channel's waiting seeds over, one record at a time, until none waits. */
+async function runHandoverLane(
+  channelId: string,
+  lane: { next: Map<string, HandedSeed> }
+): Promise<void> {
+  // The rows decoded in this same turn join the first record.
+  await Promise.resolve();
+  try {
+    while (lane.next.size > 0) {
+      const seeds = [...lane.next.values()];
+      lane.next.clear();
+      const answer = await delegateCommitToLeader({
+        kind: 'note-missing-seeds',
+        channelId,
+        seeds,
+      });
+      if (answer.status === 'done') {
+        console.debug(
+          `[GRAINE] ${seeds.length} missing seed(s) of channel ${channelId.slice(0, 8)} handed to the leader tab`
+        );
+        continue;
+      }
+      // Not asked by anybody: the next row naming one of them may hand it again.
+      for (const handed of seeds) handedToLeader.delete(handed.sessionId);
+      console.warn(
+        `[GRAINE] ${seeds.length} missing seed(s) of channel ${channelId.slice(0, 8)} not handed to the leader tab: ${answer.reason}`
+      );
+    }
+  } finally {
+    if (handoverLanes.get(channelId) === lane) handoverLanes.delete(channelId);
+  }
+}
+
+/** The leader half: asks for a seed a follower tab found missing, as for one of its own rows. */
+export const seedRepairExecutors: Pick<DelegatedCommitExecutors, 'note-missing-seeds'> = {
+  'note-missing-seeds': async (op) => {
+    for (const seed of op.seeds) {
+      noteMissingSeed(op.channelId, seed.sessionId, seed.senderId, seed.sentAt, seed.reason);
+    }
+    return 'noted';
+  },
+};

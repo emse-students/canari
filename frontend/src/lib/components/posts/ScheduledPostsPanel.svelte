@@ -1,8 +1,8 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { Clock, Trash2 } from '@lucide/svelte';
   import type { ScheduledPost } from '$lib/posts/api';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { pendingRingStyle } from '$lib/calendar/feedEvents';
 
   /**
@@ -21,7 +21,7 @@
 
   /** Formats a UTC ISO string into a short French locale date+time string. */
   function formatScheduled(iso: string): string {
-    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    return new Date(iso).toLocaleString(intlLocale(), {
       dateStyle: 'short',
       timeStyle: 'short',
     });

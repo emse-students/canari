@@ -85,7 +85,7 @@ CLOUDFLARE_TURN_TTL_SECONDS EXTERNAL_API_KEY
 FIREBASE_SERVICE_ACCOUNT_JSON GOOGLE_SAFE_BROWSING_API_KEY KLIPY_API_KEY
 MEDIA_MAX_SIZE_MB MIGALLERY_API_KEY MIGALLERY_API_URL SERVICE_ACCOUNT_USER_ID
 SKY_API_KEY SKY_API_URL TURN_CREDENTIAL TURN_URL
-TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES"
+TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES COMMUNITY_OWNED_MAX"
 
 # WRITTEN EMPTY, and this list exists because "no local equivalent" is not the only question.
 #
@@ -257,7 +257,8 @@ HEADER
 # file describes the same stack. POSTGRES_* MUST match the compose - the cluster was initialised
 # with those.
 DOMAIN=localhost
-ALLOW_ORIGIN=*
+# ALLOW_ORIGIN is NOT written here: production's list is not carried over, and the local one is
+# built by the compose file from the port it publishes (CANARI_LOCAL_ALLOW_ORIGIN overrides it).
 
 # IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
 #

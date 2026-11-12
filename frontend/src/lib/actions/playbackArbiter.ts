@@ -50,6 +50,15 @@ function isPlaying(el: HTMLMediaElement) {
   return !el.paused && !el.ended;
 }
 
+/**
+ * Whether `el` is registered here. The loudness route (`video/loudnessPlayback.ts`) routes only a
+ * registered element: the pause this registry gives every media on a native app leaving the screen
+ * is what releases its audio output.
+ */
+export function isArbitrated(el: HTMLMediaElement): boolean {
+  return registry.has(el);
+}
+
 /** Whether a registered `<video>` (not an audio-only media) is playing right now. */
 export function isVideoPlaying(): boolean {
   for (const el of registry.keys()) {
