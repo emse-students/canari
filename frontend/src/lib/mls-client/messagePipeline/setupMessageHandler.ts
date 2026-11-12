@@ -66,6 +66,7 @@ import {
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import {
   findDirectConversationByPeer,
+  moveDirectConversationRows,
   restoredConversationRow,
 } from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -701,10 +702,10 @@ async function handleWelcome({
       statePersister.persistNow();
 
       // A stray in-memory duplicate for the same DM peer (independent group created concurrently)
-      // is reconciled elsewhere: upsertConversation (below) merges the Map entry, and
-      // mergeDirectConversationDuplicates merges the IndexedDB rows on the next login. We do not
-      // delete any IndexedDB row here - that would erase accumulated messages before they are
-      // migrated, causing visible loss until the history bundle arrives.
+      // is reconciled by upsertConversation (below): it re-keys the Map entry and MOVES every stored
+      // row onto the joined group (`moveDirectConversationRows`); mergeDirectConversationDuplicates
+      // removes the emptied conversation row on the next login. We do not delete any IndexedDB row
+      // here - that would erase accumulated messages before they are migrated.
 
       // A SAFETY NET THAT CANNOT CATCH THE CASE IT WAS WRITTEN FOR, so it is gone. It read
       // "idempotent - safety net if the inviter has not yet called registerMember for this userId",
@@ -1606,72 +1607,50 @@ async function upsertConversation(
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
 
-      // Persist in-memory messages to the new group's IndexedDB.
-      // Without this, loadHistoryForConversation (which reads from the new groupId's IndexedDB)
-      // would overwrite the in-memory list with an empty array, making messages disappear
-      // until the next login where mergeDirectConversationDuplicates migrates them properly.
-      const msgs = (existing.messages ?? []).filter((m) => m.id && m.status !== 'sending');
-      if (deps.storage && msgs.length > 0) {
-        // A MOVE, built from the STORED rows. A row the old conversation already stores is moved as
-        // stored - its sealed proofs, reactions, edit and deletion included, which the copy on screen
-        // does not carry and a write built from it erased. Only a row no store holds yet is written
-        // from memory, and only where none stands. A move changes the row's conversation, which the
-        // scoped compare-and-set (`mergeMessages`) refuses by design; what it cannot see is a write
-        // to the old conversation's row after this read, and the old conversation has just left
-        // memory (`conversations.delete` above), so no shown path writes to it.
-        const ids = msgs.map((m) => m.id);
-        const found = await deps.storage
-          .getMessagesByIds(existing.id, ids, deps.deviceKey())
+      // EVERY STORED ROW OF THE OLD CONVERSATION MOVES, NOT ONLY THE ONES ON SCREEN. Without the
+      // move, loadHistoryForConversation (reading the new group's rows) would show an empty thread,
+      // and the old rows would stay stored under a group the peer already merged away: every scoped
+      // read of the joined group - its history bundle first - then met them as rows of ANOTHER
+      // conversation, until the next boot's merge. The move used to be built from the messages in
+      // memory, and a conversation restored as a stub (its page not read yet) carries none, so
+      // nothing moved and nothing said so (2026-11-12, dev web). The stored rows move as stored
+      // ({@link moveDirectConversationRows}, the boot merge's own move); a message only memory holds
+      // is then written where no row stands. The old conversation has just left memory
+      // (`conversations.delete` above), so no shown path writes to it during the move.
+      if (deps.storage) {
+        const storage = deps.storage;
+        const key = deps.deviceKey();
+        const onScreen = (existing.messages ?? []).filter((m) => m.id && m.status !== 'sending');
+        // THE LINE BELOW USED TO PRINT WHETHER OR NOT THE WRITE HAPPENED. `.catch(() => {})`
+        // swallowed the failure and the next statement announced `persisted` regardless, so a
+        // store that refuses writes produced a log CLAIMING a durable write that did not occur.
+        await moveDirectConversationRows(existing.id, joinedGroupId, storage, key)
+          .then(async ({ moved, held }) => {
+            const fresh: StoredMessage[] = onScreen
+              .filter((m) => !held.has(m.id))
+              .map((m) => ({
+                id: m.id,
+                conversationId: joinedGroupId,
+                senderId: m.senderId,
+                content: m.content,
+                timestamp:
+                  m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
+                reactions: m.reactions,
+                isDeleted: m.isDeleted,
+                isEdited: m.isEdited,
+                serverTimestamp: m.serverTimestamp,
+              }));
+            if (fresh.length > 0) await storage.saveMessagesIfAbsent(fresh, key);
+            deps.log(
+              `[WELCOME] ${existing.id.slice(0, 8)}… re-keyed onto ${joinedGroupId.slice(0, 8)}…: ${moved.length} stored row(s) moved, ${fresh.length} on-screen row(s) written`
+            );
+          })
           .catch((e: unknown) => {
             deps.log(
-              `[WELCOME] could not read the stored rows of ${existing.id.slice(0, 8)}… to re-key them: ${String(e)} - only rows no store holds are written`
+              `[WELCOME] FAILED to re-key the rows of ${existing.id.slice(0, 8)}… onto ${joinedGroupId.slice(0, 8)}…: ` +
+                `${String(e)} - they stay under the old conversation until the next boot's merge`
             );
-            return null;
           });
-        const stored = found?.rows ?? new Map<string, StoredMessage>();
-        const movedRows = [...stored.values()].map((row) => ({
-          ...row,
-          conversationId: joinedGroupId,
-        }));
-        const fresh: StoredMessage[] = msgs
-          .filter((m) => !stored.has(m.id) && !found?.unreadable.has(m.id))
-          .map((m) => ({
-            id: m.id,
-            conversationId: joinedGroupId,
-            senderId: m.senderId,
-            content: m.content,
-            timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-            reactions: m.reactions,
-            isDeleted: m.isDeleted,
-            isEdited: m.isEdited,
-            serverTimestamp: m.serverTimestamp,
-          }));
-        const toSave = [...movedRows, ...fresh];
-        if (toSave.length > 0) {
-          // THE LINE BELOW USED TO PRINT WHETHER OR NOT THE WRITE HAPPENED. `.catch(() => {})`
-          // swallowed the failure and the next statement announced `persisted` regardless, so a
-          // store that refuses writes produced a log CLAIMING a durable write that did not occur.
-          // That is worse than silence: it answers, wrongly, the exact question a reader chasing a
-          // conversation empty after a reload would come here to ask.
-          const storage = deps.storage;
-          const persisted = await Promise.all([
-            movedRows.length > 0 ? storage.saveMessages(movedRows, deps.deviceKey()) : null,
-            fresh.length > 0 ? storage.saveMessagesIfAbsent(fresh, deps.deviceKey()) : null,
-          ])
-            .then(() => true)
-            .catch((e: unknown) => {
-              deps.log(
-                `[WELCOME] FAILED to persist ${toSave.length} re-keyed message(s) in ${joinedGroupId.slice(0, 8)}…: ` +
-                  `${String(e)} - they are on screen and will NOT survive a reload`
-              );
-              return false;
-            });
-          if (persisted) {
-            deps.log(
-              `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (re-keyed)`
-            );
-          }
-        }
       }
     }
     conversations.set(newConvoKey, updated);

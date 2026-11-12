@@ -55,6 +55,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
+import type { StoredMessage } from '$lib/db';
 import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { m } from '$lib/paraglide/messages';
@@ -329,9 +330,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const olderDmGroup = '33333333-3333-4333-8333-333333333333';
 
     async function deliverDmWelcome(
-      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>,
+      storage: unknown = null
     ) {
-      const deps = baseDeps({ conversations: createTestConversations(initial) });
+      const deps = baseDeps({ conversations: createTestConversations(initial), storage });
       const mls = deps.mlsService as any;
       mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
       mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
@@ -378,6 +380,147 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(deps.conversations.has(olderDmGroup)).toBe(false);
       expect(deps.conversations.has('peer-user')).toBe(false);
       expectEveryKeyIsItsRowId(deps.conversations);
+    });
+
+    /**
+     * A store keyed by message id, each row naming its conversation - the IndexedDB shape. Its
+     * scoped read warns on a row of another conversation exactly as the real one does, so a test
+     * can assert the warning never fires.
+     */
+    function rowStore(rows: StoredMessage[]) {
+      const byId = new Map(rows.map((r) => [r.id, { ...r }]));
+      const foreign: string[] = [];
+      const store = {
+        byId,
+        foreign,
+        getMessages: vi.fn(async (conv: string) =>
+          [...byId.values()].filter((r) => r.conversationId === conv)
+        ),
+        getMessagesByIds: vi.fn(async (conv: string, ids: readonly string[]) => {
+          const found = new Map<string, StoredMessage>();
+          for (const id of ids) {
+            const row = byId.get(id);
+            if (!row) continue;
+            if (row.conversationId !== conv) foreign.push(id);
+            else found.set(id, row);
+          }
+          return { rows: found, unreadable: new Set<string>() };
+        }),
+        saveMessages: vi.fn(async (msgs: StoredMessage[]) => {
+          for (const m of msgs) byId.set(m.id, { ...m });
+        }),
+        saveMessagesIfAbsent: vi.fn(async (msgs: StoredMessage[]) => {
+          const written = new Set<string>();
+          for (const m of msgs) {
+            if (byId.has(m.id)) continue;
+            byId.set(m.id, { ...m });
+            written.add(m.id);
+          }
+          return written;
+        }),
+        getConversation: vi.fn(async () => null),
+      };
+      return store;
+    }
+
+    function storedRow(id: string, conversationId: string): StoredMessage {
+      return {
+        id,
+        conversationId,
+        senderId: 'peer-user',
+        content: `body of ${id}`,
+        timestamp: 1000,
+      } as StoredMessage;
+    }
+
+    it('a held DM restored as a stub (no message in memory) moves EVERY stored row onto the joined group', async () => {
+      // The peer merged its duplicate into `dmGroup`; this device still holds the duplicate, read
+      // from storage at boot as a row with no page loaded yet.
+      const store = rowStore([
+        storedRow('m1', olderDmGroup),
+        storedRow('m2', olderDmGroup),
+        storedRow('m3', olderDmGroup),
+      ]);
+      const deps = await deliverDmWelcome(
+        [
+          [
+            olderDmGroup,
+            emptyConversation(olderDmGroup, {
+              lifecycle: 'active',
+              conversationType: 'direct',
+              directPeerId: 'peer-user',
+              contactName: 'peer-user',
+            }),
+          ],
+        ],
+        store
+      );
+
+      expect([...store.byId.values()].map((r) => [r.id, r.conversationId])).toEqual([
+        ['m1', dmGroup],
+        ['m2', dmGroup],
+        ['m3', dmGroup],
+      ]);
+      expect([...store.byId.values()].map((r) => r.content)).toEqual([
+        'body of m1',
+        'body of m2',
+        'body of m3',
+      ]);
+      // What the joined group's history bundle then reads: every row is its own, no foreign row.
+      const read = await store.getMessagesByIds(dmGroup, ['m1', 'm2', 'm3']);
+      expect(read.rows.size).toBe(3);
+      expect(store.foreign).toEqual([]);
+      expect(deps.log).toHaveBeenCalledWith(
+        expect.stringContaining('3 stored row(s) moved, 0 on-screen row(s) written')
+      );
+    });
+
+    it('leaves alone a GROUP with the same peer and a DM with another peer', async () => {
+      const groupWithPeer = '44444444-4444-4444-8444-444444444444';
+      const dmWithOther = '55555555-5555-4555-8555-555555555555';
+      const store = rowStore([
+        storedRow('g1', groupWithPeer),
+        storedRow('o1', dmWithOther),
+        storedRow('d1', olderDmGroup),
+      ]);
+      const deps = await deliverDmWelcome(
+        [
+          [
+            groupWithPeer,
+            emptyConversation(groupWithPeer, {
+              lifecycle: 'active',
+              conversationType: 'group',
+              contactName: 'peer-user',
+            }),
+          ],
+          [
+            dmWithOther,
+            emptyConversation(dmWithOther, {
+              lifecycle: 'active',
+              conversationType: 'direct',
+              directPeerId: 'other-user',
+              contactName: 'other-user',
+            }),
+          ],
+          [
+            olderDmGroup,
+            emptyConversation(olderDmGroup, {
+              lifecycle: 'active',
+              conversationType: 'direct',
+              directPeerId: 'peer-user',
+              contactName: 'peer-user',
+            }),
+          ],
+        ],
+        store
+      );
+
+      expect(store.byId.get('g1')?.conversationId).toBe(groupWithPeer);
+      expect(store.byId.get('o1')?.conversationId).toBe(dmWithOther);
+      expect(store.byId.get('d1')?.conversationId).toBe(dmGroup);
+      expect(deps.conversations.has(groupWithPeer)).toBe(true);
+      expect(deps.conversations.has(dmWithOther)).toBe(true);
+      expect(deps.conversations.has(olderDmGroup)).toBe(false);
     });
   });
 

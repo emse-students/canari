@@ -1768,6 +1768,14 @@ duplicate's own rows, as stored), the re-key of a DM onto the group just joined
 only a row no store holds, where none stands), and a sent message whose group was re-keyed mid-send
 (`persistSent`, said when taken). The orphan mirror adoption writes only where no row stands.
 
+**Both DM moves are ONE function, `moveDirectConversationRows` (2026-11-12).** The Welcome re-key used
+to read only the ids of the messages ON SCREEN, and a DM restored as a stub (phase 1 of the boot
+restore, its page not read yet) carries none: nothing moved, nothing said so, and the rows stayed
+under the group the peer had already merged away. The joined group's history bundle then relayed
+those ids and every scoped read warned `[DB] <id> is a message of another conversation` - about 30
+times in 200 ms on dev web - until the next boot's merge. Now the Welcome moves every stored row of
+the old conversation, through the boot merge's own move, and logs the count either way.
+
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding
 it across a store walk would serialise unrelated groups' commits behind a disk read. The
