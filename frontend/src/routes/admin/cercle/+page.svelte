@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -23,7 +24,6 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   /** Beneficiary preselected on arrival: in practice a Cercle balance belongs to Le Cercle. */
   const CERCLE_SLUG = 'cercle';
@@ -191,7 +191,7 @@
   }
 
   function formatMoment(iso: string): string {
-    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleString(intlLocale());
   }
 
   /**

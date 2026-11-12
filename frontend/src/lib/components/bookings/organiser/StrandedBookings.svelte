@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount } from 'svelte';
   import { RotateCcw, X } from '@lucide/svelte';
   import { cancelBooking, namedSpaceBookings, type BookingView } from '$lib/bookings/api';
@@ -7,7 +8,6 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -36,7 +36,7 @@
   let error = $state('');
   let cancelling = $state<string | null>(null);
 
-  const locale = $derived(getLocale() === 'en' ? 'en-GB' : 'fr-FR');
+  const locale = $derived(intlLocale());
   const asked = $derived(ids.slice(0, STRANDED_PAGE));
   const more = $derived(Math.max(ids.length - asked.length, 0));
   const live = $derived(rows.filter((r) => !r.cancelled));
