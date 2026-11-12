@@ -75,6 +75,7 @@
   } from '$lib/mobile/screenOrientation.svelte';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { measuredMediaSize } from '$lib/utils/mediaSizeCache';
+  import { createFirstSighting } from '$lib/utils/firstSighting';
   import type { MediaSize } from '$lib/utils/mediaFrame';
   import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
@@ -247,7 +248,7 @@
    */
   let decodedSizes = $state<Record<string, MediaSize>>({});
   /** Items whose read failed, so the accusing line is written once per item, not per recompute. */
-  const unreadable = new Set<string>();
+  const firstUnreadable = createFirstSighting();
   const landscapeVideoShown = $derived.by(() => {
     // Outside the `svelte:boundary` (like the look-ahead): a post that throws when read costs the
     // rotation, never the page - the slide that reads it trips the boundary itself.
@@ -259,8 +260,7 @@
         : null;
       return isLandscapeVideo(media, measured);
     } catch (err) {
-      if (!unreadable.has(post?.id ?? '')) {
-        unreadable.add(post?.id ?? '');
+      if (firstUnreadable(post?.id ?? '')) {
         console.error(
           '[reel-viewer] the item on show could not be read - the pager stays portrait',
           err
