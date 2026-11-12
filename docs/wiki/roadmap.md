@@ -122,10 +122,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
+| 2026-11-12 | Backlog triage, batch 20 (the entries of 2026-11-02): D025 moved to the verification table as B401 (one production deploy's logs, read-only); D019 pruned of the decisions carried out (`1.6.2`, `1.6.3`, the `1.6.0` floor, the backlog order the 2026-11-11 decisions replaced, the video calls' readings left to queue item 21); D040 unchanged (designed, its reform page carries the plan). |
 
 ## Annex A - every row of the backlog
 
-318 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+319 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -447,10 +448,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B394 | LIVE-STALL-1 rerun on the current pre-release: no stall, no hold over the budget | P2 | calls | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B395 | SALON-REVOKE-COMMIT and the RM rows rerun: no redelivered Welcome, every external-join attempt logged | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B401 | a reload of a replica list leaves its proxy with a peer (#2933): one production deploy's logs with no `no live upstreams` | P1 | infra-hosts | shipped-verify-owed | production reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-252 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+250 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -475,7 +477,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D021 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-04.md` | Owner decisions of 2026-11-04: floor 1.6.2, every stable needs every reading, no 1.6.4 stable, shim removals after 1.6.5 | none | ci-release | decided-not-built | 2026-11-04; 2026-11-05; 1.6.2; 1.6.4; 1.6.5 | named PR (#2832 resumes after 1.6.5) |
 | D022 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md` | Owner decisions of 2026-11-07: read-only prod queries, governance by parent ships, live chat, Dependances panel | none | other | decided-not-built | 2026-11-07 | none |
 | D024 | `docs/wiki/backlog.d/p1-a-community-s-past-goes-only-to-a-proven-admission-merged-2273-2264.md` | A community's past goes only to a proven admission: merged (#2273, #2264), owed rig rows and the floor | P1 | communities | built-readings-owed | 2026-10-22; 2026-10-23; 2026-10-27 UTC | named PR (rig rows COMM-26..31; minClientVersion floor) |
-| D025 | `docs/wiki/backlog.d/p1-a-renamed-replica-list-starts-with-no-peer.md` | A renamed replica list started the proxy with no peer: fixed by variable targets, shipped v1.6.3, one prod reading owed | P1 | infra-hosts | shipped-verify-owed | 2026-11-02; v1.6.3; #2933 | none |
 | D026 | `docs/wiki/backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md` | Blind salon banners on production: the failing branch in the field is not named yet | P1 | push-notifications | open | 2026-11-04; 1.6.4-alpha.2 | none |
 | D027 | `docs/wiki/backlog.d/p1-blocks-production-calls-mode-a-call-does-not-survive-the-app-leavin.md` | A call does not survive the app leaving the screen: Android fg service shipped v1.3.1, twelve readings owed; iPhone WPs | P1 | calls | built-readings-owed | 2026-10-19; v1.3.1; #2162; #2299 | hardware reading (Android Mi 9T, iPhone) |
 | D029 | `docs/wiki/backlog.d/p1-call-ws-v6-shipped-in-v1-3-1-2167-owed-one-phone-reading-2026-10-20.md` | CALL-WS-V6: native socket races IPv6/IPv4, shipped v1.3.1, one phone reading owed | P1 | calls | shipped-verify-owed | 2026-10-20; v1.3.1; #2167 | hardware reading (hotspot with broken IPv6) |
