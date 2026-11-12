@@ -396,6 +396,53 @@ export function dismissDeviceNotice(key: string): void {
   writeStored(boundAccount);
 }
 
+/**
+ * Drops every pending alert whose device the server says is REVOKED: a device that has left the
+ * account through a revocation - "Ce n'est pas moi" or the device list, on any device of the account
+ * - leaves no alert behind to act on (Mi 9T, 2026-10-28: a reinstall listed devices long gone).
+ *
+ * THE FACT IS THE REVOCATION ROW, never the device list: that list is read from published key
+ * packages, so a device that is still enrolled but has none usable right now is absent from it, and
+ * reading its absence as a departure would hide the one alert that can still revoke it. `isRevoked`
+ * answers `true` only on the server's answer; a failure is `false` (`IMlsService.isDeviceRevoked`),
+ * so an unreachable server drops nothing.
+ *
+ * @param account the account `isRevoked` asks for; nothing is dropped when it is not the bound one
+ * @returns how many alerts were dropped
+ */
+export async function dropNoticesOfRevokedDevices(
+  account: string,
+  isRevoked: (deviceId: string) => Promise<boolean>
+): Promise<number> {
+  if (!account || boundAccount !== account) return 0;
+  const deviceIds: string[] = [];
+  for (const n of pending.values()) if (!deviceIds.includes(n.deviceId)) deviceIds.push(n.deviceId);
+  const revoked: string[] = [];
+  for (const deviceId of deviceIds) {
+    try {
+      if (await isRevoked(deviceId)) revoked.push(deviceId);
+    } catch (e) {
+      console.warn(
+        `[DEVICE_NOTICE] whether ${deviceId.slice(0, 8)}... is revoked could not be read - its alert stays: ${String(e).slice(0, 120)}`
+      );
+    }
+  }
+  // Re-read after the awaits: the account may have changed, or the alert been dismissed, meanwhile.
+  if (boundAccount !== account || revoked.length === 0) return 0;
+  let dropped = 0;
+  // Deleting the entry being visited is safe while iterating a Map.
+  for (const n of pending.values()) {
+    if (!revoked.includes(n.deviceId)) continue;
+    pending.delete(n.key);
+    dropped += 1;
+    console.log(
+      `[DEVICE_NOTICE] alert dropped: ${n.deviceId.slice(0, 8)}... is revoked, it is no longer on the account`
+    );
+  }
+  if (dropped > 0) writeStored(account);
+  return dropped;
+}
+
 /** Records an alert for the bound account unless that device and key were announced before. */
 function recordOwnDeviceNotice(notice: OwnDeviceNotice): boolean {
   if (!boundAccount) {

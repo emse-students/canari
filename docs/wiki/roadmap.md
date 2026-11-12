@@ -117,6 +117,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-11 | Backlog triage, batch 3 (2026-10-12 to 2026-10-15): B215 (a stale row, its heading gone), B216, B217, B219, B232-B237, B239 and B334 removed - shipped and proven, stale, duplicated or moved to the verification table (B365-B367); two fragments added (D261, D262); B202, B221 and B238 re-read; a multiple-choice grid question split in two groups is refused at save. |
 | 2026-11-11 | Backlog triage, batch 4 (2026-10-15 to 2026-10-17, the two GDPR entries left to the owner): B112 (shipped and proven, 0 warnings on `v1.2.9-alpha.7`), B201, B209, B210, B211, B214, B218 and B220 removed - moved to the verification table (B368-B373), the dropped-tail proofs to history-reconciliation; D028 removed as stale (production calls are open, its blocker list lives in calls.md, its block question moved to the group-calls entry); one fragment added (D263); B095 re-read. |
 | 2026-11-12 | Backlog triage, batch 16 (the entries of 2026-10-28 and 2026-10-29): CLOSED with evidence - the reel camera re-opening (D050, #2647 shipped in `v1.5.1`, read PASS), its three loose ends (D075, built by #2655 and the `leaving` guards), the tests timing out under load (D071, superseded by the test-suite reform section 8: per-file timeouts refused, the causes fixed), the two call log lines (D077, both fixed in `CallService.ts`), the `[TRUST]` ERROR on a key-group join (B032, now `info` on the open door); moved to the verification table - LIVE-STALL-1 (B031 -> B394, decided and built) and the refused external join with the redelivered Welcome (B033 + D036 -> B395); the new-device alert cut to its one live item with a plan (D065); a brief for the SSR boot gate (D069). |
+| 2026-11-12 | D065 BUILT and deleted: a new-device alert is dropped when the server says its device is revoked, asked when `/notifications` opens ([mls-protocol](protocols/mls-protocol.md)); one Mi 9T reading owed, in the verification table. |
 
 ## Annex A - every row of the backlog
 
@@ -452,7 +453,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-253 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+252 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -514,7 +515,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D062 | `docs/wiki/backlog.d/p3-history-stream-filter-reads-more-than-it-serves.md` | History stream arrival filter reads more than it serves (review of #2800) | P3 | mls-messaging | open | 2026-10-31; #2800 | none |
 | D063 | `docs/wiki/backlog.d/p3-iphone-pin-gate-on-a-390x844-screen-the-red-banner-clips-the-keypad.md` | iPhone PIN gate: the red banner clips the keypad's 0 key on 390x844 | P3 | ios-native | open | 2026-10-22 | none |
 | D064 | `docs/wiki/backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md` | Identity provider's unused Docker service connection fails its monitor every few minutes | P3 | infra-hosts | blocked | 2026-10-31 | user decision (one click owed: delete the object) |
-| D065 | `docs/wiki/backlog.d/p3-new-device-alerts-queue-one-at-a-time-never-forget-a-device-that-ha.md` | A new-device alert outlives the device it announces: drop it on the device list's answer (plan written) | P3 | mls-messaging | open | 2026-10-28 | none |
 | D066 | `docs/wiki/backlog.d/p3-overlays-stack-by-open-order.md` | Overlays stack by open order: one registered overlay stack instead of fixed rungs | P3 | other | designed | none | none |
 | D067 | `docs/wiki/backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md` | push_context.json follows every edit into the App Group: built, one iPhone reading (R2) owed | P3 | ios-native | built-readings-owed | 2026-11-06; 1.6.6-alpha.2 | hardware reading (iPhone 12) |
 | D068 | `docs/wiki/backlog.d/p3-social-unit-run-ends-with-a-worker-that-fails-to-exit.md` | Social unit test run ends with "A worker process has failed to exit gracefully" | P3 | tests-tooling | open | 2026-11-01 | none |

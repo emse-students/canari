@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import {
+  dropAlertsOfRevokedDevices,
   keyAgeOf,
   ownEnrolledAtOf,
   unregisterDeviceNotices,
   registerDeviceNotices,
 } from './deviceNoticeWiring';
 import { SvelteMap } from 'svelte/reactivity';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { pendingDeviceNotices } from './deviceNotices.svelte';
 
 /** The key [1, 2, 3] and its fingerprint (`mls-core/tests/fixtures/key_fingerprints.json`). */
 const KEY = new Uint8Array([1, 2, 3]);
@@ -98,5 +101,40 @@ describe('unregisterDeviceNotices - sign-out', () => {
     expect(setDeviceEventConsumer).toHaveBeenLastCalledWith(expect.any(Function));
     unregisterDeviceNotices();
     expect(setDeviceEventConsumer).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
+  it("asks the server about each alerted device of THIS account, and drops the revoked one's alert", async () => {
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('alice'),
+      JSON.stringify({
+        pending: [
+          { key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: 1 },
+          { key: 'alice:tablet-3|dd', deviceId: 'tablet-3', at: 2 },
+        ],
+      })
+    );
+    const isDeviceRevoked = vi.fn(async (_u: string, d: string) => d === 'laptop-9');
+    const mls = {
+      setDeviceEventConsumer: vi.fn(),
+      listUserDevices: vi.fn(async () => []),
+      fetchDeviceSignatureKeys: vi.fn(async () => ({ kind: 'unanswered', detail: 'x' })),
+      isDeviceRevoked,
+    } as unknown as IMlsService;
+    registerDeviceNotices(mls, {
+      getUserId: () => 'alice',
+      getMyDeviceId: () => 'phone-a',
+      conversations: new SvelteMap(),
+      storedConversation: vi.fn(async () => null),
+      addMessageToChat: vi.fn(),
+    });
+
+    await dropAlertsOfRevokedDevices();
+
+    expect(isDeviceRevoked.mock.calls.map((c) => c[0])).toEqual(['alice', 'alice']);
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['tablet-3']);
+    unregisterDeviceNotices();
+    localStorage.clear();
   });
 });
