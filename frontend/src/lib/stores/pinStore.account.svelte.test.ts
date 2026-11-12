@@ -2,7 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '$lib/utils/accountLocalKeys';
-import { applyPin, isMessagePinned, pinnedMessageIds } from './pinStore.svelte';
+import { clearUserLocally } from '$lib/stores/user';
+import {
+  applyPin,
+  forgetConversationPins,
+  isMessagePinned,
+  pinnedMessageIds,
+} from './pinStore.svelte';
 
 /**
  * THE PIN REGISTER IS PER ACCOUNT (found 2026-11-09, review of #3177). It was stored under
@@ -75,6 +81,49 @@ describe('the pin register belongs to one account', () => {
     setCurrentUserId('alice');
     expect(pinnedMessageIds('conv_both')).toEqual(['msg_own']);
     expect(localStorage.getItem('canari_pins_conv_both')).not.toBeNull();
+  });
+
+  it('a sign-out forgets the registers of the account leaving, stored and in memory, and no other', () => {
+    setCurrentUserId('bob');
+    applyPin('conv_signout', 'msg_bob', true, 10);
+    setCurrentUserId('alice');
+    applyPin('conv_signout', 'msg_alice', true, 10);
+    expect(isMessagePinned('conv_signout', 'msg_alice')).toBe(true);
+
+    clearUserLocally();
+    expect(localStorage.getItem(ACCOUNT_KEY.conversationPins('alice', 'conv_signout'))).toBeNull();
+    expect(
+      localStorage.getItem(ACCOUNT_KEY.conversationPins('bob', 'conv_signout'))
+    ).not.toBeNull();
+
+    // Back as alice: the memory copy went with the stored one, so nothing of it comes back.
+    setCurrentUserId('alice');
+    expect(isMessagePinned('conv_signout', 'msg_alice')).toBe(false);
+  });
+
+  it('forgetting an account (the deletion path) clears its memory copy as well as its stored one', () => {
+    setCurrentUserId('alice');
+    applyPin('conv_forget', 'msg_1', true, 10);
+    forgetConversationPins('alice');
+    expect(localStorage.getItem(ACCOUNT_KEY.conversationPins('alice', 'conv_forget'))).toBeNull();
+    expect(isMessagePinned('conv_forget', 'msg_1')).toBe(false);
+  });
+
+  it('a legacy register whose copy cannot be written is read, and kept for the next try', () => {
+    localStorage.setItem(
+      'canari_pins_conv_quota',
+      JSON.stringify({ msg_1: { pinned: true, at: 5 } })
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    setCurrentUserId('alice');
+    expect(isMessagePinned('conv_quota', 'msg_1')).toBe(true);
+    setItem.mockRestore();
+    expect(localStorage.getItem('canari_pins_conv_quota')).not.toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.conversationPins('alice', 'conv_quota'))).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not moved, kept where it is'));
   });
 
   it('with nobody signed in, a pin is held in memory and written nowhere', () => {

@@ -9,6 +9,7 @@ import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { endPeerNames } from '$lib/utils/users/peerNameDirectory';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
 import { currentUserId as signedInUserId } from '$lib/stores/userState.svelte';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
@@ -123,7 +124,12 @@ export function clearUserLocally(): void {
   // The nickname registers too: names other members set, text about people that a sign-out must
   // not leave on a shared install (review of #3177).
   const leaving = signedInUserId();
-  if (leaving) forgetConversationNicknames(leaving);
+  // And the pin registers, by the same rule: the history bundles restate them after the next
+  // sign-in.
+  if (leaving) {
+    forgetConversationNicknames(leaving);
+    forgetConversationPins(leaving);
+  }
   setCurrentUserId(null);
 }
 

@@ -36,17 +36,53 @@ const legacyKey = (conversationId: string) => `canari_pins_${conversationId}`;
  *
  * The legacy copy was every account's, so whichever account reads the conversation first takes it -
  * the same register those accounts already shared - and nobody after it does.
+ *
+ * THE LEGACY KEY GOES ONLY ONCE THE COPY IS WRITTEN. A write that throws (quota, private mode) keeps
+ * it, so nothing is lost: the register is still read from it this time, and the move is tried again
+ * on the next load.
  */
 function takeLegacyRegister(account: string, conversationId: string): string | null {
   const legacy = legacyKey(conversationId);
   const raw = localStorage.getItem(legacy);
   if (raw === null) return null;
-  localStorage.setItem(ACCOUNT_KEY.conversationPins(account, conversationId), raw);
+  try {
+    localStorage.setItem(ACCOUNT_KEY.conversationPins(account, conversationId), raw);
+  } catch (e) {
+    console.warn(
+      `[PINS] legacy register of ${conversationId.slice(0, 8)}… not moved, kept where it is: ${String(e)}`
+    );
+    return raw;
+  }
   localStorage.removeItem(legacy);
   console.log(
     `[PINS] legacy register of ${conversationId.slice(0, 8)}… moved to the signed-in account`
   );
   return raw;
+}
+
+/**
+ * Forgets every pin register of `userId` on this install - its stored copies and what is in memory.
+ * Run at sign-out (`clearUserLocally`) and by the account deletion (`eraseAccountRecordsLocally`), as
+ * the nickname registers are: a shared install keeps nothing of the account that left, and the
+ * history bundles restate the pins after the next sign-in.
+ */
+export function forgetConversationPins(userId: string): void {
+  const account = userId.trim();
+  if (!account) return;
+  const prefix = ACCOUNT_KEY.conversationPins(account, '');
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) doomed.push(key);
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`[PINS] stored registers of ${account.slice(0, 8)} not removed: ${String(e)}`);
+  }
+  // Deleting the entry being visited is defined for a Map's iterator: no copy is needed.
+  for (const key of pins.keys()) if (key.startsWith(`${account}|`)) pins.delete(key);
+  revision++;
 }
 
 /** One message's pin state and the sender's clock for it. */

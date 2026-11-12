@@ -1329,8 +1329,10 @@ is read at `at: 0`, so any dated statement about the same message beats it.
 register is a last-write-wins entry per message with dated tombstones for the unpins.
 **On removal:** delete the three `Number(data.at) ||` fallbacks, the `typeof raw === 'string'` arm of
 `mergePinEntries`, and the `Array.isArray(parsed)` arm of `parseStored`.
-**This one has a SECOND store behind it, and the date does not cover it.** `canari_pins_*` is
-`localStorage` on each device, which nothing on the server can reach and no retention window bounds.
+**This one has a SECOND store behind it, and the date does not cover it.** The stored register
+(`canari_pins_*`, per account since 2026-11-12 as `canari_pins:v1:<account>:<conversation>` - see
+[the entry below](#2027-02-12---the-pin-register-stored-under-the-conversation-alone-canari_pins_conversation),
+which moves the old copies without rewriting their shape) is `localStorage` on each device, which nothing on the server can reach and no retention window bounds.
 The `Array.isArray` arm may only go once every device has rewritten its own entry - which happens on
 the first pin change in each conversation - so on the date, delete the two frame-shape fallbacks and
 re-read that arm as its own question.
@@ -1342,13 +1344,17 @@ outcome the dating exists to prevent.
 ### 2027-02-12 - the pin register stored under the conversation alone (`canari_pins_<conversation>`)
 
 **Site:** `takeLegacyRegister` and `legacyKey` in `pinStore.svelte.ts`.
-**Shim:** until 2026-11-12 the register was stored under the conversation id alone, so every account
-of an install shared it and the account deletion's sweep never named it. When the signed-in account
-reads a conversation it holds no register for, the legacy copy is moved to it
-(`ACCOUNT_KEY.conversationPins`) and the legacy key removed, with one `[PINS] legacy register ...
-moved` line. Whichever account reads the conversation first takes it: it was already that
-account's register, shared.
-**Replacement:** the per-account key, swept by the deletion with every other per-account key.
+**Shim:** builds before 2026-11-12 stored the register under the conversation id alone, so every
+account of an install shared it and neither a sign-out nor the account deletion's sweep removed it.
+When the signed-in account reads a conversation it holds no register for, the legacy copy is moved to
+it (`ACCOUNT_KEY.conversationPins`) and the legacy key removed, with one `[PINS] legacy register ...
+moved` line; a write that fails keeps the legacy key, read again and moved on the next try.
+**On a shared install the FIRST account to open the conversation takes the old register**, the
+other accounts there start from none: the old copy cannot say whose pins it held, since it was all
+of theirs. Nothing is lost for them - every history bundle restates a conversation's pins, so the
+others converge on the next bundle they receive.
+**Replacement:** the per-account key, forgotten at sign-out (`forgetConversationPins`, as the nickname
+registers are) and swept by the deletion with every other per-account key.
 **On removal:** replace the move by a one-shot removal of every `canari_pins_*` key left (a
 conversation nobody opened in three months), then delete both functions. Three months from the
 change, so that a device opened even rarely has moved what it holds.
