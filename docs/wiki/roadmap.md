@@ -132,6 +132,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
+| 2026-11-12 | Backlog triage, batch 21 (the entries of 2026-11-03): D020 pruned of the decisions carried out (the wry abort, reform D1 and its approval lines, space pins, `1.6.3-alpha.3` and `1.6.3`, the writer switch on pre-releases, Sky #160) and of the retention answer the owner superseded on 2026-11-11; D038 re-read: phase 1 shipped in `1.6.3` without its cold-avatar reading (AV NOT-READ), now owed before phase 2, and the roster relay already sends the internal secret. |
 
 ## Annex A - every row of the backlog
 
