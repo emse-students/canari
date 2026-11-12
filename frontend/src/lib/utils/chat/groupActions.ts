@@ -981,6 +981,25 @@ export async function historyGroupStartFor(
 }
 
 /**
+ * Whether this tab must send no history-reconciliation frame: a follower, whose copy does not send
+ * (`BaseMlsService.sendMessage` refuses, `FollowerTabSendError`). These frames answer or ask on
+ * behalf of THIS DEVICE, and the leader holds the same conversations, sees the same frames live and
+ * answers them itself - so a follower's is not handed over, it is simply not this tab's to send.
+ * One line in the session log per frame not sent: the designed path, never a warning.
+ */
+function followerTabSendsNoHistoryFrame(
+  what: string,
+  groupId: string,
+  log: (msg: string) => void
+): boolean {
+  if (!refusesCommitsHere()) return false;
+  log(
+    `[HISTORY] ${what} for ${groupId.slice(0, 8)}… not sent from a follower tab - the leader tab answers for this device`
+  );
+  return true;
+}
+
+/**
  * Sends the full local history of `groupId` to active group members, encrypted under the
  * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *
@@ -1012,6 +1031,7 @@ export async function sendFullHistoryBundle(
   chunkSize = 200
 ): Promise<JoinPushOutcome> {
   const { storage, deviceKeyB64, mlsService, log, to } = deps;
+  if (followerTabSendsNoHistoryFrame('bundle', groupId, log)) return 'not-sent';
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return 'not-sent';
@@ -1384,6 +1404,7 @@ export async function sendHistoryStateKey(
   deps: HistoryStoreDeps
 ): Promise<boolean> {
   const { mlsService, log, storage } = deps;
+  if (followerTabSendsNoHistoryFrame('state key', groupId, log)) return false;
   const since = await historyRangeStartFor(groupId, storage);
   const key = await historyStateKeyFor(groupId, since, deps);
   if (key === null) {
@@ -1457,6 +1478,7 @@ export async function sendHistoryDigestRequest(
   request: { from: string; to: string },
   { mlsService, log }: HistorySendDeps
 ): Promise<void> {
+  if (followerTabSendsNoHistoryFrame('digest request', groupId, log)) return;
   const bytes = encodeAppMessage(
     mkSystem('history_digest_request', JSON.stringify({ ...request }))
   );
@@ -1495,6 +1517,7 @@ export async function sendHistoryCoverage(
   answer: { from: string; to: string; since: number; coveredFrom: number },
   { mlsService, log }: HistorySendDeps
 ): Promise<void> {
+  if (followerTabSendsNoHistoryFrame('coverage', groupId, log)) return;
   const bytes = encodeAppMessage(mkSystem('history_coverage', JSON.stringify({ ...answer })));
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
@@ -1527,6 +1550,7 @@ export async function sendHistoryRangeRequest(
   request: { from: string; before: number; limit: number; since: number },
   { mlsService, log }: HistorySendDeps
 ): Promise<boolean> {
+  if (followerTabSendsNoHistoryFrame('range request', groupId, log)) return false;
   // The ask is recorded BEFORE it leaves, under the id the frame carries: an addressed answer is
   // accepted only against it (`historyAddressing.ts`), and it can arrive before the send resolves.
   const requestId = mintHistoryRequestId();
@@ -1575,6 +1599,7 @@ export async function sendHistoryDigest(
   deps: HistoryStoreDeps
 ): Promise<boolean> {
   const { mlsService, log, storage } = deps;
+  if (followerTabSendsNoHistoryFrame('digest', groupId, log)) return false;
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
     log(`[HISTORY_DIGEST] Cannot describe ${groupId.slice(0, 8)}… - no readable store`);
@@ -1635,6 +1660,7 @@ export async function sendHistoryPull(
   },
   { mlsService, log }: HistorySendDeps
 ): Promise<void> {
+  if (followerTabSendsNoHistoryFrame('pull', groupId, log)) return;
   const { from, to, ids, prefixes, depth, since } = request;
   const frames: Array<Record<string, unknown>> =
     ids && ids.length > 0
@@ -1718,6 +1744,7 @@ export async function sendHistoryBundleForIds(
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
   const { to, chunkSize = 200, since, requestId, withTombstones = false } = opts;
+  if (followerTabSendsNoHistoryFrame('bundle for ids', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1812,6 +1839,7 @@ export async function sendHistoryRangeBundle(
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
   const { to, before, limit, since = 0, requestId } = opts;
+  if (followerTabSendsNoHistoryFrame('range bundle', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;

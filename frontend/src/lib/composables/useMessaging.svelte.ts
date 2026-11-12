@@ -6,6 +6,7 @@
  * - Reply/cancel-reply state
  * - File selection + validation
  */
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -3525,7 +3526,8 @@ export function useMessaging() {
           messageId,
           sentAt: Date.now(),
         });
-        await mlsService.sendMessage(convo.id, protoBytes, messageId);
+        // From whichever tab forwards: a follower hands the frame to the leader (`frameFromAnyTab`).
+        await sendFrameFromThisTab(mlsService, convo.id, protoBytes, { messageId });
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };
