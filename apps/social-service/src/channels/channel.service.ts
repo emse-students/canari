@@ -8,12 +8,21 @@ import {
   ConflictException,
   GoneException,
   HttpException,
+  HttpStatus,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, And, LessThan, MoreThanOrEqual, type EntityManager } from 'typeorm';
+import {
+  Repository,
+  In,
+  And,
+  LessThan,
+  MoreThan,
+  MoreThanOrEqual,
+  type EntityManager,
+} from 'typeorm';
 import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -94,6 +103,8 @@ import {
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 import { hasInvisibleCharacter } from './visible-text';
+import { validateCommunityName, validateCommunitySlug, validateDisplayName } from './display-name';
+import { COMMUNITY_CREATIONS_PER_HOUR, communityOwnedMax } from './community-limits';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -284,15 +295,7 @@ export const MAX_CHANNEL_NAME_LENGTH = 80;
  * the sidebar is refused: nothing once trimmed, too long, or a control character.
  */
 export function validateChannelName(raw: unknown): string {
-  const name = typeof raw === 'string' ? raw.trim() : '';
-  if (!name) throw new BadRequestException('Channel name cannot be empty');
-  if (Array.from(name).length > MAX_CHANNEL_NAME_LENGTH)
-    throw new BadRequestException(
-      `Channel name too long (max ${MAX_CHANNEL_NAME_LENGTH} characters)`
-    );
-  if (/\p{Cc}/u.test(name))
-    throw new BadRequestException('Channel name cannot contain control characters');
-  return name;
+  return validateDisplayName(raw, MAX_CHANNEL_NAME_LENGTH, 'Channel');
 }
 
 /** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
@@ -383,6 +386,9 @@ export interface ChannelFanoutPayload {
 export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
+
+  /** Read once, at construction: a `COMMUNITY_OWNED_MAX` that is not a number stops the boot. */
+  private readonly communityOwnedMax = communityOwnedMax();
 
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
   private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
@@ -2160,10 +2166,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
-  private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
-    const base = requested.trim();
-    if (!base) throw new BadRequestException('Slug de communaute invalide.');
-
+  private async ensureUniqueWorkspaceSlug(base: string): Promise<string> {
     let candidate = base;
     for (let suffix = 2; ; suffix++) {
       const existing = await this.workspaceRepo.findOne({ where: { slug: candidate } });
@@ -2172,13 +2175,54 @@ export class ChannelService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Refuses a creation past what one account may create in an hour or hold in all. Both are
+   * COUNTED FROM THE TABLE, so the answer is the same on every replica and after a deploy.
+   *
+   * @throws HttpException 429 `COMMUNITY_CREATION_RATE`, or ForbiddenException
+   *   `COMMUNITY_OWNED_LIMIT`
+   */
+  private async assertMayCreateCommunity(userId: string): Promise<void> {
+    const by = userId.slice(0, 8);
+    const lastHour = await this.workspaceRepo.count({
+      where: { createdBy: userId, createdAt: MoreThan(new Date(Date.now() - 60 * 60_000)) },
+    });
+    if (lastHour >= COMMUNITY_CREATIONS_PER_HOUR) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - ${lastHour} created in the last hour`
+      );
+      throw new HttpException(
+        {
+          code: 'COMMUNITY_CREATION_RATE',
+          message: 'Too many communities created in the last hour',
+        },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+    const owned = await this.workspaceRepo.count({ where: { createdBy: userId } });
+    if (owned >= this.communityOwnedMax) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - holds ${owned} of ${this.communityOwnedMax} communities`
+      );
+      throw new ForbiddenException({
+        code: 'COMMUNITY_OWNED_LIMIT',
+        message: `An account may hold ${this.communityOwnedMax} communities at most`,
+      });
+    }
+  }
+
   async createWorkspace(input: CreateWorkspaceDto) {
-    const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
+    // Both are judged before anything is read or written, and it is the judged values that are
+    // logged and stored.
+    const name = validateCommunityName(input.name);
+    const askedSlug = validateCommunitySlug(input.slug);
+    await this.assertMayCreateCommunity(input.createdBy);
+    const slug = await this.ensureUniqueWorkspaceSlug(askedSlug);
     this.logger.log(
-      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
+      `[WORKSPACE] create name=${JSON.stringify(name)} slug="${slug}" by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
-      name: input.name,
+      name,
       slug,
       createdBy: input.createdBy,
     });

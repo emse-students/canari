@@ -5,7 +5,7 @@
     eurosInputToCents,
   } from '$lib/payments/lydiaFees';
   import { fetchActivePaymentProvider, type PaymentProviderId } from '$lib/associations/api';
-  import { formatPriceCents } from '$lib/utils/canariLinkPreviewFormat';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -58,16 +58,16 @@
     return Math.max(0, cents - computeFeeCents(cents));
   }
 
-  const feeLabel = $derived(`${formatPriceCents(feeFixedCents, currency)} + ${feePercent} %`);
+  const feeLabel = $derived(`${formatAmount(feeFixedCents, currency)} + ${feePercent} %`);
 
   function lineFor(cents: number, label: string): string {
     const net = computeNetPayoutCents(cents);
     const fee = computeFeeCents(cents);
     return m.payout_line_for({
       label,
-      payment: formatPriceCents(cents, currency),
-      net: formatPriceCents(net, currency),
-      fee: formatPriceCents(fee, currency),
+      payment: formatAmount(cents, currency),
+      net: formatAmount(net, currency),
+      fee: formatAmount(fee, currency),
     });
   }
 </script>
@@ -90,24 +90,24 @@
     {#if minCents && maxCents}
       <p>
         {m.payout_free_amount_range({
-          min: formatPriceCents(computeNetPayoutCents(minCents), currency),
-          max: formatPriceCents(computeNetPayoutCents(maxCents), currency),
-          minPayment: formatPriceCents(minCents, currency),
-          maxPayment: formatPriceCents(maxCents, currency),
+          min: formatAmount(computeNetPayoutCents(minCents), currency),
+          max: formatAmount(computeNetPayoutCents(maxCents), currency),
+          minPayment: formatAmount(minCents, currency),
+          maxPayment: formatAmount(maxCents, currency),
         })}
       </p>
     {:else if minCents}
       <p>
         {m.payout_free_amount_min({
-          payment: formatPriceCents(minCents, currency),
-          net: formatPriceCents(computeNetPayoutCents(minCents), currency),
+          payment: formatAmount(minCents, currency),
+          net: formatAmount(computeNetPayoutCents(minCents), currency),
         })}
       </p>
     {:else if maxCents}
       <p>
         {m.payout_free_amount_max({
-          payment: formatPriceCents(maxCents, currency),
-          net: formatPriceCents(computeNetPayoutCents(maxCents), currency),
+          payment: formatAmount(maxCents, currency),
+          net: formatAmount(computeNetPayoutCents(maxCents), currency),
         })}
       </p>
     {/if}

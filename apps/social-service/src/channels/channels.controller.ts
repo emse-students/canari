@@ -78,7 +78,10 @@ export class ChannelsController {
     return this.service.listUnreadCounts(xUserId.trim().toLowerCase());
   }
 
-  /** Creates a new workspace owned by the calling user. */
+  /**
+   * Creates a new workspace owned by the calling user. What one account may create in an hour and
+   * hold in all is counted from the table by the service (`community-limits.ts`).
+   */
   @UseGuards(NginxAuthGuard)
   @Post('workspaces')
   createWorkspace(@Headers('x-user-id') xUserId: string, @Body() body: CreateWorkspaceDto) {

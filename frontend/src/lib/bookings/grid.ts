@@ -17,7 +17,7 @@
  * not a control. The server's clock decides every request, and its refusal is said plainly.
  */
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { intlLocale } from '$lib/utils/intlLocale';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import type { BookerSpace, ResourceSlots, SlotUnit } from './api';
 import { bookingWindowRefusal, type WindowRefusal } from './bookingWindow';
@@ -29,9 +29,6 @@ export type { WindowRefusal } from './bookingWindow';
 export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
-
-/** The Intl locale this client formats dates and numbers in. */
-export const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {
