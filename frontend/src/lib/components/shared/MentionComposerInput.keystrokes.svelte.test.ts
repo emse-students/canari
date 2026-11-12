@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MentionComposerInput from './MentionComposerInput.svelte';
+import { flushMacrotask, settleUntilStable } from '../../../test/flush';
 
 const ME = 'a'.repeat(64);
 const NAMED = 'b'.repeat(64);
@@ -25,7 +26,7 @@ vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {
     asked.push(new URL(url, 'https://x.invalid').pathname);
     // An answer that lands on a LATER turn, like the network's.
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     if (url.includes('/api/users/me/blocks')) {
       return { ok: true, status: 200, json: async () => [] };
     }
@@ -82,8 +83,12 @@ function typeChar(editor: HTMLElement, ch: string) {
   flushSync();
 }
 
+/** Waits until the requests, the picker and the errors stop moving (a quiet, not a duration). */
 async function settle() {
-  await new Promise((r) => setTimeout(r, 40));
+  await settleUntilStable(
+    () =>
+      `${asked.length}|${errors.length}|${document.querySelectorAll('[data-mention-suggestion]').length}`
+  );
   flushSync();
 }
 
@@ -148,13 +153,16 @@ it('pastes "salut @" in one go: the text lands and nothing loops', async () => {
 it('with no roster, a mention ended before its search ran sends no search and opens nothing', async () => {
   const target = document.createElement('div');
   document.body.append(target);
+  vi.useFakeTimers();
   const app = mount(MentionComposerInput, { target, props: {} });
   flushSync();
   const editor = target.querySelector<HTMLElement>('[role="textbox"]')!;
   // "." lands well inside the search's 250 ms wait: the mention is over before it would run.
   for (const ch of 'a@b.') typeChar(editor, ch);
-  await new Promise((r) => setTimeout(r, 400));
-  flushSync();
+  // Past the search's 250 ms wait, on the simulated clock.
+  vi.advanceTimersByTime(300);
+  vi.useRealTimers();
+  await settle();
   expect(errors).toEqual([]);
   expect(asked).not.toContain('/api/users/search');
   expect(target.querySelectorAll('[data-mention-suggestion]').length).toBe(0);
