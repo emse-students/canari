@@ -1085,12 +1085,6 @@ export class PushController {
     const targetMembership = await this.groupMemberRepo.findOne({
       where: { groupId, userId: targetUserId },
     });
-    if (!targetMembership) {
-      this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
-      );
-      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'not_a_member' });
-    }
     // AN INVITATION LINK'S ASK IS ANSWERED BY A MEMBER'S OWN ACCEPT, NEVER BY A PUSH (2026-10-31).
     // The gate would read this commit as that Accept and lift the ask (`liftAwaitingAdmission`).
     // The phone's verdict (`user_holds_leaf`, `background.rs`) cannot see the seat's flag, and a
@@ -1099,11 +1093,47 @@ export class PushController {
     // (`admissionOfSeat`, `actions.ts`). THIS IS THE CHEAP FIRST REFUSAL, NOT THE GUARANTEE: a link
     // ask written after this read is refused by the gate itself, under the seat lock
     // (`mayAnswerAsk: false` below), with the same token.
-    if (targetMembership.awaitingAdmission === true) {
-      this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} seat awaits a member's admission - a push never answers a link's ask`
+    const preGateRefusal = !targetMembership
+      ? ('not_a_member' as const)
+      : targetMembership.awaitingAdmission === true
+        ? ('awaiting_admission' as const)
+        : null;
+    if (preGateRefusal) {
+      // A RETRY OF A COMMIT THAT ALREADY LANDED IS NOT A RE-ADD. The phone's first POST can be
+      // accepted with its answer lost, and the connection retried after the target was removed, or
+      // removed and re-invited by link (its seat now awaiting admission): either guard would then
+      // answer a typed refusal on which the phone clears a stage the group holds. These exact bytes
+      // from this device at this base are asked of the commit log first, ABOVE BOTH guards - the
+      // same proof every refusal inside the gate consults - and answered as the acceptance they
+      // were. Anything else is refused as before: the guards still stop every NEW re-add of a
+      // removed user, and every push answer to a link's ask, before the gate could accept it.
+      const duplicate = await this.messagingService.answerIfAlreadyAccepted(
+        groupId,
+        body.baseEpoch,
+        body.commitPayload,
+        deviceId,
+        traceId
       );
-      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'awaiting_admission' });
+      if (duplicate) {
+        this.logger.log(
+          `[BG_WELCOME][${traceId}] target=${targetUserId} would be refused (${preGateRefusal}), but these bytes were already accepted at base ${body.baseEpoch} - answered as accepted`
+        );
+        const answer: BackgroundWelcomeAnswer = {
+          status: 'accepted',
+          newEpoch: duplicate.newEpoch,
+        };
+        return answer;
+      }
+      if (preGateRefusal === 'not_a_member') {
+        this.logger.warn(
+          `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
+        );
+      } else {
+        this.logger.warn(
+          `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} seat awaits a member's admission - a push never answers a link's ask`
+        );
+      }
+      throw backgroundWelcomeRefusal({ status: 'rejected', reason: preGateRefusal });
     }
 
     // The background commit advances the real epoch: validate it first (same as foreground path)

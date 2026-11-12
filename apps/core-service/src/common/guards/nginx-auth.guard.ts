@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  InternalServerErrorException,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -23,20 +24,23 @@ export class NginxAuthGuard implements CanActivate {
   /** Returns true when X-User-Id is present and X-Internal-Token verifies under the configured secret. */
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
+    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+
+    // Security: fail closed in EVERY environment - INTERNAL_SHARED_SECRET is required. An unset
+    // secret is THIS service's misconfiguration, not a caller's missing credential: it answers 500,
+    // never a 401 a client would read as its session ending (the same as chat-delivery's
+    // HeaderAuthGuard, 2026-11-12). Asked FIRST, before any header, in all three guards.
+    if (!internalSecret) {
+      Logger.error('[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing the request');
+      throw new InternalServerErrorException(
+        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
+      );
+    }
+
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase();
     if (!userId) {
       throw new UnauthorizedException(
         'Missing X-User-Id header - ensure the request passes through nginx auth.'
-      );
-    }
-
-    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
-
-    // Security: fail closed in EVERY environment - INTERNAL_SHARED_SECRET is required
-    if (!internalSecret) {
-      Logger.error('[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing the request');
-      throw new UnauthorizedException(
-        'INTERNAL_SHARED_SECRET is not configured — service cannot verify internal requests'
       );
     }
 

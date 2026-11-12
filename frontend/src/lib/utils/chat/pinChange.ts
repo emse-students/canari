@@ -36,6 +36,7 @@ import {
 } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
@@ -397,9 +398,12 @@ export async function applyNewDeviceKeyLocally(
  */
 export function thisTabMayChangeDeviceKey(log: (msg: string) => void): boolean {
   const leadership = getTabLeadership();
-  if (leadership === 'leader') return true;
+  // A LEADER PROMOTED IN PLACE IS REFUSED TOO (`refusesCommitsHere`): it leads, but its live client
+  // is the copy it loaded as a follower - the very client the paragraph above says the change must
+  // not re-seal from - until its promotion reload.
+  if (leadership === 'leader' && !refusesCommitsHere()) return true;
   log(
-    `[DEVICEKEY_CHANGE] Refused in this tab (${leadership}): a PIN change runs in the leader tab only - nothing asked, nothing moved.`
+    `[DEVICEKEY_CHANGE] Refused in this tab (${leadership === 'leader' ? 'promoted from a follower, its reload owed' : leadership}): a PIN change runs in the leader tab only - nothing asked, nothing moved.`
   );
   return false;
 }

@@ -230,10 +230,7 @@ export class PostsController {
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
-      singlePhotos: query.singlePhotos === true,
-      singleMedia: query.singleMedia === true,
       multiMedia: query.multiMedia === true,
-      withLinks: query.withLinks === true,
       withReplays: query.withReplays === true,
       ranked: feed === 'reels' && query.ranked === true,
       ...(feed === 'foryou' || (feed === 'reels' && query.ranked === true)

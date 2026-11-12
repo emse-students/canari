@@ -2299,13 +2299,23 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 `cargo audit` matches advisories against a PATH package was never verified. Job `vendored-upstream`
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
-crate on its ALLOWLIST (today `tauri-plugin-websocket` alone - [backlog](backlog.md) holds the two
-other forks), the fork's `[package]` version with crates.io's `max_stable_version`. Pre-releases are
-ignored on purpose: upstream has a `3.0.0-alpha` line, and a fork of a stable owes it nothing.
+crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry`, and since 2026-11-11
+`tauri-plugin-system-components` and `tauri-plugin-keystore` - every `[patch.crates-io]` entry), the
+fork's `[package]` version with crates.io:
+
+- **a fork of a STABLE release is compared with `max_stable_version` only.** Upstream's pre-releases
+  are ignored: `tauri-plugin-websocket` has a `3.0.0-alpha` line, and a fork of a stable owes it
+  nothing;
+- **a fork of a PRE-release is compared with `max_version`, upstream's newest release of ANY kind**,
+  in semver precedence (`alpha.2` is past `alpha.1`, `rc.10` past `rc.2`, `2.1.0` past every
+  `2.1.0-*`). `tauri-plugin-keystore` is forked from `2.1.0-alpha.1` and the crate has never had a
+  stable release, so a stable-only rule would read null and watch nothing. **Lead decision,
+  2026-11-11, reversible**: the next alpha is exactly what such a fork owes a look at. Pinned by the
+  "a fork of a PRE-release" cases of `vendored-upstream-report.test.sh`.
 
 | Exit | Means | Title |
 | --- | --- | --- |
-| 0 | every watched fork is upstream's latest stable | - |
+| 0 | every watched fork is upstream's latest release of the kind it is compared with | - |
 | 1 | upstream released past the fork (the message names the rebase: the release, the `CANARI PATCH` hunk count, the pin to move), or the forked release was yanked | `Upstream <crate> released past the vendored fork`, `Upstream withdrew the release <crate> was forked from` |
 | 1 | the reporter is broken: an allowlist entry the manifest no longer patches, a pin that does not name the fork's version (the patch would silently not apply), a 404, any unexpected status, a response with no usable version | `Stale vendored-fork allowlist entry`, `Vendored fork and its pin disagree`, `Vendored-fork watch is broken` |
 | 75 | crates.io did not answer after curl's own bounded retries (transport, 408, 429, 5xx); a finding in the same run wins | `crates.io unreachable - not a finding` |
@@ -2853,16 +2863,23 @@ are builder stages and the local compose file, which reach no estate.
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
 - **2026-11-06, the image scan red on `CVE-2026-115506`**, a fourth libexpat 2.9.0-r0 advisory, on every pull request. Upstream had rebuilt every nginx Alpine tag the evening before (`1.31.8-alpine` is now `b2f80f8f8814`), and that build carries libexpat 2.10.0-r0, curl 8.23.0-r0 and brotli-libs 1.2.1-r0 (read with `apk list -I` in the image; `stable-alpine` too). **The pin moved** in the production, dev and rolling-fixture compose files, and the three libexpat entries were deleted with it; the curl and brotli entries stay for adminer and postgres.
 - **2026-11-05, the image scan red on `CVE-2026-109518`**, Debian's apt and libapt-pkg7.0 3.0.3 (HIGH, fixed in 3.0.4), in `goauthentik/server:2026.8.5`, still the newest authentik release, so there was no pin to move. apt runs while upstream builds the image; at runtime only the entrypoint's `prepare_debug` branch calls it (the debugger setting or `test-all`), which this deployment does not enable, and the image runs as user 1000. **Allowlisted by purl** with the owner's approval (the tool's classifier refused the lead's own edit as a weakening), retiring with the image.
-- **2026-11-10, the image scan red on krb5-libs 1.22.2-r1 (16 CVEs) and libxslt 1.1.43-r3 (2)**, HIGH, fixed in Alpine (1.22.3-r0, 1.1.43-r4) but in no official `postgres:18-alpine` or `nginx` image yet (each newest digest pulled and read that day), and no Dockerfile of ours between compose and them. The krb5 advisories are in the KDC and kadmind, which the image does not ship, and postgres answers `scram-sha-256` only; libxslt is reached only through nginx's xslt module, which no configuration loads (`nginx -T` on the production frontend and edge). **Allowlisted by purl** with the owner's approval, retiring with the pins. **2026-11-12: a third libxslt advisory (CVE-2026-125350) on the same build joined them, same purl and same reach; that day the two nginx tags were still the digests measured on 2026-11-10, and `postgres:18-alpine` had a newer one whose content is not yet measured - moving that pin is owed.**
+- **2026-11-10, the image scan red on krb5-libs 1.22.2-r1 (16 CVEs) and libxslt 1.1.43-r3 (2)**, HIGH, fixed in Alpine (1.22.3-r0, 1.1.43-r4) but in no official `postgres:18-alpine` or `nginx` image yet (each newest digest pulled and read that day), and no Dockerfile of ours between compose and them. The krb5 advisories are in the KDC and kadmind, which the image does not ship, and postgres answers `scram-sha-256` only; libxslt is reached only through nginx's xslt module, which no configuration loads (`nginx -T` on the production frontend and edge). **Allowlisted by purl** with the owner's approval, retiring with the pins.
 - **2026-11-03, the image scan red on `CVE-2026-117610` and `CVE-2026-118370`**, libexpat 2.9.0-r0 (HIGH, fixed in Alpine's 2.10.0-r0), in `nginx:1.31.8-alpine` and `nginx:stable-alpine`. The pinned digest (built 2026-10-28) is still the newest plain `1.31-alpine`; the `-perl` rebuild of 2026-10-31 and the floating heads carry 2.9.0-r0 too, so there was no digest to move to: **allowlisted by purl** (`pkg:apk/alpine/libexpat@2.9.0-r0`), reached only through fontconfig (the optional `image_filter` module), retiring with the pins.
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 
 **2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
 
-**Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
-(no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
-Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
-estate, so it is a backlog item ([backlog](backlog.md#p3---the-eight-service-images-run-as-root-trivy-ds-0002-measured-2026-10-23)), not a gate that would be red from day one.
+**Trivy's Dockerfile misconfiguration scan is not run; its two findings are asserted instead.**
+Measured the same day, it found `DS-0002` (no non-root `USER`) in all eight Dockerfiles and `DS-0029`
+(`--no-install-recommends`) in the two Rust ones. **Measured per image on 2026-11-11:** six images
+mount no volume in either deployed compose file, write nothing to disk and listen above 1024, so
+root bought them nothing - the four Bun services run as the image's `bun` user, the SSR server as
+`node`, the two Rust binaries as `nobody` (65534), and the Rust stages install with
+`--no-install-recommends` (plus `make`, which cmake only recommends). `image-user.test.mjs`
+(`make test-ci-scripts`) fails a final stage left as root, a compose `user: root`, and an `apt-get
+install` with recommends. Two images stay root BY NAME in its allowlist, each with its reason, and
+the entry fails once its image gains a `USER`: the nginx frontend (port 80) and media-service
+(root-owned volumes) - [backlog](backlog.d/p3-two-service-images-still-run-as-root.md).
 
 ### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 
@@ -3009,8 +3026,6 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
 - **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `.github/scripts/tests/docs-merge-artefacts.test.mjs` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
-- **THE LINUX `apt-get` STEPS GO THROUGH `.github/scripts/apt-install.sh`, BECAUSE A DARK MIRROR USED TO FAIL THE JOB** (2026-11-11): `Temporary failure resolving 'azure.archive.ubuntu.com'` / `security.ubuntu.com` took out `Test Rust (Chat Gateway)` and `Test Rust (Frontend Native (Tauri))` three times in a day, on PRs that touched no Rust. The script runs `update` + `install` with `Acquire::Retries=5` and 30 s timeouts; when that still exits non-zero it rewrites the runner's mirror hosts (`azure.archive`, `security`) to `archive.ubuntu.com` - a different name, resolved separately - emits a `::warning::` (the fallback is a signal, so it is visible) and runs the pair once more. No new workflow; both steps in `ci.yml` call it.
-- **`outbox.reelResume.test.ts` "the reach names only its own take" read the reach while the take's own flush was still writing the row** (2026-11-11, one shard failure on an unrelated PR, logs gone, not reproduced in 100+ local runs even under 8-way load): the case now waits for the encoder to be called (and parked), the event after which nothing writes the row, before it reads.
 - **Recorded flake, not reproduced:** `chat-delivery-service` failed one test in one of five local runs on 2026-08-31; if it recurs, capture the suite name first and do not widen the dependency ceiling to feel safe.
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.

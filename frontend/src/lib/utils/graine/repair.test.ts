@@ -397,9 +397,10 @@ describe('a missing seed and this device own backlog', () => {
     warn.mockRestore();
   });
 
-  it('a follower tab asks nothing, and says so', async () => {
+  // A follower hands the want to the leader before anything is queued here
+  // (`repair.followerTab.test.ts`); this file's own repair is never reached.
+  it('a follower tab runs no repair of its own', async () => {
     tabLeadership = 'follower';
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
@@ -407,10 +408,6 @@ describe('a missing seed and this device own backlog', () => {
     expect(listMembers).not.toHaveBeenCalled();
     expect(whenGroupDrained).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(infoLines(info)).toContainEqual(
-      expect.stringContaining('this tab is a follower - asking nothing for 1 missing seed(s)')
-    );
-    info.mockRestore();
   });
 
   it('a leader demoted while it waited asks nothing', async () => {
