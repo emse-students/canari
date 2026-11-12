@@ -1008,10 +1008,15 @@ reports, one code path (`useMentionAutocomplete`, `mentionRoster.ts`):
   that landed after a newer one. Now a key sends at once when nothing is in flight; otherwise its
   query waits, replacing any query already waiting, and goes when the answer returns: at most one
   request in flight, at most one more queued, so the search runs ONCE PER KEY at most and a burst
-  of keys costs two requests. Every change of the mention, a roster switch and the composer's
-  destruction (`dispose`) bump a `generation`, and an answer is applied only if none came after its
-  request; the rows of the earlier query are hidden while the new one is asked, so Enter and Tab
-  never pick a row that no longer matches. The name index keeps only the current roster's members. The endpoint already caps at 10 rows
+  of keys costs two requests. Every change of the mention and the composer's destruction
+  (`dispose`) bump a `generation`, and an answer is applied only if none came after its request;
+  the rows of the earlier query are hidden while the new one is asked, so Enter and Tab never pick
+  a row that no longer matches. A roster change drops NOTHING: the live chat re-sends its roster on
+  every line (authors added, dropped, reordered), the search asks for the text typed, which a
+  roster does not change, and re-reading the roster keeps the rows the audience added and the
+  selected row. The name index keeps only the current roster's members, keyed once per roster
+  array (sorted ids). A failed search - transport or a non-2xx status - warns once per outage, and
+  so does the live chat's audience filter. The endpoint already caps at 10 rows
   (`take(10)`), the picker shows six; measured on dev it answers in 90-190 ms, which is now the
   whole wait instead of 250 ms plus that.
 

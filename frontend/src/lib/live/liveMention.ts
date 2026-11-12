@@ -45,15 +45,22 @@ export function liveMentionRoster(
 export function liveAudienceFilter(
   audienceOf: (ids: string[]) => Promise<string[]>
 ): (users: MentionUser[]) => Promise<MentionUser[]> {
+  // ONE WARNING PER OUTAGE, not one per key typed while the audience cannot be read: the next
+  // answer re-arms it (review of #3402).
+  let failing = false;
   return async (users) => {
     if (users.length === 0) return [];
     try {
       const allowed = new Set(
         (await audienceOf(users.map((u) => u.id))).map((id) => id.toLowerCase())
       );
+      failing = false;
       return users.filter((u) => allowed.has(u.id.toLowerCase()));
     } catch (e) {
-      console.warn('[LIVE_CHAT] the audience of a mention search could not be read', e);
+      if (!failing)
+        console.warn('[LIVE_CHAT] the audience of a mention search could not be read', e);
+      else console.debug('[LIVE_CHAT] the audience of a mention search still cannot be read');
+      failing = true;
       return [];
     }
   };

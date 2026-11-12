@@ -27,17 +27,28 @@ export type MentionUser = { id: string; displayName: string | null };
 /** One name search: `search` fills the list (no roster), `more` tops a roster's rows up (a live). */
 type SearchRequest = { q: string; kind: 'search' | 'more'; generation: number };
 
+/** {@link membersKey} per roster array: a roster is keyed once, never once per keystroke. */
+const membersKeys = new WeakMap<readonly MentionRosterMember[], string>();
+
+/**
+ * Who a roster holds, as a set (sorted ids) - never the array holding them nor their order: the live
+ * chat rebuilds and reorders its roster on every line (`liveMentionRoster`), and neither makes the
+ * name index's members other ones. Cached per array, so a 5,000-member roster is keyed once.
+ */
+function membersKey(roster: readonly MentionRosterMember[] | undefined): string {
+  if (!roster) return '';
+  let key = membersKeys.get(roster);
+  if (key === undefined) {
+    key = roster
+      .map((m) => m.id.toLowerCase())
+      .sort()
+      .join(',');
+    membersKeys.set(roster, key);
+  }
+  return key;
+}
+
 /** Whether a query holds a space, i.e. names more than one word. */
-/** A roster's identity for the picker: its member ids, in order - never the array holding them. */
-function rosterKey(roster: readonly MentionRosterMember[] | undefined): string {
-  return roster ? roster.map((m) => m.id.toLowerCase()).join(',') : '';
-}
-
-/** The names a roster carries, in order: a change re-reads the rows without making answers stale. */
-function rosterNames(roster: readonly MentionRosterMember[] | undefined): string {
-  return roster ? JSON.stringify(roster.map((m) => m.displayName ?? '')) : '';
-}
-
 function hasSpace(q: string): boolean {
   return /\s/.test(q);
 }
@@ -108,12 +119,12 @@ export function useMentionAutocomplete(opts: {
   let searching = false;
   /** The latest search asked for while one was in flight; the ones it replaced are never sent. */
   let waiting: SearchRequest | null = null;
-  /** The members (see {@link rosterKey}) the name index was last pruned to (see `suggestLocally`). */
+  /** The members ({@link membersKey}) the name index was last pruned to (see `suggestLocally`). */
   let indexedKey: string | null = null;
-  /** The members `refreshRoster` last saw: different ones make every answer on its way stale. */
-  let refreshedKey = rosterKey(opts.roster);
-  /** The names `refreshRoster` last saw ({@link rosterNames}). */
-  let refreshedNames = rosterNames(opts.roster);
+  /** The roster array `refreshRoster` last re-read. */
+  let refreshedRoster: MentionRosterMember[] | undefined = opts.roster;
+  /** The ids of the rows a `more` answer added to this mention's list (see `suggestLocally`). */
+  let topUpIds = new Set<string>();
   /** A search failed and none has answered since (see `runSearch`). */
   let searchFailing = false;
   /** Set by `dispose`: nothing on its way may write to a picker whose composer is gone. */
@@ -193,12 +204,9 @@ export function useMentionAutocomplete(opts: {
     searching = true;
     let found: MentionUser[] | null = null;
     try {
-      found = await searchDirectory(req.q);
+      found = await searchDirectory(req.q, req.kind);
     } catch (e) {
-      // ONE LINE PER OUTAGE, not one per key typed while offline: the next answer re-arms it.
-      if (!searchFailing) console.warn(`[mention] the name search failed (${req.kind})`, e);
-      else Log.d(`[mention] the name search still fails (${req.kind})`);
-      searchFailing = true;
+      noteSearchFailure(req.kind, e);
     }
     if (found) searchFailing = false;
     searching = false;
@@ -227,10 +235,26 @@ export function useMentionAutocomplete(opts: {
     void runSearch(next);
   }
 
+  /**
+   * A search that got no answer - a transport failure or a status that is not 2xx. ONE LINE PER
+   * OUTAGE, not one per key typed while it lasts: the next answer re-arms it.
+   */
+  function noteSearchFailure(kind: SearchRequest['kind'], why: unknown) {
+    if (!searchFailing) console.warn(`[mention] the name search failed (${kind})`, why);
+    else Log.d(`[mention] the name search still fails (${kind})`);
+    searchFailing = true;
+  }
+
   /** The directory search, then `audienceFilter`; null when the server did not answer 2xx. */
-  async function searchDirectory(q: string): Promise<MentionUser[] | null> {
+  async function searchDirectory(
+    q: string,
+    kind: SearchRequest['kind']
+  ): Promise<MentionUser[] | null> {
     const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      noteSearchFailure(kind, `HTTP ${res.status}`);
+      return null;
+    }
     const data: MentionUser[] = await res.json();
     return opts.audienceFilter ? opts.audienceFilter(data) : data;
   }
@@ -246,7 +270,9 @@ export function useMentionAutocomplete(opts: {
     const extra = filterUserSuggestions(found, {
       excludeIds: [...(me ? [me] : []), ...have, ...(blockedIds ?? [])],
     });
-    const merged = [...suggestions, ...matchingWholeQuery(extra, req.q)].slice(0, MENTION_MAX_ROWS);
+    const added = matchingWholeQuery(extra, req.q);
+    const merged = [...suggestions, ...added].slice(0, MENTION_MAX_ROWS);
+    for (const u of added) topUpIds.add(u.id.toLowerCase());
     suggestions = merged;
     open = merged.length > 0;
     if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches', 'no-match');
@@ -263,7 +289,7 @@ export function useMentionAutocomplete(opts: {
    * reader) is not known to the client and stays offered.
    */
   function suggestLocally(roster: MentionRosterMember[]) {
-    const key = rosterKey(roster);
+    const key = membersKey(roster);
     if (key !== indexedKey) {
       // Other members (a list that finished loading, another conversation): the index keeps only
       // them, so it never grows with every conversation the composer has shown.
@@ -282,9 +308,18 @@ export function useMentionAutocomplete(opts: {
       index: nameIndex,
       limit: MENTION_MAX_ROWS,
     });
-    suggestions = offered;
-    open = offered.length > 0;
-    selectedIdx = -1;
+    // THE ROWS A `more` ANSWER ADDED, AND THE ROW THE READER SELECTED, OUTLIVE A ROSTER CHANGE (review
+    // of #3402): a live chat re-sends its roster on every line, and re-reading it used to wipe the
+    // audience top-up and the arrow-key selection under the reader's fingers.
+    const selectedId = selectedIdx >= 0 ? suggestions[selectedIdx]?.id.toLowerCase() : undefined;
+    const offeredIds = new Set(offered.map((u) => u.id.toLowerCase()));
+    const kept = suggestions.filter(
+      (u) => topUpIds.has(u.id.toLowerCase()) && !offeredIds.has(u.id.toLowerCase())
+    );
+    const rows = [...offered, ...kept].slice(0, MENTION_MAX_ROWS);
+    suggestions = rows;
+    open = rows.length > 0;
+    selectedIdx = selectedId ? rows.findIndex((u) => u.id.toLowerCase() === selectedId) : -1;
   }
 
   /**
@@ -325,7 +360,7 @@ export function useMentionAutocomplete(opts: {
     if (
       disposed ||
       !(unnamed.length > 0 || blocksChanged) ||
-      rosterKey(opts.roster) !== rosterKey(roster)
+      (opts.roster !== roster && membersKey(opts.roster) !== membersKey(roster))
     )
       return;
     if (start >= 0) {
@@ -348,27 +383,19 @@ export function useMentionAutocomplete(opts: {
   }
 
   /**
-   * Call when the roster prop changes (a member list that finished loading, a conversation switch):
-   * an open picker re-reads it instead of keeping the rows of the roster it opened on. Any search
-   * answer on its way was asked for the previous roster and is dropped ({@link generation}).
+   * Call when the roster prop changes (a member list that finished loading, a live chat's new line):
+   * an open picker re-reads it instead of keeping the rows of the roster it opened on.
+   *
+   * NOTHING ON ITS WAY IS DROPPED (review of #3402). A search asks the directory for the TEXT typed,
+   * which a roster does not change, and a `more` answer is merged against the rows on screen when it
+   * lands. Dropping them on a roster change starved a busy live: each line can add, drop or reorder
+   * an author, so the waiting query was cleared on every line and the audience top-up never landed.
+   * A conversation switch changes the text, and the keystroke that follows makes answers stale.
    */
   function refreshRoster() {
     const roster = opts.roster;
-    // THE SAME MEMBERS IN A NEW ARRAY ARE THE SAME ROSTER (review of #3402). The live chat builds its
-    // roster afresh on every chat line (`liveMentionRoster`), and comparing arrays by identity made
-    // each line of a busy live drop the waiting query and the answer on its way, so the audience
-    // top-up never landed. Only other members make those answers stale and the rows worth re-reading.
-    // A NAME that changed (a member list that resolved its names) re-reads the rows, and drops nothing.
-    const key = rosterKey(roster);
-    const named = rosterNames(roster);
-    if (key === refreshedKey && named === refreshedNames) return;
-    if (key !== refreshedKey) {
-      Log.d('[mention] the roster changed - answers on their way are dropped');
-      refreshedKey = key;
-      generation += 1;
-      waiting = null;
-    }
-    refreshedNames = named;
+    if (roster === refreshedRoster) return;
+    refreshedRoster = roster;
     if (start < 0 || !roster || roster.length === 0) return;
     suggestLocally(roster);
     void prepareRoster(roster);
@@ -397,6 +424,7 @@ export function useMentionAutocomplete(opts: {
     ended = null;
     if (found.start === start && found.query === query) return;
     generation += 1;
+    topUpIds = new Set();
     start = found.start;
     query = found.query;
     const roster = opts.roster;
@@ -425,6 +453,7 @@ export function useMentionAutocomplete(opts: {
   function closeMention() {
     generation += 1;
     waiting = null;
+    topUpIds = new Set();
     open = false;
     suggestions = [];
     query = '';

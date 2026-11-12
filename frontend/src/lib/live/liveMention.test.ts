@@ -69,6 +69,27 @@ describe('liveAudienceFilter', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it('warns once per outage, re-armed by the next answer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    let down = true;
+    const filter = liveAudienceFilter(async (ids) => {
+      if (down) throw new Error('down');
+      return ids;
+    });
+    await filter(users);
+    await filter(users);
+    await filter(users);
+    expect(warn).toHaveBeenCalledTimes(1);
+    down = false;
+    await filter(users);
+    down = true;
+    await filter(users);
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+    debug.mockRestore();
+  });
 });
 
 describe('mentionsViewer', () => {

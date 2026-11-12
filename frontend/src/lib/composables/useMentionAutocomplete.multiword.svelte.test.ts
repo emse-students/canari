@@ -272,8 +272,9 @@ describe('review of #3402', () => {
     expect(ac.handleKeydown(key('Tab'))).toBe(false);
   });
 
-  it('drops a "more" answer that was asked for the roster before a switch', async () => {
-    let roster: MentionRosterMember[] = ROSTER;
+  /** A live picker whose roster the test swaps, as a chat line does. */
+  function livePicker(initial: MentionRosterMember[]) {
+    let roster = initial;
     const ac = useMentionAutocomplete({
       getText: () => text,
       setText: (t) => {
@@ -285,18 +286,71 @@ describe('review of #3402', () => {
       },
       audienceFilter: async (users) => users,
     });
+    return {
+      ac,
+      swap(next: MentionRosterMember[]) {
+        roster = next;
+        ac.refreshRoster();
+      },
+    };
+  }
+
+  it('a newcomer posting while a search is on its way keeps the waiting query and the top-up', async () => {
+    const { ac, swap } = livePicker(ROSTER);
     typeKeys(ac, '@Je');
     await flushMacrotask();
     // "J" is in flight, "Je" waits behind it.
     expect(calls.map((c) => c.q)).toEqual(['J']);
-    roster = [{ id: 'u-jerome', displayName: 'Jerome Exemple' }];
-    ac.refreshRoster();
-    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jerome']);
+    swap([...ROSTER.map((m) => ({ ...m })), { id: 'u-newcomer', displayName: 'Zed Exemple' }]);
+    calls[0].answer([]);
+    await flushMacrotask();
+    expect(calls.map((c) => c.q)).toEqual(['J', 'Je']);
+    calls[1].answer([{ id: 'u-jeff', displayName: 'Jeff Exemple' }]);
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jean', 'u-jeanne', 'u-jeff']);
+  });
+
+  it('the same members reordered keep the waiting query', async () => {
+    const { ac, swap } = livePicker(ROSTER);
+    typeKeys(ac, '@Je');
+    await flushMacrotask();
+    swap([...ROSTER].reverse());
+    calls[0].answer([]);
+    await flushMacrotask();
+    expect(calls.map((c) => c.q)).toEqual(['J', 'Je']);
+  });
+
+  it('a roster change keeps the rows the audience added and the row the reader selected', async () => {
+    const { ac, swap } = livePicker(ROSTER);
+    typeKeys(ac, '@J');
+    await flushMacrotask();
     calls[0].answer([{ id: 'u-jeff', displayName: 'Jeff Exemple' }]);
     await flushMacrotask();
-    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jerome']);
-    // The waiting "Je" was asked for the old roster too: never sent.
-    expect(calls).toHaveLength(1);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jean', 'u-jeanne', 'u-jeff']);
+    ac.handleKeydown(key('ArrowDown'));
+    ac.handleKeydown(key('ArrowDown'));
+    ac.handleKeydown(key('ArrowDown'));
+    expect(ac.suggestions[ac.selectedIdx].id).toBe('u-jeff');
+    // A chat line: a newcomer whose name also starts with J, the rest reordered.
+    swap([{ id: 'u-jules', displayName: 'Jules Exemple' }, ...[...ROSTER].reverse()]);
+    expect(ac.suggestions.map((u) => u.id)).toContain('u-jeff');
+    expect(ac.suggestions.map((u) => u.id)).toContain('u-jules');
+    expect(ac.suggestions[ac.selectedIdx].id).toBe('u-jeff');
+  });
+
+  it('a search answered with an error status warns, once per outage', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('down', { status: 503 }));
+    const ac = picker();
+    typeKeys(ac, '@ab');
+    await flushMacrotask();
+    await flushMacrotask();
+    typeKeys(ac, 'c');
+    await flushMacrotask();
+    const failures = warn.mock.calls.filter((c) => String(c[0]).includes('the name search failed'));
+    expect(failures).toHaveLength(1);
+    expect(String(failures[0][1])).toBe('HTTP 503');
+    expect(ac.open).toBe(false);
   });
 
   it('applies nothing once disposed, and sends nothing that was waiting', async () => {
