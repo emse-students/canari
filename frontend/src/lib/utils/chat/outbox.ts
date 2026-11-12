@@ -2816,7 +2816,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       let proto: Uint8Array;
       let mediaContent: string | undefined;
       // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
-      let commitQuote: () => Promise<void> = async () => {};
+      let commitQuote: () => Promise<void>;
       if (entry.kind === 'media') {
         const media = entry.media;
         if (!media) throw new LocalAttachmentError('the queued attachment has no payload');
