@@ -132,10 +132,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
+| 2026-11-12 | Backlog triage, batch 22 (the entries of 2026-11-04 and 2026-11-05): D021 CLOSED - every decision carried out (the floors, no `1.6.4` stable, the blind-banner pieces in `1.6.5`, the shim sweeps, #2832, the iOS compile filter, the gestures, migration 134), its one standing rule (a stable ships only once every reading of its pre-release passes) moved to durable-rules; D035 moved to the verification table as B402-B404, its eight decisions into profiles-and-access; D026 re-read (the `refused=` report shipped in `v1.6.5`, so its production read is due); D017, D048 and D136 unchanged. |
 
 ## Annex A - every row of the backlog
 
-314 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+317 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -453,10 +454,13 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B395 | SALON-REVOKE-COMMIT and the RM rows rerun: no redelivered Welcome, every external-join attempt logged | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B400 | delete MiConnect's unused Docker service connection (one admin click) | P3 | infra-hosts | open | user one-off | `docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks` |
+| B402 | "Entre etudiants": the dev reading of who reads a students-only post | P2 | other | shipped-verify-owed | dev reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B403 | "Entre etudiants": the chip and the switch on both phones | P2 | other | shipped-verify-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B404 | "Entre etudiants": the production usage count | P3 | other | shipped-verify-owed | production reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-242 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+240 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -476,7 +480,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D018 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md` | Owner decisions of 2026-11-01: what 1.5.5 carries, D5 in a 1:1, calls screen, migrations rule | none | other | decided-not-built | 2026-11-01; 1.5.5 | none |
 | D019 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-02-overnight-autonomy.md` | Owner decisions of 2026-11-02: 1.6.2/1.6.3 releases, reels writer dev-only, dependency autonomy, faces, floor 1.6.0 | none | ci-release | decided-not-built | 2026-11-02; 1.6.2; 1.6.3; 1.6.0 | none |
 | D020 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md` | Owner decisions of 2026-11-03: Play rule, wry abort, held-migration delegation, 1.6.3 alphas | none | ci-release | decided-not-built | 2026-11-03; 1.6.3-alpha.3 | none |
-| D021 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-04.md` | Owner decisions of 2026-11-04: floor 1.6.2, every stable needs every reading, no 1.6.4 stable, shim removals after 1.6.5 | none | ci-release | decided-not-built | 2026-11-04; 2026-11-05; 1.6.2; 1.6.4; 1.6.5 | named PR (#2832 resumes after 1.6.5) |
 | D022 | `docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md` | Owner decisions of 2026-11-07: read-only prod queries, governance by parent ships, live chat, Dependances panel | none | other | decided-not-built | 2026-11-07 | none |
 | D025 | `docs/wiki/backlog.d/p1-a-renamed-replica-list-starts-with-no-peer.md` | A renamed replica list started the proxy with no peer: fixed by variable targets, shipped v1.6.3, one prod reading owed | P1 | infra-hosts | shipped-verify-owed | 2026-11-02; v1.6.3; #2933 | none |
 | D026 | `docs/wiki/backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md` | Blind salon banners on production: the failing branch in the field is not named yet | P1 | push-notifications | open | 2026-11-04; 1.6.4-alpha.2 | none |
@@ -484,7 +487,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D031 | `docs/wiki/backlog.d/p1-the-admission-rule-fix-forward.md` | The admission rule's fix-forward: refusal disarmed; measure [UNINVITED_ENTRY] before re-arming | P1 | mls-messaging | open | 2026-10-31; 2026-11-01 | none (needs a production count by kind) |
 | D033 | `docs/wiki/backlog.d/p2-a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in.md` | A CallKit Decline is refused for a user whose launch signs in by itself | P2 | calls | open | 2026-10-31; #2782 | none |
 | D034 | `docs/wiki/backlog.d/p2-a-quick-reply-resent-under-the-same-id-after-a-lost-answer.md` | A notification quick reply can be sent twice under one id when its answer is lost | P2 | push-notifications | open | 2026-10-31 | none |
-| D035 | `docs/wiki/backlog.d/p2-a-students-only-switch-on-association-posts.md` | "Entre etudiants" switch on association and list posts; in production since v1.6.5; readings and usage count owed | P2 | moderation | shipped-verify-owed | 2026-11-04; v1.6.5; #2998 | none |
 | D037 | `docs/wiki/backlog.d/p2-an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-wit.md` | Old-PIN recovery installs bytes read before the PIN check, with no compare under the lock | P2 | auth-sessions | open | 2026-10-31; #2782 | none |
 | D038 | `docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md` | Signed avatar URLs phase 2: refuse unsigned requests once measurement says old builds are gone | P2 | security-privacy | blocked | 2026-11-03; 1.6.3; 7 days; 1 % access=unsigned | hardware reading (community-open with cold avatars) then a measured ratio under 1% |
 | D039 | `docs/wiki/backlog.d/p2-follower-tab-commits-run-by-the-leader-readings-owed.md` | A follower tab's commits run by the leader: built, two-tab readings on dev owed | P2 | mls-messaging | built-readings-owed | 2026-11-08 | none (two desktop browser tabs on dev) |
