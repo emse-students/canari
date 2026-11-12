@@ -51,6 +51,13 @@ import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
  */
 export const REMOVAL_RELEASES_PER_MINUTE = 60;
 
+/**
+ * Communities one user may create per hour. A creation writes the community, its roles and its
+ * first salon and mints an MLS distribution group in chat-delivery; a person creates one or two
+ * at a time, so ten leaves room and keeps a loop from filling both services.
+ */
+export const COMMUNITY_CREATIONS_PER_HOUR = 10;
+
 /** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
 export class ChannelsController {
@@ -78,8 +85,12 @@ export class ChannelsController {
     return this.service.listUnreadCounts(xUserId.trim().toLowerCase());
   }
 
-  /** Creates a new workspace owned by the calling user. */
-  @UseGuards(NginxAuthGuard)
+  /**
+   * Creates a new workspace owned by the calling user. Each creation mints an MLS distribution
+   * group in chat-delivery, so the route is throttled per user.
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: COMMUNITY_CREATIONS_PER_HOUR, ttl: 60 * 60_000 } })
   @Post('workspaces')
   createWorkspace(@Headers('x-user-id') xUserId: string, @Body() body: CreateWorkspaceDto) {
     return this.service.createWorkspace({ ...body, createdBy: xUserId.trim().toLowerCase() });

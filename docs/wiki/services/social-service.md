@@ -173,7 +173,7 @@ added later without the pipe fails there.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/channels/workspaces` | Create workspace |
+| POST | `/api/channels/workspaces` | Create workspace. `name` is a display name (trimmed, 1-80 characters, no control character - `validateDisplayName`, the rule a salon name shares), `slug` is what the client derives from it (`a-z0-9` groups joined by single hyphens, at most 48; the server appends `-2`, `-3`... to keep it unique); anything else is a 400 before any read or write. Ten creations per user per hour (`COMMUNITY_CREATIONS_PER_HOUR`) |
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |

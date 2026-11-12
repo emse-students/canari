@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Logger,
   NotFoundException,
@@ -148,6 +149,45 @@ describe('ChannelService - the community distribution group', () => {
       // Saved twice: the row, then the row carrying its group id. The second save is what makes
       // the pointer durable - without it the community would look created and be unusable.
       expect(workspaceRepo.save).toHaveBeenCalledTimes(2);
+    });
+
+    it('stores the name trimmed, under the slug asked for', async () => {
+      const { service, workspaceRepo } = makeService();
+
+      await service.createWorkspace({
+        name: '  Les Canaris 🐤 ',
+        slug: 'les-canaris',
+        createdBy: USER,
+      });
+
+      expect(workspaceRepo.create).toHaveBeenCalledWith({
+        name: 'Les Canaris 🐤',
+        slug: 'les-canaris',
+        createdBy: USER,
+      });
+    });
+
+    it.each([
+      ['no name', { name: '   ', slug: 'test' }],
+      ['a name that is not text', { name: { $ne: '' }, slug: 'test' }],
+      ['a name of 81 characters', { name: 'a'.repeat(81), slug: 'test' }],
+      ['a name holding a line break', { name: 'Les\nCanaris', slug: 'test' }],
+      ['no slug', { name: 'Test', slug: '' }],
+      ['a slug that is not text', { name: 'Test', slug: ['test'] }],
+      ['a slug of 49 characters', { name: 'Test', slug: 'a'.repeat(49) }],
+      ['a slug with an uppercase letter', { name: 'Test', slug: 'Test' }],
+      ['a slug with a slash', { name: 'Test', slug: 'a/b' }],
+      ['a slug ending with a hyphen', { name: 'Test', slug: 'test-' }],
+    ])('refuses %s with a 400, and reads and writes nothing', async (_what, body) => {
+      const { service, workspaceRepo } = makeService();
+
+      await expect(
+        service.createWorkspace({ ...body, createdBy: USER } as never)
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(workspaceRepo.findOne).not.toHaveBeenCalled();
+      expect(workspaceRepo.save).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("answers the creator's whole standing, moderation included", async () => {

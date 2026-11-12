@@ -94,6 +94,7 @@ import {
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 import { hasInvisibleCharacter } from './visible-text';
+import { validateCommunityName, validateCommunitySlug, validateDisplayName } from './display-name';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -284,15 +285,7 @@ export const MAX_CHANNEL_NAME_LENGTH = 80;
  * the sidebar is refused: nothing once trimmed, too long, or a control character.
  */
 export function validateChannelName(raw: unknown): string {
-  const name = typeof raw === 'string' ? raw.trim() : '';
-  if (!name) throw new BadRequestException('Channel name cannot be empty');
-  if (Array.from(name).length > MAX_CHANNEL_NAME_LENGTH)
-    throw new BadRequestException(
-      `Channel name too long (max ${MAX_CHANNEL_NAME_LENGTH} characters)`
-    );
-  if (/\p{Cc}/u.test(name))
-    throw new BadRequestException('Channel name cannot contain control characters');
-  return name;
+  return validateDisplayName(raw, MAX_CHANNEL_NAME_LENGTH, 'Channel');
 }
 
 /** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
@@ -2160,9 +2153,8 @@ export class ChannelService implements OnApplicationBootstrap {
    * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
-  private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
-    const base = requested.trim();
-    if (!base) throw new BadRequestException('Slug de communaute invalide.');
+  private async ensureUniqueWorkspaceSlug(requested: unknown): Promise<string> {
+    const base = validateCommunitySlug(requested);
 
     let candidate = base;
     for (let suffix = 2; ; suffix++) {
@@ -2173,12 +2165,15 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   async createWorkspace(input: CreateWorkspaceDto) {
+    // Both are judged before anything is read or written, and it is the judged values that are
+    // logged and stored.
+    const name = validateCommunityName(input.name);
     const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
     this.logger.log(
-      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
+      `[WORKSPACE] create name=${JSON.stringify(name)} slug="${slug}" by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
-      name: input.name,
+      name,
       slug,
       createdBy: input.createdBy,
     });
