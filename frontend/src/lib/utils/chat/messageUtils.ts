@@ -20,6 +20,7 @@ export { SYSTEM_SENDER_ID, isSystemSender } from '$lib/utils/chat/messageOrder';
 import {
   mediaEncodingFromProto,
   mediaReelFromProto,
+  mediaLoudnessFromProto,
   mediaKindToType,
   mediaPlaceholderFromProto,
   type IAppMessage,
@@ -206,6 +207,8 @@ export function appMsgToEnvelope(
             ...(msg.media.encoding ? { encoding: mediaEncodingFromProto(msg.media.encoding) } : {}),
             // A reel message's declaration (intent, length, expiry hint); empty for anything else.
             ...mediaReelFromProto(msg.media),
+            // The measured sound of a video; absent before 2026-11-11, and played as it is then.
+            ...mediaLoudnessFromProto(msg.media),
           },
           msg.media.caption || undefined,
           mediaReplyTo

@@ -154,6 +154,7 @@ import {
 } from './visibility';
 import {
   assertDeclaredOptionAnswers,
+  assertMultipleChoiceGridOneGroup,
   assertUniqueItemIds,
   decidesPrice,
   freeFallbackCells,
@@ -881,6 +882,10 @@ export class FormsService {
     assertFormItemsShape(input.items);
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
+    assertMultipleChoiceGridOneGroup(
+      input.priceMatrix as PriceMatrix | null | undefined,
+      (input.items ?? []) as PricedItem[]
+    );
     this.assertFileQuestionConfigValid(input);
     input = {
       ...input,
@@ -1337,6 +1342,21 @@ export class FormsService {
     } as CreateFormDto & { anonymous: boolean };
     this.assertFormOptionsCoherent(effective, form as unknown as CreateFormDto);
     this.assertPublicConfigValid(effective);
+    const keptSplits = assertMultipleChoiceGridOneGroup(
+      effective.priceMatrix as PriceMatrix | null | undefined,
+      (items ?? []) as PricedItem[],
+      {
+        matrix: form.priceMatrix as PriceMatrix | null | undefined,
+        items: (form.items ?? []) as PricedItem[],
+      }
+    );
+    if (keptSplits.length > 0) {
+      // A grid saved before the rule, left as it was: saved, and counted - its price still depends
+      // on the groups' order until its organiser reworks that criterion.
+      this.logger.warn(
+        `[FORM_GRID_SPLIT] form ${formId} saved with a stored multiple-choice split left unchanged (questions ${keptSplits.join(', ')})`
+      );
+    }
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
       items,

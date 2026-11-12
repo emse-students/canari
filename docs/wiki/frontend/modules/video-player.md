@@ -155,10 +155,75 @@ removal) or the engine evicted (Safari's `ManagedMediaSource` under pressure) is
 clamps a streamed source to `streamSeekFloor` - the later of the cut and `buffered.start(0)` - rather
 than leave a seek waiting for ever (logged at debug when it clamps).
 
-**Left, said**: an OLD post video (not a reel, so no declared length) watched as a stream still reads
-`Infinity` until its last segment - its seek reaches only what is buffered. A player that still sees no
-length logs `the engine knows no duration` at info. **Not verified on a device**: that WebKit's
-fragmented-MP4 reader honours the `mvhd` (Chromium's does) - the iPhone reading below.
+**Not verified on a device**: that WebKit's fragmented-MP4 reader honours the `mvhd` (Chromium's
+does) - the iPhone reading below.
+
+### A stream learns its length from its tail (2026-11-11)
+
+**Production `1.6.10`, web (owner): no seek line at all on CanaReels and on wide feed videos opened
+full screen.** The log: `[VideoPlayer] reel: the engine knows no duration (Infinity, stream)`, the
+same for `feed:`, and `[media] ...: undeclared movie duration (0 s) - 61.37 s read from its fragments`.
+**The cause**: every video uploaded before the writer fix declares no length, and the declared
+`durationMs` reaches only a reel PAGE's stream (`ReelSlide`: `page === 'reel' ? post.durationMs : null`;
+a carousel page, a post video, an old reel without it get nothing). Such an MSE source reads
+`Infinity` until `endOfStream` - which a paced viewer stream reaches only at the last segment - so
+`VideoScrubber` (`known` needs a finite length) drew an empty track and refused every press.
+`mediaBlobCache` reads the length from the fragments only for a WHOLE file; a stream never held one.
+
+**The fix, in the stream** (`segmentedMediaStream.ts`, `readTailSeconds`; the reader is
+`mp4Duration.readMp4TailDuration`): the muxer ends every file with an `mfra` and an `mfro`. A consumer
+whose pacing `readsLength` (the viewer's, `VIEWER_STREAM_PACING`; a feed card draws no line and does
+not pay it) fetches the LAST segment through the shared feed and reads three things:
+- the `mfro`, which gives the `mfra`'s size;
+- the `tfra` entries, which say WHERE each track's last fragment starts;
+- that fragment's `tfdt` and `trun`s.
+
+It hands the length to `MediaSource.duration` **inside the append chain**: the spec refuses a
+`duration` while a `SourceBuffer` updates, and the chain is the one place that knows none is.
+
+- **The length is the ABSOLUTE end of the walked samples**, which is what an MSE duration is. The
+  first decode time is not subtracted.
+- **A `tfra` time is never trusted.** It is used only by a `traf` with no `tfdt`, and never compared
+  with a walked end. A length that would make the file cheaper than `MIN_VIDEO_BYTES_PER_SECOND`
+  (2.5 kB/s, a twentieth of the writer's lowest target `VIDEO_MIN_BITRATE`) is refused as
+  implausible, with the reason. A fuzz test pins that every length it does give is finite, positive
+  and plausible.
+- **It never competes with playback.**
+  - It starts only once the in-order buffer holds the pacing's `aheadSeconds` (30 s) past the
+    playhead. That is a fact of the element, never a timer.
+  - Its requests wait in the gate's `background` lane (a `GateRank`). An in-order ask of the same
+    segment promotes it and holds it.
+  - Closing the viewer cancels it on the wire, unless an in-order ask holds it.
+  - A clip that ends before 30 s are buffered is fetched to its end, and `endOfStream` measures it.
+- It is never set below what is buffered, and never over a length the engine already knows.
+- When the last fragment starts before the tail, it reaches back one segment at a time, at most
+  three (a stream-level test covers it).
+- The tail segment stays in the feed, so the in-order fetch takes it from memory. Nothing is
+  downloaded twice (test: each segment requested once).
+
+- **A seek ahead of what is fetched fills the gap IN ORDER, and that costs every byte before the
+  target.** The segments are byte ranges, not fragments, so one cannot be appended alone. A
+  `seeking` element with nothing buffered at its new time is a demand (`wanted`), and the loop runs
+  up to the target. A seek to 90 % of a 60 MB video downloads 54 MB first: minutes on a weak link.
+  The `mfra` this reader now parses is the time-to-byte index a direct seek needs, which is
+  [its own entry](../../backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md).
+- **A stream that cannot learn its length** says why, once, at WARN (a fallback is a signal): `[media-seg] <label> <id>: no
+  declared length, and none read from its tail - <why>` (`no mfro at the end of the file`, `no moov in
+  the head`, its last segments did not arrive, ...). Its line still draws: `videoPlayback.scrubLength`
+  maps it onto the end of the element's `seekable` range - what is buffered - so it moves and seeks
+  within what is there instead of vanishing. The bar's BUFFERED part is drawn only against a real
+  length: mapped onto what is buffered it would always read full.
+- **The player's line** `the engine knows no duration` is gone for streams (at their metadata they
+  hold only their head; the stream speaks for them). A FILE that declares none still says so:
+  `[VideoPlayer] <variant>: the file declares no duration`.
+- **"Voir plus" did nothing on `1.6.10`** (owner, same evening): on that build the caption sat 1rem
+  above the frame's edge, inside the line's 2rem touch zone (`z-40` over the caption's `z-20`), so the
+  LINE took the click - and with no length it refused it (`known` false), so nothing happened at all.
+  `elementFromPoint` at the button's centre on a model of both geometries: the seek line at 1rem, the
+  button at `clearanceAboveSeekLineRem` (#3355, on `main`, not yet released). Nothing more to fix here.
+- **Phones**: Android's WebView is Chromium (`MediaSource`); iOS's WKWebView has only
+  `ManagedMediaSource` (17.1+), chosen by `chooseSegmentedPlayback` (`managed`). Both take the same
+  path - `duration` is the same attribute - but neither is read on a device yet (below).
 
 ### Readings owed (both phones, a pre-release carrying this)
 
@@ -168,6 +233,10 @@ fragmented-MP4 reader honours the `mvhd` (Chromium's does) - the iPhone reading 
 - the conversation viewer: line + corner speaker, tap pauses/plays, the line drags and the time moves
   (a video sent BEFORE this build, and one sent after);
 - the CanaReels line drags to a point not yet downloaded and plays from there;
+- **an OLD video (uploaded before 2026-11-10) streamed full screen** - a carousel page and a reel:
+  the line is there within a second of the first frame, the log carries `read from its last
+  fragments`, and no `none read from its tail` line (Mi 9T WebView; iPhone 12 WKWebView, whose
+  `ManagedMediaSource` takes the same `duration`);
 - a NEW post video draws its frozen first frame and its bands at once; an old one Canari's poster;
 - **the cost of the `100%` band, on the Mi 9T**: after a fast fling through ~20 video posts, the count
   of open streams (`[media-seg] stream` lines minus their closes, or `streamProgressOf` entries) and
@@ -238,10 +307,142 @@ like the theme: not per account, not wiped by a sign-out.
   first, which silences THIS session without writing the store, so the element's `volumechange`
   (forwarded by `followVideoSound`) finds the answer already muted and writes nothing. Before, that
   retry would have remembered "off" for good - a refusal turned into a preference.
+- **One volume LEVEL, and a desktop slider** (owner, 2026-11-11). `videoSound.level` is the last
+  NON-ZERO level in (0, 1], stored under `canari-video-volume` (every read and write in try/catch) and
+  applied to every video's `volume` (`VideoPlayer`'s effect, `LiveViewer`'s, `followVideoSound` for
+  the native-controls viewer, which also takes a native drag back as the level). A drag ticks the level
+  IN MEMORY (`setLevel`/`setVolume`, nothing written or logged per tick); the gesture ends in
+  `commitLevel` (the range's `change`, a wheel notch, a viewer closing): one write, one log line.
+  Mute stays its own toggle: the speaker unmutes at the stored level, `setVolume(0)` is mute and keeps
+  the level, a drag up from mute unmutes.
+- **The slider** is `VideoVolumeSlider` (a real vertical `<input type=range>`, `aria-valuetext` a
+  percentage, `data-video-controls`), mounted by `VideoSoundButton` ONLY when it is given `onLevel`
+  and `(hover: hover) and (pointer: fine)` holds (`watchFineHover`); a phone keeps its hardware
+  buttons. Behaviours pinned (reviewed 2026-11-11, checked in a real Chrome):
+  - **Position**: the caller's corner classes sit on an OUTER box alone, the pill's anchor is an inner
+    `relative` box - never two position classes on one element.
+  - **Open**: `pointerenter`/`pointerleave` of a MOUSE pointer only (a hybrid laptop's touch never
+    sticks it open); keyboard focus only after a Tab (one shared modality flag), so a click-focused
+    speaker does not hold it open. A thumb drag leaving the pill keeps it open until the release.
+  - **Escape** closes the pill alone (not the lightbox behind) and returns focus to the speaker.
+  - **Top layer**: the pill is a `popover="manual"` shown while open, so no `overflow-hidden` card or
+    bubble clips it; it stays a DOM child of the speaker's host, which keeps hover and focus continuous.
+    Closed, it is `inert` and hidden - neither Tab nor a screen reader meets it.
+  - **Inputs**: every key the range handles (not Tab, not Escape) stops at the slider, so Space, `m`,
+    `f`, `k`, arrows never reach the player's keyboard map; the wheel over the pill is the volume's
+    (non-passive, 5 % a notch, stopped there; `wheelOverVolume` also guards the reel viewer and the
+    lightbox, which would page and zoom).
+  - **Glass**: its own `glass-video` blur on the feed, the rail and the conversation viewer; the FLAT
+    tint (`--glass-video-flat-bg`, no blur) inside the lightbox's glass bar - never a second blur
+    ([design-reference](../design-reference.md)).
+  - **A chat video's slider mutes only that video** (`soundScope="local"`): it moves the shared level
+    for everyone, but dragging to 0 or up from 0 mutes or unmutes only that element, and never writes
+    the app's mute answer. A `silent` take has no slider.
+  - Surfaces: the feed, the lightbox bar, the conversation viewer, the reel rail, the live viewer, the
+    chat video. Tests: `volumeSlider.svelte.test.ts`, `volumeSlider.twoPlayers.svelte.test.ts`.
 - **Not yet: the device volume.** No WebView exposes the system volume; following it (the struck
   glyph at volume 0, as Instagram does) needs a native bridge on each phone - owed in
   [backlog](../../backlog.d/video-sound-follows-the-device-volume.md).
 - Tests: `videoSound.svelte.test.ts`.
+
+## Loudness
+
+**The owner's decisions (2026-11-11).** *Some videos are loud, others very quiet.* Measure at send,
+apply at playback, as YouTube and Spotify do; the file is never altered; an old video with no
+measurement plays exactly as today. Live streams are out of scope.
+
+**Measured on the author's device** - the server holds ciphertext and can measure nothing.
+`prepareVideoForUpload` decodes the KEPT audio window once more (`AudioSampleSink`, the same window
+the conversion reads, a reel's trim included) IN PARALLEL with the conversion and feeds
+`LoudnessMeter` (`src/lib/video/loudnessMeter.ts`): ITU-R BS.1770-4 / EBU R128 - K-weighting (two
+biquads derived per sample rate with libebur128's derivation, which reproduces the 48 kHz table),
+400 ms blocks on a 100 ms hop, an absolute gate at -70 LUFS and a relative gate at -10 LU. It also
+keeps the SAMPLE peak (one comparison a sample); a true peak would need a 4x resampler per channel,
+so the player keeps 1 dB of headroom instead. Silence (nothing over -70 LUFS) and a clip under one
+block have NO measurement. A failed decode is `null` and a `warn`, never a refusal of the video. A
+decode beside the conversion was chosen over the conversion's own audio hook because a COPIED AAC
+track (the common case, [video-preparation](../video-preparation.md#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14))
+is never decoded by the conversion at all.
+
+**What it costs.** The meter alone: 72 ms for 90 s of 48 kHz stereo on the Windows desktop (bun),
+about 8.6 million samples through two biquads. Then the decode of the audio, on the CPU, while the
+video encode runs on the hardware encoder. Neither has been timed on the Mi 9T: **owed** - the
+`[video-prep] loudness: ... measured in N ms` line against the `done in N ms` line of the same send,
+for a 90 s reel.
+
+**Where it travels** - one optional field, `loudness: { integratedLufs, samplePeakDbfs }`:
+
+| Surface | Carried by | An older build |
+| --- | --- | --- |
+| Feed post, CanaReel (publish queue, `publishReel`, the post editor) | the post's media JSON; social-service declares it (`PostMediaLoudnessDto`, so `whitelist: true` keeps it, bounded) | ignores the key and plays as before |
+| Chat video, a CanaReel take sent in a conversation (the outbox, an adopted reel upload) | `MediaMsg.loudness` (field 18, a `MediaLoudness` message), and the stored envelope's JSON | protobuf skips field 18 and plays as before |
+| Live replay | nothing: its segments are not prepared by the seam | - |
+
+A server still running the code before this change strips the post field: those posts play
+unmeasured. A reader checks every value (`isMediaLoudness`) and plays as is what no real signal gives.
+
+**The law** (`loudnessGainDb`, `src/lib/video/loudnessPlayback.ts`): toward **-14 LUFS**; a loud video
+is lowered without floor; a quiet one is raised by at most **+6 dB** and never past a sample peak of
+**-1 dBFS** (the clamp only limits a raise: a quiet video already peaking over -1 dBFS plays at 0 dB,
+never lower); within **0.5 dB** nothing is applied and no graph is built. No measurement, no gain.
+
+**No `DynamicsCompressorNode` as a limiter**: the spec's compressor adds an automatic make-up gain
+(`(1/fullRangeGain)^0.6`) that would move every routed video's level and colour its transients; the
+measured peak clamp already proves a raise cannot clip on the samples measured.
+
+**The route** (`LoudnessAudio.attach`, one handle per `<video>` ELEMENT in `VideoPlayer`, which
+every surface feeds its `MediaRef.loudness`: the feed, the lightbox, CanaReels, a chat's inline video
+and both conversation viewers; the measurement is applied by a second effect keyed on its two
+NUMBERS, so a new object with the same values changes nothing): `MediaElementAudioSourceNode ->
+GainNode -> destination`, on ONE `AudioContext` for the app.
+
+| Constraint | How it is met |
+| --- | --- |
+| A context runs only after a gesture | the reader's unmute PRIMES it synchronously inside the gesture (`videoSound.setMuted(false)` -> `primeLoudnessAudio`, and the player's own speaker): the context is made and `resume()` called there, where WebKit honours it; the graph is built the first time the element is AUDIBLE (unmuted AND playing) |
+| Muted autoplay must not need the context | a muted element never asks for it (a test says so) |
+| A context that will not run | the element is left UNROUTED, so it is never silenced; the fallback below. A `resume()` that never answers is said once (`has not answered ... unrouted, without its gain`) |
+| The app holds no audio output when nothing plays (the Pixel 6a AAudio defect, `utils/toneOutput.ts`) | the context is SUSPENDED when no routed element plays (`pause`, `ended`, unmount) and when the app leaves the screen, resumed on a routed `play`, and CLOSED when no routed element is mounted - never under a mounted one, since an element takes one source node in its life |
+| Once routed, an element sounds only through the graph | a new measurement only changes the gain (none = unity); a routed `play` whose context is not `running` after `resume()`, or a source left on a closed context, is logged at `error`: `routed and SILENT` |
+| `element.volume` and `muted` | applied by the engine BEFORE the source node, so the reader's mute silences the graph and the shared level of PR #3372 multiplies with the gain; nothing on this route writes them |
+| A blob source | same-origin, routed |
+| A STREAM on WebKit (`ManagedMediaSource` / MSE) | NOT routed (review of #3378): it may play silent through Web Audio with no exception. It takes only the fallback's attenuation, said once per element, until the iPhone 12 reading below proves sound |
+| Unmount | the source and the gain are disconnected: the graph keeps no element alive |
+
+**The fallback, and it is one** (`warn`, `[LOUDNESS] FALLBACK: <cause>`): no Web Audio, a source node
+the engine refuses, a context that stays suspended, a WebKit stream. A LOWERING then goes through
+`element.volume`; a raise cannot (a volume stops at 1) and the video plays as is. The written volume
+is READ BACK: iOS ignores it, and the line says so. **ONE rule decides an element's volume, in
+`utils/videoVolume.ts` (#3372's one place for `video.volume`): `applyVideoLevel` writes the reader's
+level TIMES the fallback's factor (`elementVolumeFor`), and `readVideoLevel` divides it back out
+(`readerLevelOf`)**, so the slider never erases the attenuation and the attenuation is never
+remembered as the reader's level (`videoVolume.test.ts`, on a loud WebKit stream). On the Web Audio
+route the factor is 1 and the gain is the graph's: the two multiply in the engine.
+
+**What a reader trusts.** The numbers come from another device. A loudness over 0 LUFS, or a peak more
+than 3 dB under the loudness, is no signal's and could only be a crafted entry meant to silence the
+video: `isMediaLoudness` refuses it and the video plays as is.
+
+**iOS (WKWebView).** `element.volume` is read-only there, so Web Audio is the ONLY way a gain reaches
+an iPhone. The silent switch is not a new risk: `audioSession.ts` already sets `playback` while an
+unmuted media plays (`reportAudibleMedia`), which covers a routed element. NOT known, and owed on the
+iPhone 12: a `ManagedMediaSource` stream through `createMediaElementSource` (older WebKit gave silence
+for MSE sources - so streams are not routed yet), whether a suspended context resumes on a routed
+`play` without a fresh gesture under `mediaTypesRequiringUserActionForPlayback = None` (the next reel
+after a swipe), and its `interrupted` state after a background.
+
+**Readings owed** (a pre-release carrying this; both phones):
+
+- the cost: `[video-prep] loudness` against `done in` for a 90 s reel, Mi 9T and iPhone 12;
+- a quiet clip and a loud clip, posted and sent in a chat: each logs `routed through Web Audio at
+  +x / -y dB`, and they sound alike - on the feed after the tap, in CanaReels, inline in a chat and in
+  the conversation viewer;
+- **iPhone 12, the gate that would route WebKit streams:** a STREAMED (segmented) reel, routed by hand
+  on a bench build, has sound; until then `stream on WebKit is not routed` is the expected line;
+- the next reel after a swipe on the iPhone: no `routed and SILENT` line, sound present;
+- a routed video after the app went to the background and back: sound present; and on the Mi 9T,
+  `dumpsys audio` shows no started AAudio stream for the app while it is in the background;
+- the silent switch ON, a routed reel unmuted: it plays, as before;
+- an old video: `no measurement: played as is`, and no change by ear.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 

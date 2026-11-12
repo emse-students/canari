@@ -867,7 +867,11 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
 - **The server's own stream is held to the same span (2026-10-31).** `GET /history` and
   `/history/batch` drop every row inside the READER's `withheld` windows in a group conversation -
   the gaps AND the span before their arrival (`ownWithheldWindows`, `withholdsArrivalSpan`, the one
-  predicate the exclusions route reads too). Before, they dropped the gaps only, so a newcomer walking
+  predicate the exclusions route reads too). The arrival facts behind that span (each group's row and
+  the reader's earliest device row in it) are read ONCE per request, the batch's 50 groups included
+  (`arrivalFactsOf`, 2026-11-12); unreadable, the batch answers every group empty with one ERROR,
+  never unfiltered. A window is NOT dropped by the cursor's instant: a row's `timestamp` is
+  `receivedAt`, taken before the `XADD`, so it is not in stream order (D062). Before, they dropped the gaps only, so a newcomer walking
   the stream was served the ciphertexts of the whole past and only their client discarded them
   (`dropOwnExcludedMessages`); a newcomer's state cannot open frames sealed before its Welcome, but
   their absence no longer rests on the client. A new device of a continuous member is unchanged: the
@@ -1190,7 +1194,14 @@ Three more things made it unsafe:
 - the client did not check that a `skipTo` lay ahead of its cursor and at or before the walk head;
 - a client with an empty local store clears its cursor on every launch, so it never helped there.
 
-What a future version must prove first is in the [backlog](../backlog.md) (P3).
+A future version must prove three things before it moves a cursor past rows it did not hand:
+
+- every window touching the skipped span is CLOSED and ends after the span;
+- the windows were repaired before the filter ran (no roster member is left without an open
+  interval);
+- the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
+
+Until then the rescan is the accepted cost, and nothing is owed on it (backlog triage of 2026-11-11).
 
 **The interval read repairs before it filters**: a roster member with no open interval gets one from
 their roster row's `joinedAt` (`openMissingIntervals`, shared with `GET .../exclusions`, one ERROR

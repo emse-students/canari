@@ -41,6 +41,7 @@
   import { reelPosterUrl } from '$lib/reels/reelPosters.svelte';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import { m } from '$lib/paraglide/messages';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
     /** Encrypted media descriptor containing the download reference and decryption keys. */
@@ -59,6 +60,8 @@
       encoding?: string;
       /** The publisher's ThumbHash of the first frame (`MediaRef.placeholder`). */
       placeholder?: string;
+      /** A video's sound as the publisher's device measured it (`MediaRef.loudness`). */
+      loudness?: MediaLoudness;
     };
     /**
      * The video's length as its publisher DECLARED it (a reel's `post.durationMs`), in ms. A stream
@@ -587,6 +590,7 @@
         onVideo={attachStream}
         class="h-full w-full"
         positionKey={media.mediaId}
+        loudness={media.loudness}
         variant={minimalPlayer ? 'reel' : 'lightbox'}
         safeBottom={playerSafeBottom}
         {poster}
@@ -734,6 +738,7 @@
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
         positionKey={media.mediaId}
+        loudness={media.loudness}
         poster={feedPoster}
         {posterFit}
         backdrop={letterbox && videoFit === 'contain'}
@@ -806,13 +811,19 @@
           <VideoPlayer
             src={viewerStream.url}
             positionKey={media.mediaId}
+            loudness={media.loudness}
             streamed
             disableRemotePlayback={streamManaged}
             onVideo={attachViewer}
             class="h-full w-full"
           />
         {:else if blobUrl}
-          <VideoPlayer src={blobUrl} positionKey={media.mediaId} class="h-full w-full" />
+          <VideoPlayer
+            src={blobUrl}
+            positionKey={media.mediaId}
+            loudness={media.loudness}
+            class="h-full w-full"
+          />
         {:else}
           <div class="relative h-full w-full"><VideoPoster /></div>
         {/if}

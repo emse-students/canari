@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { MediaIntent } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
@@ -307,6 +308,8 @@ export interface OutboxAdoptedUpload extends OutboxMediaUploadedRef {
   height?: number;
   /** The declared duration of the published reel (whole ms). */
   durationMs?: number;
+  /** The published file's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /** Sensitive media descriptor for a queued media message. */
@@ -327,6 +330,8 @@ export interface OutboxMediaPayload {
   intent?: MediaIntent;
   durationMs?: number;
   expiresAtMs?: number;
+  /** A prepared video's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.

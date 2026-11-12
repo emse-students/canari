@@ -49,6 +49,8 @@
          is all this device can honestly say. %1$s is the salon, resp. the sender. -->
     <string name="notif_channel_new_message">Nouveau message dans #%1$s</string>
     <string name="notif_new_message_from">Nouveau message de %1$s</string>
+    <string name="notif_new_message">Nouveau message</string>
+    <string name="notif_unnamed_group">Conversation de groupe</string>
     <string name="notif_new_message_generic">Vous avez reçu un message chiffré</string>
 
     <!-- A MENTION IS A TOKEN IN THE CIPHERTEXT, NOT A NAME. A decrypted body carries `@[<64 hex>]`

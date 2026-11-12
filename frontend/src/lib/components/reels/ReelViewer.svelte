@@ -35,7 +35,12 @@
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
   import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { pickedReactionToggle, railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
-  import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
+  import {
+    WheelPageLock,
+    wheelOverScrollable,
+    wheelOverVolume,
+    wheelStep,
+  } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -616,7 +621,13 @@
       const lock = new WheelPageLock();
       function onWheel(e: WheelEvent) {
         const step = wheelStep(e);
-        if (!step || list.commentsFor || list.shareFor || wheelOverScrollable(e.target, el!))
+        if (
+          !step ||
+          list.commentsFor ||
+          list.shareFor ||
+          wheelOverVolume(e.target) ||
+          wheelOverScrollable(e.target, el!)
+        )
           return;
         e.preventDefault();
         // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
