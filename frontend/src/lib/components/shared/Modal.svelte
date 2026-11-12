@@ -9,6 +9,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
   import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
+  import type { GateName } from '$lib/utils/overlayStack';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -84,6 +85,8 @@
      * overflow and gets no line; the title bar's `border-b` is the same edge at the top.
      */
     footerEdge?: boolean;
+    /** A pinned gate (`GATES_TOP_FIRST`): a fixed place above the whole normal stack, never open order. */
+    gate?: GateName;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -101,13 +104,18 @@
     phoneFullScreen = false,
     showTitleBar = true,
     footerEdge = false,
+    gate,
     onClose,
     children,
     footer,
   }: Props = $props();
 
   /** Registered while open: the last opened is on top, so what this modal opens clears it (`utils/overlayStack.ts`). */
-  const layer = useOverlayLayer(() => open, 'Modal');
+  const layer = useOverlayLayer(
+    () => open,
+    'Modal',
+    () => gate
+  );
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen

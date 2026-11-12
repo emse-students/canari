@@ -1,5 +1,6 @@
 import { untrack } from 'svelte';
-import { OverlayStack, type OverlayZ } from './overlayStack';
+import { Log } from './Log';
+import { gatePlace, OverlayStack, type GateName, type OverlayZ } from './overlayStack';
 
 /**
  * The reactive face of {@link OverlayStack}: THE ONE PLACE A COMPONENT GETS ITS Z-INDEX FROM when it
@@ -50,6 +51,22 @@ export function registerOverlay(label: string): OverlayLayer {
   };
 }
 
+/**
+ * Registers a pinned gate: its place is FIXED by the allowlist, and nothing in the normal stack can
+ * pass it. Not part of the open order, so it never shifts the ranks of the overlays beneath.
+ */
+export function registerGate(gate: GateName, label: string): OverlayLayer {
+  const place = gatePlace(gate);
+  Log.d('overlayStack', `register gate ${gate} (${label}), z ${place.z}`);
+  return {
+    z: place.z,
+    zAbove: place.zAbove,
+    release() {
+      Log.d('overlayStack', `release gate ${gate} (${label})`);
+    },
+  };
+}
+
 /** Number of overlays open now (reactive). Exposed for tests and diagnostics. */
 export function openOverlayDepth(): number {
   void version;
@@ -62,27 +79,42 @@ export function openOverlayDepth(): number {
  * @param isOpen whether the overlay is shown (read reactively); a component mounted only while open
  *               passes `() => true`.
  * @param label  names the overlay in the log lines at register and release.
+ * @param gate   reads a name from the pinned allowlist (`GATES_TOP_FIRST`): the overlay then takes that
+ *               gate's FIXED place above the whole normal stack instead of its open order.
  */
 export function useOverlayLayer(
   isOpen: () => boolean,
-  label: string
+  label: string,
+  gate?: () => GateName | undefined
 ): { readonly z: number | undefined; readonly zAbove: number | undefined } {
   let layer = $state<OverlayLayer | null>(null);
+  // WHAT AN OUTROING NODE KEEPS: a surface with a `transition:` stays in the DOM after `isOpen()` went
+  // false, and dropping its z-index at that moment would paint it under whatever it covered for the
+  // length of the outro. The last place is held (frozen) once released; it is overwritten at the next
+  // open and is never read by a node that is not rendered.
+  let frozen: { z: number | undefined; zAbove: number | undefined } | null = null;
+  // READ ONCE AS A BOOLEAN: an `isOpen` that reads other signals (a dropdown's `shown && results > 0`)
+  // would otherwise re-run the effect on every change while still true, release and register again,
+  // and the overlay would jump above one opened after it. A derived only notifies on a change of ITS
+  // value.
+  const shown = $derived(isOpen());
   $effect.pre(() => {
-    if (!isOpen()) return;
-    const mine = registerOverlay(label);
+    if (!shown) return;
+    const gateName = gate?.();
+    const mine = gateName ? registerGate(gateName, label) : registerOverlay(label);
     layer = mine;
     return () => {
+      frozen = { z: mine.z, zAbove: mine.zAbove };
       mine.release();
       layer = null;
     };
   });
   return {
     get z() {
-      return layer?.z;
+      return layer ? layer.z : frozen?.z;
     },
     get zAbove() {
-      return layer?.zAbove;
+      return layer ? layer.zAbove : frozen?.zAbove;
     },
   };
 }

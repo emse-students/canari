@@ -76,6 +76,7 @@
   open={blocked}
   onClose={() => {}}
   dismissible={false}
+  gate="BootGate"
   scrim={false}
   label={unreachable ? copy.title : m.boot_connecting()}
   panelClass="bg-cn-bg text-text-main fixed inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center"

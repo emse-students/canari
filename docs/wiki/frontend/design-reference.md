@@ -977,6 +977,19 @@ RELEASES on close or destroy.** No component names a rung, so no nesting needs a
   `GuideOverlay`, `FullScreenViewer`, `ReelViewer`, `CameraOverlay`, `LiveViewer`, `LiveOverlay`,
   `MessageMobileActions`, `MessageEmojiPicker`, `ComposerEmojiPicker`, `PostActionsMenu`,
   `GlassMenuButton`, `CommunityRailMenu`, `EcosystemLauncher`, `FormExportMenu`, `ReelActionRail`.
+- **The pinned gate tier.** The surfaces that stand between the person and the app take a FIXED
+  place above the whole normal stack and under the toast and the call, not an open-order one:
+  `BootGate` on top, then `PinModal`, `PinRecovery` (the recovery `ChangePinModal` in
+  `ChatBackgroundService`), `BiometricBottomSheet`, `BiometricEnrollSheet`. The membership is one
+  explicit allowlist, `GATES_TOP_FIRST` in `utils/overlayStack.ts`; a component passes `gate="..."`
+  to `Modal`/`ModalOverlay` and a name not on the list does not type-check. Nothing in the normal
+  stack can be drawn over a gate: a viewer mounted by a deep link or a push tap while the PIN is up
+  stays under it, and the PIN opened while the boot gate is up stays under the boot gate (tests in
+  `shared/overlayLayer.svelte.test.ts`). The normal stack's capacity is what is left below the tier.
+- `useOverlayLayer` registers on a DERIVED boolean, so a signal `isOpen` reads (a dropdown's result
+  count) changing while it stays open never re-registers it above a later dialog; and a released
+  overlay HOLDS its last z-index, so a node playing a `transition:` outro (SidePanel,
+  FloatingSurface, MessageMobileActions) is not dropped to `auto` mid-outro. Both are tested.
 - What stays on the ladder: navigation (rail, drawer, their scrims), the page layers, the banner
   column, the toast, the call, tooltips, the skip link.
 - Behaviour changes to know: a confirmation raised BEFORE another overlay opens is now under it

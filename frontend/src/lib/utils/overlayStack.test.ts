@@ -4,11 +4,13 @@ vi.mock('./Log', () => ({ Log: { d: vi.fn(), i: vi.fn(), w: vi.fn() } }));
 
 import { Log } from './Log';
 import {
+  GATES_TOP_FIRST,
   OVERLAY_CAPACITY,
   OVERLAY_Z_BASE,
   OVERLAY_Z_LIMIT,
   OVERLAY_Z_STRIDE,
   OverlayStack,
+  gatePlace,
 } from './overlayStack';
 
 const z = (stack: OverlayStack, id: number) => stack.placeOf(id)!.z;
@@ -100,5 +102,19 @@ describe('OverlayStack', () => {
       expect.stringContaining('register modal'),
       expect.stringContaining('release modal'),
     ]);
+  });
+});
+
+describe('the pinned gate tier', () => {
+  it('lists the gates top first, each above every normal overlay, in a FIXED order', () => {
+    const stack = new OverlayStack();
+    const ids = Array.from({ length: OVERLAY_CAPACITY }, (_, i) => stack.register(`o${i}`));
+    const topNormal = stack.placeOf(ids[ids.length - 1])!.zAbove;
+
+    const zs = GATES_TOP_FIRST.map((name) => gatePlace(name).z);
+    expect([...zs].sort((a, b) => b - a)).toEqual(zs);
+    expect(Math.min(...zs)).toBeGreaterThan(topNormal);
+    expect(gatePlace('BootGate').zAbove).toBeLessThan(OVERLAY_Z_LIMIT);
+    expect(gatePlace('BootGate').z).toBeGreaterThan(gatePlace('PinModal').z);
   });
 });

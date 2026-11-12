@@ -23,6 +23,7 @@
 </script>
 
 <ModalOverlay
+  gate="BiometricEnrollSheet"
   {open}
   onClose={onDismiss}
   label={m.auth_biometric_enroll_title()}

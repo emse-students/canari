@@ -19,15 +19,41 @@ import { Log } from './Log';
 
 /** The z-index of the bottom-most overlay: above the banner column (120) and the navigation. */
 export const OVERLAY_Z_BASE = 200;
-/** One past the last z-index an overlay may take: the toast (`--z-toast`, 310) stays above. */
+/** One past the last z-index ANY overlay may take: the toast (`--z-toast`, 310) stays above. */
 export const OVERLAY_Z_LIMIT = 310;
+/**
+ * THE PINNED GATE TIER: the surfaces that stand between the person and the app (the boot gate, the
+ * PIN lock, the PIN recovery, the biometric sheets). Nothing in the normal stack may ever be drawn
+ * over one - a deep link or push tap mounting a viewer while the PIN is up must stay under it - and
+ * their order among themselves is FIXED, not open order.
+ *
+ * AN EXPLICIT ALLOWLIST, IN THIS ONE PLACE: a component asks for a gate by name, and a name not
+ * listed here does not type-check. Listed top first.
+ */
+export const GATES_TOP_FIRST = [
+  'BootGate',
+  'PinModal',
+  'PinRecovery',
+  'BiometricBottomSheet',
+  'BiometricEnrollSheet',
+] as const;
+/** The name of a gate in {@link GATES_TOP_FIRST}. */
+export type GateName = (typeof GATES_TOP_FIRST)[number];
+/** The first z-index of the gate tier; the normal stack ends just below it. */
+export const GATE_Z_BASE = OVERLAY_Z_LIMIT - GATES_TOP_FIRST.length * 2;
+
+/** The fixed place of a gate, whatever opened before or after it. */
+export function gatePlace(name: GateName): OverlayZ {
+  const z = GATE_Z_BASE + (GATES_TOP_FIRST.length - 1 - GATES_TOP_FIRST.indexOf(name)) * 2;
+  return { z, zAbove: z + 1 };
+}
 /**
  * Each overlay owns TWO consecutive z-indexes: its own, and the one above for a part that must
  * clear it while living in the same stacking context (a drawer's panel over its own scrim).
  */
 export const OVERLAY_Z_STRIDE = 2;
 /** How many overlays fit before the range is full; far beyond any real nesting. */
-export const OVERLAY_CAPACITY = Math.floor((OVERLAY_Z_LIMIT - OVERLAY_Z_BASE) / OVERLAY_Z_STRIDE);
+export const OVERLAY_CAPACITY = Math.floor((GATE_Z_BASE - OVERLAY_Z_BASE) / OVERLAY_Z_STRIDE);
 
 /** An overlay's place: its z-index and the one just above it. */
 export type OverlayZ = { z: number; zAbove: number };

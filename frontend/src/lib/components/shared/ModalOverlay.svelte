@@ -48,6 +48,7 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
+  import type { GateName } from '$lib/utils/overlayStack';
 
   interface Props {
     /** Whether the modal is mounted at all. */
@@ -67,6 +68,8 @@
     scrim?: boolean;
     /** Classes for the PANEL, which is what varies: its width, its padding, its corners. */
     panelClass?: string;
+    /** A pinned gate (`GATES_TOP_FIRST`): a fixed place above the whole normal stack, never open order. */
+    gate?: GateName;
     children: Snippet;
   }
 
@@ -78,11 +81,16 @@
     role = 'dialog',
     scrim = true,
     panelClass = '',
+    gate,
     children,
   }: Props = $props();
 
   /** Registered while open: the z-index is the open order, the last opened on top (`utils/overlayStack.ts`). */
-  const layer = useOverlayLayer(() => open, 'ModalOverlay');
+  const layer = useOverlayLayer(
+    () => open,
+    'ModalOverlay',
+    () => gate
+  );
 
   /**
    * THE SYSTEM BACK IS A DISMISSAL TOO, so an open overlay holds a history entry. None of the seven

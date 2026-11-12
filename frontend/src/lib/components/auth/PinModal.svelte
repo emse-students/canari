@@ -235,6 +235,7 @@
 -->
 <Modal
   {open}
+  gate="PinModal"
   title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
   dismissible={false}
   phoneFullScreen
