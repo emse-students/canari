@@ -169,3 +169,31 @@ describe('tapRecordingLoudness', () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 });
+
+describe('the tap context follows the microphone rate', () => {
+  it("asks the context for the track's sample rate (Firefox refuses a mismatched source)", () => {
+    vi.stubGlobal('AudioWorkletNode', class {});
+    const createContext = vi.fn(() => {
+      throw new Error('stop here');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stream = {
+      getAudioTracks: () => [{ getSettings: () => ({ sampleRate: 44_100 }) }],
+    } as unknown as MediaStream;
+    tapRecordingLoudness(stream, { createContext, workletUrl: 'x' });
+    expect(createContext).toHaveBeenCalledWith(44_100);
+  });
+
+  it('leaves the rate to the engine when the track does not say it', () => {
+    vi.stubGlobal('AudioWorkletNode', class {});
+    const createContext = vi.fn(() => {
+      throw new Error('stop here');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stream = {
+      getAudioTracks: () => [{ getSettings: () => ({}) }],
+    } as unknown as MediaStream;
+    tapRecordingLoudness(stream, { createContext, workletUrl: 'x' });
+    expect(createContext).toHaveBeenCalledWith(undefined);
+  });
+});

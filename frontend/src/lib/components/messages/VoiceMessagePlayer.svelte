@@ -2,6 +2,7 @@
   import { Pause, Play, Download } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
+  import { isAppOnScreen } from '$lib/utils/appForeground';
   import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
   import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { m } from '$lib/paraglide/messages';
@@ -156,8 +157,17 @@
       // #3394). Nothing asked (an old note, a context already running) or nothing worth waiting on
       // (a context `interrupted` or closed, which takes the volume fallback): played in this turn.
       const primed = loudnessHandle?.prime() ?? null;
-      if (primed) void primed.then(() => startPlayback(audioEl));
-      else startPlayback(audioEl);
+      if (primed) {
+        void primed.then(() => {
+          // The resume answered after the app left the screen: nobody is there to hear the note,
+          // and starting it would hold the output the leave just released.
+          if (!isAppOnScreen()) {
+            console.debug('[voice] the resume answered off screen - the note is not started');
+            return;
+          }
+          startPlayback(audioEl);
+        });
+      } else startPlayback(audioEl);
     }
   }
 

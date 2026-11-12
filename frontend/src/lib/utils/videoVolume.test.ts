@@ -22,6 +22,7 @@ function webkit() {
     createContext,
     isWebKit: () => true,
     isArbitrated: () => true,
+    onScreenChange: () => () => {},
   });
   return { audio, createContext };
 }

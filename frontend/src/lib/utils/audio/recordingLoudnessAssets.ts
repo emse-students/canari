@@ -6,6 +6,6 @@ import type { RecordingLoudnessDeps } from './recordingLoudness';
  * engine's own `AudioContext`. Kept apart so the tap is tested without Vite's queries.
  */
 export const recordingLoudnessDeps: RecordingLoudnessDeps = {
-  createContext: () => new AudioContext(),
+  createContext: (sampleRate) => new AudioContext(sampleRate ? { sampleRate } : undefined),
   workletUrl: loudnessTapWorkletUrl,
 };

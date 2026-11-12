@@ -152,6 +152,7 @@ function setup(
   } = {}
 ) {
   const contexts: FakeContext[] = [];
+  let screen: ((onScreen: boolean) => void) | null = null;
   const audio = new LoudnessAudio({
     createContext: () => {
       if (options.noWebAudio) return null;
@@ -164,6 +165,10 @@ function setup(
     },
     isWebKit: () => options.webkit ?? false,
     isArbitrated: () => !options.unarbitrated,
+    onScreenChange: (fn) => {
+      screen = fn;
+      return () => (screen = null);
+    },
   });
   const mount = (
     loudness?: { integratedLufs: number; samplePeakDbfs: number },
@@ -174,7 +179,7 @@ function setup(
     handle.setLoudness(loudness);
     return { video, handle };
   };
-  return { audio, contexts, mount };
+  return { audio, contexts, mount, leaveScreen: () => screen?.(false) };
 }
 
 const LOUD = { integratedLufs: -8, samplePeakDbfs: 0 }; // -6 dB
@@ -244,16 +249,43 @@ describe('LoudnessAudio - the wiring', () => {
     b.handle.destroy();
   });
 
-  it('NOTHING BUT A PAUSE SUSPENDS: a routed element still playing keeps its output running', () => {
-    // The app leaving the screen is not a source here (review of #3394): on native the arbiter
-    // pauses the element, which lands as the `pause` above; on web the note plays on behind a tab.
-    const { contexts, mount, audio } = setup();
+  it('leaving the screen never suspends under a routed element still PLAYING (a note behind a web tab)', () => {
+    // On native the arbiter pauses it first, which lands as a `pause`; on web it plays on.
+    const { contexts, mount, leaveScreen } = setup();
     const { video, handle } = mount(LOUD);
     video.unmuteAndPlay();
-    audio.suspendIfIdle('anything');
+    leaveScreen();
     expect(contexts[0].suspend).not.toHaveBeenCalled();
     expect(contexts[0].state).toBe('running');
     handle.destroy();
+  });
+
+  it('a gesture that resumed the context with NOTHING routed playing is suspended when the app leaves the screen', async () => {
+    // The reviewer's case: an unmute (or a play tap) primes for a measured neighbour, but no routed
+    // element ever plays - an unmeasured reel, a refused play(). Nothing else would suspend it.
+    const { contexts, mount, leaveScreen, audio } = setup({ initial: 'suspended' });
+    const { handle } = mount(LOUD);
+    audio.prime();
+    await Promise.resolve();
+    expect(contexts[0].state).toBe('running');
+    leaveScreen();
+    expect(contexts[0].suspend).toHaveBeenCalledOnce();
+    expect(contexts[0].state).toBe('suspended');
+    handle.destroy();
+  });
+
+  it('a second tap that finds the waited resume still unanswered SAYS so', () => {
+    const { mount } = setup({ initial: 'suspended', resumeHangs: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { handle } = mount(LOUD);
+    const first = handle.prime();
+    expect(first).toBeInstanceOf(Promise);
+    expect(warn).not.toHaveBeenCalled();
+    expect(handle.prime()).toBe(first);
+    const said = warn.mock.calls.flat().map(String);
+    expect(said.some((l) => l.includes('still unanswered'))).toBe(true);
+    handle.destroy();
+    warn.mockRestore();
   });
 
   it('never routes an element the playback arbiter does not know, and says so', () => {

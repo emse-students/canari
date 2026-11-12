@@ -24,7 +24,13 @@ import type { MediaLoudness } from '$lib/video/loudnessMeter';
 /** The contexts the player's route made, in order. */
 const contexts: FakeContext[] = [];
 /** The state a new context starts in, and whether its `resume()` ever answers. */
-const engine = { initial: 'suspended' as AudioContextState, resumeHangs: false };
+const engine = {
+  initial: 'suspended' as AudioContextState,
+  resumeHangs: false,
+  /** When set, `resume()` answers only when the test calls it. */
+  answerResume: null as null | (() => void),
+  deferResume: false,
+};
 
 /** An `AudioContext` reduced to what the route calls; it starts suspended, as before a gesture. */
 class FakeContext {
@@ -34,6 +40,14 @@ class FakeContext {
   gains: { gain: { value: number }; connect: () => void; disconnect: () => void }[] = [];
   resume = vi.fn(() => {
     if (engine.resumeHangs) return new Promise<void>(() => {});
+    if (engine.deferResume) {
+      return new Promise<void>((resolve) => {
+        engine.answerResume = () => {
+          this.state = 'running';
+          resolve();
+        };
+      });
+    }
     this.state = 'running';
     return Promise.resolve();
   });
@@ -63,6 +77,8 @@ beforeEach(() => {
   contexts.length = 0;
   engine.initial = 'suspended';
   engine.resumeHangs = false;
+  engine.deferResume = false;
+  engine.answerResume = null;
   Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeContext });
 });
 
@@ -208,4 +224,14 @@ it('an INTERRUPTED context (WebKit, a phone call) never holds the tap: play() ru
       .map(String)
       .some((l) => l.includes('FALLBACK'))
   ).toBe(true);
+});
+
+it('a resume that answers AFTER the app left the screen does not start the note', async () => {
+  engine.deferResume = true;
+  const { audio } = mountVoice({ integratedLufs: -6, samplePeakDbfs: -1 });
+  document.querySelector<HTMLButtonElement>('button')!.click();
+  setTabHidden(true);
+  engine.answerResume!();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(audio.play).not.toHaveBeenCalled();
 });

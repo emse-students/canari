@@ -80,8 +80,11 @@ export class RecordingLoudness {
 
 /** What the tap needs from the platform - the real one in the app, a fake in a test. */
 export interface RecordingLoudnessDeps {
-  /** A NEW realtime `AudioContext`. */
-  createContext(): AudioContext;
+  /**
+   * A NEW realtime `AudioContext`, at `sampleRate` when the microphone's track says it: Firefox
+   * refuses a `MediaStreamSource` from a stream at another rate than its context's.
+   */
+  createContext(sampleRate?: number): AudioContext;
   /** The worklet module's URL (`workers/loudnessTap.worklet.ts?worker&url`). */
   workletUrl: string;
 }
@@ -107,9 +110,12 @@ export function tapRecordingLoudness(
     console.warn('[LOUDNESS] no AudioWorklet in this engine - the voice note is sent unmeasured');
     return { stop: () => null };
   }
+  const trackRate = stream.getAudioTracks?.()[0]?.getSettings?.().sampleRate;
   let context: AudioContext;
   try {
-    context = deps.createContext();
+    context = deps.createContext(
+      typeof trackRate === 'number' && trackRate > 0 ? trackRate : undefined
+    );
   } catch (e) {
     console.warn('[LOUDNESS] no AudioContext for the recording - sent unmeasured:', e);
     return { stop: () => null };

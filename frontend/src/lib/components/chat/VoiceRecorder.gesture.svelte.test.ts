@@ -24,6 +24,22 @@ vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
     devices.getUserMedia(constraints),
 }));
 
+/**
+ * The loudness tap, injected: what is pinned here is WHEN the recorder makes and closes it, not how
+ * it measures (`recordingLoudness.test.ts`). Every tap made is kept, each with its own `stop`.
+ */
+const taps = vi.hoisted(() => ({
+  made: [] as { stop: import('vitest').Mock<() => unknown> }[],
+  measured: { integratedLufs: -19, samplePeakDbfs: -3 } as unknown,
+}));
+vi.mock('$lib/utils/audio/recordingLoudness', () => ({
+  tapRecordingLoudness: () => {
+    const tap = { stop: vi.fn(() => taps.measured) };
+    taps.made.push(tap);
+    return tap;
+  },
+}));
+
 const CANCEL_SLIDE_PX = 96;
 const LOCK_SLIDE_PX = 72;
 const MIN_RECORDING_MS = 700;
@@ -69,7 +85,7 @@ class FakeMediaRecorder {
 const trackStop = vi.fn();
 
 interface Harness {
-  complete: Mock<(blob: Blob) => void>;
+  complete: Mock<(blob: Blob, loudness: unknown) => void>;
   cancel: Mock<() => void>;
   activeChanges: boolean[];
 }
@@ -78,6 +94,7 @@ let harness: Harness;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  taps.made = [];
   trackStop.mockClear();
   FakeMediaRecorder.instances = [];
   FakeMediaRecorder.deferStop = false;
@@ -109,7 +126,7 @@ afterEach(() => {
 
 function mountRecorder(): Harness {
   const h: Harness = {
-    complete: vi.fn<(blob: Blob) => void>(),
+    complete: vi.fn<(blob: Blob, loudness: unknown) => void>(),
     cancel: vi.fn<() => void>(),
     activeChanges: [],
   };
@@ -390,5 +407,68 @@ describe('VoiceRecorder - a recording that is still closing', () => {
     // The chunk arrived after the decision, which is the ordinary case - and it goes nowhere.
     expect(harness.complete).not.toHaveBeenCalled();
     expect(trackStop).toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE LOUDNESS TAP LIVES EXACTLY AS LONG AS THE RECORDING (review of #3394): it is made only once
+ * the recorder has started - its AudioContext must not outlive a failed start - and it is closed on
+ * every ending, so no tap's context is ever left holding an audio output.
+ */
+describe('VoiceRecorder - the loudness tap is closed on every ending', () => {
+  beforeEach(() => {
+    harness = mountRecorder();
+  });
+
+  it('a SEND hands the tap measurement with the blob, and closes the tap', async () => {
+    await press(300);
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    releaseAt(300);
+    expect(taps.made).toHaveLength(1);
+    expect(taps.made[0].stop).toHaveBeenCalled();
+    expect(harness.complete.mock.calls[0][1]).toEqual(taps.measured);
+  });
+
+  it('a CANCEL (the bin) closes it', async () => {
+    await press(300);
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    moveTo(300 - CANCEL_SLIDE_PX - 10);
+    releaseAt(300 - CANCEL_SLIDE_PX - 10);
+    expect(taps.made[0].stop).toHaveBeenCalled();
+  });
+
+  it("a DISCARD from a locked bar's own bin closes it", async () => {
+    await press(300);
+    moveTo(300 + LOCK_SLIDE_PX + 5);
+    await vi.advanceTimersByTimeAsync(3000);
+    document.querySelector<HTMLElement>('.chat-composer-icon-button')!.click();
+    flushSync();
+    expect(taps.made[0].stop).toHaveBeenCalled();
+  });
+
+  it('a TOO-SHORT press closes it', async () => {
+    await press(300);
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS - 200);
+    releaseAt(300);
+    expect(taps.made[0].stop).toHaveBeenCalled();
+  });
+
+  it('an UNMOUNT mid-recording closes it', async () => {
+    await press(300);
+    expect(taps.made[0].stop).not.toHaveBeenCalled();
+    mounted.pop()!();
+    expect(taps.made[0].stop).toHaveBeenCalled();
+    expect(trackStop).toHaveBeenCalled();
+  });
+
+  it('a start() that THROWS makes no tap at all, and gives the microphone back', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(FakeMediaRecorder.prototype, 'start').mockImplementation(() => {
+      throw new DOMException('the device is busy', 'NotReadableError');
+    });
+    await press(300);
+    expect(taps.made).toHaveLength(0);
+    expect(trackStop).toHaveBeenCalled();
+    expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('idle');
   });
 });
