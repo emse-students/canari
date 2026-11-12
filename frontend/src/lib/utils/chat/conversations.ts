@@ -694,32 +694,6 @@ export async function moveDirectConversationRows(
 }
 
 /**
- * Which of a peer's duplicate 1:1 conversations the boot merge keeps: THE ONE WHOSE GROUP THIS DEVICE
- * HOLDS, then the most recently updated. Recency alone undid a Welcome's re-key (review of #3406): the
- * Welcome re-keys the duplicate A onto the joined group B and forgets A's MLS state, but A's row may
- * be the newer one - and the merge then moved B's rows back into A and deleted B, the live group, on
- * the server. A conversation whose group is gone from this device cannot carry a message again, so it
- * is never the one kept while a live one exists.
- */
-function pickCanonicalDirect(
-  metas: ConversationMeta[],
-  mlsService: IMlsService | undefined,
-  log: (msg: string) => void
-): ConversationMeta {
-  const newest = (list: ConversationMeta[]) =>
-    list.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-  const held = mlsService ? new Set(mlsService.getLocalGroups()) : null;
-  const live = held ? metas.filter((m) => held.has(m.id)) : [];
-  const byRecency = newest(metas);
-  if (live.length === 0 || live.includes(byRecency)) return byRecency;
-  const kept = newest(live);
-  log(
-    `[DM_MERGE] keeping ${kept.id.slice(0, 8)}... whose group this device holds, over the newer ${byRecency.id.slice(0, 8)}... whose group it does not`
-  );
-  return kept;
-}
-
-/**
  * Detects duplicate direct conversations for the same peer (can happen when
  * two devices each start the conversation independently) and merges them into
  * a single canonical entry.
@@ -780,7 +754,8 @@ export async function mergeDirectConversationDuplicates(
         canonical = { ...canonical, id: terminalId };
       }
     } else {
-      canonical = pickCanonicalDirect(metas, mlsService, log);
+      // True independent duplicates (not a chain of successors): keep the most recent one.
+      canonical = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
       terminalId = canonical.id;
     }
 

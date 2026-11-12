@@ -36,7 +36,6 @@ function makeMlsService(getGroupMetaImpl: (id: string) => unknown): IMlsService 
   return {
     getGroupMeta: vi.fn().mockImplementation((id: string) => Promise.resolve(getGroupMetaImpl(id))),
     deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
-    getLocalGroups: vi.fn(() => []),
   } as unknown as IMlsService;
 }
 

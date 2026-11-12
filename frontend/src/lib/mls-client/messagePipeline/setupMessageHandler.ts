@@ -634,6 +634,8 @@ async function handleWelcome({
   // those seams re-acquire the same NON-reentrant MLS mutex and would deadlock if invoked from
   // within it (cf. MlsPerGroupScheduler.acquireMlsLock). The locked catch only CLASSIFIES the
   // failure into `deferredRecovery`; it is executed once the lock is released. [[recovery-outside-lock]]
+  // A 1:1 re-keyed by this Welcome: its stored rows move AFTER the lock (`runPendingRekey` below).
+  let pendingRekey: PendingRekey | null = null;
   const deferredRecovery = await mlsService.runUnderMlsLock<DeferredRecovery | null>(async () => {
     try {
       // The evicted group's local state cannot read or send anything, so it is not state - it is the
@@ -703,10 +705,11 @@ async function handleWelcome({
       statePersister.persistNow();
 
       // A stray in-memory duplicate for the same DM peer (independent group created concurrently)
-      // is reconciled by upsertConversation (below): it re-keys the Map entry and MOVES every stored
-      // row onto the joined group (`moveDirectConversationRows`); mergeDirectConversationDuplicates
-      // removes the emptied conversation row on the next login. We do not delete any IndexedDB row
-      // here - that would erase accumulated messages before they are migrated.
+      // is reconciled by upsertConversation (below): it re-keys the Map entry, and every stored row
+      // moves onto the joined group once the lock is released (`runPendingRekey`);
+      // mergeDirectConversationDuplicates decides at the next login which row survives. We do not
+      // delete any IndexedDB row here - that would erase accumulated messages before they are
+      // migrated.
 
       // A SAFETY NET THAT CANNOT CATCH THE CASE IT WAS WRITTEN FOR, so it is gone. It read
       // "idempotent - safety net if the inviter has not yet called registerMember for this userId",
@@ -731,7 +734,7 @@ async function handleWelcome({
       // groupMeta already fetched above - no second HTTP call.
       // H3: under the per-group lock so it does not interleave with a concurrent operation on the
       // same group (in-memory message overwrite).
-      await runExclusiveForGroup(joinedGroupId, () =>
+      pendingRekey = await runExclusiveForGroup(joinedGroupId, () =>
         upsertConversation(joinedGroupId, groupMeta, sender, userId, deps)
       );
 
@@ -924,6 +927,10 @@ async function handleWelcome({
     // #2466). The fact is known here, so it is carried to where the reading is made.
     startRecovery(rec.target, { welcomeHandled: true });
   }
+
+  // A storage walk of the old 1:1's whole history, which needs no MLS state: every group would wait
+  // behind it under the lock.
+  await runPendingRekey(pendingRekey, deps);
 
   return true; // Always ACKed
 }
@@ -1520,8 +1527,9 @@ async function handleKnownGroup({
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Moves a re-keyed DM's stored history from `oldId` onto the group just joined, then drops `oldId`'s
- * row - awaited inside the Welcome, and logged with its counts whichever way it ends.
+ * Moves a re-keyed DM's stored history from `oldId` onto the group just joined - awaited by the
+ * Welcome AFTER the MLS lock is released (a storage walk every group would otherwise wait behind),
+ * under the joined group's own exclusivity, and logged with its counts whichever way it ends.
  *
  * EVERY STORED ROW MOVES, NOT ONLY THE ONES ON SCREEN. The move used to be built from the messages in
  * memory, and a conversation restored as a stub (its page not read yet) carries none: nothing moved,
@@ -1531,14 +1539,11 @@ async function handleKnownGroup({
  * ({@link moveDirectConversationRows}, the boot merge's own move); a message only memory holds is
  * written after, and only where no row stands, so a stored edit or tombstone is never written over.
  *
- * `oldId`'s row is then DELETED, as the boot merge does: left in place, it competed with the joined
- * group at the next boot. Not when some of its rows did not open - those stay, with the row, for the
- * boot merge, which keeps the conversation whose group this device holds.
+ * `oldId`'s conversation row is KEPT, as before this move existed: which of a peer's two 1:1 groups
+ * survives is the boot merge's decision (`mergeDirectConversationDuplicates`), not this Welcome's.
  */
 async function rekeyStoredDirectRows(
-  oldId: string,
-  newId: string,
-  onScreen: readonly ChatMessage[],
+  { oldId, newId, onScreen }: PendingRekey,
   storage: IStorage,
   key: string,
   log: (msg: string) => void
@@ -1562,18 +1567,34 @@ async function rekeyStoredDirectRows(
         serverTimestamp: m.serverTimestamp,
       }));
     const written = fresh.length > 0 ? await storage.saveMessagesIfAbsent(fresh, key) : new Set();
-    if (left === 0) await storage.deleteConversation(oldId);
     log(
       `[WELCOME] ${from}… re-keyed onto ${to}…: ${moved.length} stored row(s) moved, ${written.size} row(s) only memory held written` +
-        (left === 0
-          ? `, ${from}…'s row deleted`
-          : ` - ${left} row(s) did not open and stay under ${from}… with its row, for the next boot's merge`)
+        (left > 0 ? `, ${left} row(s) did not open and stay under ${from}…` : '')
     );
   } catch (e) {
     log(
       `[WELCOME] FAILED to re-key the rows of ${from}… onto ${to}…: ${String(e)} - what did not move stays under ${from}… for the next boot's merge`
     );
   }
+}
+
+/** A re-key `upsertConversation` decided and the Welcome runs once the MLS lock is released. */
+interface PendingRekey {
+  oldId: string;
+  newId: string;
+  onScreen: readonly ChatMessage[];
+}
+
+/** Runs a pending re-key's storage move under the joined group's exclusivity (see `rekeyStoredDirectRows`). */
+async function runPendingRekey(
+  rekey: PendingRekey | null,
+  deps: MessageHandlerDeps
+): Promise<void> {
+  const storage = deps.storage;
+  if (!rekey || !storage) return;
+  await runExclusiveForGroup(rekey.newId, () =>
+    rekeyStoredDirectRows(rekey, storage, deps.deviceKey(), deps.log)
+  );
 }
 
 /**
@@ -1586,8 +1607,9 @@ async function upsertConversation(
   senderNorm: string,
   userId: string,
   deps: MessageHandlerDeps
-): Promise<void> {
+): Promise<PendingRekey | null> {
   const { conversations, saveConversation } = deps;
+  let pendingRekey: PendingRekey | null = null;
 
   const groupName = gData?.name ?? senderNorm;
   const isGroupFromApi: boolean | null = typeof gData?.isGroup === 'boolean' ? gData.isGroup : null;
@@ -1668,21 +1690,17 @@ async function upsertConversation(
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
       conversations.set(newConvoKey, updated);
-      await saveConversation(newConvoKey).catch((e: unknown) => {
-        deps.log(
-          `[WELCOME] conversation ${newConvoKey} not persisted before its re-key: ${String(e)}`
-        );
-      });
-      if (deps.storage) {
-        await rekeyStoredDirectRows(
-          oldId,
-          joinedGroupId,
-          existing.messages ?? [],
-          deps.storage,
-          deps.deviceKey(),
-          deps.log
-        );
-      }
+      // The rows move only once the joined group's row is on disk: moved under a conversation the
+      // store does not hold, they would answer to no row at the next boot.
+      const saved = await saveConversation(newConvoKey)
+        .then(() => true)
+        .catch((e: unknown) => {
+          deps.log(
+            `[WELCOME] conversation ${newConvoKey} not persisted before its re-key: ${String(e)} - the rows of ${oldId.slice(0, 8)}… are NOT moved, the next boot's merge owns them`
+          );
+          return false;
+        });
+      if (saved) pendingRekey = { oldId, newId: joinedGroupId, onScreen: existing.messages ?? [] };
     } else {
       conversations.set(newConvoKey, updated);
     }
@@ -1714,6 +1732,7 @@ async function upsertConversation(
       `[WELCOME] undismissGroup(${joinedGroupId}) failed - other devices keep purging it: ${String(e)}`
     );
   });
+  return pendingRekey;
 }
 
 /**
@@ -1791,9 +1810,10 @@ async function writeRowForHeldGroup(
     return;
   }
   if (groupMeta) {
-    await runExclusiveForGroup(groupId, () =>
+    const rekey = await runExclusiveForGroup(groupId, () =>
       upsertConversation(groupId, groupMeta, sender, userId, deps)
     );
+    await runPendingRekey(rekey, deps);
   } else {
     deps.conversations.set(
       groupId,

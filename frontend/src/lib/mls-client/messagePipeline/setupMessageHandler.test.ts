@@ -401,7 +401,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
     async function deliverInto(
       store: ReturnType<typeof messageRowStore>,
-      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>,
+      tune?: (mls: any) => void
     ) {
       store.conversations.set(olderDmGroup, {
         id: olderDmGroup,
@@ -414,6 +415,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
       mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
       mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      tune?.(mls);
       setupMessageHandler(deps as any);
       const onMsg = mls.onMessage.mock.calls[0][0] as (
         a: string,
@@ -449,18 +451,15 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const read = await store.getMessagesByIds(dmGroup, ['m1', 'm2', 'm3']);
       expect(read.rows.size).toBe(3);
       expect(store.foreign).toEqual([]);
-      // The joined group's row was saved BEFORE the move, the duplicate's row is gone after it.
+      // The joined group's row was saved BEFORE the move; the duplicate's row is KEPT - which of
+      // the two survives is the boot merge's decision.
       expect(store.saveConversation.mock.invocationCallOrder[0]).toBeLessThan(
         store.saveMessages.mock.invocationCallOrder[0]
       );
       expect(store.conversations.has(dmGroup)).toBe(true);
-      expect(store.conversations.has(olderDmGroup)).toBe(false);
-      expect(
-        logged(
-          deps,
-          "3 stored row(s) moved, 0 row(s) only memory held written, 33333333…'s row deleted"
-        )
-      ).toBe(true);
+      expect(store.conversations.has(olderDmGroup)).toBe(true);
+      expect(store.deleteConversation).not.toHaveBeenCalled();
+      expect(logged(deps, '3 stored row(s) moved, 0 row(s) only memory held written')).toBe(true);
     });
 
     it('moves the stored rows and writes only the messages memory alone holds', async () => {
@@ -507,7 +506,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       });
     });
 
-    it('a row that does not open stays under the duplicate WITH its row, and the log names it', async () => {
+    it('a row that does not open stays under the duplicate, and the log names it', async () => {
       const store = messageRowStore([
         storedRow('ok1', olderDmGroup),
         storedRow('sealed1', olderDmGroup, { unreadable: true }),
@@ -515,8 +514,43 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const deps = await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
 
       expect(placement(store)).toEqual({ ok1: dmGroup, sealed1: olderDmGroup });
-      expect(store.conversations.has(olderDmGroup)).toBe(true);
       expect(logged(deps, '1 row(s) did not open and stay under 33333333…')).toBe(true);
+    });
+
+    it('the move runs after the MLS lock is released, never inside it', async () => {
+      const store = messageRowStore([storedRow('m1', olderDmGroup)]);
+      let inLock = false;
+      const movedInLock: boolean[] = [];
+      const getMessages = store.getMessages;
+      store.getMessages = vi.fn(async (conv: string) => {
+        movedInLock.push(inLock);
+        return getMessages(conv);
+      }) as typeof store.getMessages;
+      await deliverInto(store, [[olderDmGroup, heldDuplicate()]], (mls) => {
+        mls.runUnderMlsLock = vi.fn(async (fn: () => Promise<unknown>) => {
+          inLock = true;
+          try {
+            return await fn();
+          } finally {
+            inLock = false;
+          }
+        });
+      });
+
+      expect(placement(store)).toEqual({ m1: dmGroup });
+      expect(movedInLock).toEqual([false]);
+    });
+
+    it('a joined row that could not be saved moves nothing, and says so', async () => {
+      const store = messageRowStore([storedRow('m1', olderDmGroup)]);
+      store.saveConversation = vi.fn(async () => {
+        throw new Error('store refuses the row');
+      }) as typeof store.saveConversation;
+      const deps = await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
+
+      expect(placement(store)).toEqual({ m1: olderDmGroup });
+      expect(store.getMessages).not.toHaveBeenCalled();
+      expect(logged(deps, 'are NOT moved, the next boot')).toBe(true);
     });
 
     it('a store that refuses the move: the joined group is shown and saved, the rows stay, it says so', async () => {

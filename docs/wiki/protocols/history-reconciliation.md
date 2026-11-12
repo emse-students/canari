@@ -1776,17 +1776,16 @@ those ids and every scoped read warned `[DB] <id> is a message of another conver
 times in 200 ms on dev web - until the next boot's merge. Now the Welcome moves every stored row of
 the old conversation, through the boot merge's own move, and logs the count either way.
 
-- **Order.** The joined group's row is shown and SAVED first, then the move runs, awaited inside the
-  Welcome: the thread never leaves the screen, and a crash mid-move leaves the joined group's row
-  for the boot merge to fold the rest into. The target is never read - a message id is the store's
-  key, so a row of the old conversation cannot also stand under the new one - and a message only
-  memory holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins.
-- **The old row is deleted** once its rows moved, as the boot merge does. Left in place it competed
-  at the next boot, and the merge kept the NEWER row: it could move the joined group's rows back
-  into the old one and delete the live group on the server. Rows that do not open with this
-  device's key are counted, logged, and left with the old row.
-- **The boot merge keeps the conversation whose group this device holds** (`pickCanonicalDirect`),
-  then the most recent; with both or neither held it is recency, as before.
+- **Order.** The joined group's row is shown and SAVED first; only then, and only if that save
+  succeeded, are the rows moved - AFTER the MLS lock is released (a storage walk of a whole history
+  needs no MLS state, and every group would wait behind it), under the joined group's own
+  exclusivity (`runPendingRekey`). The target is never read - a message id is the store's key, so
+  a row of the old conversation cannot also stand under the new one - and a message only memory
+  holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins. The log
+  gives the rows moved, the rows written from memory, and the rows that did not open.
+- **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
+  the boot merge's decision. That decision is itself not convergent between the two peers - a
+  separate P1 ([backlog](../backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).
 - **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
   message landing between the read and the write is written over by the stored body; what is
   keyed by the conversation rather than the message - read watermarks, mutations still waiting for
