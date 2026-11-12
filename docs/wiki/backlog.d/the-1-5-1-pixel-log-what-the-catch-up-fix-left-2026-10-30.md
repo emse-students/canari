@@ -1,34 +1,22 @@
 ## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
 
-One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). The
-catch-up fan-out and the transport failures logged as errors are fixed on
-`fix/catchup-transport-failure` ([offline-and-weak-network section 20](../frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
-These are the lines of the same log that fix does NOT cover, each with its count:
+One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). Of the
+lines the catch-up fix did not cover, three are settled since (batch 17, 2026-11-12, read in the
+code): `playWhileVisible play() refused AbortError` is classified by `name` and the page's own facts
+(`playWhileVisible.ts`, 2026-11-10); `pauseSocket: native disconnect failed` is answered by the frame
+accepted before the refusal (`TauriMlsService.ts`, `pausePlatformSocket`, the Mi 9T sign-out reading
+of 2026-11-08); `[QUEUE] delivery ... arrived twice` had one cause fixed (single-flight pulls,
+2026-11-04, [chat](../frontend/modules/chat.md#one-pull-at-a-time-and-the-one-asked-meanwhile-is-owed-2026-11-04))
+and its re-read is a row of the verification table. The boot restore's refusals are
+[their own entry](p2-the-boot-restore-opens-the-frame-pipeline-before-any-conversation-r.md).
 
-- **P2 - `[QUEUE] delivery ... arrived twice` is back: 31 lines** (`BaseMlsService.ts`, `REPEAT_MEANS`,
-  ~line 2219). The ack-before-pull ordering (`ackInFlight`, CHANGELOG) was recorded as closing it; on
-  this log the ack landed before the pull and the pull still listed the row. Read which cell of
-  `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
-  cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
-  **2026-11-04: one cause found and fixed** - a pull issued before the row's ack was even sent (two
-  pulls at boot, the second while the first's drain still applied) listed rows met as `pull:done`;
-  pulls are now single-flight, the one asked meanwhile owed behind the drain's ack ([chat](../frontend/modules/chat.md#one-pull-at-a-time-and-the-one-asked-meanwhile-is-owed-2026-11-04)).
-  Whether the Pixel's 31 lines were all that shape is owed a re-read on a build carrying the fix.
-- **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
-  ([architecture](../frontend/architecture.md)) reached from the salon send path: a `$derived` read
-  after its owner was destroyed. Name the component whose effect outlives the send first.
-  **Not reproduced on the web (2026-11-12, dev `1.6.11-alpha.1`):** the W1 rig profile sent three
-  messages in a community salon on desktop Chrome, and three more under mobile emulation (412x915,
-  touch, after a reload) before going back to the list. Its console was kept with stack traces and
-  checked to hear a warning. No `derived_inert` appeared, and no other warning or error. The Pixel's
-  lines came from the Android WebView, so the next reading is on the Mi 9T, at `alpha.2`.
-- **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
-  600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
-  rejection says why, read it from the log line before touching the code.
-- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
-  An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
-  decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
-  and say it at the level of what it is; any other rejection keeps the warn.
-- **Raised to P2: the boot restore's absent-conversation refusals** - see
-  [the item below](p2-the-boot-restore-opens-the-frame-pipeline-before-any-conversation-r.md):
-  **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
+**What is left: P2 - `derived_inert` after salon sends, 48 lines.** The Svelte 5 teardown race
+([architecture](../frontend/architecture.md)) reached from the salon send path: a `$derived` read
+after its owner was destroyed. Owed: name the component whose effect outlives the send - the stack
+of the first `derived_inert` read on a build with the console kept - then fix that effect's
+teardown, with a test that sends and unmounts.
+**Not reproduced on the web (2026-11-12, dev `1.6.11-alpha.1`):** the W1 rig profile sent three
+messages in a community salon on desktop Chrome, and three more under mobile emulation (412x915,
+touch, after a reload) before going back to the list, the console kept with stack traces: no
+`derived_inert`, no other warning or error. The Pixel's lines came from the Android WebView, so
+the next reading is on the Mi 9T, at `alpha.2`.
