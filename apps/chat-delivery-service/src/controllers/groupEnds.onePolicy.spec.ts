@@ -106,7 +106,13 @@ const ENDINGS: Ending[] = [
 type Repos = ReturnType<typeof makeRepos>;
 
 function makeRepos() {
-  return {
+  const groupMember = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    count: jest.fn().mockResolvedValue(0),
+  };
+  const repos = {
     group: {
       findOne: jest.fn().mockResolvedValue(null),
       findBy: jest.fn().mockResolvedValue([]),
@@ -121,16 +127,23 @@ function makeRepos() {
         // A SELECT answers rows (the account's eviction rows: none); a raw DELETE `[rows, count]`.
         query: jest.fn(async (sql: string) => (sql.trim().startsWith('SELECT') ? [] : [[], 0])),
         delete: jest.fn().mockResolvedValue({ affected: 0 }),
-        // The account's key packages, deleted on their own before anything is read.
-        getRepository: () => ({ delete: jest.fn().mockResolvedValue({ affected: 0 }) }),
+        // The account's key packages, deleted on their own before anything is read; the group and
+        // its seats, read to choose an ending (a creator's unseated group, a 1:1's roster).
+        getRepository: (entity: unknown): object =>
+          entity === Group
+            ? repos.group
+            : entity === GroupMember
+              ? groupMember
+              : {
+                  delete: jest.fn().mockResolvedValue({ affected: 0 }),
+                  find: jest.fn().mockResolvedValue([]),
+                  count: jest.fn().mockResolvedValue(0),
+                },
       },
     },
-    groupMember: {
-      find: jest.fn().mockResolvedValue([]),
-      findOne: jest.fn().mockResolvedValue(null),
-      delete: jest.fn().mockResolvedValue({ affected: 0 }),
-    },
+    groupMember,
   };
+  return repos;
 }
 
 describe('a group ends - one policy, three routes', () => {
@@ -176,14 +189,20 @@ describe('a group ends - one policy, three routes', () => {
               tombstones = true;
               return repos.group;
             }
-            entities.push(entity);
             return {
-              delete: jest.fn().mockResolvedValue({ affected: 1 }),
-              // The account's device rows, read before they end: none left in these cases.
-              find: jest.fn().mockResolvedValue([]),
+              delete: jest.fn(async () => {
+                entities.push(entity);
+                return { affected: 1 };
+              }),
+              // The roster read again under the seat lock: the seats the case prepared, no device.
+              find:
+                entity === GroupMember ? repos.groupMember.find : jest.fn().mockResolvedValue([]),
+              count:
+                entity === GroupMember ? repos.groupMember.count : jest.fn().mockResolvedValue(0),
             };
           }),
-          // The account's push registrations, locked then deleted in their own transaction.
+          // The account's push registrations, locked then deleted in their own transaction; the
+          // seat lock a tombstone decided on a read takes first.
           query: jest.fn().mockResolvedValue([{ n: 0 }]),
         };
         const out = await cb(transactional);

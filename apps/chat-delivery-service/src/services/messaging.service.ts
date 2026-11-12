@@ -868,6 +868,15 @@ export interface HistoryBatchResponse {
 
 /** Redis stream MAXLEN (~1000) — upper bound for a full catch-up page. */
 const HISTORY_FULL_PAGE_LIMIT = 1000;
+
+/** What dates a caller's arrival in one group: its row, and the caller's earliest device row there. */
+type ArrivalFacts = {
+  group: Pick<
+    Group,
+    'id' | 'isGroup' | 'distributionWorkspaceId' | 'distributionChannelId' | 'createdAt'
+  >;
+  firstDeviceAt: Date | null;
+};
 /** Smaller default when `after` is set (incremental catch-up). */
 const HISTORY_INCREMENTAL_DEFAULT_LIMIT = 200;
 /**
@@ -4246,9 +4255,11 @@ export class MessagingService {
    * Nothing is advanced or fanned out again; the first acceptance did both. Called by each place that
    * would otherwise refuse on the epoch or on a seat - the admits pre-check, the strict gate, and the
    * advance's lost or rolled-back transaction - because a client reads any of those as a refusal and
-   * clears a commit the group holds.
+   * clears a commit the group holds. PUBLIC for the one refusal taken before this gate: the
+   * background Welcome route's membership guard (`PushController.sendWelcomeAndCommitPush`), whose
+   * retry of an accepted commit would otherwise read `not_a_member` once the target was removed.
    */
-  private async answerIfAlreadyAccepted(
+  async answerIfAlreadyAccepted(
     groupId: string,
     baseEpoch: number,
     commitProto: string,
@@ -7336,7 +7347,8 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownWithheldWindows(headerUserId, groupId);
+      const arrivals = await this.arrivalFactsOf(headerUserId, [groupId]);
+      const windows = await this.ownWithheldWindows(headerUserId, groupId, arrivals);
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -7369,8 +7381,11 @@ export class MessagingService {
    * the gaps alone, as it always was. A member's NEW device reads everything since its PERSON's
    * arrival: intervals are per user, never per device.
    *
-   * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
-   * Postgres hiccup answers that group empty, never the whole batch.
+   * ONE GROUP PER INTERVAL READ, so the batch route isolates a failure to the group it was read for:
+   * one Postgres hiccup answers that group empty, never the whole batch. The two ARRIVAL facts - the
+   * group row and the caller's earliest device row - are read once for the whole batch
+   * ({@link arrivalFactsOf}, review of #2800): two reads per group, up to 100 in parallel for the
+   * 50-group cap, were two reads in all.
    *
    * **A ROSTER MEMBER WITH NO OPEN INTERVAL IS REPAIRED BEFORE ITS WINDOWS ARE READ** (fifth review
    * of #1878). Read as it stands, their last closed interval is a window open to now, and every row
@@ -7386,7 +7401,8 @@ export class MessagingService {
    */
   private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string
+    groupId: string,
+    arrivals: ReadonlyMap<string, ArrivalFacts>
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
@@ -7416,8 +7432,28 @@ export class MessagingService {
       );
       return [{ from: 0, until: null }];
     }
-    const group = await this.groupRepo.findOne({
-      where: { id: groupId },
+    const facts = arrivals.get(groupId);
+    const group = facts?.group ?? null;
+    if (!withholdsArrivalSpan(group)) return exclusionWindows(intervals);
+    return withheldWindows(intervals, true, facts?.firstDeviceAt ?? null, group?.createdAt ?? null);
+  }
+
+  /**
+   * The facts that date the CALLER's arrival in each of `groupIds`, read in TWO queries whatever their
+   * number: each group's row (whether it withholds an arrival span, and when it was created) and the
+   * caller's earliest device row in it, the second record of their arrival - read as the exclusions
+   * route reads it, so the two answers are one. A group with no row is absent from the map, and
+   * {@link ownWithheldWindows} then withholds no arrival span for it, as a missing row always did.
+   */
+  private async arrivalFactsOf(
+    headerUserId: string | undefined,
+    groupIds: readonly string[]
+  ): Promise<Map<string, ArrivalFacts>> {
+    const facts = new Map<string, ArrivalFacts>();
+    const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!userId || groupIds.length === 0) return facts;
+    const groups = await this.groupRepo.find({
+      where: { id: In([...groupIds]) },
       select: {
         id: true,
         isGroup: true,
@@ -7426,21 +7462,21 @@ export class MessagingService {
         createdAt: true,
       },
     });
-    if (!withholdsArrivalSpan(group)) return exclusionWindows(intervals);
-    // The person's earliest device row in the group, the second record of their arrival - read as
-    // the exclusions route reads it, so the two answers are one.
     const earliest = await this.deviceGroupRepo
       .createQueryBuilder('d')
-      .select('MIN(d.createdAt)', 'firstDeviceAt')
-      .where('d.groupId = :groupId', { groupId })
+      .select('d.groupId', 'groupId')
+      .addSelect('MIN(d.createdAt)', 'firstDeviceAt')
+      .where('d.groupId IN (:...groupIds)', { groupIds: [...groupIds] })
       .andWhere('d.userId = :userId', { userId })
-      .getRawOne<{ firstDeviceAt: Date | string | null }>();
-    return withheldWindows(
-      intervals,
-      true,
-      earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null,
-      group?.createdAt ?? null
+      .groupBy('d.groupId')
+      .getRawMany<{ groupId: string; firstDeviceAt: Date | string | null }>();
+    const firstDevice = new Map(
+      earliest.map((r) => [r.groupId, r.firstDeviceAt ? new Date(r.firstDeviceAt) : null])
     );
+    for (const group of groups) {
+      facts.set(group.id, { group, firstDeviceAt: firstDevice.get(group.id) ?? null });
+    }
+    return facts;
   }
 
   /**
@@ -7478,6 +7514,17 @@ export class MessagingService {
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
     let caughtUp = 0;
+    // Read once for the batch. Should it fail, every group is answered empty - never unfiltered.
+    let arrivals: Map<string, ArrivalFacts>;
+    try {
+      arrivals = await this.arrivalFactsOf(headerUserId, [...authorized]);
+    } catch (e) {
+      this.logger.error(
+        `[HISTORY_BATCH] ${requester} arrival facts unreadable - every group answered empty: ${String(e)}`
+      );
+      for (const { groupId } of normalized) histories[groupId] = [];
+      return { histories, heads };
+    }
     await Promise.all(
       normalized.map(async ({ groupId, after, until, limit }) => {
         if (!authorized.has(groupId)) {
@@ -7488,7 +7535,7 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownWithheldWindows(headerUserId, groupId);
+          const windows = await this.ownWithheldWindows(headerUserId, groupId, arrivals);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,

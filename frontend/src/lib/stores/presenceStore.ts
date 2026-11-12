@@ -11,6 +11,8 @@ import { Log } from '$lib/utils/Log';
  */
 export const presenceMap = writable<Record<string, boolean>>({});
 const peerIdsToPoll = new Set<string>();
+/** How many holders watch each id in {@link peerIdsToPoll}: {@link unwatchUsers} drops an id at zero. */
+const watchHolds = new Map<string, number>();
 let _destroyInterval: (() => void) | null = null;
 
 /**
@@ -99,7 +101,9 @@ export function whenAnyComesOnline(userIds: string[], fn: (userIds: string[]) =>
  */
 export function watchUsers(userIds: string[]) {
   userIds.forEach((id) => {
-    if (id) peerIdsToPoll.add(id);
+    if (!id) return;
+    peerIdsToPoll.add(id);
+    watchHolds.set(id, (watchHolds.get(id) ?? 0) + 1);
   });
   if (!_destroyInterval) {
     _destroyInterval = createPausableInterval(checkPresenceNow, 10_000);
@@ -107,11 +111,24 @@ export function watchUsers(userIds: string[]) {
 }
 
 /**
- * Removes the given user IDs from the polling watchlist. When the set becomes
- * empty the interval is stopped entirely (saves battery when no presence is needed).
+ * Releases one hold on each of the given user IDs; an id leaves the polling watchlist only when its
+ * LAST holder releases it. When the set becomes empty the interval is stopped entirely (saves
+ * battery when no presence is needed).
+ *
+ * A COUNT, NOT A SET (review of #2618, 2026-10-27): a DM's header, its sidebar tile and a salon's
+ * member list watch the same peer at once, and one of them releasing used to stop the poll for
+ * all of them - the tile's dot froze once its DM was left.
  */
 export function unwatchUsers(userIds: string[]) {
-  userIds.forEach((id) => peerIdsToPoll.delete(id));
+  userIds.forEach((id) => {
+    const holds = (watchHolds.get(id) ?? 0) - 1;
+    if (holds > 0) {
+      watchHolds.set(id, holds);
+      return;
+    }
+    watchHolds.delete(id);
+    peerIdsToPoll.delete(id);
+  });
   if (peerIdsToPoll.size === 0 && _destroyInterval) {
     _destroyInterval();
     _destroyInterval = null;
@@ -258,6 +275,7 @@ function notifyCameOnline(userIds: string[]): void {
 /** @internal Resets module state between Vitest cases. */
 export function resetPresenceForTests(): void {
   peerIdsToPoll.clear();
+  watchHolds.clear();
   cameOnlineListeners.clear();
   inFlight = null;
   legacyRouteAnnounced = false;

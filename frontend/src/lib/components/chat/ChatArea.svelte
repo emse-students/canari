@@ -85,6 +85,7 @@
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import {
     isNarrowChatLayout,
     isOverlayLayout,
@@ -240,7 +241,7 @@
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Sends a finished recording straight out, without staging it. Enables the microphone. */
-    onSendVoiceNote?: (file: File) => void;
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -477,7 +478,14 @@
   // other says this device cannot fetch. They were one value until 2026-09-21, and a brand-new
   // conversation was told no device could serve its history because nothing had asked whether
   // there was any.
-  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'complete' | 'unavailable';
+  type ScrollbackState =
+    | 'idle'
+    | 'asking'
+    | 'asked'
+    | 'no-peer'
+    | 'complete'
+    | 'unavailable'
+    | 'main-tab';
   let scrollbackState = $state<ScrollbackState>('idle');
   /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
   let scrollbackAskedAt = $state<number | null>(null);
@@ -1862,6 +1870,15 @@
             >
               <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
               {m.chat_scrollback_no_peer()}
+            </div>
+          {:else if scrollbackState === 'main-tab'}
+            <div
+              class="text-muted-foreground flex items-center justify-center gap-2 px-4 py-2 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_main_tab()}
             </div>
           {/if}
           <ChatMessageGroups

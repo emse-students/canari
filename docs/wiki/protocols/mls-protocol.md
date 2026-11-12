@@ -640,6 +640,11 @@ ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
   for people nobody added. A tree holding none of the candidates needs no confirmation (the gate
   decides the commit built on it); one that cannot be confirmed aborts `tree-unconfirmed`, never
   `added`. All three bulk Adds go through it: an invitation, a 1:1 creation, a group's own devices.
+  The pending sweep reads a confirmed tree once per pass of a group (`pendingAddFactsOf`), but never
+  keeps an UNCONFIRMED one: the next row of the group reads afresh (2026-11-11,
+  `pendingAddFacts.test.ts`), so one failed confirmation no longer aborts the rest of the sweep.
+  The cost is paid per row, not per pass: while its tree stays unconfirmed, a group's every row pays
+  one `fetchCommitsSince` and a replay, and the sweep's own log says so for each.
 - **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
   durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
   reason - `commit-race-lost`, `add-lock-busy`, `removed-meanwhile`, `tree-unconfirmed` - and every reason is a sentence the member sees
@@ -1534,6 +1539,33 @@ member as `new-person`. The server takes the report from a member of the group o
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
 
+**The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
+stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with
+nothing to remove - the lift by the accepted commit's `admits` is how every Add admits, and stays.
+
+**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
+every existing row to `false`, so a person who accepted a link before the deploy and had not entered
+yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
+`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+own external commit exactly as before the rule, and the members then report it:
+`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
+population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
+read-only on production, once, right after the deploy - each seat with no trace of an admission:
+
+```sql
+SELECT m."groupId", m."userId" FROM dm_group_members m
+WHERE NOT m."awaitingAdmission"
+  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
+                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
+                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
+```
+
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
+and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
+the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
+line after the floor is the rule failing. The list stays in the private operations notes with the
+deploy date; only this query and the rule live here.
+
 ### A device of a member is added, never asked about (2026-10-31)
 
 **The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un
@@ -2359,7 +2391,16 @@ people, logged `REJECT admit_refused` - the shape `WelcomeSeatGone` already answ
 any version clears its staged commit on it): nothing advances, nobody gets a leaf, no device row is
 written. A commit accepted with its admits dropped would still have given those people a leaf in
 every member's tree - a leaf no seat holds - so the gate refuses it rather than accept it in part,
-the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Every candidate is decided before anything
+the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Key groups are to follow the same whole-commit rule -
+decided by the lead on 2026-11-12, under the owner's delegation, NOT BUILT YET**: a key group's gate
+still accepts a commit and drops an admit it may not record (`not_entitled`, the RM-5 grant that
+raced a kick), which leaves exactly that seatless leaf in the tree. The build is one change on each
+side, landed together: the gate refuses with `admit_refused` and the refused `userIds` in a key
+group too (the `admitClaims` loop of `MessagingService`), and the key-group Add
+(`graine/distributionGroup.ts`) rebuilds without the named people the way `addDevicesRebuildingOnRace`
+does - it reads no `admit_refused` today, so the server half alone would stall every grant that
+races a kick. The `no_key_package` drop keeps its own reasoning (below) in both kinds of group.
+([backlog](../backlog.md#p3---key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review-2026-10-26)) **Every candidate is decided before anything
 is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
 rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
@@ -3123,6 +3164,115 @@ and deleted unrun once the tab that asked is gone (its requester lock free). A l
 serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
 has no executor for or a follower of another account. The mechanism, the refusals, the frozen
 background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
+
+### A follower tab wrote its copy of the MLS state over the leader's - FIXED 2026-11-11
+
+**Reported by the owner on web `1.6.10`** ("conflicts receiving messages between tabs"). A second
+tab of the account loaded the state as a follower, ran its boot restore, and the close of that
+history window started the persister's checkpoint (`onBulkIngestEnd` marks the state dirty
+unconditionally). Nothing gated the write, so the follower stored ITS copy, tagged one above the
+version it had loaded (`_snapshotSeq` is per document, seeded from the stored version). Four minutes
+later the leader's next checkpoint reached the same number and the guard refused it as a
+`collision`; on earlier days the same log shows runs of `REFUSED as stale` lasting up to an hour,
+while the other document's counter ran ahead.
+
+**What it cost.** The leader's memory stayed right and the guard did its job; each refused
+checkpoint re-raises the dirty flag, so the leader's next write lands as soon as its counter passes
+the stored one - nothing latches (only a refused ROTATION ends a document). But until then the disk
+held the follower's copy, behind every frame and commit the leader had applied since that copy was
+loaded, and the follower's write had also DECLARED durable what it did not hold: the shared send
+ledger (`commitPersisted` with the leader's `emitted`, which erases the burn the next load owes) and
+its replay markers. A reload inside that window loads a state that misses the leader's merged
+commits (the group is unreadable until a heal) and re-issues spent send generations (peers answer
+`SecretReuseError`). No queue row was lost to the follower: it never pulls the mailbox
+([below](#a-follower-pulled-the-leaders-queue-on-every-barrier-2026-09-28)).
+
+**The fix is the single-writer rule at the one write seam.** `BaseMlsService.persistCheckpoint`
+refuses on `refusesCommitsHere()` - a follower, or a follower promoted in place whose reload is owed,
+the same fact that refuses its commits - BEFORE anything is captured, with
+`MlsStateWriteRefusedError('follower-tab')`, so neither ledger is declared durable either. Said once
+per page at info (`checkpoint not written: this tab does not own the MLS state`); every catcher
+already treats a typed refusal as said. The persister's fire-and-forget lifecycle flushes now catch,
+so a follower's backgrounding raises no unhandled rejection, and the logout's final flush does not
+accuse a refusal. Guarded by `BaseMlsService.followerTabCheckpoint.test.ts` (two documents, each its
+own `hex` module, over one IndexedDB).
+
+**And it never EMITS either - the second half, same day (review of #3371).** The checkpoint gate
+left a follower's SENDS open: `sendMessage` had no gate, and a follower reached it by forwarding an
+attachment into a DM or a group, by a salon invitation card, a group notice, a call signal, a history
+ask, and - the one with a reading behind it - by a SALON message: `sealChannelMessage` reserved an
+outbound index in the shared Graine store and, on a rotation, minted a seed and DISTRIBUTED it with a
+key-group frame sealed on the follower's forked copy, mirrored the seed and bumped the shared send
+ledger. A phone of the owner's holds salon rows "no seed for session" whose seed holder is the owner's
+web device. Now:
+
+- `BaseMlsService.sendMessage` refuses in a tab that does not own the state, BEFORE the catch-up wait
+  and the settle (which may resubmit a commit): `FollowerTabSendError`, at `error` - every path a
+  follower reaches is routed, so reaching it is a caller that was not.
+- **One frame a gesture awaits** goes through `sendFrameFromThisTab` (`mls-client/frameFromAnyTab.ts`):
+  `sendMessage` in the leader, the gesture handover (`tabCommitDelegation.ts`, kind `emit-frame`) in a
+  follower - the leader sends it on its own state and answers the server's time. Used by the media
+  forward, the salon invitation card, `sendVisibleNotice`, and call signalling.
+- **A salon message** is sealed by the leader (`seal-salon-message`): the follower posts the sealed
+  message it gets back. A refusal is a `GraineSealUnavailableError` (`main-tab-gone`,
+  `main-tab-unavailable`, `main-tab-not-delegable`, `main-tab-failed`), so the member reads the
+  existing main-tab sentences and nothing is kept on screen as sent.
+- **A missing seed** is handed to the leader (`note-missing-seeds`), whose own repair asks and
+  receives; a follower asks no community history.
+- **History reconciliation frames** (state key, digest, pulls, coverage, bundles) are not sent from a
+  follower - the leader holds the same conversations and answers for the device - and a follower's
+  scrollback says "scroll in the main tab" (`main-tab`) rather than asking.
+- Every payload a handover record carries rests SEALED under the device key (`sealForHandover`): the
+  record is IndexedDB, and nothing a member wrote rests there in clear.
+- The shared send ledger is judged by the leader only: `reconcileSendRatchets` returns at once in a
+  follower (no reset, no forget, no burn). An in-session PIN change is refused in a leader promoted in
+  place, as in a follower.
+
+Not covered, filed: the leader lock is one per BROWSER, so a tab of another account is a follower its
+leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)).
+**And the second review of #3371, same day - order, the leader's own gate, the promotion window:**
+
+- **A follower's requests run in the order it made them.** A record was keyed by a random UUID and
+  the drain read the store in key order, so a call's hangup could run before its invitation and two
+  salon messages typed quickly could swap. A record now carries an `order` key that only grows in its
+  tab (the time, never allowed back, then a per-tab counter - `createOrderKeys`) and its tab's
+  `requester` id; the follower writes its records one after another, the drain sorts on the key, and
+  a request still waiting (its run lock held by another document, this leader not ready) holds back
+  every LATER request of the same tab until a drain finds it settled. One leader serves one record at
+  a time, so the order holds end to end.
+- **The leader seals behind its OWN salon gate.** The `seal-salon-message` executor waits on
+  `whenSalonSendable` before sealing, exactly as `deliverSalonSend` does for its own sends: a main
+  tab just reloaded has not listed its salons yet, and the follower's request stays pending meanwhile
+  instead of being refused. Only the gate's `refused` is an answer (`{ gate }`), thrown in the
+  follower as `SalonNotLoadableError` and read like this tab's own gate refusal (row `error`, the
+  gate's sentence, `nothingLeftTheDevice`). The cost, taken knowingly: while one seal waits on the
+  leader's gate, the leader's drain serves nothing else - it is the same wait a single tab's send
+  makes, and it ends on the listing's answer, never a clock.
+- **The promotion window.** A follower promoted in place leads on a copy it loaded as a follower until
+  its reload. The outbox flush is gated on `refusesCommitsHere()` (it was `getIsTabLeader()`), so that
+  window flushes nothing and the reloaded page drains; a frame or a seal asked there is refused at
+  once, typed (`FrameNotHandedError('reload-owed')`, seal reason `tab-reloading`, its own sentence),
+  never written as a request no tab would run; `sendMessage` classifies the case at the throw
+  (`FollowerTabSendError.refusal === 'reload-owed'`, at warn) so the routing-defect line accuses only
+  a real defect; a missing seed is not handed (the reloaded page reads the row again).
+- **A missing seed handed to a leader that has since changed is handed again**: the election tells
+  (`onLeaderTabChanged` - this tab's role moved, or another tab sent `leader_promoted` /
+  `leader_closing`) and the follower forgets what it handed. And one record per channel: the seeds
+  named while a channel's handover is in flight leave together when it is answered.
+- **A device-key change between seal and open is an answer**, `{ unopened: 'device-key-changed' }`,
+  not an executor throw logged at `error`: the frame is `FrameNotHandedError('device-key-changed')`,
+  the seal `main-tab-key-changed` ("the PIN changed while sending").
+- `sendHistoryBundleForIds` and `sendHistoryRangeBundle` are gated like the other history senders.
+- `GraineSealHandoverRefusedError` with `leader-gone` is NOT "nothing happened": the leader may have
+  minted and distributed a seed before it died. A retry is safe - the message keeps its `messageId`
+  and the server deduplicates a row posted twice under it; a seed minted for nothing is a rotation.
+
+Guarded by `tabCommitDelegation.test.ts` (two simulated tabs: the leader sends the very frame the
+follower sealed, and the record as STORED holds it sealed; a frame it cannot open is answered
+`unopened`, never sent; four pending records of one tab run in the order made, whatever their ids; a
+later record waits while an earlier one runs in another document), `channelSeal.followerTab.test.ts`
+(the leader's gate held and refused), `repair.followerTab.test.ts` (coalescing, a leader change) and
+`BaseMlsService.followerTabCheckpoint.test.ts`.
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 

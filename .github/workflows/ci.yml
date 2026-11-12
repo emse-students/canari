@@ -178,8 +178,9 @@ jobs:
           # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
           # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
           # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
-          # change runs them: ask what the gate reads.
-          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/'; then
+          # change runs them, and chat-delivery's device limit (`state.rs` asserts its copy of it):
+          # ask what the gate reads.
+          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/' || has '^apps/chat-delivery-service/src/retention\.constants\.ts$'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native

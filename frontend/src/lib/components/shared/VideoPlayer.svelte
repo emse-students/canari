@@ -621,7 +621,7 @@
     if (scope === 'silent') return;
     video.muted = !video.muted;
     // The unmute is the reader's GESTURE: a measured video's AudioContext is resumed inside it.
-    if (!video.muted) loudnessHandle?.prime();
+    if (!video.muted) void loudnessHandle?.prime();
     // Drawn from the element at once, not at its `volumechange`: the speaker is the answer.
     muted = video.muted;
     if (inline && scope === 'app') videoSound.setMuted(video.muted);

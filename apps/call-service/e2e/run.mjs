@@ -132,9 +132,11 @@ const serviceGone = new Promise((_, reject) => {
 });
 serviceGone.catch(() => {});
 
-function startService() {
+/** Starts the service; `pageOrigin` is the one origin its socket upgrades may name. */
+function startService(pageOrigin) {
   const env = {
     ...process.env,
+    ALLOW_ORIGIN: pageOrigin,
     PORT: '0',
     RUST_LOG: 'info',
     NO_COLOR: '1',
@@ -268,7 +270,7 @@ async function main() {
   const www = join(OUT, 'www');
   await buildPage(www);
   const server = serveDirectory(www);
-  startService();
+  startService(`http://127.0.0.1:${server.port}`);
   const port = await serviceLine(
     (l) => /Call service listening on .*:(\d+)\s*$/.exec(l)?.[1],
     'its listening line'
