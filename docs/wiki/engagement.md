@@ -23,7 +23,8 @@ any suggestion, and why a global search is the next design question
 The owner's engagement chantier (2026-11-07): more people notified, following made easy, and
 Instagram-style follow suggestions, with a ceiling on the noise. This page holds the decisions, the
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
-The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
+Every work package shipped by `1.6.10`; what each still owes is a row of the
+[verification table](backlog.md#owed-a-verification-and-nothing-else).
 
 **The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (what the people one follows write
 or repost - an entity's post a followed person reposted included -, ranked by freshness and
@@ -390,7 +391,7 @@ Built 2026-11-08 to the design [below](#the-bell---data-model-and-how-it-combine
   read and write the bell; the settings list; the erasure. Unit: `account-bells.service.spec.ts`,
   `post-notifications.batch.spec.ts`. Client: `AccountBell.svelte.test.ts`,
   `SettingsAccountBells.svelte.test.ts`.
-- **Owed on the phones** (after the approval line is merged and a NEW pre-release serves dev): on the
+- **Owed on the phones** (migration 143 approved, shipped in `1.6.8`): on the
   Mi 9T and the iPhone 12, set an association's bell to "Rien" and publish as that association from
   the other phone - the post is in the feed and the notifications list, with no push; "Lives
   seulement" then a live of it - pushed; a followed person at "Lives seulement" - their post silent,
@@ -479,7 +480,7 @@ L24-L29 above. Never capped (decision 11).
   the five forms integration specs, which now build `opening_reminders`). Unit:
   `push-content.spec.ts` (the two keys against `strings.xml`), `push-category.spec.ts`. Client:
   `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, `nativeStrings.test.ts`.
-- **Owed.** The approval merge of 152, then a NEW pre-release on dev, then on the Mi 9T and the
+- **Owed** (152 approved, shipped in `1.6.9`): on the Mi 9T and the
   iPhone 12: follow an association from one phone; from the other publish a form of it opening in
   ten minutes - the follower gets "Formulaire ouvert !" at the opening and no heads-up; press "Me
   prévenir" on it as well before the opening - the heads-up, and still ONE opening push; a listed

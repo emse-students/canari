@@ -1321,6 +1321,27 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
       transform 120ms ease;
   }
 
+  /* A CAMERA'S CONTROLS TURN IN PLACE (owner, 2026-11-11; screen-orientation.md, "The camera keeps
+     its layout"). The camera's layout never turns, so a phone held sideways would show every glyph
+     sideways; each round control turns by `--camera-glyph-rotation` (set by `CameraScreen` from the
+     sensor) about its own centre, a quarter turn animated, as the system camera apps do. `rotate`,
+     not `transform`, so the press feedback's transform is untouched; after `.ui-icon-button`, whose
+     transition it extends. Outside a camera the variable is unset and nothing turns. */
+  .camera-glyph-turn {
+    rotate: var(--camera-glyph-rotation, 0deg);
+    transition:
+      rotate var(--motion-slow) var(--motion-ease-out),
+      background-color 180ms ease,
+      color 180ms ease,
+      transform 120ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .camera-glyph-turn {
+      transition-property: background-color, color, transform;
+    }
+  }
+
   /* UNDER A POINTER, NOT FROM A WIDTH. 768px was standing in for "a mouse", and a touch tablet is
      768px wide too: in portrait the header's icon buttons measured 38px there, under the 44px
      floor (viewport audit, 2026-09-30). The width alone never knew which it was. */

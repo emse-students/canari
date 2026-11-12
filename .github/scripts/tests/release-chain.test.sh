@@ -160,10 +160,14 @@ for f in $SHA_WORKFLOWS; do
   # whole length of the run - 22 minutes on production, which waits behind the iOS build.
   # Comment lines are excluded by SHAPE, not by wording: both files explain in prose why the two
   # estates keep separate checkouts, and that explanation names the command it is talking about.
-  # shellcheck disable=SC2016  # `${{ }}` is GitHub Actions syntax and is matched literally
+  # The commit reaches the script through the step's `env:` (`workflow-expressions.test.sh`), so a
+  # reset names `$INPUT_SHA`, and every binding of `INPUT_SHA` in the file is the commit handed in.
+  # shellcheck disable=SC2016  # `$INPUT_SHA` and `${{ }}` are matched literally
   BAD="$(grep -nE 'reset --hard' "$WF/$f" |
     grep -vE '^[0-9]+: *#' |
-    grep -vF 'reset --hard "${{ inputs.sha }}"' || true)"
+    grep -vF 'reset --hard "$INPUT_SHA"' || true)"
+  # shellcheck disable=SC2016  # `${{ }}` is GitHub Actions syntax and is matched literally
+  BAD="$BAD$(grep -nE '^ *INPUT_SHA:' "$WF/$f" | grep -vE '^[0-9]+: *INPUT_SHA: \$\{\{ inputs\.sha \}\}$' || true)"
   if [ -n "$BAD" ]; then
     fail "$f resets to something other than the commit it was handed: $(echo "$BAD" | tr '
 ' ';')"
@@ -1007,7 +1011,15 @@ if grep -qE 'type=raw,value=v\$\{\{ inputs\.version \}\}' "$WF/build.yml"; then
 else
   fail 'build.yml no longer pushes the v<version> tag - production has nothing immutable to deploy'
 fi
-if grep -qE -- '--tag "v\$\{\{ inputs\.version \}\}"' "$WF/serve-prod.yml"; then
+# Every binding of INPUT_VERSION must be the release's own version: the two counts are compared, so
+# no reader exits before its writer is done.
+# shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
+version_bindings="$(grep -cE '^ *INPUT_VERSION:' "$WF/serve-prod.yml")"
+# shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
+exact_version_bindings="$(grep -cE '^ *INPUT_VERSION: \$\{\{ inputs\.version \}\}$' "$WF/serve-prod.yml")"
+# shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
+if grep -qE -- '--tag "v\$INPUT_VERSION"' "$WF/serve-prod.yml" \
+  && [ "$version_bindings" -ge 1 ] && [ "$version_bindings" = "$exact_version_bindings" ]; then
   pass 'serve-prod.yml deploys --tag v<version>, the tag build.yml pushes'
 else
   fail 'serve-prod.yml does not deploy v<version> - a rerun of an old release redeploys whatever latest points at'

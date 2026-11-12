@@ -104,19 +104,23 @@ jobs:
       # clone is done here rather than by hand so the state is reproducible - a directory somebody
       # created once, differently, is exactly the inherited state this repository keeps paying for.
       - name: Ensure the dev checkout exists and is at this commit
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          REPO_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ ! -d "$DEV_DEPLOY_PATH/.git" ]; then
             echo "no dev checkout at $DEV_DEPLOY_PATH - cloning"
             rm -rf "$DEV_DEPLOY_PATH"
             git clone --no-checkout \
-              "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+              "https://x-access-token:${REPO_TOKEN}@github.com/${REPO}.git" \
               "$DEV_DEPLOY_PATH"
           fi
           cd "$DEV_DEPLOY_PATH"
           git remote set-url origin \
-            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch origin "${{ inputs.sha }}"
+            "https://x-access-token:${REPO_TOKEN}@github.com/${REPO}.git"
+          git fetch origin "$INPUT_SHA"
           # THE COMMIT, NEVER THE BRANCH. `main` MOVES while a release runs - the bump's own push
           # is on it, and auto-merge lands pull requests unattended for as long as the arms take.
           # Resolving `main` here would be a SECOND resolution of a reference the caller already
@@ -124,7 +128,7 @@ jobs:
           # not on. The bump's commit lives on `release/vX.Y.Z` (2026-10-30, docs/wiki/cicd.md), so
           # it is fetched BY SHA - GitHub serves any commit a ref reaches - and `reset` fails loudly
           # if it somehow is not there.
-          git reset --hard "${{ inputs.sha }}"
+          git reset --hard "$INPUT_SHA"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
       # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only.
@@ -194,7 +198,7 @@ jobs:
           set -euo pipefail
           bash infrastructure/deploy/render-env.sh \
             --environment dev \
-            --domain "${{ env.DOMAIN }}" \
+            --domain "$DOMAIN" \
             --build "dev.$(git rev-parse --short=7 HEAD)" \
             --out infrastructure/.env
 
@@ -237,10 +241,10 @@ jobs:
           # in flight back in rotation (docs/wiki/cicd.md, the rollback invariant).
           exec bash infrastructure/deploy/deploy-environment.sh \
             --environment dev \
-            --path "${{ env.DEV_DEPLOY_PATH }}" \
+            --path "$DEV_DEPLOY_PATH" \
             --tag dev \
-            --registry "${{ env.REGISTRY }}" \
-            --image-prefix "${{ env.IMAGE_PREFIX }}" \
+            --registry "$REGISTRY" \
+            --image-prefix "$IMAGE_PREFIX" \
             --pull-services "$pull"
 
       # MICONNECT'S CONFIGURATION, TRIED AND NOT WRITTEN. Dev signs in through the PRODUCTION
@@ -279,7 +283,7 @@ jobs:
         working-directory: ${{ env.DEV_DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          bun tools/cross-client-harness/deployed-wasm-check.mjs "https://${{ env.DEV_DOMAIN }}"
+          bun tools/cross-client-harness/deployed-wasm-check.mjs "https://$DEV_DOMAIN"
 
       # A REAL SIGN-IN, BEFORE THE MARKER MOVES (user, 2026-10-18; WP-SMOKE-LOGIN). The wasm check
       # above names one class from outside; this walks MiConnect's flow, the OIDC callback and the
@@ -308,10 +312,15 @@ jobs:
       # answer the question the estate itself cannot.
       - name: Record the deployed commit
         if: success()
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REPO_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          git -C "${{ env.DEV_DEPLOY_PATH }}" tag -f dev-deployed "${{ inputs.sha }}"
-          git -C "${{ env.DEV_DEPLOY_PATH }}" push -f \
-            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+          git -C "$DEV_DEPLOY_PATH" tag -f dev-deployed "$INPUT_SHA"
+          git -C "$DEV_DEPLOY_PATH" push -f \
+            "https://x-access-token:${REPO_TOKEN}@github.com/${REPO}.git" \
             refs/tags/dev-deployed
-          echo "dev-deployed -> ${{ inputs.sha }} (v${{ inputs.version }})"
+          echo "dev-deployed -> ${INPUT_SHA} (v${INPUT_VERSION})"

@@ -1361,7 +1361,9 @@ The microphone of a live or a reel is asked for ONE channel (`REEL_AUDIO_CONSTRA
 `MediaRecorder` wrote as a stereo file playing on one side only (owner, 2026-11-09). Nothing downstream changes the layout
 (the transcode keeps the source's channel count, the player uses no Web Audio splitter or panner). Every capture logs one
 line, `audio layout: mono|stereo|... (ch=N)` (`utils/audioLayout.ts`); a `stereo` answer to the mono request is the case to read
-on the bench phones, see [the backlog entry](../../backlog.d/p2-a-phone-microphone-may-answer-two-channels-with-one-silent.md).
+on the bench phones, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else). Media already published
+with a silent side are left as they are: a playback upmix would decode and measure every file on
+every play, for few files, and live replays are not kept.
 
 ## Mentions in the chat (owner, 2026-11-09)
 
