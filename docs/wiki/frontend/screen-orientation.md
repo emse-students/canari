@@ -181,3 +181,34 @@ Found by the adversarial review of 2026-11-09 and accepted as they are (no code)
 
 Native is verified by COMPILING, which proves nothing about running. Each row on a pre-release, on the
 Mi 9T and the iPhone 12, is in [the backlog entry](../backlog.d/rotation-on-video-and-camera-screens.md#readings-owed-on-a-pre-release).
+
+## A turned phone is still a phone, and a full-screen place draws no chrome (2026-11-11)
+
+**Defect (owner, Android `1.6.10`):** turned to landscape, the camera showed the DESKTOP shell - the
+top bar ("Canari", status, apps, avatar) and the left rail - with the camera shrunk into what was
+left. **Cause:** the root layout hid only `MobileHeader`, `BottomNav` and the native tab bar on a
+full-screen place; `Navbar` and `AppSidebar` are `md:` pieces (`hidden md:block` / `md:flex`) and the
+shell reserved `md:pl-24` for the rail. A phone turned is 800+ px wide, so it crossed `md` and the
+two came back. **Fix, at the one place that decides it:** `routes/+layout.svelte` renders `AppSidebar`,
+`Navbar`, `MobileHeader`, the tab bars and the gutter only when `!isFullScreen` - chrome follows the
+PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays (reel viewer, video
+and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
+above every shell layer, so they were never affected.
+
+**The phone question (decided, and left alone):** `PHONE_VIEWPORT_QUERY` is NOT changed. A first cut
+added a rotated-phone term (`(max-height: 500px) and (pointer: coarse)`) and was dropped in review:
+rotation exists only on the camera and video screens, where chrome is now gone through `isFullScreen`,
+so nothing needs it; and it was harmful - the guide's `phone` fact (`guideTypes.ts`, the welcome-tour
+and booking-week wording) would no longer match the chrome drawn on a turned phone, and a coarse
+tablet with a short viewport (keyboard open, split-screen) would be classed as a phone. **The layout
+never asks the width whether a place is full screen.** The reel viewer's prev/next rail was `md:flex`
+("a pointer has no swipe") and showed on a turned phone; it is `any-pointer-fine:flex`, so an iPad
+with a trackpad keeps it and a phone, with no fine pointer at all, does not.
+
+**A desktop browser on `/camera` has no shell either** (lead decision, 2026-11-11): the camera is a
+full-screen place on every device, with its own close button.
+
+**The rotate button** was the video kit's 28 px chip (`VideoChipButton`, glass), a bordered circle
+turned, beside 44 px circles. It is now `ui/CameraControlButton.svelte` - the ONE round control of the
+camera and the broadcaster (close, flip, flash, rotate, share, chat) - with the siblings' 22 px glyph.
+The ratchet of hand-built controls went down by the buttons it replaced.

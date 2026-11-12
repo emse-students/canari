@@ -240,7 +240,7 @@ export async function publishReel(
       enter('createPost');
       const post = await deps.createPost({
         markdown: caption,
-        media: [ref],
+        media: [prepared.loudness ? { ...ref, loudness: prepared.loudness } : ref],
         ...postIdentityFields(identity),
         ...(input.studentsOnly ? { studentsOnly: true } : {}),
         ...(input.reach ? { reach: input.reach } : {}),
@@ -260,7 +260,12 @@ export async function publishReel(
       { width: prepared.width, height: prepared.height },
       FEED_REEL_UPLOAD_CLASS
     );
-    const ref: MediaRef = placeholder ? { ...uploaded, placeholder } : uploaded;
+    // The measured sound rides on the ref, so the post's media AND the chats adopting it carry it.
+    const ref: MediaRef = {
+      ...uploaded,
+      ...(placeholder ? { placeholder } : {}),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
+    };
     const durationMs = declaredReelDurationMs(prepared.durationSeconds, maxDurationMs);
     // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the
     // post's fate, the conversations of the same take have their file.

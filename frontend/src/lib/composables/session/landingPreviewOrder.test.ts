@@ -30,6 +30,32 @@ describe('loginImpl and the landing preview', () => {
     expect(start).toBeLessThan(token);
   });
 
+  it('reads an unattended hardware-held key and starts its preview BEFORE the token (gap 1, 2026-11-11)', () => {
+    // Only an unlock that prompts nobody: a prompted keystore read stays behind its prompt.
+    const gate = at(
+      loginBody,
+      "if (isBiometric && opts?.unattendedKeyRead === true && atRestScheme === 'hardware') {"
+    );
+    const read = at(loginBody, 'const read = readHardwareHeldKey(tauriHardwareKeyPort');
+    const install = at(loginBody, 'ctx.setDeviceKey(early);');
+    const start = at(loginBody, 'startLandingPreview(storageOpen, early);');
+    const token = at(loginBody, "accessToken = await untilSignedOut(getToken(), 'access-token');");
+    expect(gate).toBeLessThan(read);
+    expect(read).toBeLessThan(install);
+    expect(install).toBeLessThan(start);
+    expect(start).toBeLessThan(token);
+    // Not awaited in line (a fast link pays nothing), but settled before the store and the init.
+    const block = loginBody.slice(gate, token);
+    expect(block).not.toContain('await readHardwareHeldKey');
+    expect(at(loginBody, 'if (earlyHardwareKey) await earlyHardwareKey;')).toBeLessThan(
+      at(loginBody, "beginBootSpan('mls-init-and-storage');")
+    );
+    // The session's own key read does not start a second preview over the first.
+    expect(loginBody).toContain(
+      'if (!landingPreview) startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);'
+    );
+  });
+
   it('starts the PIN preview only after pin-check proved the PIN and the device', () => {
     // `unlockWithPin` returns the device key only once pin-check answered `ok` or `registered` and
     // the `mismatch` and `resetRequired` branches were passed (`pinUnlock.test.ts`, by behaviour), so

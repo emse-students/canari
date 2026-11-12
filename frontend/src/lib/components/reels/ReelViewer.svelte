@@ -27,7 +27,7 @@
    * is the PAGE's: once its first visible media settled, a media swipe keeps it, so the next post's
    * download is never aborted and restarted by a swipe inside the strip.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
@@ -35,14 +35,22 @@
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
   import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { pickedReactionToggle, railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
-  import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
+  import {
+    WheelPageLock,
+    wheelOverScrollable,
+    wheelOverVolume,
+    wheelStep,
+  } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import { ReelList, mountedReelSlots } from '$lib/reels/reelList.svelte';
   import { REEL_PAGE as PAGE, allReelsLoader, type ReelPageLoader } from '$lib/reels/allReels';
+  import { REEL_ORDERS, type ReelOrder } from '$lib/reels/reelOrder';
+  import type { ReelOrderChoice } from '$lib/reels/reelStream.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     mergeReelPage,
-    mountedReelIndices,
     reelDragOffset,
     reelReleaseVerdict,
     shouldLoadMoreReels,
@@ -52,6 +60,7 @@
     type ReelSwipeVerdict,
   } from '$lib/reels/reelViewerNav';
   import { fullScreenMediaListOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
+  import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
     GESTURE,
     classifyMove,
@@ -102,6 +111,14 @@
      * grid (owner, 2026-11-10: a tap on a feed video opens full screen on THAT video). 0 elsewhere.
      */
     startMediaIndex?: number;
+    /**
+     * THE STREAM'S ORDER, "Pour toi" or "Récents" ("Nos principes", owner 2026-11-10: a chronological
+     * view must always exist), drawn at the top - for the CanaReels stream, from its entry or from a
+     * feed video (`reels/reelStream.svelte.ts`); an opener that shows one post's media passes none. A
+     * change hands this viewer a new `loadPage` (and the entry a new `startPost`), and the viewer
+     * starts over at the top of the new list.
+     */
+    orderChoice?: ReelOrderChoice;
   }
 
   let {
@@ -113,7 +130,14 @@
     expandOrigin = null,
     onMediaGone,
     startMediaIndex = 0,
+    orderChoice,
   }: Props = $props();
+
+  /** The label of each order, in the order `REEL_ORDERS` lists them. */
+  const REEL_ORDER_LABELS: Record<ReelOrder, () => string> = {
+    ranked: m.reels_order_for_you,
+    recent: m.reels_order_recent,
+  };
 
   /**
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
@@ -129,34 +153,69 @@
   const releasePlayback = holdPlayback('the reel viewer is open');
   onDestroy(releasePlayback);
 
-  let reels = $state<PostEntity[]>([]);
-  let index = $state(0);
-  /** How many rows the server has handed over so far - the next page's offset. */
-  let fetched = 0;
-  let hasMore = $state(true);
-  let loadingMore = false;
+  /**
+   * THE LIST ON SCREEN, A `$derived` OF THE LOADER (`reels/reelList.svelte.ts`): a new loader - the
+   * stream's order changed - IS a new list, in the same instant the prop changes, starting over at the
+   * top with the post the opener hands (`startPost`, read once per list). Nothing of the old list is
+   * reset by an effect after a render, and nothing outlives it: its reels, its place, its pages, its
+   * settle, its carousels and its track move all go with the object.
+   */
+  /**
+   * Runs the body of one of the viewer's OWN effects: a throw there is outside the template's
+   * boundary and would reach the route, so it closes the viewer the same way (`closeOnCrash`).
+   */
+  function guarded<T>(where: string, body: () => T): T | undefined {
+    try {
+      return body();
+    } catch (error) {
+      closeOnCrash(error, where);
+      return undefined;
+    }
+  }
 
-  let frame = $state<HTMLDivElement | null>(null);
-  let offsetX = $state(0);
-  let offsetY = $state(0);
-  let settling = $state(false);
-  let afterSettle: (() => void) | null = null;
+  /** How many lists this viewer has shown: the first is the opening, each later one a change of order. */
+  let listCount = 0;
+  const list = $derived.by(() => {
+    const start = untrack(() => startPost);
+    const next = new ReelList(
+      loadPage,
+      start,
+      untrack(() => startMediaIndex)
+    );
+    listCount += 1;
+    if (listCount > 1) console.debug(`[reel-viewer] a new list (${listCount}) from ${start.id}`);
+    return next;
+  });
 
   /**
-   * THE VISIBLE MEDIA OF EACH CAROUSEL, by post id, for the viewer's life: a post scrolled away and
-   * back opens where the reader left it. Absent means the first.
+   * THE SWAP LANDS THE PREVIOUS LIST'S MOVE, EXPLICITLY. A track move in flight when the list changes
+   * (a step, a close swipe) would wait for a `transitionend` the swap itself cancels - the close
+   * swipe would leave the viewer open. Its landing runs now, on the list it was set on; a step's
+   * writes go to that list, which nothing draws any more.
    */
-  let mediaIndexById = $state<Record<string, number>>({});
-  /** Where a held horizontal drag has taken the current carousel's strip (`reelDragOffset`). */
-  let mediaDragX = $state(0);
-  /** A drag is held: the strip follows the finger with no transition. */
-  let mediaDragging = $state(false);
+  let previousList: ReelList | null = null;
+  $effect.pre(() =>
+    guarded('the list swap', () => {
+      const current = list;
+      const previous = previousList;
+      previousList = current;
+      if (previous === null || previous === current) return;
+      const landing = previous.afterSettle;
+      previous.afterSettle = null;
+      previous.settling = false;
+      if (!landing) return;
+      console.debug('[reel-viewer] the list changed during a track move - its landing runs now');
+      untrack(landing);
+    })
+  );
+
+  let frame = $state<HTMLDivElement | null>(null);
 
   /** The media position of a page: its visible media out of how many (1 off a carousel). */
   function mediaPositionOf(post: PostEntity | undefined): MediaPosition {
     if (!post || fullScreenPageOf(post) !== 'carousel') return { index: 0, count: 1 };
     const count = fullScreenMediaListOf(post).length;
-    return { index: Math.min(mediaIndexById[post.id] ?? 0, count - 1), count };
+    return { index: Math.min(list.mediaIndexById[post.id] ?? 0, count - 1), count };
   }
 
   /**
@@ -179,62 +238,107 @@
   onMount(() => {
     // The viewer paints black under the status bar: light icons while it is up, handed back after.
     const releaseBar = themeStore.holdNativeBar('dark');
-    reels = [startPost];
-    if (startMediaIndex > 0) mediaIndexById = { [startPost.id]: startMediaIndex };
     overlay.syncOpen();
     console.debug(`[reel-viewer] opened on ${startPost.id}`);
     return releaseBar;
   });
 
-  const mounted = $derived(mountedReelIndices(index, reels.length));
+  /**
+   * The pages mounted around the one on screen, EACH WITH ITS OWN POST (`mountedReelSlots`): a slide
+   * is keyed by and handed its slot's post, so one torn down after its list was replaced still holds
+   * the post it was drawn for.
+   */
+  const slots = $derived(mountedReelSlots(list));
 
   /**
    * THE REEL ON SCREEN THAT HAS SETTLED (`ReelSlide`'s `onReady`: whole and playing). The next
    * reel preloads only behind it, never beside it: on a weak link two downloads at once would
    * starve the one being watched. Every step CLEARS it (where `index` moves), so a return to a reel that
    * settled on an earlier visit withholds the preload until it settles again; and only the slide
-   * on screen may set it (`onReady` checks its index), never one torn down mid-swipe.
+   * on screen may set it (`onReady` checks its post), never one torn down mid-swipe.
    */
-  let settledId = $state<string | null>(null);
-  const currentSettled = $derived(settledId !== null && settledId === settleKeyOf(reels[index]));
+  const currentSettled = $derived(
+    list.settledId !== null && list.settledId === settleKeyOf(list.reels[list.index])
+  );
 
-  function markSettled(i: number) {
-    if (i !== index) {
-      console.debug(`[reel-viewer] slide ${i} settled off screen - ignored`);
+  function markSettled(post: PostEntity) {
+    if (post.id !== settleKeyOf(list.reels[list.index])) {
+      console.debug(`[reel-viewer] ${post.id} settled off screen - ignored`);
       return;
     }
-    settledId = settleKeyOf(reels[i]);
+    list.settledId = settleKeyOf(post);
   }
 
-  // The next page, asked for as the reader nears the end of what is loaded.
+  /**
+   * THE NEXT PAGES, FETCHED AHEAD IN PARALLEL (owner, 2026-11-11): their heads or pictures, at once
+   * and whether or not the page on screen has settled - in the gate's background lane, so the page
+   * on screen is always served first (`reels/reelAhead.ts`). It only READS the list on screen: a
+   * new list (another order) simply names other pages, and the old ones are dropped.
+   */
+  const ahead = new ReelAhead();
   $effect(() => {
-    if (!shouldLoadMoreReels(index, reels.length, hasMore) || loadingMore || reels.length === 0) {
+    // This effect lives OUTSIDE the viewer's `svelte:boundary`: a post that throws when read must
+    // cost the look-ahead, never the page - the slide that reads it trips the boundary itself.
+    let pages: ReturnType<typeof aheadPagesOf>;
+    try {
+      pages = aheadPagesOf(list);
+    } catch (err) {
+      console.error('[reel-ahead] the pages ahead could not be read - nothing fetched ahead', err);
+      ahead.update(null, []);
       return;
     }
-    void loadMore();
+    ahead.update(pages.current, pages.next);
   });
+  $effect(() => () => ahead.stop());
 
-  async function loadMore() {
-    loadingMore = true;
+  // The next page, asked for as the reader nears the end of what is loaded.
+  $effect(() =>
+    guarded('the next-page effect', () => {
+      const current = list;
+      if (
+        !shouldLoadMoreReels(current.index, current.reels.length, current.hasMore) ||
+        current.loadingMore ||
+        current.reels.length === 0
+      ) {
+        return;
+      }
+      void loadMore(current);
+    })
+  );
+
+  /**
+   * Reads the next page of `target`, into `target`: a page asked of a list that has since been
+   * replaced lands in the object nobody draws any more, and is said, never mixed into the new one.
+   */
+  async function loadMore(target: ReelList) {
+    target.loadingMore = true;
     try {
-      const page = await loadPage(fetched, PAGE);
-      fetched += page.length;
-      if (page.length < PAGE) hasMore = false;
-      reels = mergeReelPage(reels, page);
-      console.debug(`[reel-viewer] page of ${page.length}, ${reels.length} loaded`);
+      const page = await target.loader(target.fetched, PAGE);
+      if (target !== list) {
+        console.debug('[reel-viewer] a page of the previous list landed - dropped');
+        return;
+      }
+      target.fetched += page.length;
+      if (page.length < PAGE) target.hasMore = false;
+      target.reels = mergeReelPage(target.reels, page);
+      console.debug(`[reel-viewer] page of ${page.length}, ${target.reels.length} loaded`);
     } catch (err) {
+      if (target !== list) {
+        console.debug('[reel-viewer] a page of the previous list failed - its list is gone', err);
+        return;
+      }
       // The reels already loaded stay watchable; the list simply ends here.
       console.error('[reel-viewer] the next reels could not be loaded', err);
-      hasMore = false;
+      target.hasMore = false;
       showToast(m.reels_viewer_load_error(), 'error');
     } finally {
-      loadingMore = false;
+      target.loadingMore = false;
     }
   }
 
   /** Replaces the reactions of the loaded reel `postId`, wherever it now sits in the list. */
   function setReactions(postId: string, served: ServedReactions) {
-    reels = reels.map((r) => (r.id === postId ? { ...r, ...served } : r));
+    list.reels = list.reels.map((r) => (r.id === postId ? { ...r, ...served } : r));
   }
 
   /**
@@ -341,14 +445,13 @@
     sendReaction(post, me, pick.type, pick.wasReacted);
   }
 
-  /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
-  let commentsFor = $state<string | null>(null);
-  /** The sheet has begun to slide out: the reel grows back to the screen with it. */
-  let commentsLeaving = $state(false);
+  // The comments sheet (`list.commentsFor`) and the share sheet (`list.shareFor`) belong to the LIST:
+  // a change of order closes them with it, so the reel never stays shrunk above a sheet of a list
+  // that is gone.
   /** The reel is a rounded card above the sheet (Instagram's): `scale` of the full screen. */
-  const commentsCard = $derived(commentsFor !== null && !commentsLeaving);
+  const commentsCard = $derived(list.commentsFor !== null && !list.commentsLeaving);
   const commentsPost = $derived(
-    commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
+    list.commentsFor ? (list.reels.find((r) => r.id === list.commentsFor) ?? null) : null
   );
 
   /**
@@ -357,23 +460,24 @@
    * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
    * take the viewer's rung (`markViewerLayer`).
    */
-  let shareFor = $state<string | null>(null);
   let ShareSheet = $state<
     typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
   >(null);
 
   function openShareSheet(postId: string) {
+    // The sheet opens on the list it was asked from: a change of order meanwhile leaves it closed.
+    const target = list;
     import('$lib/components/posts/PostShareSheet.svelte')
       .then((mod) => {
         ShareSheet = mod.default;
-        shareFor = postId;
+        target.shareFor = postId;
       })
       .catch((e: unknown) => console.error('[reel-viewer] the share sheet did not load', e));
   }
 
   /** Replaces the loaded post `next.id` - a comment written in the sheet. */
   function setPost(next: PostEntity) {
-    reels = reels.map((r) => (r.id === next.id ? next : r));
+    list.reels = list.reels.map((r) => (r.id === next.id ? next : r));
   }
 
   /** The rail's actions for one page, or none outside a signed-in reader's posts. */
@@ -386,8 +490,8 @@
       onReact: (type) => pickReaction(post, type),
       onComments: () => {
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
-        commentsLeaving = false;
-        commentsFor = post.id;
+        list.commentsLeaving = false;
+        list.commentsFor = post.id;
       },
       onSend: () => openShareSheet(post.id),
     };
@@ -407,24 +511,24 @@
   function settle(x: number, y: number, then?: () => void) {
     // A LANDING IS NEVER DROPPED: a move started over one still pending (every entry point waits for
     // `settling` to clear, so this is a defect upstream) runs it first, and says so.
-    if (afterSettle) {
+    if (list.afterSettle) {
       console.error('[reel-viewer] a move started over a pending landing - the landing runs first');
-      const pending = afterSettle;
-      afterSettle = null;
+      const pending = list.afterSettle;
+      list.afterSettle = null;
       pending();
     }
-    if (reducedMotion() || (x === offsetX && y === offsetY)) {
-      offsetX = x;
-      offsetY = y;
-      settling = false;
-      afterSettle = null;
+    if (reducedMotion() || (x === list.offsetX && y === list.offsetY)) {
+      list.offsetX = x;
+      list.offsetY = y;
+      list.settling = false;
+      list.afterSettle = null;
       then?.();
       return;
     }
-    settling = true;
-    afterSettle = then ?? null;
-    offsetX = x;
-    offsetY = y;
+    list.settling = true;
+    list.afterSettle = then ?? null;
+    list.offsetX = x;
+    list.offsetY = y;
   }
 
   /**
@@ -435,12 +539,19 @@
    */
   function onTransitionEnd(e: TransitionEvent) {
     if (e.target !== e.currentTarget || e.propertyName !== 'transform') return;
+    if (!list.settling) {
+      // The swap landed the previous list's move already (the effect above): nothing is pending.
+      console.debug(
+        `[reel-viewer] a ${e.type} for a move the current list did not start - nothing to land`
+      );
+      return;
+    }
     if (e.type === 'transitioncancel') {
       console.warn('[reel-viewer] the track move was cancelled - landing where it was going');
     }
-    settling = false;
-    const next = afterSettle;
-    afterSettle = null;
+    list.settling = false;
+    const next = list.afterSettle;
+    list.afterSettle = null;
     next?.();
   }
 
@@ -450,15 +561,15 @@
    * media that leaves unmounts its player at once (only the visible media plays).
    */
   function stepMedia(verdict: 'media-next' | 'media-prev') {
-    const post = reels[index];
+    const post = list.reels[list.index];
     const at = mediaPositionOf(post);
     const target = stepMediaIndex(at.index, verdict, at.count);
-    mediaDragging = false;
-    mediaDragX = 0;
+    list.mediaDragging = false;
+    list.mediaDragX = 0;
     if (!post || target === at.index) return;
     console.debug(`[reel-viewer] ${verdict} on ${post.id}: ${at.index} -> ${target}`);
     // The page's settle is kept: the next post's preload goes on behind the strip.
-    mediaIndexById = { ...mediaIndexById, [post.id]: target };
+    list.mediaIndexById = { ...list.mediaIndexById, [post.id]: target };
   }
 
   /** Carries out a verdict: the track leaves towards it, then the index moves and the track rests. */
@@ -467,28 +578,30 @@
       stepMedia(verdict);
       return;
     }
-    mediaDragging = false;
-    mediaDragX = 0;
+    list.mediaDragging = false;
+    list.mediaDragX = 0;
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
-    const target = stepReelIndex(index, verdict, reels.length);
+    const target = stepReelIndex(list.index, verdict, list.reels.length);
     if (verdict === 'close') {
       console.debug('[reel-viewer] closed by a swipe');
       settle(width, 0, () => overlay.dismissFromUi());
       return;
     }
-    if (target === index) {
+    if (target === list.index) {
       settle(0, 0);
       return;
     }
-    console.debug(`[reel-viewer] ${verdict}: ${index} -> ${target}`);
+    console.debug(`[reel-viewer] ${verdict}: ${list.index} -> ${target}`);
+    // The landing belongs to the list the move started on: a list replaced meanwhile keeps its own.
+    const moved = list;
     settle(0, verdict === 'next' ? -height : height, () => {
       // The track has landed one screen away; moving the index there is the same picture at rest.
-      settling = false;
+      moved.settling = false;
       // The reel landed on has not settled IN THIS VISIT, whatever it did before.
-      settledId = null;
-      index = target;
-      offsetY = 0;
+      moved.settledId = null;
+      moved.index = target;
+      moved.offsetY = 0;
     });
   }
 
@@ -501,216 +614,231 @@
    * scroll. Non-passive, on the viewer only, so `preventDefault` runs exactly when the event is
    * consumed; removed with the viewer.
    */
-  $effect(() => {
-    const el = viewerEl;
-    if (!el) return;
-    const lock = new WheelPageLock();
-    function onWheel(e: WheelEvent) {
-      const step = wheelStep(e);
-      if (!step || commentsFor || shareFor || wheelOverScrollable(e.target, el!)) return;
-      e.preventDefault();
-      // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
-      const free = lock.free && !settling;
-      lock.heard();
-      if (!free) return;
-      console.debug(`[reel-viewer] wheel: ${step}`);
-      go(step);
-    }
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-      lock.dispose();
-    };
-  });
+  $effect(() =>
+    guarded('the wheel effect', () => {
+      const el = viewerEl;
+      if (!el) return;
+      const lock = new WheelPageLock();
+      function onWheel(e: WheelEvent) {
+        const step = wheelStep(e);
+        if (
+          !step ||
+          list.commentsFor ||
+          list.shareFor ||
+          wheelOverVolume(e.target) ||
+          wheelOverScrollable(e.target, el!)
+        )
+          return;
+        e.preventDefault();
+        // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
+        const free = lock.free && !list.settling;
+        lock.heard();
+        if (!free) return;
+        console.debug(`[reel-viewer] wheel: ${step}`);
+        go(step);
+      }
+      el.addEventListener('wheel', onWheel, { passive: false });
+      return () => {
+        el.removeEventListener('wheel', onWheel);
+        lock.dispose();
+      };
+    })
+  );
 
   // Touch listeners by hand with `passive: false`: Svelte registers touch handlers as passive, where
   // `preventDefault()` is ignored and the page would scroll under the drag. THE MOUSE DRIVES THE SAME
   // GESTURE (owner, 2026-11-06: a carousel is dragged on a desktop too) through pointer events of
   // type `mouse` - a touch or a pen keeps the touch path, so nothing is read twice.
-  $effect(() => {
-    const el = frame;
-    if (!el) return;
-    let gesture: GestureKind | null = null;
-    let start: Sample = { x: 0, y: 0, t: 0 };
-    let samples: Sample[] = [];
-    /** A mouse drag that moved the page: the click it ends with is not a tap. */
-    let swallowClick = false;
-    const sampleOf = (t: Touch, time: number): Sample => ({ x: t.clientX, y: t.clientY, t: time });
+  $effect(() =>
+    guarded('the gesture effect', () => {
+      const el = frame;
+      if (!el) return;
+      let gesture: GestureKind | null = null;
+      let start: Sample = { x: 0, y: 0, t: 0 };
+      let samples: Sample[] = [];
+      /** A mouse drag that moved the page: the click it ends with is not a tap. */
+      let swallowClick = false;
+      const sampleOf = (t: Touch, time: number): Sample => ({
+        x: t.clientX,
+        y: t.clientY,
+        t: time,
+      });
 
-    /** A press: whether it starts a gesture of ours. */
-    function begin(target: EventTarget | null, at: Sample, pointers: number) {
-      if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || settling) {
-        gesture = null;
-        return;
+      /** A press: whether it starts a gesture of ours. */
+      function begin(target: EventTarget | null, at: Sample, pointers: number) {
+        if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || list.settling) {
+          gesture = null;
+          return;
+        }
+        gesture = pointers >= 2 ? 'pinch' : 'pending';
+        start = at;
+        samples = [start];
       }
-      gesture = pointers >= 2 ? 'pinch' : 'pending';
-      start = at;
-      samples = [start];
-    }
 
-    /**
-     * A move. `claim` takes it from the engine and says whether it could (a touch the engine is
-     * already scrolling cannot be claimed). False when the move is not ours.
-     */
-    function move(now: Sample, claim: () => boolean): boolean {
-      if (!gesture || gesture === 'pinch') return false;
-      samples.push(now);
-      if (samples.length > 12) samples.shift();
-      const dx = now.x - start.x;
-      const dy = now.y - start.y;
-      if (gesture === 'pending') {
-        // Classified ONCE, then kept until the finger lifts: a swipe that curves stays a swipe.
-        gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
-        if (gesture === 'pending') return false;
-        console.debug(`[reel-viewer] drag locked to ${gesture}`);
+      /**
+       * A move. `claim` takes it from the engine and says whether it could (a touch the engine is
+       * already scrolling cannot be claimed). False when the move is not ours.
+       */
+      function move(now: Sample, claim: () => boolean): boolean {
+        if (!gesture || gesture === 'pinch') return false;
+        samples.push(now);
+        if (samples.length > 12) samples.shift();
+        const dx = now.x - start.x;
+        const dy = now.y - start.y;
+        if (gesture === 'pending') {
+          // Classified ONCE, then kept until the finger lifts: a swipe that curves stays a swipe.
+          gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
+          if (gesture === 'pending') return false;
+          console.debug(`[reel-viewer] drag locked to ${gesture}`);
+        }
+        // A move the engine is already scrolling is not ours: the drag stands down and springs back.
+        if (!claim()) {
+          gesture = null;
+          list.mediaDragging = false;
+          list.mediaDragX = 0;
+          settle(0, 0);
+          return false;
+        }
+        const o = reelDragOffset(
+          gesture,
+          dx,
+          dy,
+          list.index > 0,
+          list.index < list.reels.length - 1,
+          mediaPositionOf(list.reels[list.index])
+        );
+        list.offsetX = o.x;
+        list.offsetY = o.y;
+        list.mediaDragging = true;
+        list.mediaDragX = o.mediaX;
+        return true;
       }
-      // A move the engine is already scrolling is not ours: the drag stands down and springs back.
-      if (!claim()) {
+
+      /** A release: what the drag meant. */
+      function end(at: Sample) {
+        const kind = gesture;
         gesture = null;
-        mediaDragging = false;
-        mediaDragX = 0;
+        if (!kind || kind === 'pending' || kind === 'pinch') return;
+        samples.push(at);
+        go(
+          reelReleaseVerdict({
+            kind,
+            dx: at.x - start.x,
+            dy: at.y - start.y,
+            velocity: releaseVelocity(samples),
+            width: el!.clientWidth,
+            height: el!.clientHeight,
+            hasPrevious: list.index > 0,
+            hasNext: list.index < list.reels.length - 1,
+            media: mediaPositionOf(list.reels[list.index]),
+          })
+        );
+      }
+
+      // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
+      function cancel() {
+        if (!gesture) return;
+        gesture = null;
+        list.mediaDragging = false;
+        list.mediaDragX = 0;
         settle(0, 0);
-        return false;
       }
-      const o = reelDragOffset(
-        gesture,
-        dx,
-        dy,
-        index > 0,
-        index < reels.length - 1,
-        mediaPositionOf(reels[index])
-      );
-      offsetX = o.x;
-      offsetY = o.y;
-      mediaDragging = true;
-      mediaDragX = o.mediaX;
-      return true;
-    }
 
-    /** A release: what the drag meant. */
-    function end(at: Sample) {
-      const kind = gesture;
-      gesture = null;
-      if (!kind || kind === 'pending' || kind === 'pinch') return;
-      samples.push(at);
-      go(
-        reelReleaseVerdict({
-          kind,
-          dx: at.x - start.x,
-          dy: at.y - start.y,
-          velocity: releaseVelocity(samples),
-          width: el!.clientWidth,
-          height: el!.clientHeight,
-          hasPrevious: index > 0,
-          hasNext: index < reels.length - 1,
-          media: mediaPositionOf(reels[index]),
-        })
-      );
-    }
+      function onStart(e: TouchEvent) {
+        begin(e.target, sampleOf(e.touches[0], e.timeStamp), e.touches.length);
+      }
 
-    // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
-    function cancel() {
-      if (!gesture) return;
-      gesture = null;
-      mediaDragging = false;
-      mediaDragX = 0;
-      settle(0, 0);
-    }
+      function onMove(e: TouchEvent) {
+        if (e.touches.length !== 1) return;
+        move(sampleOf(e.touches[0], e.timeStamp), () => claimTouchMove(e));
+      }
 
-    function onStart(e: TouchEvent) {
-      begin(e.target, sampleOf(e.touches[0], e.timeStamp), e.touches.length);
-    }
+      function onEnd(e: TouchEvent) {
+        if (!gesture || e.touches.length > 0) return;
+        end(sampleOf(e.changedTouches[0], e.timeStamp));
+      }
 
-    function onMove(e: TouchEvent) {
-      if (e.touches.length !== 1) return;
-      move(sampleOf(e.touches[0], e.timeStamp), () => claimTouchMove(e));
-    }
+      const pointSample = (e: PointerEvent): Sample => ({
+        x: e.clientX,
+        y: e.clientY,
+        t: e.timeStamp,
+      });
 
-    function onEnd(e: TouchEvent) {
-      if (!gesture || e.touches.length > 0) return;
-      end(sampleOf(e.changedTouches[0], e.timeStamp));
-    }
-
-    const pointSample = (e: PointerEvent): Sample => ({
-      x: e.clientX,
-      y: e.clientY,
-      t: e.timeStamp,
-    });
-
-    function onPointerDown(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || e.button !== 0) return;
-      swallowClick = false;
-      begin(e.target, pointSample(e), 1);
-    }
-
-    function onPointerMove(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || !gesture) return;
-      if (e.buttons === 0) {
-        // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
-        console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+      function onPointerDown(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
         swallowClick = false;
-        cancel();
-        return;
+        begin(e.target, pointSample(e), 1);
       }
-      if (
-        move(pointSample(e), () => {
-          // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
-          e.preventDefault();
-          return true;
-        })
-      ) {
-        swallowClick = true;
+
+      function onPointerMove(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || !gesture) return;
+        if (e.buttons === 0) {
+          // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
+          console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+          swallowClick = false;
+          cancel();
+          return;
+        }
+        if (
+          move(pointSample(e), () => {
+            // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
+            e.preventDefault();
+            return true;
+          })
+        ) {
+          swallowClick = true;
+        }
       }
-    }
 
-    function onPointerUp(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || !gesture) return;
-      end(pointSample(e));
-      // The click this pointerup makes is dispatched in the same task; a drag that ends outside
-      // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
-      if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
-    }
+      function onPointerUp(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || !gesture) return;
+        end(pointSample(e));
+        // The click this pointerup makes is dispatched in the same task; a drag that ends outside
+        // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
+        if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
+      }
 
-    /**
-     * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
-     * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
-     * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
-     * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
-     * alone), the slide's double tap and the player see it; only a click inside the viewer.
-     */
-    function onClickCapture(e: MouseEvent) {
-      if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
-      swallowClick = false;
-      console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
-      e.preventDefault();
-      e.stopPropagation();
-    }
+      /**
+       * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
+       * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
+       * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
+       * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
+       * alone), the slide's double tap and the player see it; only a click inside the viewer.
+       */
+      function onClickCapture(e: MouseEvent) {
+        if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
+        swallowClick = false;
+        console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
+        e.preventDefault();
+        e.stopPropagation();
+      }
 
-    el.addEventListener('touchstart', onStart, { passive: false });
-    el.addEventListener('touchmove', onMove, { passive: false });
-    el.addEventListener('touchend', onEnd, { passive: false });
-    el.addEventListener('touchcancel', cancel);
-    el.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', cancel);
-    window.addEventListener('click', onClickCapture, { capture: true });
-    // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
-    const noNativeDrag = (e: DragEvent) => e.preventDefault();
-    el.addEventListener('dragstart', noNativeDrag);
-    return () => {
-      el.removeEventListener('dragstart', noNativeDrag);
-      el.removeEventListener('touchstart', onStart);
-      el.removeEventListener('touchmove', onMove);
-      el.removeEventListener('touchend', onEnd);
-      el.removeEventListener('touchcancel', cancel);
-      el.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('click', onClickCapture, { capture: true });
-    };
-  });
+      el.addEventListener('touchstart', onStart, { passive: false });
+      el.addEventListener('touchmove', onMove, { passive: false });
+      el.addEventListener('touchend', onEnd, { passive: false });
+      el.addEventListener('touchcancel', cancel);
+      el.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', cancel);
+      window.addEventListener('click', onClickCapture, { capture: true });
+      // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
+      const noNativeDrag = (e: DragEvent) => e.preventDefault();
+      el.addEventListener('dragstart', noNativeDrag);
+      return () => {
+        el.removeEventListener('dragstart', noNativeDrag);
+        el.removeEventListener('touchstart', onStart);
+        el.removeEventListener('touchmove', onMove);
+        el.removeEventListener('touchend', onEnd);
+        el.removeEventListener('touchcancel', cancel);
+        el.removeEventListener('pointerdown', onPointerDown);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', cancel);
+        window.removeEventListener('click', onClickCapture, { capture: true });
+      };
+    })
+  );
 
   /** How far one arrow key scrolls an unfolded caption: about two lines of its text. */
   const CAPTION_LINE_STEP = 40;
@@ -733,12 +861,12 @@
   }
 
   /** The page on screen is a carousel: the left and right keys step its media. */
-  const carouselOnScreen = $derived(mediaPositionOf(reels[index]).count > 1);
+  const carouselOnScreen = $derived(mediaPositionOf(list.reels[list.index]).count > 1);
 
   /** The keyboard: up/down page, left/right a carousel's media, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || settling || commentsFor || shareFor) return;
+    if (e.defaultPrevented || list.settling || list.commentsFor || list.shareFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -755,145 +883,190 @@
       overlay.dismissFromUi();
     }
   }
+
+  /**
+   * A THROW INSIDE THE VIEWER (its boundary: a slide, a sheet, the rail; or `guarded`: one of its
+   * own effects, which a boundary in its template cannot see): a defect of this viewer, said as one
+   * with where it came from, then the viewer closes ONCE - the feed behind it stays as it was. It
+   * reads nothing of the list, which may be what threw.
+   */
+  let crashed = false;
+  function closeOnCrash(error: unknown, where = 'its content') {
+    console.error(
+      `[reel-viewer] the viewer failed in ${where} - closed, the page behind it kept:`,
+      error
+    );
+    if (crashed) return;
+    crashed = true;
+    showToast(m.reels_viewer_crashed(), 'error');
+    overlay.dismissFromUi();
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<div use:portal>
-  <div
-    bind:this={viewerEl}
-    use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
-      ? 'motion-expand-in'
-      : ''}"
-    style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
-    role="dialog"
-    aria-modal="true"
-    aria-label={m.reels_viewer_label()}
-    data-reel-viewer
-  >
-    <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
+<!-- AN ERROR INSIDE THE VIEWER CLOSES THE VIEWER, NOT THE PAGE BEHIND IT (production, 1.6.10: a slide's
+     throw reached the route's boundary and took the whole feed down). A visible feature inside a page
+     takes its own boundary (architecture.md, "boundaries are placed by blast radius"): the line
+     accuses, the reader is told, and the viewer closes through its history entry - nothing is drawn
+     in its place, the feed under it never left. -->
+<svelte:boundary onerror={(error) => closeOnCrash(error)}>
+  <div use:portal>
+    <div
+      bind:this={viewerEl}
+      use:coversScreen
+      class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
+        ? 'motion-expand-in'
+        : ''}"
+      style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
+      role="dialog"
+      aria-modal="true"
+      aria-label={m.reels_viewer_label()}
+      data-reel-viewer
+    >
+      <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
          design-reference "Motion"; the global reduced-motion rule makes it instant). The corner radius is
          set at once, not animated, and is drawn at the card's scale, so it reads about 12 px. -->
-    <div
-      bind:this={frame}
-      class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-3xl' : ''}"
-      style:transform-origin="50% 0"
-      style:transform={commentsCard
-        ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
-        : 'none'}
-      style:transition="transform var(--motion-slow) var(--motion-ease-out)"
-      data-reel-card={commentsCard}
-    >
       <div
-        class="absolute inset-0"
-        style:transform="translate3d({offsetX}px, calc({-index * 100}% + {offsetY}px), 0)"
-        style:transition={settling
-          ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
+        bind:this={frame}
+        class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-3xl' : ''}"
+        style:transform-origin="50% 0"
+        style:transform={commentsCard
+          ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
           : 'none'}
-        ontransitionend={onTransitionEnd}
-        ontransitioncancel={onTransitionEnd}
-        data-reel-track
+        style:transition="transform var(--motion-slow) var(--motion-ease-out)"
+        data-reel-card={commentsCard}
       >
-        {#each mounted as i (reels[i].id)}
-          <div class="absolute inset-x-0 h-full" style:top="{i * 100}%">
-            <ReelSlide
-              post={reels[i]}
-              {authToken}
-              active={i === index}
-              preload={i === index + 1 && currentSettled}
-              onReady={() => markSettled(i)}
-              onMediaGone={onMediaGone ? () => onMediaGone(reels[i].id) : undefined}
-              onLike={likerId ? () => likeReel(reels[i]) : undefined}
-              rail={railFor(reels[i])}
-              mediaIndex={mediaPositionOf(reels[i]).index}
-              mediaDragX={i === index ? mediaDragX : 0}
-              mediaDragging={i === index && mediaDragging}
-              onMediaStep={(step) => !settling && i === index && go(step)}
-            />
-          </div>
-        {/each}
+        <div
+          class="absolute inset-0"
+          style:transform="translate3d({list.offsetX}px, calc({-list.index * 100}% + {list.offsetY}px),
+          0)"
+          style:transition={list.settling
+            ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
+            : 'none'}
+          ontransitionend={onTransitionEnd}
+          ontransitioncancel={onTransitionEnd}
+          data-reel-track
+        >
+          <!-- Each slide is keyed by and HANDED its slot's post, never `reels[i]` read again: a slide
+             torn down after a change of order still reads the post it was drawn for. -->
+          {#each slots as slot (slot.post.id)}
+            <div class="absolute inset-x-0 h-full" style:top="{slot.i * 100}%">
+              <ReelSlide
+                post={slot.post}
+                {authToken}
+                active={slot.i === list.index}
+                preload={slot.i === list.index + 1 && currentSettled}
+                onReady={() => markSettled(slot.post)}
+                onMediaGone={onMediaGone ? () => onMediaGone(slot.post.id) : undefined}
+                onLike={likerId ? () => likeReel(slot.post) : undefined}
+                rail={railFor(slot.post)}
+                mediaIndex={mediaPositionOf(slot.post).index}
+                mediaDragX={slot.i === list.index ? list.mediaDragX : 0}
+                mediaDragging={slot.i === list.index && list.mediaDragging}
+                onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
+              />
+            </div>
+          {/each}
+        </div>
       </div>
-    </div>
 
-    <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
+      <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
          close button and the phone's status bar, so white icons read on a bright reel too; the
          native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
-    <div
-      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
-      data-reel-top-scrim
-    >
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
-        aria-label={m.reels_viewer_close()}
-        title={m.reels_viewer_close()}
-        onclick={() => overlay.dismissFromUi()}
+      <div
+        class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        data-reel-top-scrim
       >
-        <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
-      </button>
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
+          aria-label={m.reels_viewer_close()}
+          title={m.reels_viewer_close()}
+          onclick={() => overlay.dismissFromUi()}
+        >
+          <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
+        </button>
+        {#if orderChoice}
+          <!-- "Pour toi" / "Récents" (owner, 2026-11-10; restyled 2026-11-11 as TikTok and Instagram
+             draw it): bare white tabs on the video, the selected one brighter and underlined, a
+             text shadow keeping both readable on a bright reel. The empty box after it balances the X. -->
+          <div class="pointer-events-auto {orderChoice.busy ? 'opacity-70' : ''}" data-reel-order>
+            <SegmentedControl
+              items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
+              value={orderChoice.value}
+              onSelect={(key) => orderChoice.onChange(key)}
+              label={m.reels_order_label()}
+              variant="overlay"
+              activation="manual"
+              class="w-56"
+            />
+          </div>
+          <span class="w-11 shrink-0" aria-hidden="true"></span>
+        {/if}
+      </div>
+
+      <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->
+      <div
+        class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 any-pointer-fine:flex"
+      >
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
+          aria-label={m.reels_viewer_prev()}
+          title={m.reels_viewer_prev()}
+          disabled={list.index === 0}
+          onclick={() => !list.settling && go('prev')}
+        >
+          <ChevronUp size={22} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
+          aria-label={m.reels_viewer_next()}
+          title={m.reels_viewer_next()}
+          disabled={list.index >= list.reels.length - 1}
+          onclick={() => !list.settling && go('next')}
+        >
+          <ChevronDown size={22} strokeWidth={2.5} />
+        </button>
+      </div>
+
+      {#if commentsPost && likerId}
+        <ReelCommentsSheet
+          post={commentsPost}
+          currentUserId={likerId}
+          {authToken}
+          onChange={setPost}
+          onClosing={() => (list.commentsLeaving = true)}
+          onClose={() => {
+            list.commentsFor = null;
+            list.commentsLeaving = false;
+          }}
+        />
+      {/if}
+
+      {#if ShareSheet && list.shareFor}
+        {@const sharedReel = list.reels.find((r) => r.id === list.shareFor)}
+        <ShareSheet
+          open
+          postId={list.shareFor}
+          onClose={() => (list.shareFor = null)}
+          canRepost={sharedReel?.canRepost === true}
+          repostedByMe={sharedReel?.repostedByMe === true}
+          onRepostChange={(id, reposted) => {
+            // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
+            const reel = list.reels.find((r) => r.id === id);
+            if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
+          }}
+          onSentInApp={() => {
+            // The link waits in a conversation's composer, under this viewer: step aside for it.
+            console.debug('[reel-viewer] closed: the reel was sent into a conversation');
+            overlay.dismissFromUi();
+          }}
+        />
+      {/if}
     </div>
-
-    <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->
-    <div
-      class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 md:flex"
-    >
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
-        aria-label={m.reels_viewer_prev()}
-        title={m.reels_viewer_prev()}
-        disabled={index === 0}
-        onclick={() => !settling && go('prev')}
-      >
-        <ChevronUp size={22} strokeWidth={2.5} />
-      </button>
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
-        aria-label={m.reels_viewer_next()}
-        title={m.reels_viewer_next()}
-        disabled={index >= reels.length - 1}
-        onclick={() => !settling && go('next')}
-      >
-        <ChevronDown size={22} strokeWidth={2.5} />
-      </button>
-    </div>
-
-    {#if commentsPost && likerId}
-      <ReelCommentsSheet
-        post={commentsPost}
-        currentUserId={likerId}
-        {authToken}
-        onChange={setPost}
-        onClosing={() => (commentsLeaving = true)}
-        onClose={() => {
-          commentsFor = null;
-          commentsLeaving = false;
-        }}
-      />
-    {/if}
-
-    {#if ShareSheet && shareFor}
-      {@const sharedReel = reels.find((r) => r.id === shareFor)}
-      <ShareSheet
-        open
-        postId={shareFor}
-        onClose={() => (shareFor = null)}
-        canRepost={sharedReel?.canRepost === true}
-        repostedByMe={sharedReel?.repostedByMe === true}
-        onRepostChange={(id, reposted) => {
-          // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
-          const reel = reels.find((r) => r.id === id);
-          if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
-        }}
-        onSentInApp={() => {
-          // The link waits in a conversation's composer, under this viewer: step aside for it.
-          console.debug('[reel-viewer] closed: the reel was sent into a conversation');
-          overlay.dismissFromUi();
-        }}
-      />
-    {/if}
   </div>
-</div>
+</svelte:boundary>

@@ -14,7 +14,12 @@ const digest: HistoryDigest = { mode: 'ids', ids: ['m1'] };
 const other: HistoryDigest = { mode: 'ids', ids: ['m2'] };
 
 /** What a resolved wait looks like: the peer's digest and the window it asked over, together. */
-const solicited = (d: HistoryDigest, since = 0) => ({ kind: 'digest' as const, digest: d, since });
+const solicited = (d: HistoryDigest, since = 0) => ({
+  kind: 'digest' as const,
+  digest: d,
+  since,
+  requestId: 'ask-00000001',
+});
 
 /** Records a digest probe, which is the shape every case below used before probes had kinds. */
 function noteDigestReceived(
@@ -24,7 +29,7 @@ function noteDigestReceived(
   since = 0,
   now?: number
 ): void {
-  noteProbeReceived(groupId, from, { kind: 'digest', digest: d, since }, now);
+  noteProbeReceived(groupId, from, solicited(d, since), now);
 }
 
 beforeEach(() => {
@@ -219,7 +224,13 @@ describe('historyDigestRendezvous', () => {
     // asking the peer for a digest, which lands here as a second probe on the same exchange.
 
     const stateProbe = { kind: 'state' as const, key: 'abcdef0123456789', since: 1000 };
-    const rangeProbe = { kind: 'range' as const, before: 9000, limit: 50, since: 1000 };
+    const rangeProbe = {
+      kind: 'range' as const,
+      before: 9000,
+      limit: 50,
+      since: 1000,
+      requestId: 'ask-00000001',
+    };
 
     it('carries a state key through, waiting or not', async () => {
       noteProbeReceived(GROUP, PEER, stateProbe);

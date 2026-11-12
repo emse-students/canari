@@ -194,6 +194,55 @@ rate after the release.
 | C7 | `users/batch` and `avatar-presence` fired in pairs for the same ids (271 and 568 in the owner's log) | two questions about one face, two endpoints | `users/batch` answers `hasPhoto` in each profile; `avatar-presence` remains for the faces with no profile read | 1 request per face batch |
 | C8 | Feed form cards: `GET /api/forms/:id` + `/check` per card (~127 each in the owner's log) | one card, two reads, per form (`forms/api.ts:526`) | the post's feed row carries the form summary and the reader's answer state | 2 requests per card |
 
+### 3.8 BUILT (2026-11-11) - C1, C2, C3 and the restore stop; C4, C7, C8 and `revoked-leaves` re-read
+
+Counted on a fake network (vitest, no clock), the unit being the serial level a read leaves at.
+
+| Chain | Before | After | Test |
+| --- | --- | --- | --- |
+| C1 bookings: `managed` read by the tab | level 2 (after `mine` + `spaces`) | level 1, beside them: **-1 RTT** | `routes/bookings/page.reads.svelte.test.ts` |
+| C2 Pour toi: `users/me/blocks` | level 2 (when the first chip mounts, after the posts) | level 1, issued by the route `load` beside `listPosts`: **-1 RTT**; the cached read is shared with every later chip | `routes/posts/page.load.test.ts` |
+| C3 association: `bells/association/:id` | level 3 (the bell mounts when the page leaves its spinner) | level 2, beside members, products, partnerships and the follow status: **-1 RTT** | `AccountBell.svelte.test.ts` |
+| Restore, link drops mid-pass | N dead history reads + N warns after the drop | the first conversation that finds `connectivity.isOffline` stops the pass, owes it and the rest to the reconnect, ONE `[CATCHUP]` line | `restoreUnreachable.test.ts` |
+
+How: the page starts the read and hands the PROMISE to the component that draws it (`managed` on
+`EditBookingsTab`, `takeInitial` on `AccountBell`, a taker the page empties once used), which awaits it instead of asking again; a refusal
+surfaces where the component already handled it, and the page attaches a no-op `catch` so it is never
+an unhandled rejection before the component mounts. Nothing is a timer.
+
+**Not built, and why (read again 2026-11-11).**
+
+- **C2's second half** (`follow-statuses` carried by `GET /api/posts?feed=foryou`) and **C3's sub-reads
+  keyed by the slug** need a social-service change: the author ids exist only in the answer, and the
+  slug routes do not exist. Designed, owed.
+- **C4** is smaller than written: `reconcilePublishedKeyPackages` (the `prekeys/list` read) is already
+  `void` in the background, beside the group sweep, so the serial chain is `prekeys/count` ->
+  `register-device` (the count decides whether to mint, the register carries the package). Cutting
+  that pair needs `register-device` to answer the published count, a chat-delivery change to MLS
+  key-package code; `isDeviceRevoked` is a third, independent question already at level 2.
+- **C7, C8** need the server to carry `hasPhoto` in `users/batch` and the form summary in the feed
+  row.
+- **`revoked-leaves` as `GET`:** equivalence checked against `getRevokedLeaves` - the answer is the
+  banned devices of the group's bound users (device rows, seats, `revoked_device_groups`), which the
+  client intersects with its tree by `lower(user):device`. It needs the route, a client falling back
+  to the `POST` for an older server (a shim with a removal date in
+  [legacy-compatibility](../legacy-compatibility.md)) and a spec: a server change of its own.
+
+### 3.9 The request gate, investigated (owner's question, 2026-11-11)
+
+*Can a slow media request hold a slot that a screen's small API read waits behind?* **No, in the app.**
+`mediaRequestGate` (3 slots) is entered by media bytes only (`mediaBlobCache`, `segmentedMediaReader`);
+every API read goes `apiFetch` -> `trackedFetch` -> `fetch` and touches no gate, so an API read has no
+queue to wait in. A slot is held from the request's start to its RESPONSE HEAD (the gated task returns
+the live `Response`; the body is read after the slot is freed), so a slow body holds none; a media
+request whose head never arrives (media has no head deadline) holds one of three slots and delays other
+MEDIA only. What remains is the wire: three media transfers share the link's bandwidth with the API
+reads, which no app queue decides and the cap of three bounds. So no API lane was added and no deadline
+shortened; `requestGate.apiLane.test.ts` pins the property (a real `trackedFetch` read leaves at once while the real gate is saturated; a
+saturated gate queues only its own kind; the slot is freed at the head). Not measured on a phone: the
+bandwidth share on a real 3G link is owed (a feed with sixty thumbnails, an API read timed beside it).
+Also fixed in `requestGate.ts`: a needless spread (`unicorn/no-useless-spread`) the lint printed.
+
 ## 4. The lead's field evidence (owner's Android `1.6.9` log, production nginx), read against the code
 
 1. **Fan-out at boot** (`avatar-presence` 568, `users/batch` 271, per-community triplet ~210 each,
@@ -230,6 +279,64 @@ rate after the release.
    session. `POST graine/live-sessions` is buffered for the same reason (it lists the sessions the
    device holds).
 4. **FCM registration 429 x3 in 5 s** - fixed server-side, 3.6.
+5. **The per-community triplet and the duplicate reads (slow-link chantier, gaps 4 and 5,
+   2026-11-11).** Counted on a fake network (vitest, no clock: `ChannelService.bootReads.test.ts`,
+   `followState.requests.svelte.test.ts`), the unit being the request.
+
+   | Read | Before | After |
+   | --- | ---: | ---: |
+   | Per-community triplet, 9 communities (salon listing, key-group reference, roster) | **27** | **19** (1 batch of listings + 9 references + 9 rosters) |
+   | `follow-statuses`, 8 cards mounting in 8 separate turns | **8** | **2** |
+   | `users/batch` | no identical request to remove (below) | unchanged |
+   | `devices/<self>` x3 | three different URLs (below) | unchanged |
+
+   **The triplet** is, per community, `GET workspace/:id/user/me` (the salons),
+   `GET workspaces/:id/distribution-group` (the key-group reference) and `GET workspaces/:id/members`
+   (the roster the key-group pass compares with the tree). **Only the first is batched**: new
+   `GET /api/channels/workspaces/boot-reads?ids=` (social-service, at most 50 ids, 10 read at a time,
+   database reads only) answers the salon listing of every community in one request, **through the
+   very method the single route calls**, each item carrying its own `{ status, code, message }`
+   refusal so a community just left never fails the others (an unclassified failure is a generic
+   500 item, its detail logged server-side); the client rethrows it as the `ChannelApiError` the
+   single route gives. The first version also batched the key-group reference and was refused in
+   review: that answer carries a roster of the user's devices (`memberDevices`) that
+   `joinDistributionGroup` uses to decide `serverForgotThisDevice` - forget the local tree and
+   external-join - and a batch read before `whenMlsReady()` and the startup drain can forget a tree
+   against a roster that predates an owed Welcome (the GRP-4 duplicate-leaf pattern), and feeds
+   `verifyDistributionEpoch` / `republishStaleBase` an older epoch. It is read where it always was,
+   after MLS is ready. **The roster is not batched either:** `reconcileOnce` reads the device's own
+   tree first and the roster second, so a member who joined in between is never read as absent and
+   stripped of a leaf. So the honest saving is 27 -> 19 requests, and the salon rows no longer wait
+   for anything but the database (rule F3). **The hold belongs to the load:** the batch returns a
+   `CommunityBootReads` handle (`startCommunityBootReads`: the request starts and the handle returns
+   at once, its `listChannels` awaits the pending batch, so the key-group joins and the other chains
+   start no later than before) that the walk passes down (`loadCommunitySalons` reads its listings
+   through it), each listing handed out once, `release()` dropping only that handle's ids when every
+   chain has settled. It is a value, not a state of the shared `ChannelService`, so no other caller
+   (in-session gestures, leader-tab executors, creation, `refreshChannelOrder`) can take a boot-time
+   answer, and a second load's hold cannot be wiped by the first one's release. Old routes stay,
+   for old clients; a failed batch (an older server, the link) holds nothing and says
+   `[BOOT_READS] warn` in the load's own log, and each community then reads its route. The client's
+   bound of 50 is asserted equal to the server's by a test. The revoked-leaves read stays per key
+   group (chat-delivery, keyed by the tree), section 4.3.
+
+   **`follow-statuses`** was already one request per id per epoch, flushed by a microtask; the eight
+   calls are eight DIFFERENT id sets, one per turn in which cards mounted. A microtask cannot join
+   turns and a timer is refused, so the flush is now **one round in flight**: ids queued while a call
+   is out leave together the moment its answer lands (the 100-id chunks of a round go together, the
+   next round waits for all of them). A chip waits at most one extra round trip. What bounds a round
+   is a fact, not a timer: every call rejects at `apiFetch`'s response-head deadline, and the gate is
+   emptied by a reader or block change, by a reconnect and by a navigation (one `Log.i` line when it
+   releases a round still out; an abandoned call keeps only its own token); a response BODY stalling
+   after its head arrived is the transport's to bound, and costs the chips hidden - the safe side -
+   only until the next of those events.
+   **`users/batch`** already joins an identical id in flight (`profileCache`), so the 271 are
+   different id sets across turns, as above; it is NOT given the same wait, because a name on a
+   conversation tile is content and not a hint - left open (the answer is a store that owns the
+   peers' names locally, [local-first-ui](local-first-ui.md)). **`devices/<self>` x3** are three
+   different questions about one device (`/revoked`, `/prekeys/count`, `/prekeys/list`) at three
+   different moments around `register-device`, not identical requests: there is nothing to
+   coalesce, and merging them is C4 (MLS key-package path), still designed.
 
 ## 5. Ranked fixes
 
@@ -243,8 +350,8 @@ rate after the release.
 | 6 | C5: one bulk read for the per-community key-group triplet | designed | 2 RTT and ~3 requests per community per boot |
 | 7 | R11 (first pass): an encrypted thumbnail variant for post and chat images | designed (WP-W7) | MBs per feed screen on a thin link |
 | 8 | C4: the key-package path reads its own device list once | designed | 2 RTT per boot |
-| 9 | C1, C2, C3 (bookings, Pour toi, association page) | designed; C1/C2 sit in components other work is changing | 1-2 RTT each |
-| 10 | History restore stops on the first transport failure mid-loop (section 4.2) | designed | N warn lines and N dead requests per drop |
+| 9 | C1, C2, C3 (bookings, Pour toi, association page) | **built** (1 RTT each, 3.8); C2's follow statuses and C3's slug routes owed to the server | 1 RTT each |
+| 10 | History restore stops on the first transport failure mid-loop (section 4.2) | **built** (3.8) | N warn lines and N dead requests per drop |
 | 11 | `revoked-leaves` as a short server answer (section 4.3) | designed | a tree-sized body per key group per session |
 | 12 | C7, C8 (profile + photo in one read; form summary in the feed row) | designed | 1-2 requests per face batch / per form card |
 

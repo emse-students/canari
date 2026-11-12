@@ -318,6 +318,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
+	@bun .github/scripts/tests/image-user.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
 	@bash .github/scripts/tests/upstream-reachability-report.test.sh
@@ -327,6 +328,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
 	@bun test ./tools/play-vitals/
+	@cd libs/handoff && bun install --frozen-lockfile --silent && bun test
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh

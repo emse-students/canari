@@ -27,11 +27,19 @@ import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/di
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import { isUnreadForUser, readPointFor } from './readState';
+import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
+
+/** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
+class LinkDroppedMidPassError extends Error {
+  constructor() {
+    super('the link was seen to drop while the pass was running');
+    this.name = 'LinkDroppedMidPassError';
+  }
+}
 
 const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
 
@@ -99,6 +107,9 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    // A number when this session knows it; absent otherwise, which the store reads as "keep what
+    // the row holds", never as 0: the store migration wrote it, and only it.
+    ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
     imageMediaId: convo.imageMediaId ?? null,
     awaitingAdmission: convo.awaitingAdmission === true,
   };
@@ -460,6 +471,8 @@ export interface ConversationRowSpec {
   serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
+  /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
+  localReadSeed?: Conversation['localReadSeed'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
   awaitingAdmission?: Conversation['awaitingAdmission'];
 }
@@ -502,6 +515,10 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
+  // A number, or nothing: the seed is written by the STORE MIGRATION (SQLite v20, IndexedDB 14), and a save that
+  // states nothing keeps it (`saveConversation`).
+  const localReadSeed =
+    typeof spec.localReadSeed === 'number' ? spec.localReadSeed : existing?.localReadSeed;
   const directPeerId = identity.directPeerId ?? existing?.directPeerId;
 
   return {
@@ -520,6 +537,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
 }
@@ -638,6 +656,44 @@ export function resolveConversationListPresentation(
 // ---------- De-duplication ----------
 
 /**
+ * Moves every stored message of conversation `fromId` it can open onto `toId`.
+ *
+ * THE ONE MOVE OF A DUPLICATE 1:1's ROWS, used by the boot-time merge
+ * ({@link mergeDirectConversationDuplicates}) and by a Welcome that re-keys a held DM onto the group
+ * just joined (`upsertConversation`). The Welcome used to move only the messages ON SCREEN: a
+ * conversation restored as a stub (phase 1 of {@link loadExistingConversations}, its page not yet
+ * read) carried none, so nothing moved and its rows stayed stored under the group the peer had
+ * already merged away - every scoped read of the joined group then met them as rows of another
+ * conversation, until the next boot's merge (2026-11-12, dev web).
+ *
+ * A MOVE, AND THE ONE WHOLE-ROW WRITE IT MAKES. A message id is the store's primary key, so a row of
+ * `fromId` cannot also stand under `toId`: `toId`'s rows are never read nor rewritten. A move changes
+ * a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design, so each
+ * moved row is the STORED row just read - every field, proofs and reactions included - under its new
+ * conversation. A row this device cannot open is not moved and is counted in `left`.
+ *
+ * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
+ * `fromId`'s messages handled by its group is written over by the body read here; and what is keyed
+ * by the conversation rather than by the message - its read watermarks, the mutations still waiting
+ * for a row (`pendingMutations`) - stays with `fromId`. Both callers run it while `fromId` is out of
+ * the reactive map, so no shown path writes to it.
+ *
+ * @returns the ids of the rows moved, and how many rows stayed under `fromId` because they did not open
+ */
+export async function moveDirectConversationRows(
+  fromId: string,
+  toId: string,
+  storage: IStorage,
+  deviceKeyB64: string
+): Promise<{ moved: string[]; left: number }> {
+  const source = await storage.getMessages(fromId, deviceKeyB64);
+  const moved = source.map((m) => ({ ...m, conversationId: toId }));
+  if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
+  const left = await storage.countMessages(fromId);
+  return { moved: moved.map((m) => m.id), left };
+}
+
+/**
  * Detects duplicate direct conversations for the same peer (can happen when
  * two devices each start the conversation independently) and merges them into
  * a single canonical entry.
@@ -718,26 +774,21 @@ export async function mergeDirectConversationDuplicates(
   for (const { canonical, duplicate } of duplicatesToMerge) {
     if (canonical.id === duplicate.id) continue;
     try {
-      const canonicalMessages = await storage.getMessages(canonical.id, deviceKeyB64);
-      const duplicateMessages = await storage.getMessages(duplicate.id, deviceKeyB64);
-      const inCanonical = new Set(canonicalMessages.map((m) => m.id));
-      // A MOVE, AND THE ONE WHOLE-ROW WRITE THIS MERGE MAKES. Only the duplicate's own rows are
-      // written - the canonical's stand as they are, never rewritten from this read. A move changes
-      // a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design,
-      // so each moved row is the STORED row just read - every field, proofs and reactions included -
-      // under its new conversation.
-      //
-      // THE WINDOW IT LEAVES, STATED AS IT IS: from the read above to `deleteConversation` below, a
-      // deletion (or edit) of one of the duplicate's messages handled by its group is NOT carried.
-      // Landing before the move, its tombstone is written over by the body read here; landing after
-      // it, the handler finds no row in the duplicate, keeps the mutation under the duplicate, and
-      // `deleteConversation` removes that entry - either way the body stands under the canonical
-      // conversation. Closing it needs the move as one store operation that the handlers serialise
-      // against; this boot-time merge runs once per duplicate, before its conversation is shown.
-      const moved = duplicateMessages
-        .filter((m) => !inCanonical.has(m.id))
-        .map((m) => ({ ...m, conversationId: canonical.id }));
-      if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
+      // The move and its window: {@link moveDirectConversationRows}. Landing after the move, a
+      // mutation handled by the duplicate's group finds no row there, keeps it under the duplicate,
+      // and `deleteConversation` below removes that entry; this boot-time merge runs once per
+      // duplicate, before its conversation is shown.
+      const { moved, left } = await moveDirectConversationRows(
+        duplicate.id,
+        canonical.id,
+        storage,
+        deviceKeyB64
+      );
+      if (left > 0) {
+        log(
+          `[DM_MERGE] ${left} row(s) of ${duplicate.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
+        );
+      }
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
@@ -749,7 +800,9 @@ export async function mergeDirectConversationDuplicates(
           logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
         }
       }
-      log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);
+      log(
+        `Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id} (${moved.length} row(s) moved)`
+      );
     } catch (error) {
       log(`Direct-conversation merge error: ${String(error)}`);
     }
@@ -874,8 +927,50 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,
   });
+}
+
+/**
+ * THE UNREAD COUNT A LOAD ASSIGNS to a DM or group row: derived from the saved read point over the
+ * messages the row holds ({@link derivedUnreadCount}), never from what arrived in this session.
+ *
+ * `unreadCount` is not persisted; the read marks are. Counting "not held before this replay" lost a
+ * message stored by an earlier session (a push stored at a resume, then the process died): the next
+ * cold start found it held, counted 0, and the badge was gone with nothing read (owner, Android
+ * 1.6.9, 2026-11-11). The marks are what says "read", so they are all the count is taken from.
+ *
+ * Over the rows HELD - the stored page (`INITIAL_MESSAGES_PAGE`) merged with what arrived live -
+ * so a conversation with more unread messages than one page counts one page's worth: a lower bound,
+ * over the rows the open thread first draws. See chat.md, "A DM's unread count is derived from
+ * its read point at every load (2026-11-11)".
+ *
+ * A ROW THAT IS NOT `active` DERIVES 0: a removed or pending conversation can take no read mark
+ * (the receipt effect refuses it), so nothing could ever clear a badge given to it.
+ */
+function bootUnreadCount(
+  id: string,
+  convo: Pick<
+    Conversation,
+    'messages' | 'readWatermarks' | 'serverReadWatermarks' | 'localReadSeed' | 'lifecycle'
+  >,
+  userId: string
+): { count: number; source: ReturnType<typeof countingReadPoint>['source'] } {
+  if (convo.lifecycle !== 'active') {
+    console.debug(`[RESTORE] ${id.slice(0, 8)} is ${convo.lifecycle} - unread 0, it takes no mark`);
+    return { count: 0, source: 'none' };
+  }
+  const userNorm = userId.toLowerCase();
+  const point = countingReadPoint(convo, userNorm);
+  const count = derivedUnreadCount(convo, userNorm);
+  // Per row at DEBUG only: the boot says ONE census line (`loadExistingConversations`).
+  if (count > 0) {
+    console.debug(
+      `[RESTORE] ${id.slice(0, 8)} unread ${count} of ${convo.messages.length} held, read point: ${point.source}`
+    );
+  }
+  return { count, source: point.source };
 }
 
 /**
@@ -1098,21 +1193,67 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           else console.error('[CATCHUP] batch history threw - each group reads its own page:', e);
         }
       }
-      if (unreachable !== null && replayMetas.length > 0) {
-        // ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation.
+      /**
+       * ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation - and the
+       * archives handed to the reconnect. Said once: before the loop when the first questions got no
+       * answer, or at the conversation where the link was seen to drop.
+       */
+      const skipArchiveReplays = (skipped: typeof replayMetas, why: unknown): void => {
         console.warn(
-          `[CATCHUP] the server got no answer - the archive replay of ${replayMetas.length} ` +
+          `[CATCHUP] the server got no answer - the archive replay of ${skipped.length} ` +
             "conversation(s) is skipped this pass: the mailbox is owed to the reconnect's pull, " +
-            `the archives to the next reconnect: ${String(unreachable)}`
+            `the archives to the next reconnect: ${String(why)}`
         );
-        ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
-      }
+        ctx.onArchiveReplaysSkipped?.(skipped.map((m) => m.id));
+      };
+      if (unreachable !== null && replayMetas.length > 0)
+        skipArchiveReplays(replayMetas, unreachable);
+
+      // THE UNREAD CENSUS OF THIS LOAD, said in ONE line after the loop (per row at debug only).
+      // Each row's LAST derived count, by id; the census line is summed from it after the loop.
+      const published = new Map<string, ReturnType<typeof bootUnreadCount>>();
+      /**
+       * Assigns a row its derived count. FIRST as soon as its stored page is read - before its replay,
+       * so a badge never waits for the network (a slow link held it for the whole replay) - and again
+       * after the replay over what it added. The count is derived from the marks and the rows held,
+       * and rows are only ever added, so the second call raises it for what the replay brought and
+       * lowers it only for a mark the replay brought.
+       */
+      const publishBootCount = (
+        id: string,
+        when: 'stored page' | 'replay' | 'failed load'
+      ): void => {
+        const row = ctx.conversations.get(id);
+        if (!row) {
+          console.debug(
+            `[RESTORE] ${id.slice(0, 8)} left the conversation map before its count (${when}) - nothing to publish`
+          );
+          return;
+        }
+        const derived = bootUnreadCount(id, row, ctx.userId);
+        published.set(id, derived);
+        if ((row.unreadCount ?? 0) !== derived.count) {
+          ctx.conversations.set(id, { ...row, unreadCount: derived.count });
+        }
+      };
 
       for (const meta of mergedConvMetas) {
         // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
         // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
         // erased here at every boot, which is what made a salon's first open network-only.
         if (isChannelConversationId(meta.id)) continue;
+        // THE LINK DROPPED MID-PASS. The checks above ran before the first replay; a replay that gets
+        // no answer tells the connectivity store (its history read swallows the failure into an empty
+        // page, so the store is the only place the pass can learn of it). Without this the remaining
+        // N conversations each asked a dead link (45 and 36 `[HISTORY] no answer` lines in a minute,
+        // owner's log), one dead request and one warn per group. The same stop as above, taken at the
+        // first conversation that finds the link known down; this one and the rest are owed.
+        if (unreachable === null && connectivity.isOffline) {
+          unreachable = new LinkDroppedMidPassError();
+          const from = replayMetas.findIndex((r) => r.id === meta.id);
+          // A meta absent from the list is not owed to anyone's reconnect by a slice(-1).
+          skipArchiveReplays(from >= 0 ? replayMetas.slice(from) : [], unreachable);
+        }
         try {
           const existingConvo = ctx.conversations.get(meta.id);
           if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
@@ -1175,7 +1316,6 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             meta.id,
             ctx.deviceKeyB64
           );
-          const preReplayMsgIds = new Set(msgs.map((m) => m.id));
           const existing = ctx.conversations.get(meta.id);
           if (existing && msgs.length > 0) {
             // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
@@ -1192,7 +1332,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               }
             }
           }
-          // The stored page is drawn; the archive is owed elsewhere (said once, above the loop).
+          // THE STORED PAGE'S COUNT IS PUBLISHED NOW, online or not: on a slow link the replay below
+          // can take seconds, and the badge of what this device already holds must not wait for it.
+          publishBootCount(meta.id, 'stored page');
+          // The archive is owed elsewhere (said once, above the loop).
           if (unreachable !== null) continue;
           // Fetch from network → decrypt → save to DB (no direct UI update)
           const commit = await replayConversationHistory({
@@ -1228,19 +1371,20 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           );
           const current = ctx.conversations.get(meta.id);
           if (current) {
-            // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
-            // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
+            // DERIVED FROM THE READ POINT, NEVER FROM "ARRIVED DURING THIS REPLAY" (2026-11-11). That
+            // proxy counted a message only in the session that STORED it: once a push or a resume had
+            // stored it, the next cold start found it held and the badge was gone, nothing read
+            // (`bootUnreadCount`).
             //
             // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
             // a message delivered live while the replay ran is not in it, so counting the page alone
             // both dropped that message from the display and then wrote a badge that did not include
             // it - the same stale read, once as a loss and once as an undercount.
-            const mine = readPointFor(current, ctx.userId.toLowerCase());
-            const messages = mergeMessagePage(current.messages, refreshedMsgs);
-            const newUnreadCount = messages.filter(
-              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
-            ).length;
-            ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
+            ctx.conversations.set(meta.id, {
+              ...current,
+              messages: mergeMessagePage(current.messages, refreshedMsgs),
+            });
+            publishBootCount(meta.id, 'replay');
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
                 ctx.messageReactions.set(m.id, m.reactions);
@@ -1249,8 +1393,23 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           }
         } catch (e) {
           ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
+          // The rows already held still say what is unread: a failed replay must not leave the
+          // badge at the 0 every row starts at - that is the defect this count replaces.
+          publishBootCount(meta.id, 'failed load');
         }
       }
+      const census = { seeded: 0, withBadge: 0, total: 0 };
+      for (const { count, source } of published.values()) {
+        if (source === 'seed') census.seeded += 1;
+        if (count > 0) {
+          census.withBadge += 1;
+          census.total += count;
+        }
+      }
+      ctx.log(
+        `[RESTORE] unread census: ${census.seeded} conversation(s) counted from the upgrade's local read seed, ` +
+          `${census.withBadge} with a badge, ${census.total} unread in all`
+      );
       // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
       return pendingCommits.length > 0 ? pendingCommits : undefined;
     },

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { MediaIntent } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
@@ -57,6 +58,19 @@ export interface ConversationMeta {
    * or the ask expired). Absent on rows written before it existed, which reads as `false`.
    */
   awaitingAdmission?: boolean;
+  /**
+   * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock: the newest server-dated message
+   * THIS conversation held when the store migration that added the field ran (SQLite v20, IndexedDB
+   * 14) - inside the migration, so before this build could store anything. Max'ed with any saved
+   * read mark, on THIS device only - never a read mark, never a receipt, never
+   * in a bundle (`countingReadPoint`).
+   *
+   * Written by the migration and nowhere else: `0` when the conversation held nothing dated (and for
+   * a row this build creates, `saveConversation`), the newest time otherwise. A save that does not
+   * state it keeps the stored value. `null` / absent - a row a downgraded build re-created - covers
+   * nothing.
+   */
+  localReadSeed?: number | null;
 }
 
 /**
@@ -294,6 +308,8 @@ export interface OutboxAdoptedUpload extends OutboxMediaUploadedRef {
   height?: number;
   /** The declared duration of the published reel (whole ms). */
   durationMs?: number;
+  /** The published file's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /** Sensitive media descriptor for a queued media message. */
@@ -314,6 +330,8 @@ export interface OutboxMediaPayload {
   intent?: MediaIntent;
   durationMs?: number;
   expiresAtMs?: number;
+  /** A prepared video's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.
@@ -952,15 +970,16 @@ export interface IStorage {
     before?: PageKey
   ): Promise<StoredMessage[]>;
 
-  // Garbage collection - delete messages older than the given threshold.
+  // Garbage collection - delete messages older than this device's retention window.
 
   /**
-   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
-   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
-   * upper bound on its target's, so the message such an entry waits for is older still, and would
-   * be collected the moment it arrived.
+   * Delete messages older than `maxAgeMs` milliseconds - by default this device's window,
+   * `deviceWindowMs()` (5 years on a phone or desktop app, 90 days in a browser; owner, 2026-11-11)
+   * - and return the count of deleted rows. The pending mutations whose FRAME is older than the
+   * same cutoff go with them: a frame's time is an upper bound on its target's, so the message such
+   * an entry waits for is older still, and would be collected the moment it arrived.
    */
-  deleteOldMessages(maxAgeMs: number): Promise<number>;
+  deleteOldMessages(maxAgeMs?: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same device key.
@@ -1154,8 +1173,12 @@ export interface IStorage {
    * caller can tell "nothing stored" from "something stored that must go" and delete it.
    */
   getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
-  /** Delete every stored feed page, returning how many went. Needs no key. */
-  deleteFeedPages(): Promise<number>;
+  /**
+   * Delete every stored page, or only those whose key starts with `keyPrefix`, returning how many
+   * went. Needs no key. The feed passes `feed:` so its churn leaves the device copies (`copy:`, the
+   * peer names) alone; a key change passes nothing and drops them all.
+   */
+  deleteFeedPages(keyPrefix?: string): Promise<number>;
   /** Delete the one stored feed page `key`, returning how many went (0 or 1). Needs no key. */
   deleteFeedPage(key: string): Promise<number>;
 

@@ -485,7 +485,7 @@
     "input": 0
   },
   "src/lib/components/live/LiveBroadcaster.svelte": {
-    "button": 13,
+    "button": 9,
     "select": 0,
     "input": 0
   },
@@ -865,7 +865,7 @@
     "input": 0
   },
   "src/lib/components/reels/CameraScreen.svelte": {
-    "button": 6,
+    "button": 3,
     "select": 0,
     "input": 0
   },
@@ -991,11 +991,6 @@
   },
   "src/lib/components/shared/CommentsDrawer.svelte": {
     "button": 2,
-    "select": 0,
-    "input": 0
-  },
-  "src/lib/components/shared/EnvironmentBanner.svelte": {
-    "button": 1,
     "select": 0,
     "input": 0
   },

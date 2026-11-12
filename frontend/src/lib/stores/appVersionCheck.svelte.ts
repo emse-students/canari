@@ -53,6 +53,19 @@ function hydrateFromCachedServerInfo(): void {
   }
 }
 
+/**
+ * Whether this process's version check has SETTLED - answered, fallen back to the cached verdict, or
+ * skipped offline with it. `lastCheck` cannot say so: it stays `null` after a check that settled on
+ * a non-blocking verdict. A surface that must never flash in front of a below-minimum gate (the
+ * announcement drawn from the device) waits for this fact, not for a clock.
+ */
+let verdictSettled = $state(false);
+
+/** See {@link verdictSettled}. Reactive. */
+export function isVersionVerdictSettled(): boolean {
+  return verdictSettled;
+}
+
 /** Latest version check result, or null before the first run. */
 export function getAppVersionCheck(): AppVersionCheckResult | null {
   return lastCheck;
@@ -194,6 +207,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
     if (!cached.upToDate || cached.belowMinVersion || cached.maintenance.enabled) {
       lastCheck = cached;
     }
+    verdictSettled = true;
     return lastCheck ?? cached;
   }
 
@@ -222,6 +236,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
       return lastCheck ?? fallback;
     } finally {
       inflight = null;
+      verdictSettled = true;
     }
   })();
 

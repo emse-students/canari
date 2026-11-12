@@ -153,7 +153,10 @@ notice is for followers (decision 4).
   overflowed a phone). **Dismissed means gone**: the cross and "Ajouter" both record the help in the
   account's `help_seen` (`seenHelps`, the profile-photo prompt's store), so it never returns on any
   device - durable state, no timer. It shows only once `seenHelps.ready` and
-  `ownBirthday.hasBirthday === false`. The help id `prompt-birthday` is kept (the server lists it) but
+  `ownBirthday.hasBirthday === false`. Since 2026-11-11 both are drawn from the device at a cold
+  start and revalidated behind (`hasBirthday` is kept per account as ONE boolean about the account
+  itself, never the date - `ACCOUNT_KEY.ownBirthdayKnown`), so the card no longer waits for the
+  session refresh; today's celebrants stay in memory only. The help id `prompt-birthday` is kept (the server lists it) but
   no guide declares it any more. **Why a card**: the field is empty for every existing account, and the
   ring and the notice exist only for a member who entered a date. **Why no reminder**: a birthday is
   personal data the member may not want to give; the profile section stays the way back.

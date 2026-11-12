@@ -5,7 +5,7 @@
 whose `type` names its codecs. The video is always re-encoded; an AAC-LC audio track is COPIED
 when it has no hole and costs no more than an encode would, or when the engine has no AAC encoder ([why](#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)). The server transcodes nothing and draws no thumbnail - the user's
 decision C3, 2026-09-29 (*"il faut que la charge serveur soit minimale"*), recorded on
-[backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken).
+[reels](modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29).
 
 ## The seam - `prepareVideoForUpload` (`frontend/src/lib/video/prepareVideoForUpload.ts`)
 
@@ -40,6 +40,13 @@ prepareVideoForUpload(source: Blob, {
 **There is no second path.** An engine that cannot make the format is refused, never handed the
 original to upload: an untranscoded upload is a second format every reader then carries for ever,
 and the exact server cost C3 refused.
+
+### The sound is measured, never altered (2026-11-11)
+
+`PreparedVideo.loudness` is the kept audio's BS.1770 integrated loudness and sample peak, measured
+by one decode of the audio alone beside the conversion; the player normalises to it. The meter, the
+cost, the fields and the readings owed are in
+[video-player](modules/video-player.md#loudness).
 
 ### The movie declares its length (2026-11-10)
 

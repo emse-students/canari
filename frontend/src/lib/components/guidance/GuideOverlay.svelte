@@ -34,7 +34,13 @@
   import { ownProfilePhoto } from '$lib/guidance/ownProfilePhoto.svelte';
   import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
-  import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
+  import {
+    placeBubble,
+    ringRadius,
+    usableBand,
+    type BubblePosition,
+  } from '$lib/guidance/guidePlacement';
+  import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
 
   /**
@@ -227,6 +233,26 @@
     );
   }
 
+  /**
+   * The boxes of the bars fixed at the viewport's edges, as drawn NOW: every element marked
+   * `data-guide-chrome` (the phone header, the web bottom bar, the desktop top bar) and, in the iOS
+   * app where the bar is native, the regions its tabs register. A hidden bar has no box and is
+   * skipped by `usableBand`.
+   */
+  function chromeBars(): GuideRect[] {
+    const bars: GuideRect[] = [];
+    for (const node of document.querySelectorAll<HTMLElement>('[data-guide-chrome]')) {
+      const r = node.getBoundingClientRect();
+      bars.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+    }
+    for (const place of MOBILE_NAV_PLACES) {
+      const region = resolveGuideAnchor(`nav.${place.id}`);
+      const r = region && !region.element ? region.rect() : null;
+      if (r) bars.push(r);
+    }
+    return bars;
+  }
+
   /** Re-reads the target's box and places the bubble. Called on every event that can move either. */
   function measure(): void {
     const current = guideEngine.view;
@@ -255,7 +281,8 @@
       { width: window.innerWidth, height: window.innerHeight },
       current.placement,
       0.75 * rem(),
-      rem()
+      rem(),
+      usableBand(window.innerHeight, chromeBars())
     );
   }
 

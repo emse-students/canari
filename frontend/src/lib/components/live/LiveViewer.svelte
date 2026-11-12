@@ -19,6 +19,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import VideoFeedbackGlyph, {
@@ -273,6 +274,12 @@
       });
   }
 
+  // The app's one volume level, on the live's element too (the slider of the speaker moves it).
+  $effect(() => {
+    const level = videoSound.level;
+    if (video) applyVideoLevel(video, level);
+  });
+
   /** A tap on the picture only turns the sound ON, never off (owner, 2026-11-10); the speaker mutes. */
   function onPictureTap() {
     if (videoSound.muted) toggleSound();
@@ -359,7 +366,12 @@
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
-      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
+      <VideoSoundButton
+        muted={videoSound.muted}
+        onToggle={toggleSound}
+        onLevel={(v) => videoSound.setVolume(v)}
+        data-live-sound
+      />
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button

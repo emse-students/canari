@@ -129,6 +129,12 @@ export type LoginErrorCode =
    */
   | 'state_written_by_another_tab'
   /**
+   * The same rotation, refused before it was written because THIS tab does not own the MLS state: a
+   * follower tab (`persistCheckpoint`, `follower-tab`). Nothing was moved; the other tab holds this
+   * device's state, so the remedy is that tab, never a PIN or a reset.
+   */
+  | 'state_owned_by_another_tab'
+  /**
    * PIN accepted, on a phone whose data is sealed under a HARDWARE-HELD key (2026-10-22), and the
    * keystore PROVABLY no longer holds that key: the entry is empty, or holds another key than the one
    * the marker names. No PIN can open data sealed under a random key, so the old-PIN recovery is NOT
@@ -289,6 +295,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'revoked_device_wipe_owed' ||
     code === 'pin_reset_unsettled' ||
     code === 'state_written_by_another_tab' ||
+    code === 'state_owned_by_another_tab' ||
     isVaultRefusal(code)
   );
 }

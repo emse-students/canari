@@ -41,7 +41,7 @@ is mounted into or copied onto the host.
 
 | Who | Mode | What it proves |
 | --- | --- | --- |
-| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 
@@ -84,6 +84,19 @@ CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, 
 user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
+
+**`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
+mint asks whether a person may enter a site: a role with global `view_user`, `view_policybinding`
+(global on purpose - a grant on today's bindings would not see tomorrow's), `view_flow` and
+`view_flowstagebinding` (the providers' login and authorization flows, whose bindings the mint
+counts too; global for the same reason) and `view_system_settings`, plus `view_application` on `migallery`, `sky` and `cercle` only, granted by
+the `permissions:` of those entries in `60-applications.yaml` (which is why the file sorts before
+it); the group, the account `miconnect-canari-handoff-reader` and its token, key `!Env
+MICONNECT_READER_TOKEN` (production only; dev holds none). CI uses the token
+(`test-handoff-reader.py`): the reads work, a binding added later on an application, a flow or a
+stage is seen, another application is `404`, and every write - a user, an application, a flow, a
+stage binding, a binding, the settings - is `403`
+([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
 
 **What is NOT in the blueprints, deliberately:**
 
@@ -177,7 +190,10 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 - **`!Find`, `!Env` and `!File` resolve to null and carry on** when they match nothing. A mistyped
   name would silently clear a nullable reference, which is why the brand CSS is written inline rather
   than read through `!File`. The applier refuses any `!Find` or `!Env` that resolves to nothing,
-  before it commits.
+  before it commits - and every `!Env` BEFORE anything applies, as `UNRESOLVED <file> attrs.<field>:
+  !Env <NAME> is unset in the worker's environment`. Applied first, an unset one reached a
+  non-nullable field as null and failed with a serializer error naming the field, never the variable
+  (`'key': ['This field may not be null.']`, 2026-11-11).
 - **A policy bound to a stage binding targets its `pbm_uuid`**, while `!Find` returns `.pk`, the
   child's own key. The target is therefore found on `authentik_policies.policybindingmodel`, through
   `flowstagebinding__...` lookups.

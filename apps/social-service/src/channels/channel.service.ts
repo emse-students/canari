@@ -8,12 +8,21 @@ import {
   ConflictException,
   GoneException,
   HttpException,
+  HttpStatus,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, And, LessThan, MoreThanOrEqual, type EntityManager } from 'typeorm';
+import {
+  Repository,
+  In,
+  And,
+  LessThan,
+  MoreThan,
+  MoreThanOrEqual,
+  type EntityManager,
+} from 'typeorm';
 import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -94,6 +103,8 @@ import {
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 import { hasInvisibleCharacter } from './visible-text';
+import { validateCommunityName, validateCommunitySlug, validateDisplayName } from './display-name';
+import { COMMUNITY_CREATIONS_PER_HOUR, communityOwnedMax } from './community-limits';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -284,15 +295,7 @@ export const MAX_CHANNEL_NAME_LENGTH = 80;
  * the sidebar is refused: nothing once trimmed, too long, or a control character.
  */
 export function validateChannelName(raw: unknown): string {
-  const name = typeof raw === 'string' ? raw.trim() : '';
-  if (!name) throw new BadRequestException('Channel name cannot be empty');
-  if (Array.from(name).length > MAX_CHANNEL_NAME_LENGTH)
-    throw new BadRequestException(
-      `Channel name too long (max ${MAX_CHANNEL_NAME_LENGTH} characters)`
-    );
-  if (/\p{Cc}/u.test(name))
-    throw new BadRequestException('Channel name cannot contain control characters');
-  return name;
+  return validateDisplayName(raw, MAX_CHANNEL_NAME_LENGTH, 'Channel');
 }
 
 /** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
@@ -383,6 +386,9 @@ export interface ChannelFanoutPayload {
 export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
+
+  /** Read once, at construction: a `COMMUNITY_OWNED_MAX` that is not a number stops the boot. */
+  private readonly communityOwnedMax = communityOwnedMax();
 
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
   private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
@@ -2160,10 +2166,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
-  private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
-    const base = requested.trim();
-    if (!base) throw new BadRequestException('Slug de communaute invalide.');
-
+  private async ensureUniqueWorkspaceSlug(base: string): Promise<string> {
     let candidate = base;
     for (let suffix = 2; ; suffix++) {
       const existing = await this.workspaceRepo.findOne({ where: { slug: candidate } });
@@ -2172,13 +2175,54 @@ export class ChannelService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Refuses a creation past what one account may create in an hour or hold in all. Both are
+   * COUNTED FROM THE TABLE, so the answer is the same on every replica and after a deploy.
+   *
+   * @throws HttpException 429 `COMMUNITY_CREATION_RATE`, or ForbiddenException
+   *   `COMMUNITY_OWNED_LIMIT`
+   */
+  private async assertMayCreateCommunity(userId: string): Promise<void> {
+    const by = userId.slice(0, 8);
+    const lastHour = await this.workspaceRepo.count({
+      where: { createdBy: userId, createdAt: MoreThan(new Date(Date.now() - 60 * 60_000)) },
+    });
+    if (lastHour >= COMMUNITY_CREATIONS_PER_HOUR) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - ${lastHour} created in the last hour`
+      );
+      throw new HttpException(
+        {
+          code: 'COMMUNITY_CREATION_RATE',
+          message: 'Too many communities created in the last hour',
+        },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+    const owned = await this.workspaceRepo.count({ where: { createdBy: userId } });
+    if (owned >= this.communityOwnedMax) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - holds ${owned} of ${this.communityOwnedMax} communities`
+      );
+      throw new ForbiddenException({
+        code: 'COMMUNITY_OWNED_LIMIT',
+        message: `An account may hold ${this.communityOwnedMax} communities at most`,
+      });
+    }
+  }
+
   async createWorkspace(input: CreateWorkspaceDto) {
-    const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
+    // Both are judged before anything is read or written, and it is the judged values that are
+    // logged and stored.
+    const name = validateCommunityName(input.name);
+    const askedSlug = validateCommunitySlug(input.slug);
+    await this.assertMayCreateCommunity(input.createdBy);
+    const slug = await this.ensureUniqueWorkspaceSlug(askedSlug);
     this.logger.log(
-      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
+      `[WORKSPACE] create name=${JSON.stringify(name)} slug="${slug}" by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
-      name: input.name,
+      name,
       slug,
       createdBy: input.createdBy,
     });
@@ -2449,6 +2493,60 @@ export class ChannelService implements OnApplicationBootstrap {
       `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
+  }
+
+  /**
+   * The salon listing ({@link listChannelsForUser}) of SEVERAL communities in ONE answer, the first
+   * of the three per-community reads of a boot.
+   *
+   * ONLY THE SALON LISTING, and that is a decision: it is database reads and nothing else. The key
+   * group's reference (`getDistributionGroupForMember`) carries a roster of this user's devices
+   * that decides whether the device forgets its tree and external-joins, and it must be read where
+   * it always was - after MLS is ready and the startup drain has run - or an owed Welcome landing
+   * during boot is forgotten against a stale roster (the GRP-4 duplicate-leaf pattern). The roster
+   * of the community is not batched either: it is read after the device's own tree.
+   *
+   * EACH ITEM IS ITS OWN VERDICT. The answer comes from the very method the per-community route
+   * calls, so authorization and shape are its, and a refusal on one community (a 403 on a community
+   * just left) is carried as `{ status, code, message }` on that item and never fails the others -
+   * the client rethrows it as the refusal the single route would have given. Ids beyond
+   * {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller chunks), a repeated id is
+   * answered once, and at most {@link COMMUNITY_BOOT_READS_CONCURRENCY} communities are read at a
+   * time so one request never holds the whole connection pool.
+   */
+  async listCommunityBootReads(
+    userId: string,
+    workspaceIds: readonly string[]
+  ): Promise<{ items: CommunityBootReadItem[] }> {
+    const ids = [...new Set(workspaceIds)].slice(0, COMMUNITY_BOOT_READS_MAX);
+    this.logger.log(
+      `[BOOT_READS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
+    );
+    const items: CommunityBootReadItem[] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_CONCURRENCY) {
+      const slice = ids.slice(i, i + COMMUNITY_BOOT_READS_CONCURRENCY);
+      items.push(
+        ...(await Promise.all(
+          slice.map(async (workspaceId): Promise<CommunityBootReadItem> => {
+            try {
+              const channels = await this.listChannelsForUser(workspaceId, userId);
+              return { workspaceId, channels, channelsRefusal: null };
+            } catch (e) {
+              const refusal = bootReadRefusal(e);
+              // The detail stays here: an unclassified failure is a generic 500 to the client.
+              this.logger.warn(
+                `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${refusal.status}` +
+                  (e instanceof HttpException
+                    ? ''
+                    : ` ${e instanceof Error ? e.message : String(e)}`)
+              );
+              return { workspaceId, channels: null, channelsRefusal: refusal };
+            }
+          })
+        ))
+      );
+    }
+    return { items };
   }
 
   /**
@@ -3532,13 +3630,12 @@ export class ChannelService implements OnApplicationBootstrap {
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
     // list - and an empty private salon is one nobody can open, its maker included, which is the
     // state `chat_no_allowed_members_warning` names. COMM-23 granted the owner by hand for this.
+    // The line narrating it is written AFTER the save (`grantedMaker`): the removal bound below may
+    // still refuse the flip, and a line stating an outcome before it is decided is false whenever
+    // the write is refused (RM-6, 2026-10-26).
     const actorNormalised = actorUserId.trim().toLowerCase();
-    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised)) {
-      this.logger.log(
-        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId}`
-      );
-      nextAllowed.push(actorNormalised);
-    }
+    const grantedMaker = isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised);
+    if (grantedMaker) nextAllowed.push(actorNormalised);
     // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
     // and that retirement supersedes every per-user cut - evicting people who are about to regain
     // access as ordinary community members would be work with no reader.
@@ -3648,6 +3745,11 @@ export class ChannelService implements OnApplicationBootstrap {
     channel.allowedUsers = nextAllowed;
     if (writePolicy) {
       channel.writePolicy = writePolicy;
+    }
+    if (grantedMaker) {
+      this.logger.log(
+        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId} revision=${channel.accessRevision}`
+      );
     }
 
     // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
@@ -4000,12 +4102,20 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
-    // "Membre" is how every client up to the current stable names the ordinary invitation, so it
-    // means the base role even in a community whose lowest role is called something else. Matching
-    // a role literally named Membre first waits for `minClientVersion` (see backlog).
-    if (wanted === 'Membre' || wanted === base?.name) return base;
+    if (wanted === base?.name) return base;
     const role = roles.find((r) => r.name === wanted) ?? null;
-    if (!role || role.id === base?.id) return role;
+    // A role is matched by its own name first, so a community that calls a higher role "Membre"
+    // can grant it by invitation. Only where no role carries that name does "Membre" (or "member")
+    // mean the base role: no client above the floor sends it for an ordinary invitation (#2277
+    // sends no role at all), and a caller naming the generic word still gets the base role.
+    if (!role) {
+      if (wanted !== 'Membre') return null;
+      this.logger.debug(
+        `[INVITE] "Membre" read as the base role=${base?.name ?? 'none'} workspace=${workspaceId}`
+      );
+      return base;
+    }
+    if (role.id === base?.id) return role;
 
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
     if (actorMayGrantRole(actorPermissions, role.permissions)) {
@@ -7114,6 +7224,43 @@ class ErasedAccountLeftAlone extends Error {
     super(`erased account is the last member of workspace ${workspaceId}`);
     this.name = 'ErasedAccountLeftAlone';
   }
+}
+
+/** The most communities one {@link ChannelService.listCommunityBootReads} answers; the client chunks. */
+export const COMMUNITY_BOOT_READS_MAX = 50;
+
+/** A refusal carried on one item of a batched read, the shape the single route's error body has. */
+export interface BootReadRefusal {
+  status: number;
+  code: string | null;
+  message: string;
+}
+
+/** How many communities one batched read lists at a time (database reads, so a small bound). */
+export const COMMUNITY_BOOT_READS_CONCURRENCY = 10;
+
+/** One community's part of the batched boot read: its salon listing or its refusal. */
+export interface CommunityBootReadItem {
+  workspaceId: string;
+  channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
+  channelsRefusal: BootReadRefusal | null;
+}
+
+/**
+ * A failure of a batched read, as the refusal the single route would have answered: an HTTP
+ * exception keeps its status, `code` and message; anything else is a GENERIC 500 - its message can
+ * name a table or a host, so it is logged by the caller and never sent.
+ */
+export function bootReadRefusal(err: unknown): BootReadRefusal {
+  if (err instanceof HttpException) {
+    const body = err.getResponse();
+    const code =
+      body && typeof body === 'object' && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    return { status: err.getStatus(), code, message: err.message };
+  }
+  return { status: 500, code: null, message: 'Internal error' };
 }
 
 /**

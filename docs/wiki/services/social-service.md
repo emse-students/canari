@@ -173,7 +173,7 @@ added later without the pipe fails there.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/channels/workspaces` | Create workspace |
+| POST | `/api/channels/workspaces` | Create workspace. `name` is a display name (trimmed, 1-80 characters, no control character - `validateDisplayName`, the rule a salon name shares), `slug` is what the client derives from it (`a-z0-9` groups joined by single hyphens, at most 48; the server appends `-2`, `-3`... to keep it unique); anything else is a 400 before any read or write, coded `COMMUNITY_NAME_INVALID` or `COMMUNITY_SLUG_INVALID`. Two limits are COUNTED FROM THE `workspaces` TABLE at each creation, so they hold across replicas and deploys (`community-limits.ts`): ten created by one account in the last hour (429 `COMMUNITY_CREATION_RATE`), and twenty held by one account as their creator (403 `COMMUNITY_OWNED_LIMIT`; the server setting `COMMUNITY_OWNED_MAX`, default 20). The client names all four through `describeCommunityRefusal` |
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |
@@ -1055,8 +1055,7 @@ pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
 
 ### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
 
-Every personal account is private (Q1 of the
-[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+Every personal account is private ([profiles-and-access](../profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)):
 `POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
 only the followed person's answer makes it `accepted`. An association, a list or an institution
 (`association_follows`) is followed at once and has no status.
@@ -1602,12 +1601,11 @@ its lowest-priority one (`baseMemberRole`, the one definition). A direct invitat
 `roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
 role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
 `403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
-downgrade. `Membre`, or the base role's own name, means the base role, so a deployed client's
-ordinary invitation works in a community whose lowest role is called otherwise; a role literally
-named `Membre` above the base role is therefore not grantable by invitation until `minClientVersion`
-reaches a client that sends no `roleName` for an ordinary invitation ([backlog](../backlog.md)).
-The client sends no `roleName` at all for an ordinary invitation since #2277, and names a role only
-when the inviter picked one.
+downgrade. A named role is matched by its own name first, so a role literally named `Membre` above
+the base role is granted under the same right as any other (since 2026-11-11, once
+`minClientVersion` passed `v1.4.0`); only where no role carries the name does `Membre` (or `member`)
+mean the base role. The client sends no `roleName` at all for an ordinary invitation since #2277,
+and names a role only when the inviter picked one.
 
 **Role changes are bounded by the actor's own permissions, by the same function.** Every
 role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,

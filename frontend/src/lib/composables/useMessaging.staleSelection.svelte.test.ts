@@ -50,6 +50,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
 }));
 
 const { useMessaging } = await import('./useMessaging.svelte');
+const { windowAttention } = await import('$lib/utils/windowAttention.svelte');
 const { resetChannelReadSignals } = await import('$lib/utils/chat/channelReadSignal');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
@@ -96,6 +97,8 @@ function reader(pathname: string, inFront = true) {
     get: () => (inFront ? 'visible' : 'hidden'),
   });
   vi.spyOn(document, 'hasFocus').mockReturnValue(inFront);
+  // A window in front is one a person is at (`windowAttention.svelte.ts`).
+  if (inFront) windowAttention.noteGesture();
 }
 
 const unread = (conversations: SvelteMap<string, Conversation>) =>

@@ -2556,8 +2556,9 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+The two window-scale banners (`MaintenanceAdminBanner`, `MlsFatalErrorBanner`; `EnvironmentBanner` was the first until 2026-11-11, when the test-environment mark became a badge on the logo in `CanariBrand`;
+`OfflineBanner` was the fourth until 2026-11-11, when the connection became a ring on the header avatar -
+[offline-and-weak-network](offline-and-weak-network.md#the-connection-ring-owner-2026-11-11); `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
 its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
 all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-2` (0.5rem on all four sides; it was `m-3`
@@ -3338,7 +3339,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.d/p2-the-tab-swipe-on-a-slow-start-both-causes-fixed-owed-a-real-finger.md)).
+touch must be the one the gesture claims ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.

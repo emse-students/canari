@@ -1322,7 +1322,7 @@ export class AuthController {
       this.logger.warn(`[HANDOFF] refused class=no_session user=${userId}`);
       throw new UnauthorizedException('A handoff needs a token of a live session');
     }
-    return this.handoff.mint(userId, body?.aud, body?.dest);
+    return await this.handoff.mint(userId, body?.aud, body?.dest);
   }
 
   /**

@@ -19,27 +19,40 @@ beforeEach(() => {
 });
 
 describe('notificationPreferences', () => {
-  it('has everything on until the server says otherwise', () => {
+  it('has everything on, and no push of Suggestions, until the server says otherwise ("Deux niveaux")', () => {
     expect(notificationPreferences.isEnabled('messages')).toBe(true);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(true);
+    expect(notificationPreferences.isPushEnabled('suggestions')).toBe(false);
+    expect(notificationPreferences.pushAllowed('suggestions')).toBe(false);
+    expect(notificationPreferences.pushAllowed('messages')).toBe(true);
     expect(notificationPreferences.disabled).toEqual([]);
   });
 
-  it('mirrors the server set after a load', async () => {
+  it('a save before the first load never turns a push on by omission, and declares the opt-in reading', async () => {
+    await notificationPreferences.setEnabled('posts', false);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['posts'], [], []);
+  });
+
+  it('mirrors the server sets after a load', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts', 'forms'],
       unknownDisabled: [],
+      pushEnabled: ['suggestions'],
       groupLevels: {},
       groupCalls: {},
     });
     expect(await notificationPreferences.load()).toBe(true);
     expect(notificationPreferences.isEnabled('posts')).toBe(false);
     expect(notificationPreferences.isEnabled('messages')).toBe(true);
+    expect(notificationPreferences.isPushEnabled('suggestions')).toBe(true);
+    expect(notificationPreferences.pushAllowed('suggestions')).toBe(true);
   });
 
   it('keeps the current set and reports false when the load fails', async () => {
     api.fetchNotificationPreferences.mockResolvedValueOnce({
       disabled: ['posts'],
       unknownDisabled: [],
+      pushEnabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -53,30 +66,60 @@ describe('notificationPreferences', () => {
     const pending = notificationPreferences.setEnabled('events', false);
     expect(notificationPreferences.isEnabled('events')).toBe(false);
     expect(await pending).toBe(true);
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['events'], []);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['events'], [], []);
 
     await notificationPreferences.setEnabled('forms', false);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['events', 'forms'], []);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['events', 'forms'], [], []);
 
     await notificationPreferences.setEnabled('events', true);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], [], []);
+  });
+
+  it('the push of Suggestions: turning it on turns the app switch on; the app switch off takes the push with it', async () => {
+    await notificationPreferences.setEnabled('suggestions', false);
+    await notificationPreferences.setPushEnabled('suggestions', true);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(true);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], [], ['suggestions']);
+    // One gesture: the app switch off silences the push too.
+    await notificationPreferences.setEnabled('suggestions', false);
+    expect(notificationPreferences.isPushEnabled('suggestions')).toBe(false);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions'], [], []);
+    // Push off alone leaves the app switch where it is.
+    await notificationPreferences.setPushEnabled('suggestions', true);
+    await notificationPreferences.setPushEnabled('suggestions', false);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(true);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], [], []);
+  });
+
+  it('refuses the push switch of a category that is not opt-in', async () => {
+    expect(await notificationPreferences.setPushEnabled('posts', true)).toBe(false);
+    expect(api.saveDisabledCategories).not.toHaveBeenCalled();
+  });
+
+  it('puts both switches back when the server refuses a push write', async () => {
+    await notificationPreferences.setEnabled('suggestions', false);
+    api.saveDisabledCategories.mockRejectedValueOnce(new Error('500'));
+    expect(await notificationPreferences.setPushEnabled('suggestions', true)).toBe(false);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(false);
+    expect(notificationPreferences.isPushEnabled('suggestions')).toBe(false);
   });
 
   it('sends back, on every save, the switched-off ids this build does not know', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts'],
       unknownDisabled: ['a_category_from_later'],
+      pushEnabled: [],
       groupLevels: {},
       groupCalls: {},
     });
     await notificationPreferences.load();
     expect(notificationPreferences.disabled).toEqual(['posts']);
     await notificationPreferences.setEnabled('posts', true);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], ['a_category_from_later']);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], ['a_category_from_later'], []);
     // A sign-out forgets them with the rest: the next account never sends another's choice.
     notificationPreferences.reset();
     await notificationPreferences.setEnabled('forms', false);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], [], []);
   });
 
   it('puts the switch back when the server refuses the write', async () => {
@@ -90,10 +133,12 @@ describe('notificationPreferences', () => {
     expect(api.saveDisabledCategories).not.toHaveBeenCalled();
   });
 
-  it('forgets the set on reset, so the next account never inherits it', async () => {
+  it('forgets the sets on reset, so the next account never inherits them', async () => {
     await notificationPreferences.setEnabled('posts', false);
+    await notificationPreferences.setPushEnabled('suggestions', true);
     notificationPreferences.reset();
     expect(notificationPreferences.isEnabled('posts')).toBe(true);
+    expect(notificationPreferences.isPushEnabled('suggestions')).toBe(false);
   });
 
   describe('private conversation levels', () => {

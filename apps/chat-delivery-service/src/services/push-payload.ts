@@ -112,6 +112,16 @@ export const IOS_NOTIFICATION_SOUND = {
 } as const;
 
 /**
+ * Canari's own incoming-call ring, as the APNs `sound` of the generic ring alert an iPhone with no
+ * VoIP token receives (`CallsService.ringViaFcm`). The owner's C1 rings on every surface
+ * (docs/wiki/frontend/sounds.md, 2026-11-01): CallKit already plays this file, and an alert naming
+ * `default` was the one surface left on the system tone. The file is bundled in the app's
+ * Resources from `gen/apple/CallSounds`; 25 s, under the 30 s Apple plays for a banner sound.
+ * `iosNotificationSounds.test.ts` holds this name and the bundle together.
+ */
+export const IOS_CALL_RING_SOUND = 'canari_ring_callkit.wav';
+
+/**
  * Generic notification text used before the client decrypts the real content, per language.
  *
  * The iOS NSE replaces this with the decrypted preview; if decryption fails the user still sees who

@@ -213,3 +213,68 @@ describe('a system notice from the FCM cache is not activity', () => {
     expect(conversations.get('grp-aaaa-bbbb')?.lastMessageAt).toBe(100);
   });
 });
+
+/**
+ * Each case below adds a FOREIGN, non-system row: the merge before 2026-11-11 counted every such row
+ * (+1), so every case expecting 0 fails on it.
+ */
+describe('the badge a push merge adds is the one the next load derives', () => {
+  /** My own reply, already on the row, which the server dated `at`. */
+  const myReply = (at: number) =>
+    ({
+      id: 'r1',
+      senderId: 'me',
+      content: 'reply',
+      isOwn: true,
+      timestamp: new Date(at),
+      serverTimestamp: at,
+    }) as Conversation['messages'][number];
+
+  it('counts a message past every point, the control', () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ messages: [myReply(500)], unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 900, serverTimestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(1);
+  });
+
+  it('does not count a late row the server holds before my own newest reply (no saved mark)', () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ messages: [myReply(2_000)], unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 1_495, serverTimestamp: 1_500 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(0);
+  });
+
+  it("does not count a row the upgrade's local seed covers", () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ localReadSeed: 1_000, unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 895, serverTimestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(0);
+  });
+
+  it('does not count a message the read point already covers (read in the shade or elsewhere)', () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ serverReadWatermarks: { me: 1_000 }, unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 900, serverTimestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(0);
+  });
+});

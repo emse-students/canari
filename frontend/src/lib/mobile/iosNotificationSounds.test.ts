@@ -105,6 +105,13 @@ describe('the CallKit ringtone (Canari ring, 2026-11-01)', () => {
     expect(pushMm).toContain('pathForResource:@"canari_ring_callkit" ofType:@"wav"');
   });
 
+  it('the generic ring alert of an iPhone with no VoIP token names the same file', () => {
+    expect(pushPayload).toContain(`export const IOS_CALL_RING_SOUND = '${FILE}';`);
+    const calls = read(resolve(REPO, 'apps/chat-delivery-service/src/services/calls.service.ts'));
+    expect(calls).toContain('sound: IOS_CALL_RING_SOUND,');
+    expect(calls).not.toContain("sound: 'default'");
+  });
+
   it('the file is rendered, a 16-bit WAV of at most 30 s', () => {
     const path = resolve(APPLE, 'CallSounds', FILE);
     expect(existsSync(path), 'run bun tools/notification-sounds/render.mjs').toBe(true);

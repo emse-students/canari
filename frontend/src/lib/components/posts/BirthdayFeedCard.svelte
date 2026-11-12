@@ -18,9 +18,11 @@
    *
    * DISMISSED MEANS GONE, FROM DURABLE STATE, NEVER A TIMER: the cross and "Ajouter" both record the
    * help `prompt-birthday` in the account's server-side `help_seen` (the profile-photo prompt's
-   * store), so the card does not return on any device. It shows only once the server has answered
-   * both facts - `seenHelps.ready` and `ownBirthday.hasBirthday === false` - so an offline or
-   * unanswered state shows NOTHING rather than a card that would come back.
+   * store), so the card does not return on any device. It shows only once both facts are KNOWN -
+   * `seenHelps.ready` and `ownBirthday.hasBirthday === false` - from the server, or since 2026-11-11
+   * from the device's copy of an earlier server answer (drawn before the session refresh, then
+   * revalidated: the card leaves if the answer says otherwise). A device that never had an answer
+   * shows NOTHING rather than a card that would come back.
    */
   const visible = $derived(
     seenHelps.ready && !seenHelps.has('prompt-birthday') && ownBirthday.hasBirthday === false

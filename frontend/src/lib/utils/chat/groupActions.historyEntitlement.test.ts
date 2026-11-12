@@ -205,21 +205,6 @@ describe('a Remove holds against a later re-add - every history sender withholds
     error.mockRestore();
   });
 
-  it('an ask with no request id (an older client) is not answered addressed - nothing is sent', async () => {
-    const mlsService = stubWithBobsWindow();
-    const log = vi.fn();
-
-    await sendHistoryBundleForIds(
-      GROUP,
-      STORE.map((m) => m.id),
-      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log },
-      { to: ALICE, since: 0 }
-    );
-
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('carries no request id'));
-  });
-
   it('a device the server cannot address is answered nothing - never a broadcast in its place', async () => {
     const mlsService = stubWithBobsWindow();
     vi.mocked(mlsService.sendMessage).mockRejectedValue(

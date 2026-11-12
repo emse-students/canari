@@ -132,6 +132,9 @@ apps/media-service/upload_sessions/
 !apps/social-service/bun.lock
 !apps/media-service/bun.lock
 !apps/chat-delivery-service/bun.lock
+# The sign-in handoff's verifier: VENDORED into each ecosystem site, so its `jose` is pinned here
+# and `make test-ci-scripts` installs it --frozen-lockfile (libs/handoff/).
+!libs/handoff/bun.lock
 !frontend/src-tauri/Cargo.lock
 !frontend/mls-wasm/Cargo.lock
 !apps/*/Cargo.lock

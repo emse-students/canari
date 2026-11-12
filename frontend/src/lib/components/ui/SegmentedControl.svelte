@@ -34,8 +34,11 @@
     /**
      * `pill` (default): the filled track with a raised active tab. `underline`: bare tabs on a
      * rule, the active one marked by a brand underline (the bookings dashboard's phone tabs).
+     * `overlay`: no track, white text with a shadow ON a video (the CanaReels order switch, as
+     * TikTok and Instagram draw theirs) - the selected tab full white, medium weight and a short
+     * underline, the other dimmed.
      */
-    variant?: 'pill' | 'underline';
+    variant?: 'pill' | 'underline' | 'overlay';
     /**
      * `auto` (default): arrows move AND select, for panels that load lazily on select. `manual`:
      * arrows only move focus, Enter/Space selects - for a choice whose selection is a committed
@@ -92,7 +95,9 @@
   data-variant={variant}
   class="grid gap-1 {variant === 'underline'
     ? 'border-cn-border border-b'
-    : 'rounded-xl bg-black/5 p-1 dark:bg-white/5'} {extra}"
+    : variant === 'overlay'
+      ? ''
+      : 'rounded-xl bg-black/5 p-1 dark:bg-white/5'} {extra}"
   style:grid-template-columns="repeat({items.length}, minmax(0, 1fr))"
 >
   {#each items as item, i (item.key)}
@@ -107,16 +112,26 @@
       tabindex={selected ? 0 : -1}
       onclick={() => onSelect(item.key)}
       onkeydown={(e) => onKeydown(e, i)}
-      class="focus-visible:ring-accent-icon flex min-w-0 items-center justify-center text-center leading-tight font-semibold transition-colors outline-none focus-visible:ring-2 {variant ===
+      class="focus-visible:ring-accent-icon flex min-w-0 items-center justify-center text-center leading-tight transition-colors outline-none focus-visible:ring-2 {variant ===
       'underline'
-        ? `-mb-px min-h-11 gap-2 border-b-2 px-4 text-sm ${selected ? 'border-accent-icon text-text-main' : 'text-text-muted hover:text-text-main border-transparent'}`
-        : `flex-col gap-1 rounded-lg px-1 py-2 text-xs sm:flex-row sm:gap-2 sm:text-sm ${selected ? ACTIVE[tone] : IDLE}`}"
+        ? `-mb-px min-h-11 gap-2 border-b-2 px-4 text-sm font-semibold ${selected ? 'border-accent-icon text-text-main' : 'text-text-muted hover:text-text-main border-transparent'}`
+        : variant === 'overlay'
+          ? `min-h-11 gap-2 rounded-lg px-3 text-sm [text-shadow:0_1px_3px_rgb(0_0_0/0.6)] ${selected ? 'font-medium text-white' : 'font-normal text-white/60 hover:text-white/80'}`
+          : `flex-col gap-1 rounded-lg px-1 py-2 text-xs font-semibold sm:flex-row sm:gap-2 sm:text-sm ${selected ? ACTIVE[tone] : IDLE}`}"
     >
       {#if item.icon}
         {@const Icon = item.icon}
         <Icon size={16} />
       {/if}
-      <span class="min-w-0 break-words">{item.label}</span>
+      {#if variant === 'overlay'}
+        <span
+          class="relative min-w-0 break-words after:absolute after:inset-x-1/4 after:-bottom-1 after:h-0.5 after:rounded-full {selected
+            ? 'after:bg-white'
+            : 'after:bg-transparent'}">{item.label}</span
+        >
+      {:else}
+        <span class="min-w-0 break-words">{item.label}</span>
+      {/if}
       {#if item.badge && item.badge > 0}
         <span
           class="text-2xs rounded-full px-1.5 py-0.5 font-bold {item.badgeClass ??

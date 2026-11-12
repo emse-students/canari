@@ -1,7 +1,7 @@
 # CanaReels - the server half (R3: decisions C2, C3, C4, C6; the rule and the year of 2026-11-09)
 
 Decided by the user on 2026-09-29 and built from 2026-10-01
-([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+([reels](../frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 This page is the CONTRACT the camera tab, the full-screen viewer and the on-device compression are
 built against, and the design behind the server side. A reel is a **post of `kind = 'reel'`**: same
 table, same feed, same reactions, comments, reports and moderation - plus a duration, an expiry,
@@ -135,74 +135,40 @@ Every post row - feed, search, `GET /api/posts/:id`, the notification link - now
 feed*). The full-screen viewer asks for `kind=reel` and pages with `limit`/`offset` like the feed.
 Every filter the feed has applies (blocked authors, moderation-hidden, promo gate, service account).
 
-**`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
-picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
-The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
-`images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
-attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
-drop; allowed since 2026-11-06 under `withLinks`, below). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
-`jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
-reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
-Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
-(`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer client against it simply
-shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is
-a feed concept and does not head the CanaReels list. Every `listPosts` and `searchPosts` order ends
-in `posts.id DESC`, so posts published at the same instant (scheduled ones) can neither repeat nor
-be skipped across `OFFSET` pages; the post an event card links back to is picked the same way. Pinned by `posts.service.reels.spec.ts` (every
-arm) and `full-screen-post-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+**`multiMedia=true` (with `kind=reel`) adds the full-screen posts** - the photo, video and carousel
+pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels),
+[carousels](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06),
+[links](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)). The clause is
+`FULL_SCREEN_POST_SQL` (`posts/full-screen-post-sql.ts`): **1 to 10 attachments, every one a picture
+or a video** (each by its `type`, or untyped with an `image/` or `video/` mime type, a legacy row),
+no poll, no form, no attached form, no linked calendar event; a link in the text is ALLOWED and drawn
+in the caption (owner, 2026-11-06). A file, an audio or an element with neither type nor mime keeps
+the whole post out; eleven or more attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). "Every
+element" is a `NOT EXISTS` over `jsonb_array_elements`, and a column holding JSON `null` or a scalar
+counts as empty through a `CASE` on `jsonb_typeof` - `jsonb_array_length` and the element function
+raise on it and would fail the page. It is OR-ed into the reel filter of every feed arm, behind the
+same visibility rules, and keys its own cache entry (`+carousel-links`). Without `kind=reel` it
+means nothing.
 
-**`singleMedia=true` (with `kind=reel`, 2026-11-06)** is the same list with ONE VIDEO too: the posts
-whose only content is one picture OR one video, a video not filmed with the Canari camera (owner:
-*a feed post of a single video exists and does not appear*). The clause is `SINGLE_MEDIA_POST_SQL`
-(same file): the picture rule above, OR-ed with the same rule on a `video`-typed (or untyped with a
-`video/` mime type) attachment, with the SAME exclusions (poll, form, attached form, linked event,
-link in the text). It wins over `singlePhotos` when both are sent, and **`singlePhotos` stays
-served, pictures only** (`singleMediaModeOf`): an installed client keeps asking for it and its
-`fullScreenPageOf` would draw a foreign video as a reel and log an accusation, so it must never
-receive one. The current client sends BOTH (`buildListPostsSearchParams`), so a server that does
-not know `singleMedia` still serves the pictures. The cache key carries `+photos` or `+media`.
-**A video post never expires**: only a `reel` (or a live `replay`) row has an `expiresAt`, and the
-live-row clause (`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
-it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the comments
-sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, id DESC`). Pinned by
-`full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
-exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
-the precedence, and "means nothing without `kind=reel`").
+**One switch since 2026-11-11.** The list grew in four steps - `singlePhotos` (one picture,
+2026-10-19), `singleMedia` (one picture or video), `multiMedia` (carousels) and `withLinks` (a link
+in the text, all 2026-11-06) - each older switch keeping its narrower meaning for the installed
+clients that could not draw the wider one. Every client the `1.6.6` floor admits sends `multiMedia`
+(with `withLinks`), so the four collapsed into one: `singlePhotos`, `singleMedia` and `withLinks` are
+no longer DTO fields, the whitelisting `ValidationPipe` strips them, and a floor client that still
+sends them gets the list it asked for ([legacy-compatibility](../legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
 
-**`multiMedia=true` (with `kind=reel`, 2026-11-06)** adds the CAROUSELS to that list: the posts of
-**2 to 10 attachments, every one a picture or a video** (each by its `type`, or untyped with an
-`image/` or `video/` mime type), with the same exclusions (owner: *a post of several photos and
-videos, swiped left and right as on Instagram*; [client half](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06)).
-The clause is `MULTI_MEDIA_POST_SQL` (same file), OR-ed with `SINGLE_MEDIA_POST_SQL` under the mode
-`carousel` (`singleMediaSql`). "Every element" is a `NOT EXISTS` over `jsonb_array_elements`, behind
-a `CASE` on `jsonb_typeof` for the same reason as the length: the function raises on a scalar. A
-file, an audio or an element with neither type nor mime keeps the whole post out; eleven or more
-attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). **Precedence: `multiMedia` > `singleMedia` >
-`singlePhotos`** (`singleMediaModeOf`), and each older switch keeps its meaning, so an installed
-client that sends `singleMedia` alone - and cannot draw a carousel - never receives one. The current
-client sends all three, so a server that does not know `multiMedia` still serves the single pictures
-and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.integration.spec.ts`
-(the bounds 10 and 11, a mix with a caption, a legacy element by mime, a file, an audio, an untyped
-element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
-`posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
-without `kind=reel`").
-
-**`withLinks=true` (with `multiMedia=true`, 2026-11-06)** lets a post with a LINK in its text in:
-the single and carousel rules above WITHOUT the `http(s)://` clause (owner: *a photo, video or
-carousel post with a link appears in CanaReels, the link clickable in the caption*;
-[client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
-Poll, form, attached form and linked event still keep a post out. The clause is
-`LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
-**It means something only with `multiMedia`** (`singleMediaModeOf`): every client built without
-this change (every release through `1.6.6-alpha.1`; the first that sends `withLinks` is
-`1.6.6-alpha.2` at the earliest, the first stable `1.6.6`) drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
-none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
-meaning beside an older one because no client would send that pair. A server that does not know
-`withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by
-`full-screen-post-sql.integration.spec.ts` (the `carousel-links` mode is exactly the `carousel` mode
-plus the three rows whose only extra is a link; poll, form, attached form and event rows stay out)
-and `posts.service.reels.spec.ts` (every arm; `withLinks` without `multiMedia`, and `multiMedia`
-without `withLinks`, keep the link out).
+**`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is a feed concept and does
+not head the CanaReels list. Every `listPosts` and `searchPosts` order ends in `posts.id DESC`, so
+posts published at the same instant (scheduled ones) can neither repeat nor be skipped across
+`OFFSET` pages; the post an event card links back to is picked the same way. **A video post never
+expires**: only a `reel` (or a live `replay`) row has an `expiresAt`, and the live-row clause
+(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`) leaves a plain post alone; the viewer
+draws it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the
+comments sheet read it like any post. Pinned by `full-screen-post-sql.integration.spec.ts` (the
+exact set on a real PostgreSQL: the bounds 10 and 11, a mix with a caption, legacy elements by mime,
+each exclusion, JSON `null` and scalars) and `posts.service.reels.spec.ts` (every arm, "means
+nothing without `kind=reel`", the retired switches turn nothing on).
 
 **Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
 saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled

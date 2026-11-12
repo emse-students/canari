@@ -9,6 +9,10 @@ import {
   reviewCohortAuthorFilterSql,
 } from '../spaces/reader-spaces';
 import { engagedAccountsSql } from './engagement-sql';
+import { Logger } from '@nestjs/common';
+import { suggestionsOn } from '../push/notification-category';
+
+const logger = new Logger('SuggestedPosts');
 
 /**
  * SUGGESTED POSTS (engagement WP-7, decision 8): popular posts the viewer ALREADY sees by the SPACE
@@ -91,6 +95,12 @@ export async function suggestedPostIds(
   opts: { peopleOnly?: boolean } = {}
 ): Promise<string[]> {
   if (!viewerId) return [];
+  // ONE SWITCH, "Suggestions dans l'app", on by default (owner, "Deux niveaux", 2026-11-11): Pour
+  // toi merges none and the older clients' route serves none for a reader who switched it off.
+  if (!(await suggestionsOn(manager, viewerId))) {
+    logger.debug(`[SUGGESTED_POSTS] ${viewerId.slice(0, 8)}: Suggestions off - none`);
+    return [];
+  }
   const [blocked, promoCutoff] = await Promise.all([
     blockedUserIdsFor(manager, viewerId),
     promoCutoffFor(manager, viewerId, isAdmin),

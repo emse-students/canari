@@ -80,7 +80,31 @@ describe('the categories this build does not know', () => {
     apiFetch.mockResolvedValueOnce(Response.json({ disabled: [] }));
     await saveDisabledCategories(['forms'], ['a_later_one']);
     const init = apiFetch.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
-    expect(JSON.parse(String(init.body))).toEqual({ disabled: ['forms', 'a_later_one'] });
+    // `enabled` is always sent: its presence declares this build knows the opt-in reading.
+    expect(JSON.parse(String(init.body))).toEqual({
+      disabled: ['forms', 'a_later_one'],
+      enabled: [],
+    });
     expect(init.headers[CLIENT_VERSION_HEADER]).toBe(getClientAppVersion());
+  });
+});
+
+describe('the push of an opt-in category ("Deux niveaux", owner 2026-11-11)', () => {
+  beforeEach(() => apiFetch.mockReset());
+
+  it('is read from enabled, opt-in ids only, and is empty when the server says nothing', async () => {
+    apiFetch.mockResolvedValueOnce(
+      Response.json({ disabled: [], enabled: ['suggestions', 'posts', 'a_later_one'] })
+    );
+    expect((await fetchNotificationPreferences()).pushEnabled).toEqual(['suggestions']);
+    apiFetch.mockResolvedValueOnce(Response.json({ disabled: [] }));
+    expect((await fetchNotificationPreferences()).pushEnabled).toEqual([]);
+  });
+
+  it('is sent on the save', async () => {
+    apiFetch.mockResolvedValueOnce(Response.json({ disabled: [] }));
+    await saveDisabledCategories([], [], ['suggestions']);
+    const init = apiFetch.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ disabled: [], enabled: ['suggestions'] });
   });
 });

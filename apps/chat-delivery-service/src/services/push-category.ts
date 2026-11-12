@@ -9,7 +9,8 @@ import { keysKnownBy } from '../utils/app-version';
  * reads this file to pin the two together, because no compiler spans a service boundary.
  *
  * The ids are a CLOSED set and the persisted value is the set of DISABLED ones, so a new category
- * ships ON for every account with no migration - "everything on" is the default by construction.
+ * ships ON for every account with no migration - "everything on" is the default by construction -
+ * EXCEPT the {@link OPT_IN_CATEGORIES}, which are off until the account turns them on (migration 047).
  */
 export const NOTIFICATION_CATEGORIES = [
   /** 1-to-1 and group MLS conversations. */
@@ -42,16 +43,70 @@ export const NOTIFICATION_CATEGORIES = [
    */
   'birthdays',
   /**
-   * A post of the reader's space that takes off - a campus trend, told as a SUGGESTION (owner,
-   * 2026-11-10, docs/wiki/engagement.md WP-10): its own switch, on by default, independent of
-   * `posts`, because it is news about accounts the reader does not follow. Off, the bell still lists
-   * it - only the push is not sent. A build older than the switch draws none for it; it is also too
-   * old to be sent a trend at all (social-service's client floor).
+   * EVERY SUGGESTION, ONE SWITCH, OFF UNTIL TURNED ON (owner, 2026-11-10, "Nos principes"; docs/wiki/
+   * engagement.md, "Aligned with the charter"): the campus-trend push and bell row, the follow
+   * suggestions and the suggested posts of Pour toi - social-service reads the same switch before it
+   * writes or serves any of them. Independent of `posts`, because it is news about accounts the
+   * reader does not follow. A build older than the switch draws none for it; it is also too old to be
+   * sent a trend at all (social-service's client floor).
    */
   'suggestions',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/**
+ * THE CATEGORIES WHOSE PUSH IS OFF UNTIL THE ACCOUNT TURNS IT ON (owner, 2026-11-10, "Nos
+ * principes", and "Deux niveaux", 2026-11-11). Two switches per such category:
+ * - `"disabledCategories"` lists it when the account switched the category OFF altogether - for
+ *   `suggestions`, "Suggestions dans l'app" (on by default: the carousel, "Suivez aussi...", the
+ *   suggested posts of Pour toi, the trend rows of the bell);
+ * - `"enabledCategories"` (migration 047) lists it when the account turned its PUSH on.
+ * It is pushed only when both say so; an account with no row is never pushed one. social-service's
+ * `push/notification-category.ts` names the same list, and its spec reads this file to pin them.
+ */
+export const OPT_IN_CATEGORIES: readonly NotificationCategory[] = ['suggestions'];
+
+/** True for a category that is off until the account turns it on ({@link OPT_IN_CATEGORIES}). */
+export function isOptInCategory(category: NotificationCategory): boolean {
+  return OPT_IN_CATEGORIES.includes(category);
+}
+
+/** The account's two stored switch sets, unknown ids dropped; `enabled` holds opt-in ids only. */
+export interface StoredSwitches {
+  /** The categories switched off altogether (for an opt-in one: in the app too). */
+  disabled: NotificationCategory[];
+  /** The opt-in categories whose PUSH was turned on. */
+  enabled: NotificationCategory[];
+}
+
+/** Reads a row's two columns (`null` for an account that never saved: nothing off, no push on). */
+export function storedSwitches(
+  row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
+): StoredSwitches {
+  const list = (value: unknown): NotificationCategory[] =>
+    (Array.isArray(value) ? (value as unknown[]) : []).filter(isNotificationCategory);
+  const disabled = new Set(list(row?.disabledCategories));
+  const enabled = new Set(list(row?.enabledCategories).filter(isOptInCategory));
+  return {
+    disabled: NOTIFICATION_CATEGORIES.filter((c) => disabled.has(c)),
+    enabled: NOTIFICATION_CATEGORIES.filter((c) => enabled.has(c)),
+  };
+}
+
+/**
+ * THE CATEGORIES NOT PUSHED TO AN ACCOUNT, from its stored row: every category it switched off,
+ * plus every opt-in category whose push it has not turned on. The ONE push-side reading of the two
+ * columns in this service.
+ */
+export function effectiveDisabledCategories(
+  row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
+): NotificationCategory[] {
+  const { disabled, enabled } = storedSwitches(row);
+  const off = new Set(disabled);
+  for (const category of OPT_IN_CATEGORIES) if (!enabled.includes(category)) off.add(category);
+  return NOTIFICATION_CATEGORIES.filter((c) => off.has(c));
+}
 
 /**
  * THE FIRST BUILD WHOSE SETTINGS SCREEN NAMES EACH CATEGORY (`null` = every admitted build), read

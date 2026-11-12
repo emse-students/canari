@@ -101,6 +101,7 @@ import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { resetSeenHelps } from '$lib/guidance/seenHelps.svelte';
 import { guideEngine } from '$lib/guidance/guidance.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
+import { beginLoginAttempt, endLoginAttempt, installEarlyKeyIfLive } from './earlyKeyRead';
 import {
   flushPendingGroupExits,
   registerPendingGroupExitDrain,
@@ -626,6 +627,11 @@ export function savedStateFailure(
   // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
   // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
   if (reason instanceof MlsStateWriteRefusedError) {
+    // Refused before any write, because this tab does not own the state (a follower): nobody wrote
+    // over anything, so "another tab has just saved" would be false.
+    if (reason.outcome === 'follower-tab') {
+      return new LoginFailure('state_owned_by_another_tab', m.auth_state_owned_by_another_tab());
+    }
     return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
   }
   if (reason instanceof SavedStateOfAnotherAccountError) {
@@ -1349,7 +1355,10 @@ export async function loginImpl(
   // already holds is SHOWN before the server has confirmed the device, and if the server then says
   // it is revoked (or the login fails for any other reason) everything drawn is removed and the
   // ordinary consequence follows. It reads and never acts - no request, no write, no MLS
-  // (`landingPreview.ts`). The PIN path cannot start it before the PIN is proven: its device key is
+  // (`landingPreview.ts`). The UNATTENDED HARDWARE-HELD path takes the same trade-off since
+  // 2026-11-11 (slow-link chantier, gap 1): its key is a keystore read that prompts nobody, so it is
+  // read before the token and the stored feed and the landing are drawn before the revocation
+  // answer too, withdrawn the same way if that answer says revoked. The PIN path cannot start it before the PIN is proven: its device key is
   // derived from the server's salt AFTER `pin-check`, so nothing is decryptable before then, which
   // is what keeps the PIN gate's promise by construction rather than by a flag.
   //
@@ -1362,6 +1371,10 @@ export async function loginImpl(
   let landingPreview: Promise<void> | null = null;
   let previewWithdrawn = false;
   let storageOpen: Promise<IStorage> | null = null;
+  /** The unattended hardware-held key read started before the token, never rejects (see below). */
+  let earlyHardwareKey: Promise<void> | null = null;
+  /** This login attempt, as its early key read sees it: ended in the `finally` below. */
+  const attempt = beginLoginAttempt(loginId);
   const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
     const preview = cb.previewLandingTarget;
     if (!preview) return;
@@ -1464,6 +1477,51 @@ export async function loginImpl(
       // a key that may be another account's.
       storageOpen = getStorage(ctx.getUserId());
       startLandingPreview(storageOpen, deviceKeyB64);
+    }
+    if (isBiometric && opts?.unattendedKeyRead === true && atRestScheme === 'hardware') {
+      // THE SAME HOLDS FOR A HARDWARE-HELD KEY READ WITH NO PROMPT (slow-link chantier, gap 1,
+      // 2026-11-11): "stay signed in" on such a phone, and the biometric cadence when no prompt is
+      // due. The key is a local keystore read that asks nobody, so the store can be opened and drawn
+      // now - the feed's stored page, the landing - instead of after the session refresh, which took
+      // 4 s on the owner's link while the server answered in 17 ms. `deviceKeyB64` stays empty: the
+      // native init still reads the keystore itself, and the vault write stays skipped.
+      //
+      // A read that fails here is not answered here: the init below reads the same alias and meets
+      // the same refusal on the login's own path, typed. This line says the early read lost its draw.
+      //
+      // NOT AWAITED IN LINE: the state lookup and the token below start at once, so a fast link
+      // pays nothing for the draw. The key is installed BEFORE the preview starts, inside the same
+      // continuation, and the login awaits this read before the store and the MLS init are opened.
+      //
+      // BOUND TO THIS ATTEMPT (`earlyKeyRead.ts`): a read resolving after this login ended (its
+      // `finally` ends `attempt`) installs nothing, so no key outlives a failed login in memory.
+      const read = readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log).catch(
+        (e: unknown) => {
+          cb.log(
+            `[AT_REST_KEY] WARN: the hardware-held key could not be read before the token - nothing drawn before the session (${String(e)})`
+          );
+          return null;
+        }
+      );
+      earlyHardwareKey = installEarlyKeyIfLive(
+        read,
+        attempt,
+        () => !signedOutSinceStart(),
+        (early) => {
+          if (!isValidDeviceKeyB64(early)) {
+            cb.log(
+              '[AT_REST_KEY] WARN: the keystore answered a key that is not 32 bytes - not drawn'
+            );
+            return;
+          }
+          noteHardwareHeldDeviceKey(early);
+          ctx.setDeviceKey(early);
+          storageOpen = getStorage(ctx.getUserId());
+          startLandingPreview(storageOpen, early);
+          cb.log('[AT_REST_KEY] hardware-held key in hand before the token - local pages may draw');
+        },
+        cb.log
+      ).then(() => undefined);
     }
     if (isBiometric) {
       cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
@@ -1798,6 +1856,10 @@ export async function loginImpl(
     // after `login-start` - and `allSettled` means that number is the SLOWER of two concurrent
     // things, with nothing saying which. Three spans, not one: the two halves overlap by
     // construction, which is what this bench was built to report rather than flatten.
+    // The early hardware-held read (local, long settled by now) finishes before the store and the
+    // init are opened, so the store it opened is the one used and its key is the one compared below.
+    if (earlyHardwareKey) await earlyHardwareKey;
+    stopIfSignedOut('hardware-key-before-token');
     beginBootSpan('mls-init-and-storage');
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       timeBootSpan(
@@ -1899,10 +1961,20 @@ export async function loginImpl(
       }
       // Read from the keystore: on a hardware-held phone no vault may copy it out (`saveDeviceKey`).
       if (atRestScheme === 'hardware') noteHardwareHeldDeviceKey(sessionKey);
+      // A key read before the token (an unattended hardware-held read) IS this one: the same alias.
+      // A difference would mean the store was drawn under another key - accused, and the session's
+      // key wins from here.
+      const drawnWith = ctx.getDeviceKey();
+      if (drawnWith && drawnWith !== sessionKey) {
+        cb.log(
+          '[AT_REST_KEY] ERROR: the key read before the token differs from the session key - the session key is kept'
+        );
+      }
       ctx.setDeviceKey(sessionKey);
-      // The keystore path learns its key only here, behind the single prompt and after the gate.
+      // The prompted keystore path learns its key only here, behind the single prompt and after the
+      // gate; the unattended hardware-held read already started its preview before the token.
       // Not awaited before the session flips: the landing selects the row whenever it arrives.
-      startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);
+      if (!landingPreview) startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);
     }
 
     ctx.setStorage(storageSettled.value);
@@ -2916,6 +2988,8 @@ export async function loginImpl(
       });
     }
   } finally {
+    // FIRST: an early key read still in flight installs nothing for an attempt that has ended.
+    endLoginAttempt(attempt);
     if (loginFlowOwner === loginId) ctx.setIsMessagingInitializing(false);
     releaseLoginFlag();
     if (loginInFlightSettled === thisLoginSettled) loginInFlightSettled = null;
@@ -3590,7 +3664,12 @@ export function tearDownLiveSession(
     // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
     // the caller chains the MLS client's retirement, and the next login's wait, on it.
     finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .catch((e) => {
+        // A REFUSAL HAS BEEN SAID WHERE IT WAS DECIDED (the version guard, or a follower tab, which
+        // owns no MLS state to write); only an unexplained failure is said here.
+        if (e instanceof MlsStateWriteRefusedError) return;
+        console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
+      })
       .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
