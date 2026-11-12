@@ -1776,6 +1776,22 @@ those ids and every scoped read warned `[DB] <id> is a message of another conver
 times in 200 ms on dev web - until the next boot's merge. Now the Welcome moves every stored row of
 the old conversation, through the boot merge's own move, and logs the count either way.
 
+- **Order.** The joined group's row is shown and SAVED first, then the move runs, awaited inside the
+  Welcome: the thread never leaves the screen, and a crash mid-move leaves the joined group's row
+  for the boot merge to fold the rest into. The target is never read - a message id is the store's
+  key, so a row of the old conversation cannot also stand under the new one - and a message only
+  memory holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins.
+- **The old row is deleted** once its rows moved, as the boot merge does. Left in place it competed
+  at the next boot, and the merge kept the NEWER row: it could move the joined group's rows back
+  into the old one and delete the live group on the server. Rows that do not open with this
+  device's key are counted, logged, and left with the old row.
+- **The boot merge keeps the conversation whose group this device holds** (`pickCanonicalDirect`),
+  then the most recent; with both or neither held it is recency, as before.
+- **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
+  message landing between the read and the write is written over by the stored body; what is
+  keyed by the conversation rather than the message - read watermarks, mutations still waiting for
+  their row (`pendingMutations`) - stays with the old conversation and goes with its row.
+
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding
 it across a store walk would serialise unrelated groups' commits behind a disk read. The

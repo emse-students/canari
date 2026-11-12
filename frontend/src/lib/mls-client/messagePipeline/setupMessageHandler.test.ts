@@ -55,7 +55,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
-import type { StoredMessage } from '$lib/db';
+import { messageRowStore, placement, storedRow } from '../test/fixtures/messageRowStore';
 import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { m } from '$lib/paraglide/messages';
@@ -382,85 +382,64 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expectEveryKeyIsItsRowId(deps.conversations);
     });
 
-    /**
-     * A store keyed by message id, each row naming its conversation - the IndexedDB shape. Its
-     * scoped read warns on a row of another conversation exactly as the real one does, so a test
-     * can assert the warning never fires.
-     */
-    function rowStore(rows: StoredMessage[]) {
-      const byId = new Map(rows.map((r) => [r.id, { ...r }]));
-      const foreign: string[] = [];
-      const store = {
-        byId,
-        foreign,
-        getMessages: vi.fn(async (conv: string) =>
-          [...byId.values()].filter((r) => r.conversationId === conv)
-        ),
-        getMessagesByIds: vi.fn(async (conv: string, ids: readonly string[]) => {
-          const found = new Map<string, StoredMessage>();
-          for (const id of ids) {
-            const row = byId.get(id);
-            if (!row) continue;
-            if (row.conversationId !== conv) foreign.push(id);
-            else found.set(id, row);
-          }
-          return { rows: found, unreadable: new Set<string>() };
-        }),
-        saveMessages: vi.fn(async (msgs: StoredMessage[]) => {
-          for (const m of msgs) byId.set(m.id, { ...m });
-        }),
-        saveMessagesIfAbsent: vi.fn(async (msgs: StoredMessage[]) => {
-          const written = new Set<string>();
-          for (const m of msgs) {
-            if (byId.has(m.id)) continue;
-            byId.set(m.id, { ...m });
-            written.add(m.id);
-          }
-          return written;
-        }),
-        getConversation: vi.fn(async () => null),
-      };
-      return store;
+    const heldDuplicate = () =>
+      emptyConversation(olderDmGroup, {
+        lifecycle: 'active',
+        conversationType: 'direct',
+        directPeerId: 'peer-user',
+        contactName: 'peer-user',
+      });
+
+    /** `saveConversation` writing the map's row to `store`, as the session's does. */
+    function savingInto(store: ReturnType<typeof messageRowStore>) {
+      return (deps: { conversations: Map<string, { id: string; name?: string }> }) =>
+        vi.fn(async (id: string) => {
+          const row = deps.conversations.get(id);
+          if (row) await store.saveConversation({ id, name: row.name ?? id } as never);
+        });
     }
 
-    function storedRow(id: string, conversationId: string): StoredMessage {
-      return {
-        id,
-        conversationId,
-        senderId: 'peer-user',
-        content: `body of ${id}`,
-        timestamp: 1000,
-      } as StoredMessage;
+    async function deliverInto(
+      store: ReturnType<typeof messageRowStore>,
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+    ) {
+      store.conversations.set(olderDmGroup, {
+        id: olderDmGroup,
+        name: 'user-a::peer-user',
+      } as never);
+      const conversations = createTestConversations(initial);
+      const deps = baseDeps({ conversations, storage: store });
+      deps.saveConversation = savingInto(store)({ conversations });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
+      mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (
+        a: string,
+        b: Uint8Array,
+        c?: string,
+        d?: boolean
+      ) => Promise<boolean>;
+      expect(await onMsg('peer-user', new Uint8Array([1]), dmGroup, true)).toBe(true);
+      return deps;
+    }
+
+    function logged(deps: { log: ReturnType<typeof vi.fn> }, part: string): boolean {
+      return deps.log.mock.calls.some((c: unknown[]) => String(c[0]).includes(part));
     }
 
     it('a held DM restored as a stub (no message in memory) moves EVERY stored row onto the joined group', async () => {
       // The peer merged its duplicate into `dmGroup`; this device still holds the duplicate, read
       // from storage at boot as a row with no page loaded yet.
-      const store = rowStore([
+      const store = messageRowStore([
         storedRow('m1', olderDmGroup),
         storedRow('m2', olderDmGroup),
         storedRow('m3', olderDmGroup),
       ]);
-      const deps = await deliverDmWelcome(
-        [
-          [
-            olderDmGroup,
-            emptyConversation(olderDmGroup, {
-              lifecycle: 'active',
-              conversationType: 'direct',
-              directPeerId: 'peer-user',
-              contactName: 'peer-user',
-            }),
-          ],
-        ],
-        store
-      );
+      const deps = await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
 
-      expect([...store.byId.values()].map((r) => [r.id, r.conversationId])).toEqual([
-        ['m1', dmGroup],
-        ['m2', dmGroup],
-        ['m3', dmGroup],
-      ]);
+      expect(placement(store)).toEqual({ m1: dmGroup, m2: dmGroup, m3: dmGroup });
       expect([...store.byId.values()].map((r) => r.content)).toEqual([
         'body of m1',
         'body of m2',
@@ -470,54 +449,117 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const read = await store.getMessagesByIds(dmGroup, ['m1', 'm2', 'm3']);
       expect(read.rows.size).toBe(3);
       expect(store.foreign).toEqual([]);
-      expect(deps.log).toHaveBeenCalledWith(
-        expect.stringContaining('3 stored row(s) moved, 0 on-screen row(s) written')
+      // The joined group's row was saved BEFORE the move, the duplicate's row is gone after it.
+      expect(store.saveConversation.mock.invocationCallOrder[0]).toBeLessThan(
+        store.saveMessages.mock.invocationCallOrder[0]
       );
+      expect(store.conversations.has(dmGroup)).toBe(true);
+      expect(store.conversations.has(olderDmGroup)).toBe(false);
+      expect(
+        logged(
+          deps,
+          "3 stored row(s) moved, 0 row(s) only memory held written, 33333333…'s row deleted"
+        )
+      ).toBe(true);
+    });
+
+    it('moves the stored rows and writes only the messages memory alone holds', async () => {
+      const store = messageRowStore([storedRow('s1', olderDmGroup), storedRow('s2', olderDmGroup)]);
+      const convo = heldDuplicate();
+      convo.messages = [
+        {
+          id: 's1',
+          senderId: 'peer-user',
+          content: 'screen copy of s1',
+          timestamp: new Date(1000),
+        },
+        { id: 'mem1', senderId: 'peer-user', content: 'only on screen', timestamp: new Date(2000) },
+      ] as never;
+      const deps = await deliverInto(store, [[olderDmGroup, convo]]);
+
+      expect(placement(store)).toEqual({ s1: dmGroup, s2: dmGroup, mem1: dmGroup });
+      expect(store.byId.get('s1')?.content).toBe('body of s1');
+      expect(store.byId.get('mem1')?.content).toBe('only on screen');
+      expect(logged(deps, '2 stored row(s) moved, 1 row(s) only memory held written')).toBe(true);
+    });
+
+    it('an edited or deleted stored row is moved as stored, never written over by the copy on screen', async () => {
+      const store = messageRowStore([
+        storedRow('e1', olderDmGroup, { content: 'edited body', isEdited: true }),
+        storedRow('d1', olderDmGroup, { content: '', isDeleted: true }),
+      ]);
+      const convo = heldDuplicate();
+      convo.messages = [
+        { id: 'e1', senderId: 'peer-user', content: 'original body', timestamp: new Date(1000) },
+        { id: 'd1', senderId: 'peer-user', content: 'deleted body', timestamp: new Date(1000) },
+      ] as never;
+      await deliverInto(store, [[olderDmGroup, convo]]);
+
+      expect(store.byId.get('e1')).toMatchObject({
+        conversationId: dmGroup,
+        content: 'edited body',
+        isEdited: true,
+      });
+      expect(store.byId.get('d1')).toMatchObject({
+        conversationId: dmGroup,
+        content: '',
+        isDeleted: true,
+      });
+    });
+
+    it('a row that does not open stays under the duplicate WITH its row, and the log names it', async () => {
+      const store = messageRowStore([
+        storedRow('ok1', olderDmGroup),
+        storedRow('sealed1', olderDmGroup, { unreadable: true }),
+      ]);
+      const deps = await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
+
+      expect(placement(store)).toEqual({ ok1: dmGroup, sealed1: olderDmGroup });
+      expect(store.conversations.has(olderDmGroup)).toBe(true);
+      expect(logged(deps, '1 row(s) did not open and stay under 33333333…')).toBe(true);
+    });
+
+    it('a store that refuses the move: the joined group is shown and saved, the rows stay, it says so', async () => {
+      const store = messageRowStore([storedRow('m1', olderDmGroup)], { failSave: true });
+      const deps = await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
+
+      expect(deps.conversations.get(dmGroup)?.directPeerId).toBe('peer-user');
+      expect(store.conversations.has(dmGroup)).toBe(true);
+      expect(placement(store)).toEqual({ m1: olderDmGroup });
+      expect(store.conversations.has(olderDmGroup)).toBe(true);
+      expect(logged(deps, '[WELCOME] FAILED to re-key the rows of 33333333…')).toBe(true);
     });
 
     it('leaves alone a GROUP with the same peer and a DM with another peer', async () => {
       const groupWithPeer = '44444444-4444-4444-8444-444444444444';
       const dmWithOther = '55555555-5555-4555-8555-555555555555';
-      const store = rowStore([
+      const store = messageRowStore([
         storedRow('g1', groupWithPeer),
         storedRow('o1', dmWithOther),
         storedRow('d1', olderDmGroup),
       ]);
-      const deps = await deliverDmWelcome(
+      const deps = await deliverInto(store, [
         [
-          [
-            groupWithPeer,
-            emptyConversation(groupWithPeer, {
-              lifecycle: 'active',
-              conversationType: 'group',
-              contactName: 'peer-user',
-            }),
-          ],
-          [
-            dmWithOther,
-            emptyConversation(dmWithOther, {
-              lifecycle: 'active',
-              conversationType: 'direct',
-              directPeerId: 'other-user',
-              contactName: 'other-user',
-            }),
-          ],
-          [
-            olderDmGroup,
-            emptyConversation(olderDmGroup, {
-              lifecycle: 'active',
-              conversationType: 'direct',
-              directPeerId: 'peer-user',
-              contactName: 'peer-user',
-            }),
-          ],
+          groupWithPeer,
+          emptyConversation(groupWithPeer, {
+            lifecycle: 'active',
+            conversationType: 'group',
+            contactName: 'peer-user',
+          }),
         ],
-        store
-      );
+        [
+          dmWithOther,
+          emptyConversation(dmWithOther, {
+            lifecycle: 'active',
+            conversationType: 'direct',
+            directPeerId: 'other-user',
+            contactName: 'other-user',
+          }),
+        ],
+        [olderDmGroup, heldDuplicate()],
+      ]);
 
-      expect(store.byId.get('g1')?.conversationId).toBe(groupWithPeer);
-      expect(store.byId.get('o1')?.conversationId).toBe(dmWithOther);
-      expect(store.byId.get('d1')?.conversationId).toBe(dmGroup);
+      expect(placement(store)).toEqual({ g1: groupWithPeer, o1: dmWithOther, d1: dmGroup });
       expect(deps.conversations.has(groupWithPeer)).toBe(true);
       expect(deps.conversations.has(dmWithOther)).toBe(true);
       expect(deps.conversations.has(olderDmGroup)).toBe(false);

@@ -656,7 +656,7 @@ export function resolveConversationListPresentation(
 // ---------- De-duplication ----------
 
 /**
- * Moves every stored message of conversation `fromId` that `toId` does not already hold onto `toId`.
+ * Moves every stored message of conversation `fromId` it can open onto `toId`.
  *
  * THE ONE MOVE OF A DUPLICATE 1:1's ROWS, used by the boot-time merge
  * ({@link mergeDirectConversationDuplicates}) and by a Welcome that re-keys a held DM onto the group
@@ -666,31 +666,57 @@ export function resolveConversationListPresentation(
  * already merged away - every scoped read of the joined group then met them as rows of another
  * conversation, until the next boot's merge (2026-11-12, dev web).
  *
- * A MOVE, AND THE ONE WHOLE-ROW WRITE IT MAKES. Only `fromId`'s own rows are written - `toId`'s stand
- * as they are, never rewritten from this read. A move changes a row's conversation, which the scoped
- * compare-and-set (`mergeMessages`) refuses by design, so each moved row is the STORED row just read -
- * every field, proofs and reactions included - under its new conversation.
+ * A MOVE, AND THE ONE WHOLE-ROW WRITE IT MAKES. A message id is the store's primary key, so a row of
+ * `fromId` cannot also stand under `toId`: `toId`'s rows are never read nor rewritten. A move changes
+ * a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design, so each
+ * moved row is the STORED row just read - every field, proofs and reactions included - under its new
+ * conversation. A row this device cannot open is not moved and is counted in `left`.
  *
- * THE WINDOW IT LEAVES, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
- * `fromId`'s messages handled by its group is NOT carried - its tombstone is written over by the body
- * read here. Closing it needs the move as one store operation the handlers serialise against; both
- * callers run it while `fromId` is out of the reactive map, so no shown path writes to it.
+ * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
+ * `fromId`'s messages handled by its group is written over by the body read here; and what is keyed
+ * by the conversation rather than by the message - its read watermarks, the mutations still waiting
+ * for a row (`pendingMutations`) - stays with `fromId`. Both callers run it while `fromId` is out of
+ * the reactive map, so no shown path writes to it.
  *
- * @returns the ids of the rows moved, and every id either conversation now holds
+ * @returns the ids of the rows moved, and how many rows stayed under `fromId` because they did not open
  */
 export async function moveDirectConversationRows(
   fromId: string,
   toId: string,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<{ moved: string[]; held: Set<string> }> {
-  const target = await storage.getMessages(toId, deviceKeyB64);
+): Promise<{ moved: string[]; left: number }> {
   const source = await storage.getMessages(fromId, deviceKeyB64);
-  const held = new Set(target.map((m) => m.id));
-  const moved = source.filter((m) => !held.has(m.id)).map((m) => ({ ...m, conversationId: toId }));
+  const moved = source.map((m) => ({ ...m, conversationId: toId }));
   if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
-  for (const m of source) held.add(m.id);
-  return { moved: moved.map((m) => m.id), held };
+  const left = await storage.countMessages(fromId);
+  return { moved: moved.map((m) => m.id), left };
+}
+
+/**
+ * Which of a peer's duplicate 1:1 conversations the boot merge keeps: THE ONE WHOSE GROUP THIS DEVICE
+ * HOLDS, then the most recently updated. Recency alone undid a Welcome's re-key (review of #3406): the
+ * Welcome re-keys the duplicate A onto the joined group B and forgets A's MLS state, but A's row may
+ * be the newer one - and the merge then moved B's rows back into A and deleted B, the live group, on
+ * the server. A conversation whose group is gone from this device cannot carry a message again, so it
+ * is never the one kept while a live one exists.
+ */
+function pickCanonicalDirect(
+  metas: ConversationMeta[],
+  mlsService: IMlsService | undefined,
+  log: (msg: string) => void
+): ConversationMeta {
+  const newest = (list: ConversationMeta[]) =>
+    list.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+  const held = mlsService ? new Set(mlsService.getLocalGroups()) : null;
+  const live = held ? metas.filter((m) => held.has(m.id)) : [];
+  const byRecency = newest(metas);
+  if (live.length === 0 || live.includes(byRecency)) return byRecency;
+  const kept = newest(live);
+  log(
+    `[DM_MERGE] keeping ${kept.id.slice(0, 8)}... whose group this device holds, over the newer ${byRecency.id.slice(0, 8)}... whose group it does not`
+  );
+  return kept;
 }
 
 /**
@@ -754,8 +780,7 @@ export async function mergeDirectConversationDuplicates(
         canonical = { ...canonical, id: terminalId };
       }
     } else {
-      // True independent duplicates (not a chain of successors): keep the most recent one.
-      canonical = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+      canonical = pickCanonicalDirect(metas, mlsService, log);
       terminalId = canonical.id;
     }
 
@@ -778,7 +803,17 @@ export async function mergeDirectConversationDuplicates(
       // mutation handled by the duplicate's group finds no row there, keeps it under the duplicate,
       // and `deleteConversation` below removes that entry; this boot-time merge runs once per
       // duplicate, before its conversation is shown.
-      await moveDirectConversationRows(duplicate.id, canonical.id, storage, deviceKeyB64);
+      const { moved, left } = await moveDirectConversationRows(
+        duplicate.id,
+        canonical.id,
+        storage,
+        deviceKeyB64
+      );
+      if (left > 0) {
+        log(
+          `[DM_MERGE] ${left} row(s) of ${duplicate.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
+        );
+      }
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
@@ -790,7 +825,9 @@ export async function mergeDirectConversationDuplicates(
           logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
         }
       }
-      log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);
+      log(
+        `Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id} (${moved.length} row(s) moved)`
+      );
     } catch (error) {
       log(`Direct-conversation merge error: ${String(error)}`);
     }
