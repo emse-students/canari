@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
+import type { CallFocusState } from '$lib/mobile/androidCallService';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
@@ -547,6 +548,16 @@ export class CallService {
    * `null` otherwise.
    */
   private micSuspendedSince: number | null = null;
+  /**
+   * When Android took the call's AUDIO FOCUS (`performance.now()`), while it is gone; `null`
+   * otherwise. A cellular call ringing in takes it: the microphone is HELD (its track disabled) until
+   * the focus comes back, then the member's own mute state ({@link isMuted}) is given back - never a
+   * hang-up (D056, decided by the lead on 2026-11-12). A second source of {@link localMicSuspended},
+   * beside {@link micSuspendedSince}; neither clears the other ({@link micHeldBySystem}).
+   */
+  private focusLostSince: number | null = null;
+  /** Asks Android for the focus again ({@link setAudioFocusAsker}); `null` with no session. */
+  private audioFocusAsker: ((why: string) => void) | null = null;
   /** Removes the listeners {@link watchSystemMicrophone} put on the capture track. */
   private micWatchCleanup: (() => void) | null = null;
   /**
@@ -620,6 +631,11 @@ export class CallService {
    * the iPhone, locked or in the background (CALL-IOS-MIC-HIDDEN, 2026-10-20). `false` outside a call.
    */
   public localMicSuspended = writable<boolean>(false);
+  /**
+   * Android's audio focus is held for a loss (D056, {@link onAudioFocus}): the microphone is silent
+   * whatever {@link isMuted} says. The ongoing notification shows the call muted meanwhile.
+   */
+  public audioFocusHeld = writable<boolean>(false);
   /**
    * The OTHER party's operating system holds ITS microphone, as it said over the relay
    * (`MicSuspended`). Cleared when the other party goes away (`PeerAway`: no fresh evidence) and
@@ -3843,6 +3859,9 @@ export class CallService {
     logCallAudioTrackSettings(this.localStream, appendLog);
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
+    // A new capture starts free of any focus hold: a hold belongs to the call it was taken in.
+    this.focusLostSince = null;
+    this.audioFocusHeld.set(false);
     this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
     if (mic) {
@@ -3869,21 +3888,19 @@ export class CallService {
     this.micWatchCleanup?.();
     const onMute = () => {
       if (this.micSuspendedSince !== null) return;
+      const wasHeld = this.micHeldBySystem();
       this.micSuspendedSince = performance.now();
       appendLog(
         `[Call] WARN the system took the microphone (track muted, page ${typeof document !== 'undefined' && document.hidden ? 'hidden' : 'visible'}) - telling the other party`
       );
-      this.localMicSuspended.set(true);
-      this.sendMicState(true);
+      this.markMicHeld(wasHeld);
     };
     const onUnmute = () => {
       if (this.micSuspendedSince === null) return;
       const seconds = Math.max(1, Math.round((performance.now() - this.micSuspendedSince) / 1000));
       this.micSuspendedSince = null;
       appendLog(`[Call] the system gave the microphone back after ${seconds} s`);
-      this.localMicSuspended.set(false);
-      this.sendMicState(false);
-      showToast(m.call_mic_was_suspended({ seconds }), 'warning');
+      this.markMicFreedIfNothingHolds(seconds);
     };
     const onEnded = () => appendLog('[Call] WARN the microphone track ended');
     mic.addEventListener('mute', onMute);
@@ -3898,11 +3915,135 @@ export class CallService {
     if (mic.muted) onMute();
   }
 
+  /**
+   * Whether anything outside the member's own mute holds the microphone: the OS (the capture track
+   * is `muted`) or Android's audio focus (another app's sound took it). Either one keeps
+   * {@link localMicSuspended} and the partner's word `true`; only the last to let go clears them.
+   */
+  private micHeldBySystem(): boolean {
+    return this.micSuspendedSince !== null || this.focusLostSince !== null;
+  }
+
+  /** A source started holding the microphone: shown here, and said to the partner if none held it. */
+  private markMicHeld(wasHeld: boolean): void {
+    this.localMicSuspended.set(true);
+    if (!wasHeld) this.sendMicState(true);
+  }
+
+  /**
+   * A source let the microphone go after `seconds`: the member is told how long they could not be
+   * heard, and the screen and the partner learn it is free only if the OTHER source does not hold it.
+   */
+  private markMicFreedIfNothingHolds(seconds: number): void {
+    if (!this.micHeldBySystem()) {
+      this.localMicSuspended.set(false);
+      this.sendMicState(false);
+    }
+    showToast(m.call_mic_was_suspended({ seconds }), 'warning');
+  }
+
+  /**
+   * ANDROID'S AUDIO FOCUS, told by the ongoing-call service (`androidCallService.ts`, `focus`). A loss
+   * (`lost`) - a cellular call ringing in, a video started in another app - HOLDS the microphone
+   * (every audio track disabled, whatever the member's mute) and says so to the member and the
+   * partner, through the same state the OS's own hold uses. `gained` (the platform's GAIN after a
+   * transient loss, or an ask granted) and `released` (the service is gone, so nothing native can
+   * end the hold) give the member's OWN mute state back - muted before stays muted. `refused` (an ask
+   * the platform refused: a phone call still holds the focus) keeps the hold and tells the member
+   * why. The call is never hung up here: only the member ends it (D056, decided by the lead on
+   * 2026-11-12, owner's delegation).
+   *
+   * A state with NO LIVE CALL (no capture, or the call already ended - its summary still shows) is
+   * ignored: a late event of a call that is over must never carry a hold into the next one.
+   */
+  public onAudioFocus(state: CallFocusState): void {
+    const callState = get(this.callState);
+    if (!this.localStream || callState === 'ended' || callState === 'idle') {
+      appendLog(`[Call] audio focus ${state} with no live call (state=${callState}) - ignored`);
+      return;
+    }
+    if (state === 'lost') {
+      if (this.focusLostSince !== null) {
+        appendLog('[Call] audio focus lost again while already held - nothing changes');
+        return;
+      }
+      const wasHeld = this.micHeldBySystem();
+      this.focusLostSince = performance.now();
+      this.audioFocusHeld.set(true);
+      this.applyMicEnabled();
+      appendLog(
+        '[Call] WARN another app took the audio focus - the microphone is held, telling the other party'
+      );
+      this.markMicHeld(wasHeld);
+      return;
+    }
+    if (this.focusLostSince === null) {
+      appendLog(`[Call] audio focus ${state} with no hold in place - nothing changes`);
+      return;
+    }
+    if (state === 'refused') {
+      appendLog('[Call] audio focus asked again and refused - the microphone stays held');
+      showToast(m.call_focus_still_taken(), 'warning');
+      return;
+    }
+    const seconds = Math.max(1, Math.round((performance.now() - this.focusLostSince) / 1000));
+    this.focusLostSince = null;
+    this.audioFocusHeld.set(false);
+    this.applyMicEnabled();
+    appendLog(
+      `[Call] audio focus hold ended (${state}) after ${seconds} s - the microphone follows the member's own mute (muted=${get(this.isMuted)})`
+    );
+    this.markMicFreedIfNothingHolds(seconds);
+  }
+
+  /**
+   * Who asks Android for the audio focus again (the call surface's ongoing-call session, D056);
+   * `null` when no session runs. Set by the call surface for its call's life.
+   */
+  public setAudioFocusAsker(ask: ((why: string) => void) | null): void {
+    this.audioFocusAsker = ask;
+  }
+
+  /** Asks the focus again while it is held for a loss - the only way back from a permanent `LOSS`. */
+  private askAudioFocus(why: string): void {
+    if (this.focusLostSince === null) return;
+    if (!this.audioFocusAsker) {
+      appendLog(`[Call] WARN audio focus held and no session to ask it again (${why})`);
+      return;
+    }
+    this.audioFocusAsker(why);
+  }
+
+  /**
+   * EVERY mute control's tap - the in-app buttons, the ongoing notification, the OS media controls.
+   * Each shows the call MUTED while the focus is held ({@link audioFocusHeld}), so a press then means
+   * "give me my microphone back": the focus is asked again and the member's own mute is left as it
+   * is (flipping it would leave them muted once the focus came back). Otherwise it is the member's
+   * toggle.
+   */
+  public muteButtonTap(): void {
+    if (this.focusLostSince !== null && !get(this.isMuted)) {
+      this.askAudioFocus('an unmute tap while held');
+      return;
+    }
+    this.toggleMute();
+  }
+
+  /** Every capture track carries sound only when the member has not muted AND the focus is held. */
+  private applyMicEnabled(): void {
+    const enabled = !get(this.isMuted) && this.focusLostSince === null;
+    this.localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = enabled;
+    });
+  }
+
   /** Drops the capture track's listeners and both microphone states: the call is over. */
   private stopWatchingMicrophone(): void {
     this.micWatchCleanup?.();
     this.micWatchCleanup = null;
     this.micSuspendedSince = null;
+    this.focusLostSince = null;
+    this.audioFocusHeld.set(false);
     this.localMicSuspended.set(false);
     this.peerMicSuspended.set(false);
   }
@@ -3922,7 +4063,7 @@ export class CallService {
    */
   private announceMicOnPairing(): void {
     this.peerMicSuspended.set(false);
-    if (this.micSuspendedSince !== null) {
+    if (this.micHeldBySystem()) {
       appendLog('[Call] the system still holds the microphone - telling the other party again');
       this.sendSignal({ type: 'MicSuspended', suspended: true });
     }
@@ -4000,13 +4141,17 @@ export class CallService {
     this.ensureMicPipeline(micSwitch);
   }
 
-  /** Toggles microphone mute on the local audio track. */
+  /**
+   * Toggles the member's own microphone mute; a control's tap goes through {@link muteButtonTap}.
+   * While the audio focus is held the tracks stay disabled whatever the mute says, and a toggle then
+   * (a member who had muted, unmuting) ASKS the focus again: a grant ends the hold and the microphone
+   * follows the mute; a refusal keeps it and says why.
+   */
   public toggleMute() {
-    const muted = !get(this.isMuted);
-    this.localStream?.getAudioTracks().forEach((t) => {
-      t.enabled = !muted;
-    });
-    this.isMuted.set(muted);
+    this.isMuted.set(!get(this.isMuted));
+    this.applyMicEnabled();
+    // A tap while held is how the member gets back from a permanent loss, which no GAIN follows.
+    this.askAudioFocus(get(this.isMuted) ? 'a mute tap' : 'an unmute tap');
   }
 
   /**

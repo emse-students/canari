@@ -203,6 +203,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name (docs/wiki/services/call-service.md): the same list
+      # as chat-gateway's, because the same pages open both sockets.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:?ALLOW_ORIGIN must be set in infrastructure/.env - see .env.example; CD writes it in the deploy job}
       JWT_SECRET: ${JWT_SECRET}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
