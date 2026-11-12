@@ -23,14 +23,17 @@ import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** The contexts the player's route made, in order. */
 const contexts: FakeContext[] = [];
+/** The state a new context starts in, and whether its `resume()` ever answers. */
+const engine = { initial: 'suspended' as AudioContextState, resumeHangs: false };
 
 /** An `AudioContext` reduced to what the route calls; it starts suspended, as before a gesture. */
 class FakeContext {
-  state: AudioContextState = 'suspended';
+  state: AudioContextState = engine.initial;
   destination = { name: 'destination' };
   sources: object[] = [];
   gains: { gain: { value: number }; connect: () => void; disconnect: () => void }[] = [];
   resume = vi.fn(() => {
+    if (engine.resumeHangs) return new Promise<void>(() => {});
     this.state = 'running';
     return Promise.resolve();
   });
@@ -58,6 +61,8 @@ const mounted: (() => void)[] = [];
 
 beforeEach(() => {
   contexts.length = 0;
+  engine.initial = 'suspended';
+  engine.resumeHangs = false;
   Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeContext });
 });
 
@@ -186,4 +191,21 @@ it('starts the note only once the resume answered: the first syllable is already
 it('the element of a note is registered with the playback arbiter - the route only takes those', () => {
   const { audio } = mountVoice();
   expect(isArbitrated(audio)).toBe(true);
+});
+
+it('an INTERRUPTED context (WebKit, a phone call) never holds the tap: play() runs in it, on the volume fallback', () => {
+  engine.initial = 'interrupted' as AudioContextState;
+  engine.resumeHangs = true;
+  const { audio } = mountVoice({ integratedLufs: -6, samplePeakDbfs: -1 });
+  const warn = vi.mocked(console.warn);
+  document.querySelector<HTMLButtonElement>('button')!.click();
+  // Synchronously, inside the tap - no wait on a resume() that may never answer.
+  expect(audio.play).toHaveBeenCalledOnce();
+  expect(contexts[0].sources).toHaveLength(0);
+  expect(
+    warn.mock.calls
+      .flat()
+      .map(String)
+      .some((l) => l.includes('FALLBACK'))
+  ).toBe(true);
 });

@@ -475,8 +475,18 @@ second meter, no second law, no second route.
   two numbers). Its play tap PRIMES the context - every tap, a routed element's suspended context
   included - and, when a `resume()` was asked, calls `play()` only once it answered: the graph is
   then built at the note's gain on that `play`, and the first syllable is never heard at the
-  uncorrected level. Nothing asked (an old note, a context already running): `play()` runs in the
-  tap's own turn. `MessageMediaRenderer` hands it `mediaRef.loudness`.
+  uncorrected level. **Only a `suspended` context's resume is waited on - decided from its STATE,
+  never a timer**: a context `interrupted` (WebKit, during a phone call) or closed may hold its
+  `resume()` unanswered for as long as the cause lasts, so the tap plays at once, unrouted, with the
+  element-volume fallback for the gain (`[LOUDNESS] FALLBACK: the AudioContext is interrupted`, at
+  `warn`). Nothing asked (an old note, a context already running): `play()` runs in the tap's own
+  turn. `MessageMediaRenderer` hands it `mediaRef.loudness`.
+- **Safari on the web, not verified**: after a waited resume, `play()` runs once the resume has
+  answered - the device's start time after the tap, not within it. Whether WebKit still counts it
+  as the gesture is not known here (no WebKit in the test rig). The alternative - `play()` muted inside the tap, unmuted when the resume answers - is NOT taken
+  blind, because WebKit's autoplay policy pauses a muted-autoplayed element that is unmuted outside a
+  gesture: it would trade one unverified risk for another. A reading decides (below); the native
+  shells play media without a gesture requirement.
 - **No WebKit bypass.** A voice note is a decrypted BLOB URL, never a `MediaSource` stream, so it is
   attached with `streamed: false` and IS routed on WebKit - the only way a gain reaches an iPhone,
   whose `element.volume` is read-only. The element-volume factor stays the fallback for an engine
@@ -509,6 +519,11 @@ second meter, no second law, no second route.
 - on the Mi 9T, no started AAudio stream once the note ends or the app leaves the screen
   (`dumpsys audio`);
 - on web, a note started then the tab switched: it keeps playing;
+- **Safari on macOS / iOS web**, a measured note's first tap from a suspended context: it plays (no
+  `play() refused` NotAllowedError line); if refused, the muted-inside-the-tap variant above is built
+  and its unmute read on the same engine;
+- a phone call arriving on the iPhone 12, then a note tapped: it plays at once, with `FALLBACK: the
+  AudioContext is interrupted`;
 - an old note unchanged.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)

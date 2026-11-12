@@ -115,7 +115,9 @@ export interface LoudnessHandle {
    * The reader's gesture (an unmute, a play tap): makes and resumes the context INSIDE it (WebKit),
    * and returns that `resume()`'s settlement - a caller that awaits it before `play()` starts the
    * element at its corrected level, never loud for the first syllable. `null`: nothing to wait for
-   * (no gain, no context, or one already running), and `play()` stays in the gesture's own turn.
+   * (no gain, no context, one already running, or one in a state no gesture brings back -
+   * `interrupted`, `closed` - where the element takes the volume fallback), and `play()` stays in
+   * the gesture's own turn.
    */
   prime(): Promise<void> | null;
   /** The element is going away: nodes released, the context suspended or closed if unused. */
@@ -169,22 +171,29 @@ export class LoudnessAudio {
 
   /** The unmute gesture, for every handle that wants a route: the context resumed INSIDE it. */
   prime(): void {
-    if (this.#wanting.size > 0) void this.resumeInGesture();
+    if (this.#wanting.size > 0) this.resumeInGesture();
   }
 
   /**
    * Makes the context if needed and calls `resume()` synchronously - inside the caller's gesture.
-   * Returns the `resume()`'s settlement, so a caller can start its element only once the route can
-   * be built AT its gain - or `null` when nothing was asked (no context, or one already running),
-   * so a caller with nothing to wait for keeps its gesture's synchronous turn for `play()`.
+   *
+   * WHAT IS WORTH WAITING FOR IS DECIDED FROM THE STATE, never from a clock (review of #3394): only a
+   * `suspended` context's `resume()` is one the engine answers on its own, so only its settlement is
+   * returned - a caller then starts its element once the route can be built AT its gain. Any other
+   * state that is not `running` (WebKit's `interrupted` during a phone call, a context the engine
+   * closed) may hold its `resume()` unanswered for as long as the cause lasts: the call is still made,
+   * and `null` is returned with the state, so no caller waits on it. `null` and `running`: nothing was
+   * asked, and the caller keeps its gesture's synchronous turn for `play()`.
    */
-  resumeInGesture(): Promise<void> | null {
+  resumeInGesture(): { resumed: Promise<void> | null; state: AudioContextState | null } {
     const ctx = this.context();
-    if (!ctx || ctx.state === 'running') return null;
-    Log.d('LOUDNESS', `the reader's gesture resumes the shared AudioContext (${ctx.state})`);
-    return ctx.resume().catch((e: unknown) => {
+    if (!ctx || ctx.state === 'running') return { resumed: null, state: ctx?.state ?? null };
+    const state = ctx.state;
+    Log.d('LOUDNESS', `the reader's gesture resumes the shared AudioContext (${state})`);
+    const resumed = ctx.resume().catch((e: unknown) => {
       console.warn('[LOUDNESS] the gesture could not resume the AudioContext', e);
     });
+    return { resumed: state === 'suspended' ? resumed : null, state };
   }
 
   /** The current context, made on first need; null where the engine has no Web Audio. */
@@ -346,7 +355,21 @@ class RouteHandle implements LoudnessHandle {
     // NOT GUARDED ON AN EXISTING GRAPH: a routed element whose context was suspended since (its
     // pause, another element's end) needs its `resume()` inside THIS tap as much as the first time.
     if (this.#disposed || this.#gainDb === 0 || this.webkitStream) return null;
-    return this.audio.resumeInGesture();
+    const { resumed, state } = this.audio.resumeInGesture();
+    if (resumed || state === null || state === 'running') return resumed;
+    // A CONTEXT NO GESTURE BRINGS BACK (`interrupted`, `closed`): the tap must still play. An element
+    // not yet routed plays at once, unrouted, with the element-volume fallback for its gain - logged
+    // at `warn` by `#fallBack`, a fallback being a signal. One already routed sounds only through the
+    // graph (Web Audio's rule), so it is said: silent until the context runs again.
+    if (this.#gainNode) {
+      console.warn(
+        `[LOUDNESS] a routed element is asked to play while its AudioContext is ${state}: ` +
+          'silent until the context runs again'
+      );
+    } else {
+      this.#fallBack(`the AudioContext is ${state}`);
+    }
+    return null;
   }
 
   destroy(): void {

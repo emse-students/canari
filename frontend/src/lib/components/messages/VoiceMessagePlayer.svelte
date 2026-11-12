@@ -153,7 +153,8 @@
       // The play tap is the gesture WebKit honours a `resume()` in - made before `play()`. When one
       // was asked, `play()` waits for its answer: the route is then built at the note's gain on its
       // first `play`, and the first syllable is never heard at the uncorrected level (review of
-      // #3394). Nothing asked (an old note, a context already running): played in this very turn.
+      // #3394). Nothing asked (an old note, a context already running) or nothing worth waiting on
+      // (a context `interrupted` or closed, which takes the volume fallback): played in this turn.
       const primed = loudnessHandle?.prime() ?? null;
       if (primed) void primed.then(() => startPlayback(audioEl));
       else startPlayback(audioEl);

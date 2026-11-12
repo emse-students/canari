@@ -314,6 +314,49 @@ describe('LoudnessAudio - the wiring', () => {
     handle.destroy();
   });
 
+  it('a SUSPENDED context: the tap returns its resume to wait on, and the route is built at the gain', async () => {
+    const { contexts, mount } = setup({ initial: 'suspended' });
+    const { video, handle } = mount(LOUD);
+    // The context is made on the tap itself.
+    const primed = handle.prime();
+    expect(primed).toBeInstanceOf(Promise);
+    await primed;
+    expect(contexts[0].state).toBe('running');
+    video.unmuteAndPlay();
+    expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+  });
+
+  it('an INTERRUPTED context (a phone call on WebKit): nothing to wait on, the element plays on the volume fallback, said at warn', () => {
+    const { contexts, mount } = setup({
+      initial: 'interrupted' as AudioContextState,
+      resumeHangs: true,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    // Its resume() is still asked inside the tap - and never answers.
+    expect(handle.prime()).toBeNull();
+    expect(contexts[0].resume).toHaveBeenCalledTimes(1);
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    const said = warn.mock.calls.flat().map(String);
+    expect(said.some((l) => l.includes('FALLBACK') && l.includes('interrupted'))).toBe(true);
+    // It plays unrouted: no graph is ever built under it.
+    video.unmuteAndPlay();
+    expect(contexts[0].sources).toHaveLength(0);
+    handle.destroy();
+    warn.mockRestore();
+  });
+
+  it('a CLOSED context is not waited on either', () => {
+    const { mount } = setup({ initial: 'closed', resumesTo: null });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    expect(handle.prime()).toBeNull();
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+    warn.mockRestore();
+  });
+
   it('a resume() that never answers leaves the video UNROUTED (audible) and is said', () => {
     const { contexts, mount } = setup({ initial: 'suspended', resumeHangs: true });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
