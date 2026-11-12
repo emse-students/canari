@@ -261,11 +261,12 @@ vulnerabilities:
   # pinned digests, nginx:stable-alpine and postgres:18-alpine (a newer digest than the pin) were
   # rescanned and carry the same 8.22.0-r0, so there was no patched digest to move to. Scoped by purl,
   # so a later curl build is NOT covered and the rescan retires each half the day its pin moves.
+  # The `curl` half was retired on 2026-11-12 (#3260): adminer 3a07decd carries no curl 8.22.0-r0,
+  # and the scan of that run reported it in no other image. Only postgres's `libcurl` is left.
   - id: CVE-2026-92392
     purls:
-      - "pkg:apk/alpine/curl@8.22.0-r0"
       - "pkg:apk/alpine/libcurl@8.22.0-r0"
-    statement: "curl 8.22.0-r0 (adminer, nginx:1.31.8-alpine, nginx:stable-alpine) and libcurl 8.22.0-r0 (postgres:18-alpine): HTTP/2 upload use-after-free in a client library none of these servers uses to send uploads - nginx and postgres do not call curl on request data, and adminer's curl is a PHP build dependency; which processes load it was not verified. No patched upstream image yet (Alpine ships 8.23.0-r0); remove when the pins are rebuilt."
+    statement: "libcurl 8.22.0-r0 (postgres:18-alpine): HTTP/2 upload use-after-free in a client library postgres does not call on request data; which processes load it was not verified. No patched upstream image yet (Alpine ships 8.23.0-r0); remove when the postgres pin is rebuilt."
 
   # --- krb5-libs 1.22.2-r1 and libxslt 1.1.43-r3, Alpine 3.24 (2026-11-10) ---------------------
   # Reported HIGH with a fix in Alpine (krb5 1.22.3-r0, libxslt 1.1.43-r4) but in no official image:

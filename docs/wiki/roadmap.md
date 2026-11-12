@@ -135,7 +135,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
 | 2026-11-12 | Backlog triage, batch 24 (the entries of 2026-11-07): D078 and D015 moved to the verification table as B407 and B408 (the seed-mirror residue, the live titles and preview card), their mechanism and decisions into auth and lives; D022 pruned of what was carried out (WP-D2, the Dependances panel, the live chat's two axes), its standing permissions kept; D086 cut to the drafts still open; D009, D014, D081 unchanged (chantiers in progress). |
 | 2026-11-12 | Triage batch 25: the engagement chantier (D009) shipped whole by `v1.6.10`, its fragment goes; the readings it owes are B409-B412; D116-D128 re-read against the releases. Of 2026-11-08: birthdays (D002) and the follower tab's commits (D039) owe only readings, B413 and B414; D088 cut to the video ladder; D060's fragment went with #3170 and its row goes. Of 2026-11-09: #3185's defect entry folds into the nicknames verification row (shipped `v1.6.9`); the owner's decisions of 2026-11-09 lose the carried-out floor raise. Of 2026-11-10: the institution reach (#3314) and the mono capture (#3226) owe only readings, B415 and B416. The old-drafts triage closed nothing: R28 carries every open draft with its verdict, and the pause of 2026-11-07 (D086), whose rows are all on R28 or merged, goes. Of 2026-11-11: the throttled-link reading (#3342, #3337 merged) owes only the Mi 9T re-reading, B417. |
-| 2026-11-12 | Roadmap refresh (batch 26): R01 is now 1.6.11 (1.6.9 and 1.6.10 shipped); engagement R06-R11 are one row, every package shipped by 1.6.10, readings B409-B412; 29 backlog.d fragments created since 2026-11-09 get their D rows (D270-D298). |
+| 2026-11-12 | Roadmap refresh (batch 26): R01 is now 1.6.11 (1.6.9 and 1.6.10 shipped); engagement R06-R11 are one row, every package shipped by 1.6.10, readings B409-B412; 30 backlog.d fragments created since 2026-11-09 get their D rows (D270-D298, D299). |
 
 ## Annex A - every row of the backlog
 
@@ -479,7 +479,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-257 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+258 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -740,3 +740,4 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D296 | `docs/wiki/backlog.d/p3-salon-rows-warned-unreadable-on-every-open.md` | Unreadable salon rows (Graine v1, a missing seed) are warned again on every open | P3 | communities | open | 2026-11-12 | none |
 | D297 | `docs/wiki/backlog.d/p3-silent-promise-catches-in-the-frontend-triage.md` | About a hundred frontend promise rejections end in an empty handler: triage owed | P3 | observability | open | 2026-11-12 | none |
 | D298 | `docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md` | chat-gateway and call-service share no crate: two modules copied | P3 | docs-hygiene | open | 2026-11-12 | none |
+| D299 | `docs/wiki/backlog.d/camera-keeps-its-layout-and-volume-shutter.md` | The camera keeps its layout and the volume keys are its shutter (#3370): built, compiled, readings owed | P2 | other | built-readings-owed | 2026-11-11 | hardware reading (both phones) |
