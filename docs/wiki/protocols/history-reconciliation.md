@@ -1795,13 +1795,29 @@ the old conversation, through the boot merge's own move, and logs the count eith
   writes by compare-and-set and, finding no row, keeps the act as a pending mutation (sender = the
   user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
   joined group only after the move, which would have reopened the window at the swap.
+  - **The key is lowercased in `persistLocalMutation`, once**: the edit and delete paths hand the
+    shown key as they hold it, and an entry kept under another case waited for a look - always
+    under the lowercased id - that never came.
+  - **Write first, look second.** The scoped compare-and-set is tried first, told that a row of
+    another conversation is expected (`mergeMessages(..., { foreignExpected: true })`, so the store
+    does not warn about a row still moving). Only when it wrote nothing does one unscoped look
+    (`IStorage.getMessageStanding`) say why, and every outcome but a written row keeps the act, then
+    looks once more: a row that left between the write and the look is kept, never lost.
+  - **A row that stands and does not open keeps the act too, as a peer's act is kept**
+    (`keepPendingMutationForUnreadable`, the same bounds, said once with that reason): a key change in
+    flight - a PIN reseal - may open the row again, and an act dropped there would be gone for good.
+  - **The mutations waiting under the OLD group go with its rows** (`moveDirectConversationRows`,
+    `IStorage.getPendingMutationsOf`): each is kept again under the joined group (its tags are per
+    conversation), then removed from the old one, and the carried ids are settled with the moved
+    ones - by the Welcome's re-key and by the boot merge (`mergeDirectConversationDuplicates`, against
+    the store alone, since nothing is shown yet). An entry that does not open under this
+    key may be under another one mid-reseal, so it is left where it is.
 - **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
   the boot merge's decision, and it folds only into the lowest group id
   ([below](#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
 - **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
-  message landing between the read and the write is written over by the stored body; what is
-  keyed by the conversation rather than the message - read watermarks, mutations still waiting for
-  their row (`pendingMutations`) - stays with the old conversation and goes with its row.
+  message landing between the read and the write is written over by the stored body; the old
+  conversation's read watermarks stay with it.
 
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding

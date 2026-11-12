@@ -555,6 +555,22 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(store.pending.size).toBe(0);
     });
 
+    it('the mutations kept under the OLD group go with its rows, and settle under the joined one', async () => {
+      const store = messageRowStore([storedRow('d1', olderDmGroup)]);
+      const base = { conversationId: olderDmGroup, at: 1, slot: '', kind: 'delete', rank: 0 };
+      // One whose row moves now, one whose message neither group holds yet.
+      await store.putPendingMutation({ ...base, messageId: 'd1', sender: 'peer-user' } as never);
+      await store.putPendingMutation({ ...base, messageId: 'later', sender: 'peer-user' } as never);
+      await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
+
+      expect(placement(store)).toEqual({ d1: dmGroup });
+      expect(store.byId.get('d1')?.isDeleted).toBe(true);
+      // The one still waiting waits under the joined group, where its message will arrive.
+      expect([...store.pending.values()].map((e) => [e.conversationId, e.messageId])).toEqual([
+        [dmGroup, 'later'],
+      ]);
+    });
+
     it('the move runs after the MLS lock is released, never inside it', async () => {
       const store = messageRowStore([storedRow('m1', olderDmGroup)]);
       let inLock = false;

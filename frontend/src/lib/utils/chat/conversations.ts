@@ -32,6 +32,8 @@ import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
 import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
+import { PENDING_MUTATION_LIMITS } from './pendingMutations';
+import { settlePendingFor } from './pendingMutationStore';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -672,25 +674,68 @@ export function resolveConversationListPresentation(
  * moved row is the STORED row just read - every field, proofs and reactions included - under its new
  * conversation. A row this device cannot open is not moved and is counted in `left`.
  *
- * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
- * `fromId`'s messages handled by its group is written over by the body read here; and what is keyed
- * by the conversation rather than by the message - its read watermarks, the mutations still waiting
- * for a row (`pendingMutations`) - stays with `fromId`. Both callers run it while `fromId` is out of
- * the reactive map, so no shown path writes to it.
+ * THE MUTATIONS WAITING UNDER `fromId` GO WITH ITS ROWS. A deletion, edit or reaction kept under
+ * `fromId` (`pendingMutations`, its message not there yet) waits for a message that will now arrive
+ * under `toId`; left behind, nothing would ever settle it. Each entry this device opens is kept again
+ * under `toId` (its tags are per conversation) and removed from `fromId`; the caller settles the
+ * carried ids against what `toId` holds (`settlePendingFor`), as for the moved rows.
  *
- * @returns the ids of the rows moved, and how many rows stayed under `fromId` because they did not open
+ * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
+ * `fromId`'s messages handled by its group is written over by the body read here; and `fromId`'s read
+ * watermarks stay with it. Both callers run it while `fromId` is out of the reactive map, so no shown
+ * path writes to it.
+ *
+ * @returns the ids of the rows moved, how many rows stayed under `fromId` because they did not open,
+ *   and the message ids of the waiting mutations carried to `toId`
  */
 export async function moveDirectConversationRows(
   fromId: string,
   toId: string,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<{ moved: string[]; left: number }> {
+): Promise<{ moved: string[]; left: number; carried: string[] }> {
   const source = await storage.getMessages(fromId, deviceKeyB64);
   const moved = source.map((m) => ({ ...m, conversationId: toId }));
   if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
   const left = await storage.countMessages(fromId);
-  return { moved: moved.map((m) => m.id), left };
+  const carried = await carryPendingMutations(fromId, toId, storage, deviceKeyB64);
+  return { moved: moved.map((m) => m.id), left, carried };
+}
+
+/**
+ * Keeps every mutation waiting under `fromId` again under `toId`, then removes it from `fromId` - in
+ * that order, so a failure between the two leaves a copy, never nothing (settling twice changes
+ * nothing). Best-effort like the rest of the move: a failure is said and the entries stay where they
+ * were. Returns the message ids carried.
+ */
+async function carryPendingMutations(
+  fromId: string,
+  toId: string,
+  storage: IStorage,
+  deviceKeyB64: string
+): Promise<string[]> {
+  try {
+    const { entries } = await storage.getPendingMutationsOf(fromId, deviceKeyB64);
+    if (entries.length === 0) return [];
+    for (const entry of entries) {
+      await storage.putPendingMutation(
+        { ...entry, conversationId: toId },
+        PENDING_MUTATION_LIMITS,
+        deviceKeyB64
+      );
+    }
+    await storage.deletePendingMutations(entries, deviceKeyB64);
+    console.log(
+      `[DM_MOVE] ${entries.length} mutation(s) waiting under ${fromId.slice(0, 8)}... carried to ${toId.slice(0, 8)}...`
+    );
+    return [...new Set(entries.map((e) => e.messageId))];
+  } catch (e) {
+    console.error(
+      `[DM_MOVE] the mutations waiting under ${fromId.slice(0, 8)}... were NOT carried to ${toId.slice(0, 8)}... - they stay there:`,
+      e
+    );
+    return [];
+  }
 }
 
 /**
@@ -807,16 +852,33 @@ export async function mergeDirectConversationDuplicates(
       if (loser.id === survivor.id) continue;
       const pair = `${loser.id.slice(0, 8)}... -> ${survivor.id.slice(0, 8)}...`;
       try {
-        // The move and its window: {@link moveDirectConversationRows}. Landing after the move, a
-        // mutation handled by the loser's group finds no row there, keeps it under the loser, and
-        // `deleteConversation` below removes that entry; this boot-time merge runs once per loser,
-        // before its conversation is shown.
-        const { moved, left } = await moveDirectConversationRows(
+        // The move and its window: {@link moveDirectConversationRows} takes the loser's rows AND the
+        // mutations waiting under it to the survivor. One landing after that carry, handled by the
+        // loser's group, finds no row there, is kept under the loser, and `deleteConversation`
+        // below removes it; this boot-time merge runs once per loser, before its conversation is
+        // shown.
+        const { moved, left, carried } = await moveDirectConversationRows(
           loser.id,
           survivor.id,
           storage,
           deviceKeyB64
         );
+        // Nothing is shown yet at boot: what waits for the moved rows - carried with them, or kept
+        // under the survivor already - settles against the store alone.
+        const lookFor = [...new Set([...moved, ...carried])];
+        if (lookFor.length > 0) {
+          await settlePendingFor(
+            {
+              storage,
+              deviceKey: () => deviceKeyB64,
+              conversations: new Map(),
+              messageReactions: new Map(),
+              log,
+            },
+            survivor.id,
+            lookFor
+          );
+        }
         if (left > 0) {
           log(
             `[DM_MERGE] ${left} row(s) of ${loser.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`

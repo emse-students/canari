@@ -162,6 +162,22 @@ export interface PageKey {
   provisional: boolean;
 }
 
+/** What {@link IStorage.mergeMessages} is told about its call. */
+export interface MergeMessagesOptions {
+  /** The caller handles a row of another conversation itself: left alone, and not said at warn. */
+  foreignExpected?: boolean;
+}
+
+/**
+ * Where ONE message row stands, whatever its conversation - the answer of
+ * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
+ * under another key, or damaged): it stands, and nothing this device does can ever be written onto it.
+ */
+export type MessageRowStanding =
+  | { kind: 'absent' }
+  | { kind: 'unreadable'; conversationId: string }
+  | { kind: 'readable'; conversationId: string };
+
 /** The answer of {@link IStorage.getMessagesByIds}. */
 export interface StoredRowsById {
   /** The rows found and opened, by id - only rows of the conversation asked about. */
@@ -829,12 +845,17 @@ export interface IStorage {
    * in between is read again and merged again; each retry means another writer COMMITTED, so the
    * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
    * ids written.
+   *
+   * A row of another conversation is said at warn, unless `opts.foreignExpected`: a caller that
+   * handles that case itself (a row still moving onto the conversation it shows) is not told at warn
+   * what it is about to look at.
    */
   mergeMessages(
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts?: MergeMessagesOptions
   ): Promise<Set<string>>;
   /**
    * Remove one message row outright. No-op when the row is absent.
@@ -860,6 +881,13 @@ export interface IStorage {
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  /**
+   * Where the row of `id` stands, in ANY conversation, and whether this device opens it - the one
+   * read that tells an absent row from one this key cannot open, which `getMessage` (null for both)
+   * and the scoped reads (a row of another conversation read as absent, said at warn) cannot. Says
+   * nothing itself: the caller knows what the answer means.
+   */
+  getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding>;
   /**
    * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
    * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
@@ -918,6 +946,13 @@ export interface IStorage {
     messageIds: readonly string[],
     deviceKeyB64: string
   ): Promise<PendingMutationRead>;
+  /**
+   * EVERY entry kept under `conversationId`, whatever message it waits for - what a move of the
+   * conversation's rows onto another conversation carries with them (`moveDirectConversationRows`).
+   * Found by conversation and not by this key's tags, an entry that does not open may be under another
+   * key (a reseal in flight): it is left as it is, never removed nor returned.
+   */
+  getPendingMutationsOf(conversationId: string, deviceKeyB64: string): Promise<PendingMutationRead>;
   /**
    * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
    * later frame raised meanwhile is a different version and stays.
