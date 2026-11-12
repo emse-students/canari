@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -63,7 +64,6 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -567,10 +567,11 @@
                 {m.profile_member_since_label()}
               </p>
               <p class="text-text-main text-sm font-bold capitalize">
-                {new Date(profile.createdAt).toLocaleDateString(
-                  getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                  { year: 'numeric', month: 'long', day: 'numeric' }
-                )}
+                {new Date(profile.createdAt).toLocaleDateString(intlLocale(), {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
               </p>
             </div>
           </div>

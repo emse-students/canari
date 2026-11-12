@@ -19,6 +19,14 @@ const SOURCES = sourceFiles({
 /** An `Intl` constructor or a `toLocale...String` call whose first argument is a literal tag. */
 const LITERAL_TAG = /(?:Intl\.\w+|\.toLocale\w*String)\(\s*['"`][a-z]{2}-[A-Z]{2}['"`]/g;
 
+/**
+ * The ternary `getLocale() === 'en' ? 'en-US' : 'fr-FR'` in any spelling (quotes, spacing, line
+ * breaks, reversed operands or operator). No `g` flag: a global regex keeps a `lastIndex` between
+ * `.test()` calls.
+ */
+const LOCALE_TERNARY =
+  /getLocale\(\)\s*[!=]==\s*['"`][a-z]{2}['"`]\s*\?\s*['"`][a-z]{2}-[A-Z]{2}['"`]\s*:\s*['"`][a-z]{2}-[A-Z]{2}['"`]/;
+
 describe('formatters follow the app language', () => {
   it('reads sources at all', () => {
     expect(SOURCES.length).toBeGreaterThan(500);
@@ -46,6 +54,24 @@ describe('formatters follow the app language', () => {
       [...text.matchAll(LITERAL_TAG)].map((match) => `${file}: ${match[0]}`)
     );
     expect(found.toSorted()).toEqual(COMPUTED.toSorted());
+  });
+
+  it('no call site copies the language-to-tag ternary; intlLocale() is the one place', () => {
+    const found = SOURCES.filter(
+      ({ file, text }) => file !== 'lib/utils/intlLocale.ts' && LOCALE_TERNARY.test(text)
+    ).map(({ file }) => file);
+    expect(found).toEqual([]);
+  });
+
+  it('the ternary rule sees every spelling of it', () => {
+    const forbidden = [
+      "getLocale() === 'en' ? 'en-US' : 'fr-FR'",
+      'getLocale()==="en"?"en-GB":"fr-FR"',
+      "getLocale() === 'fr' ? 'fr-FR' : 'en-US'",
+      "getLocale() !== 'en'\n  ? 'fr-FR'\n  : 'en-US'",
+    ];
+    for (const line of forbidden) expect(LOCALE_TERNARY.test(line)).toBe(true);
+    expect(LOCALE_TERNARY.test('intlLocale()')).toBe(false);
   });
 
   it('the rule sees what it forbids', () => {

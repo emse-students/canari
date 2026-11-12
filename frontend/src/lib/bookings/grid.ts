@@ -30,8 +30,6 @@ export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
 
-export { intlLocale };
-
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {
   return localDate(unit.startMs, zone);

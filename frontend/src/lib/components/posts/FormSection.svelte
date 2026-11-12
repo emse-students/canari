@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { X, ClipboardList, Plus } from '@lucide/svelte';
   import type { Form } from '$lib/forms/api';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
 
@@ -33,7 +33,7 @@
 
   function formPriceLabel(form: Form): string {
     if (!form.requiresPayment || !form.basePrice || form.basePrice <= 0) return '';
-    const euros = (form.basePrice / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    const euros = (form.basePrice / 100).toLocaleString(intlLocale(), {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
