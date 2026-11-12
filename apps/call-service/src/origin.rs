@@ -4,9 +4,10 @@
 // and nothing else in that request says where it comes from. The rule:
 //
 // - an `Origin` that is PRESENT must be one of the origins this estate serves its clients from
-//   (`ALLOW_ORIGIN`, the list the CORS layer already matches), or the upgrade is refused;
-// - an ABSENT `Origin` is accepted: a native client opens its socket outside any page and sends
-//   none (the Tauri socket plugin builds its request without one).
+//   (`ALLOW_ORIGIN`), or the upgrade is refused;
+// - an ABSENT `Origin` is accepted: only a client that opens its socket outside any page sends
+//   none (a native socket library builds its request from the URL alone). Which clients of a given
+//   socket those are, if any, is said where this rule is applied.
 //
 // `*` IS NEVER A LIST. A wildcard means nobody wrote down who the clients are, so there is nothing
 // to match a page against: every present `Origin` is refused and the configuration is accused. It
@@ -31,8 +32,7 @@ pub enum OriginRefusal {
 }
 
 impl UpgradeOrigins {
-    /// Reads a raw `ALLOW_ORIGIN` value: a comma-separated list (blank segments dropped, as the
-    /// CORS layer does), or `*`.
+    /// Reads a raw `ALLOW_ORIGIN` value: a comma-separated list (blank segments dropped), or `*`.
     pub fn parse(raw: &str) -> Self {
         if raw.trim() == "*" {
             return Self::Wildcard;
@@ -49,7 +49,7 @@ impl UpgradeOrigins {
     /// Whether an upgrade whose `Origin` header is `origin` (`None` when the request has none) may
     /// proceed.
     ///
-    /// The comparison is EXACT, the one the CORS layer makes: an origin is a scheme, a host and a
+    /// The comparison is EXACT: an origin is a scheme, a host and a
     /// port as the browser serialises them, and a browser never sends a trailing slash or another
     /// casing.
     pub fn admits(&self, origin: Option<&str>) -> Result<(), OriginRefusal> {

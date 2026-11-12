@@ -55,7 +55,7 @@ says `"refresh"` - is refused, as in [chat-gateway](chat-gateway.md#websocket-au
 **A socket upgrade must come from an allowed origin (2026-11-12).** Before the token is read, an
 `Origin` header that is present must be one of the entries of `ALLOW_ORIGIN`, compared exactly, or
 the upgrade is answered `403`; a request with no `Origin` is accepted; `*`, or no variable at all,
-is never a list and admits no page (`src/origin.rs`, the module chat-gateway carries). The app's
+is never a list and admits no page (`src/origin.rs`). The app's
 WebView opens this socket, so on every client the upgrade names an origin: an entry missing from
 the list costs that client its calls. A refusal is logged with the origin it refused, once per
 distinct value and then at each power of ten (`[ws] upgrade REFUSED: origin "..."`), which is the
