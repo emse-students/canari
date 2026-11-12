@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { stubQueryBuilder } from '../testing/queryBuilder';
 
 /**
  * A HISTORY LINE THAT DOES NOT NAME ITS CALLER MEASURES NOTHING.
@@ -87,7 +88,11 @@ describe('a history read names who asked', () => {
         },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(DeviceGroupMembership),
+          // The reader's earliest device row per group, read once per request: none by default.
+          useValue: { ...emptyRepo(), createQueryBuilder: jest.fn(() => stubQueryBuilder()) },
+        },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
@@ -335,18 +340,16 @@ describe('a history read names who asked', () => {
         firstDeviceAt: Date | null
       ) => {
         const internals = service as unknown as {
-          groupRepo: { findOne: jest.Mock };
+          groupRepo: { find: jest.Mock };
           deviceGroupRepo: { createQueryBuilder: jest.Mock };
         };
-        internals.groupRepo.findOne = jest
+        // One row per group, for the orphan purge and the arrival facts alike.
+        internals.groupRepo.find = jest
           .fn()
-          .mockResolvedValue({ id: GROUP, distributionChannelId: null, ...group });
-        const qb: Record<string, unknown> = {
-          select: () => qb,
-          where: () => qb,
-          andWhere: () => qb,
-          getRawOne: async () => ({ firstDeviceAt }),
-        };
+          .mockResolvedValue([{ id: GROUP, distributionChannelId: null, ...group }]);
+        const qb = stubQueryBuilder({
+          getRawMany: firstDeviceAt ? [{ groupId: GROUP, firstDeviceAt }] : [],
+        });
         internals.deviceGroupRepo.createQueryBuilder = jest.fn(() => qb);
       };
 
@@ -379,6 +382,59 @@ describe('a history read names who asked', () => {
         const page = await service.getHistory(GROUP, undefined, USER);
 
         expect(page.rows.map((r) => r['id'])).toEqual(['2-0', '3-0']);
+      });
+
+      /**
+       * THE ARRIVAL FACTS ARE READ ONCE PER BATCH (review of #2800): two reads per group, up to 100
+       * in parallel for the 50-group cap, became two reads in all - and each group still gets its
+       * OWN reader's arrival.
+       */
+      it('a batch reads every group row and every earliest device row in one query each', async () => {
+        const G2 = 'group-2';
+        intervalFind.mockImplementation(
+          async (_e: unknown, opts: { where: { groupId: string } }) => [
+            { groupId: opts.where.groupId, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+          ]
+        );
+        const internals = service as unknown as {
+          groupRepo: { find: jest.Mock };
+          deviceGroupRepo: { createQueryBuilder: jest.Mock };
+        };
+        internals.groupRepo.find = jest.fn().mockResolvedValue([
+          { id: GROUP, isGroup: true, distributionChannelId: null, createdAt: at(day(1)) },
+          { id: G2, isGroup: true, distributionChannelId: null, createdAt: at(day(1)) },
+        ]);
+        const qb = stubQueryBuilder({
+          // G2's first device row is on the 3rd: added = arrived, earlier than its interval.
+          getRawMany: [
+            { groupId: GROUP, firstDeviceAt: at(day(5)) },
+            { groupId: G2, firstDeviceAt: at(day(3)) },
+          ],
+        });
+        internals.deviceGroupRepo.createQueryBuilder = jest.fn(() => qb);
+
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }, { groupId: G2 }], USER);
+
+        expect(batch.histories[GROUP].map((r) => r['id'])).toEqual(['3-0']);
+        expect(batch.histories[G2].map((r) => r['id'])).toEqual(['2-0', '3-0']);
+        expect(internals.deviceGroupRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+        // The orphan purge's read, and the arrival facts' one - never one per group.
+        expect(internals.groupRepo.find).toHaveBeenCalledTimes(2);
+      });
+
+      it('unreadable arrival facts answer every group of the batch empty, never unfiltered', async () => {
+        const internals = service as unknown as {
+          deviceGroupRepo: { createQueryBuilder: jest.Mock };
+        };
+        internals.deviceGroupRepo.createQueryBuilder = jest.fn(() => {
+          throw new Error('connection reset');
+        });
+
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }], USER);
+
+        expect(batch.histories[GROUP]).toEqual([]);
+        expect(redis.xrange).not.toHaveBeenCalled();
+        expect(lines()).toContain('arrival facts unreadable - every group answered empty');
       });
 
       it('the person who arrived with the group is withheld nothing', async () => {
@@ -446,12 +502,17 @@ describe('a history read names who asked', () => {
           };
           internals.groupRepo.manager.transaction = async (fn: (m: typeof tx) => unknown) => fn(tx);
         };
-        const windowsOf = (s: MessagingService) =>
-          (
-            s as unknown as {
-              ownWithheldWindows: (u: string, g: string) => Promise<unknown>;
-            }
-          ).ownWithheldWindows(USER, GROUP);
+        const windowsOf = async (s: MessagingService) => {
+          const internals = s as unknown as {
+            arrivalFactsOf: (u: string, g: string[]) => Promise<Map<string, unknown>>;
+            ownWithheldWindows: (u: string, g: string, a: Map<string, unknown>) => Promise<unknown>;
+          };
+          return internals.ownWithheldWindows(
+            USER,
+            GROUP,
+            await internals.arrivalFactsOf(USER, [GROUP])
+          );
+        };
 
         it('is repaired from the roster, and withheld what preceded that arrival', async () => {
           intervalFind
