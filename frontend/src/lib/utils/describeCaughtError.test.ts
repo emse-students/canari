@@ -26,6 +26,20 @@ describe('describeCaughtError', () => {
     );
   });
 
+  it('spends no frame on the lines of a multi-line message that V8 repeats at the top', () => {
+    const e = new Error('first line\nsecond line');
+    e.stack = [
+      'Error: first line',
+      'second line',
+      '    at a (chunk1.js:1:1)',
+      '    at b (chunk2.js:2:2)',
+      '    at c (chunk3.js:3:3)',
+    ].join('\n');
+    expect(describeCaughtError(e)).toBe(
+      'Error: first line / second line | at a (chunk1.js:1:1) | at b (chunk2.js:2:2) | at c (chunk3.js:3:3)'
+    );
+  });
+
   it('gives the head alone when there is no stack', () => {
     const e = new RangeError('too deep');
     e.stack = undefined;

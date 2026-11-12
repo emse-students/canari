@@ -12,13 +12,17 @@ export const DESCRIBED_STACK_FRAMES = 3;
 export function describeCaughtError(caught: unknown): string {
   if (caught instanceof Error) {
     const head = `${caught.name}: ${caught.message}`;
-    const frames = (caught.stack ?? '')
+    // V8 opens the stack with `name: message` - EVERY line of a multi-line message - and Firefox and
+    // Safari do not; that prefix is dropped whole, so the frame budget is spent on frames.
+    const stack = caught.stack ?? '';
+    const framesText = stack.startsWith(head) ? stack.slice(head.length) : stack;
+    const frames = framesText
       .split('\n')
       .map((line) => line.trim())
-      // V8 repeats `name: message` as the stack's first line; Firefox and Safari do not.
-      .filter((line) => line && line !== head)
+      .filter(Boolean)
       .slice(0, DESCRIBED_STACK_FRAMES);
-    return frames.length > 0 ? `${head} | ${frames.join(' | ')}` : head;
+    const oneLineHead = head.replace(/\s*\n\s*/g, ' / ');
+    return frames.length > 0 ? `${oneLineHead} | ${frames.join(' | ')}` : oneLineHead;
   }
   if (caught !== null && typeof caught === 'object') {
     try {
