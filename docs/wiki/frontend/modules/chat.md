@@ -5574,7 +5574,8 @@ it changes the reconciliation's wire and deserves its own review.
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
-(reading 2 of `1.6.9-alpha.1`, [defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+(reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
+[verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
