@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Pause, Play, Download } from '@lucide/svelte';
+  import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
+  import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { m } from '$lib/paraglide/messages';
   import {
     barCountForWidth,
@@ -20,9 +23,16 @@
      * bytes behind the URL are not what the message declares".
      */
     mimeType?: string;
+    /**
+     * The note's sound as its author's device measured it at send (`MediaRef.loudness`,
+     * `recordingLoudness.ts`): brought toward one loudness through the same law and the same route
+     * as a video's (`loudnessPlayback.ts`, owner 2026-11-12). Absent - every note sent before this,
+     * an unmeasurable recording, the composer's own preview - plays exactly as it always did.
+     */
+    loudness?: MediaLoudness | null;
   }
 
-  let { src, onDownload, mimeType = '' }: Props = $props();
+  let { src, onDownload, mimeType = '', loudness = null }: Props = $props();
 
   /** `MediaError.code` as a word, so a log line names its cause without a lookup table. */
   const MEDIA_ERROR_NAMES: Record<number, string> = {
@@ -109,11 +119,39 @@
     return `${mins}:${secs}`;
   }
 
+  // THE VIDEO'S ROUTE, NOT A SECOND ONE: the wiring lives as long as the ELEMENT (an element takes
+  // one source node in its life), the measurement is applied keyed on its two NUMBERS. A voice note
+  // is a decrypted BLOB, never a stream, so it is routed on WebKit too (`streamed: false`).
+  let loudnessHandle: LoudnessHandle | null = null;
+  $effect(() => {
+    if (!audioEl) return;
+    const handle = loudnessAudio.attach(audioEl, { streamed: false });
+    loudnessHandle = handle;
+    return () => {
+      handle.destroy();
+      if (loudnessHandle === handle) loudnessHandle = null;
+    };
+  });
+  const loudnessLufs = $derived(loudness?.integratedLufs);
+  const loudnessPeak = $derived(loudness?.samplePeakDbfs);
+  $effect(() => {
+    const integratedLufs = loudnessLufs;
+    const samplePeakDbfs = loudnessPeak;
+    if (!audioEl) return;
+    untrack(() => loudnessHandle)?.setLoudness(
+      integratedLufs === undefined || samplePeakDbfs === undefined
+        ? null
+        : { integratedLufs, samplePeakDbfs }
+    );
+  });
+
   function togglePlay() {
     if (!audioEl) return;
     if (isPlaying) {
       audioEl.pause();
     } else {
+      // The play tap is the gesture WebKit honours a `resume()` in - made before `play()`.
+      loudnessHandle?.prime();
       audioEl.play().catch((err: unknown) => {
         console.warn('[voice] play() refused', {
           name: err instanceof Error ? err.name : String(err),

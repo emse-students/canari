@@ -444,6 +444,39 @@ after a swipe), and its `interrupted` state after a background.
 - the silent switch ON, a routed reel unmuted: it plays, as before;
 - an old video: `no measurement: played as is`, and no change by ear.
 
+### Voice notes take the same loudness (owner, 2026-11-12)
+
+A voice note in a DM, a group or a salon is measured and played through the SAME two halves - no
+second meter, no second law, no second route.
+
+- **At send**, `sendVoiceNote` (`useMessaging.svelte.ts`) measures the recording while the upload
+  ceiling is asked: `measureRecordingLoudness` (`src/lib/utils/audio/recordingLoudness.ts`) decodes
+  it with an `OfflineAudioContext` (no speaker opened - the decode the voice player already makes for
+  its waveform) and feeds its planes to `LoudnessMeter`. `voiceNoteEntry` (`utils/chat/voiceNote.ts`)
+  puts the result on the pending entry next to `voiceNote: true`. From there it is a video's path:
+  DM, group and salon all leave through `buildMediaMessage`, into `MediaMsg.loudness` (field 18) and
+  the stored envelope's JSON. A recording this engine cannot decode, or silence, is sent UNMEASURED
+  with a `warn` naming its type - never refused.
+- **At playback**, `VoiceMessagePlayer` attaches its `<audio>` element to `loudnessAudio` exactly as
+  `VideoPlayer` attaches its `<video>` (one handle per element, the measurement applied keyed on its
+  two numbers), and its play tap PRIMES the context before `play()` - the gesture WebKit honours a
+  `resume()` in. `MessageMediaRenderer` hands it `mediaRef.loudness`.
+- **No WebKit bypass.** A voice note is a decrypted BLOB URL (`MessageMediaRenderer`'s `blobUrl`),
+  never a `MediaSource` stream, so it is attached with `streamed: false` and IS routed on WebKit -
+  the only way a gain reaches an iPhone, whose `element.volume` is read-only. The element-volume
+  factor stays the fallback for an engine without Web Audio, as for videos.
+- **Old notes**, sent before this, and the composer's own preview (unmeasured) carry no loudness:
+  `no measurement: played as is`, no context is made.
+- Tests: `recordingLoudness.test.ts` (a 997 Hz sine at -20 dBFS measures -23 LUFS; a refused decode
+  sends unmeasured), `voiceNote.test.ts` (`voiceNoteEntry`), `VoiceMessagePlayer.loudness.svelte.test.ts`
+  (the real singleton over a fake `AudioContext`: a loud note at -8 dB, a quiet one at the +6 dB cap,
+  the resume before `play()`, an old note unrouted).
+
+**Readings owed** (a pre-release; both phones): a whispered and a shouted note, each logging `voice
+note measured: ... LUFS` on the sender and `routed through Web Audio at ... dB` on the reader, and
+sounding alike; on the iPhone 12, a routed note has sound on the first tap and after a background;
+on the Mi 9T, no started AAudio stream once the note ends (`dumpsys audio`); an old note unchanged.
+
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 
 > *"J'aurais juste fait le triangle en liquid glass."* The play glyph ITSELF is the glass: no circle

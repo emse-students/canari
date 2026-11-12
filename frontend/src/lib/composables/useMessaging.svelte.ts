@@ -175,6 +175,8 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+import { measureRecordingLoudness } from '$lib/utils/audio/recordingLoudness';
+import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -2657,14 +2659,20 @@ export function useMessaging() {
    * beside it, neither of which the user asked to send by lifting their finger off a microphone.
    */
   async function sendVoiceNote(file: File, ctx: MessagingContext) {
-    const ready = await prepareMediaFiles([file], ctx);
+    // THE SOUND IS MEASURED WHILE THE CEILING IS ASKED (owner, 2026-11-12): the same BS.1770 meter
+    // as a video's, carried in `MediaRef.loudness` to every reader's player, DM, group and salon
+    // alike - all three leave through `buildMediaMessage`.
+    const [ready, loudness] = await Promise.all([
+      prepareMediaFiles([file], ctx),
+      measureRecordingLoudness(file),
+    ]);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
     // THIS IS THE ONLY PLACE IN THE APPLICATION THAT KNOWS. Past it, a recording and an imported
     // audio file are the same bytes with the same mime type, and the only thing left to read is a
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
-    await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+    await handleSendChat(ctx, '', { files: ready.map((f) => voiceNoteEntry(f, loudness)) });
   }
 
   /**
