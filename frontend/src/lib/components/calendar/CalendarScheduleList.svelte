@@ -30,6 +30,7 @@
    * The grid is not deleted: from `md` up there is room for it and it answers a different question
    * (the shape of the month). This component replaces it only where it does not fit.
    */
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { CalendarDays } from '@lucide/svelte';
   import { isToday } from '$lib/utils/dates';
   import {
@@ -49,7 +50,6 @@
   import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
   import OrganiserFaces from '$lib/components/calendar/OrganiserFaces.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     /** The whole feed; this component takes its own window out of it. */
@@ -85,7 +85,7 @@
    * of `lun.` / `mar.`. The heading is the half anybody looks at, which is why it was the only half
    * that was right.
    */
-  const localeTag = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const localeTag = $derived(intlLocale());
 
   const monthFormatter = $derived(
     new Intl.DateTimeFormat(localeTag, { month: 'long', year: 'numeric' })

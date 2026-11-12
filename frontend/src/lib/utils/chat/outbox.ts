@@ -28,6 +28,7 @@ import {
 } from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ReleaseAnswer } from './uploadReleaseMarks';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
 import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
@@ -37,6 +38,7 @@ import {
   encodeAppMessage,
   mediaEncodingProtoField,
   mediaReelProtoFields,
+  mediaLoudnessProtoField,
   mediaKindToType,
   mediaPlaceholderProtoField,
   mkMedia,
@@ -105,6 +107,7 @@ import {
   getTabLeadership,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -274,6 +277,8 @@ export interface PreparedOutboxMedia {
   width?: number;
   height?: number;
   durationMs?: number;
+  /** The video's or voice note's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /**
@@ -812,6 +817,7 @@ export function buildMediaMessage(
     ...(media.voiceNote ? { voiceNote: true } : {}),
     ...(ref.encoding ? { encoding: ref.encoding } : {}),
     ...declaration,
+    ...(media.loudness ? { loudness: media.loudness } : {}),
   };
   const proto = encodeAppMessage({
     ...mkMedia({
@@ -828,6 +834,7 @@ export function buildMediaMessage(
       ...mediaPlaceholderProtoField(media.placeholder),
       ...mediaEncodingProtoField(ref.encoding),
       ...mediaReelProtoFields(declaration),
+      ...mediaLoudnessProtoField(media.loudness),
       // THE MESSAGE THIS FILE ANSWERS, the same reference a text reply carries (a reply that gets
       // a photo attached stays a reply on both sides). Absent for an ordinary attachment.
       ...(replyTo
@@ -2056,6 +2063,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(prepared.width ? { width: prepared.width } : {}),
       ...(prepared.height ? { height: prepared.height } : {}),
       ...(prepared.durationMs ? { durationMs: prepared.durationMs } : {}),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
     if (storage) {
       const { blob: _blob, ...withBytes } = next;
@@ -3285,7 +3293,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // (WP-MULTITAB-1). Leadership already gated the WebSocket and `initializeConnection`; this is
     // the write path it never covered - the follower was observed flushing the LEADER's entry.
     // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
-    if (!getIsTabLeader()) {
+    //
+    // THE GATE IS THE STATE'S, NOT THE ELECTION'S (review of #3371): a leader promoted in place
+    // leads on a copy it loaded as a follower, and sends nothing until its promotion reload - the
+    // queue waits for the reloaded page, whose own first flush drains it. Asking "the leader" from
+    // there would ask this very tab.
+    if (refusesCommitsHere()) {
+      if (promotedSinceLoad()) {
+        log(
+          '[OUTBOX] Flush skipped - this tab has just become the leader and reloads; the reloaded page drains the shared queue.'
+        );
+        return;
+      }
       log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
       requestLeaderOutboxFlush();
       return;
@@ -4209,7 +4228,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       takesRerun = true;
       return;
     }
-    const { mimeType, size, fileName, width, height, durationMs, ...ref } = adopted;
+    const { mimeType, size, fileName, width, height, durationMs, loudness, ...ref } = adopted;
     const media: NonNullable<OutboxEntry['media']> = {
       ...take.media!,
       mimeType,
@@ -4218,6 +4237,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       width,
       height,
       durationMs,
+      loudness,
       uploadedRef: ref,
       adoptedRef: undefined,
       prepare: undefined,
@@ -4293,6 +4313,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         width: file.width,
         height: file.height,
         ...(file.durationMs ? { durationMs: file.durationMs } : {}),
+        ...(file.loudness ? { loudness: file.loudness } : {}),
         uploadedRef: file.uploadedRef,
       },
     };
@@ -4391,6 +4412,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(ref.width ? { width: ref.width } : {}),
       ...(ref.height ? { height: ref.height } : {}),
       durationMs,
+      ...(ref.loudness ? { loudness: ref.loudness } : {}),
     };
     const written = await writeTakeRow(takeId, (take) => {
       if (!take.take || take.take.state || takeWithdrawn.has(takeId)) {

@@ -27,12 +27,7 @@ import type { PostNotificationsService } from './post-notifications.service';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
-import {
-  LINKED_MEDIA_POST_SQL,
-  MULTI_MEDIA_POST_SQL,
-  SINGLE_MEDIA_POST_SQL,
-  SINGLE_PHOTO_POST_SQL,
-} from './full-screen-post-sql';
+import { FULL_SCREEN_POST_SQL } from './full-screen-post-sql';
 import { republishedFeedAtSql } from './republished-feed-sql';
 import { derivePosterKey } from '../lives/live-poster-key';
 
@@ -183,7 +178,7 @@ describe('reads exclude a reel past its month', () => {
     }
   });
 
-  it('with singlePhotos, reels AND one-picture posts, in EVERY feed arm', async () => {
+  it('with multiMedia, reels AND the full-screen posts (a link allowed), in EVERY feed arm', async () => {
     for (const feed of ['all', 'associations', 'custom'] as const) {
       const { service, queries } = makeService({});
       await service.listPosts({
@@ -191,12 +186,14 @@ describe('reads exclude a reel past its month', () => {
         offset: 0,
         feed,
         kind: 'reel',
-        singlePhotos: true,
+        multiMedia: true,
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
       expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(SINGLE_PHOTO_POST_SQL);
+      expect(sql).toContain(FULL_SCREEN_POST_SQL);
+      // ONE SWITCH since the floor 1.6.6: no list keeps a post with a link out any more.
+      expect(sql).not.toContain(`!~* 'https?://'`);
       // The visibility of a post is still asked of every row the arm serves.
       expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
     }
@@ -210,7 +207,7 @@ describe('reads exclude a reel past its month', () => {
         offset: 0,
         feed,
         kind: 'reel',
-        singlePhotos: true,
+        multiMedia: true,
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
@@ -233,156 +230,25 @@ describe('reads exclude a reel past its month', () => {
     }
   });
 
-  it('singlePhotos means nothing without kind=reel', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singlePhotos: true });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
-  });
-
-  it('with singleMedia, reels AND one-picture-or-video posts, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        singleMedia: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-      expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
-      // A plain post has no expiry: the live-reel clause still spares it.
-      expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
-    }
-  });
-
-  it('singleMedia wins over singlePhotos, and singlePhotos alone stays pictures only', async () => {
-    const both = makeService({});
-    await both.service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      singlePhotos: true,
-      singleMedia: true,
-    });
-    const bothSql = both.queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(bothSql).toContain(SINGLE_MEDIA_POST_SQL);
-    const photos = makeService({});
-    await photos.service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      singlePhotos: true,
-    });
-    const photosSql = photos.queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(photosSql).toContain(SINGLE_PHOTO_POST_SQL);
-    expect(photosSql).not.toContain(SINGLE_MEDIA_POST_SQL);
-  });
-
-  it('with multiMedia, reels AND single AND 2..10-media posts, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        multiMedia: true,
-        singleMedia: true,
-        singlePhotos: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
-      expect(sql).toContain(MULTI_MEDIA_POST_SQL);
-      expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    }
-  });
-
-  it('singleMedia alone never answers a carousel: an installed client cannot draw one', async () => {
+  it('the retired switches turn nothing on: singlePhotos, singleMedia and withLinks are not read', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({
       limit: 10,
       offset: 0,
       feed: 'all',
       kind: 'reel',
-      singleMedia: true,
-      singlePhotos: true,
+      ...({ singlePhotos: true, singleMedia: true, withLinks: true } as object),
     });
     const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
-  });
-
-  it('with withLinks (owner, 2026-11-06), a post with a link comes too, in EVERY feed arm', async () => {
-    for (const feed of ['all', 'associations', 'custom'] as const) {
-      const { service, queries } = makeService({});
-      await service.listPosts({
-        limit: 10,
-        offset: 0,
-        feed,
-        kind: 'reel',
-        withLinks: true,
-        multiMedia: true,
-        singleMedia: true,
-        singlePhotos: true,
-        viewerUserId: 'alice',
-      });
-      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(LINKED_MEDIA_POST_SQL);
-      expect(sql).not.toContain(`!~* 'https?://'`);
-    }
-  });
-
-  it('withLinks without multiMedia keeps the old rule: an installed client drops a link', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      withLinks: true,
-      singleMedia: true,
-    });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
-    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
-  });
-
-  it('multiMedia alone keeps the link out: a client built before withLinks cannot draw one', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({
-      limit: 10,
-      offset: 0,
-      feed: 'all',
-      kind: 'reel',
-      multiMedia: true,
-      singleMedia: true,
-      singlePhotos: true,
-    });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).toContain(MULTI_MEDIA_POST_SQL);
-    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
+    expect(sql).not.toContain(FULL_SCREEN_POST_SQL);
+    expect(sql).toContain(`posts.kind IN ('reel', 'replay')`);
   });
 
   it('multiMedia means nothing without kind=reel', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', multiMedia: true });
     const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
-  });
-
-  it('singleMedia means nothing without kind=reel', async () => {
-    const { service, queries } = makeService({});
-    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singleMedia: true });
-    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-    expect(sql).not.toContain(SINGLE_MEDIA_POST_SQL);
+    expect(sql).not.toContain(FULL_SCREEN_POST_SQL);
   });
 
   it('absent kind means both: no kind clause, but the live-reel clause stays', async () => {

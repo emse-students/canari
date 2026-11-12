@@ -3,6 +3,7 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X, ImagePlus, Link2 } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -160,6 +161,16 @@
     }
   }
 
+  /**
+   * The keyboard inside the panel, as the shared `Modal` reads it: the key is stopped here, so an
+   * Escape closes this dialog and not one stacked under it (both are portaled, siblings under
+   * `body`), and Escape closes it the way a click on the backdrop does. Tab is `focusTrap`'s.
+   */
+  function onPanelKeydown(e: KeyboardEvent) {
+    e.stopPropagation();
+    if (e.key === 'Escape') onClose();
+  }
+
   async function onPosterRemoved() {
     if (!poster) return;
     try {
@@ -184,6 +195,9 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby="event-form-title"
+        tabindex="-1"
+        use:focusTrap
+        onkeydown={onPanelKeydown}
       >
         <h3 id="event-form-title" class="text-text-main text-lg font-bold">{heading}</h3>
         {#if note}

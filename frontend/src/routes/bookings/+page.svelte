@@ -7,7 +7,14 @@
   import SpaceList from '$lib/components/bookings/booker/SpaceList.svelte';
   import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
   import MyBookingRow from '$lib/components/bookings/booker/MyBookingRow.svelte';
-  import { listSpaces, myBookings, type ListedSpace, type MyBooking } from '$lib/bookings/api';
+  import {
+    listManagedSpaces,
+    listSpaces,
+    myBookings,
+    type ListedSpace,
+    type ManagedSpaceRow,
+    type MyBooking,
+  } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { m } from '$lib/paraglide/messages';
@@ -27,6 +34,11 @@
   let bookingsError = $state('');
   let spacesError = $state('');
   let nowMs = $state(Date.now());
+  /**
+   * The reader's personal spaces, asked with the page's other two reads (they need nothing from each
+   * other) and handed to the tab that draws them once those have ended.
+   */
+  let managed = $state<Promise<ManagedSpaceRow[]> | undefined>();
 
   /** Live and not yet over, soonest first. */
   const coming = $derived(
@@ -46,6 +58,12 @@
   async function load() {
     Log.d('BOOKINGS', 'reservations page load');
     loading = true;
+    const managedRead = listManagedSpaces(null);
+    // The tab awaits it later; until then a refusal must not surface as an unhandled rejection.
+    managedRead.catch((e: unknown) =>
+      Log.d('BOOKINGS', `personal spaces read refused, the tab reports it: ${String(e)}`)
+    );
+    managed = managedRead;
     await Promise.all([readBookings(), readSpaces()]);
     loading = false;
   }
@@ -152,7 +170,7 @@
         {/if}
       </section>
 
-      <EditBookingsTab associationId={null} />
+      <EditBookingsTab associationId={null} {managed} />
 
       <p
         class="border-cn-border bg-cn-surface text-text-muted flex items-start gap-2 rounded-2xl border p-4 text-xs"

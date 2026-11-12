@@ -655,7 +655,10 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([backlog](../../backlog.md)).
+  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+- **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
+  when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
+  2026-10-16).
 
 ### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
 
@@ -961,6 +964,21 @@ reader and the accounts the reader blocked are never offered (the server hides b
 ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
 falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
+
+**Typing an `@` looped the roster picker's effect on `1.6.6`-`1.6.8`, and the chat fell to its
+boundary (reported on Android `1.6.6`, 2026-11-12).** The caret reaching an `@` changes `start`,
+which re-runs the effect `MentionComposerInput` keeps on the roster prop (`refreshRoster`). There,
+`suggestLocally` wrote `suggestions` and read it back to set `open`, so the effect depended on the
+array it replaced on every run: `effect_update_depth_exceeded` at the first `@`, in a DM and in a
+salon alike, right after the blocks read and the name batch the picker's first open asks for. **It
+was fixed by #3233 (`v1.6.9`)**, which sets `open` from the local array; a reader on an older build
+only has to update. `MentionComposerInput.keystrokes.svelte.test.ts` types "salut @" and "a@b." key
+by key through the real component, with the blocks read and the batch answered asynchronously, and
+fails with that error on the `1.6.6` shape. The boundary's own line read `[object Object]` in that
+log; it now goes through `describeCaughtError` (name, message, three stack frames) at the error
+level. On the way: a server search still waiting for its delay ran after the mention had ended
+("a@b." typed quickly) and reopened the picker on plain text with nothing selectable; the end of a
+mention now drops it.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
 

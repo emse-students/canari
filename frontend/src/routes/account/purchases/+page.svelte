@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -10,7 +11,6 @@
   import type { UserTag } from '$lib/associations/api';
   import CotisationTagRow from '$lib/components/shared/CotisationTagRow.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface PurchaseRecord {
     id: string;
@@ -176,14 +176,11 @@
                     </span>
                   </div>
                   <p class="text-text-muted mt-1 text-xs">
-                    {new Date(purchase.paidAt).toLocaleDateString(
-                      getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                      {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      }
-                    )}
+                    {new Date(purchase.paidAt).toLocaleDateString(intlLocale(), {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })}
                     ·
                     {purchase.paymentMethod === 'cash'
                       ? m.purchases_payment_cash()

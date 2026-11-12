@@ -36,4 +36,8 @@ EXPOSE 3010
 # The image has no node, so the check runs under bun - the same runtime that serves.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=50s --retries=3   CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||3010)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
+# NON-ROOT: the image's own `bun` user (uid 1000). This service writes nothing to disk and mounts no
+# volume (both compose files), and listens above 1024, so root bought it nothing (Trivy DS-0002).
+USER bun
+
 CMD ["bun", "dist/main.js"]

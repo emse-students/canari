@@ -72,7 +72,7 @@
     "thumbhash": "^0.1.1"
   },
   "devDependencies": {
-    "@inlang/paraglide-js": "^3.2.0",
+    "@inlang/paraglide-js": "^3.2.1",
     "@sveltejs/adapter-node": "^6.0.1",
     "@sveltejs/adapter-static": "^4.0.1",
     "@sveltejs/kit": "^3.1.1",
@@ -83,12 +83,12 @@
     "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^5.1.0",
     "emoji-picker-element-data": "1.8.0",
-    "fake-indexeddb": "^6.2.7",
+    "fake-indexeddb": "^6.2.8",
     "happy-dom": "^21.0.4",
     "husky": "^9.1.7",
     "oxfmt": "^0.77.0",
     "oxlint": "^1.92.0",
-    "parse5": "8.1.0",
+    "parse5": "8.1.1",
     "protobufjs": "^8.8.1",
     "protobufjs-cli": "^2.7.1",
     "sharp": "^0.35.5",

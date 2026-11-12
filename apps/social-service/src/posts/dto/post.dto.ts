@@ -54,6 +54,24 @@ export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
 /** A ThumbHash is at most a few dozen bytes; its base64 never approaches this. */
 export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 
+/**
+ * A video's sound as the PUBLISHER'S DEVICE measured it while preparing it (ITU-R BS.1770 / EBU R128,
+ * `frontend/src/lib/video/loudnessMeter.ts`): every reader's player brings it toward one loudness
+ * (owner, 2026-11-11, docs/wiki/frontend/modules/video-player.md#loudness). The server cannot measure
+ * a ciphertext, so it only keeps what it is handed, bounded to what a real signal gives.
+ */
+export class PostMediaLoudnessDto {
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-70)
+  @Max(0)
+  integratedLufs: number;
+
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Max(30)
+  @Min(-200)
+  samplePeakDbfs: number;
+}
+
 export class PostMediaDto {
   @IsString()
   @IsNotEmpty()
@@ -123,6 +141,15 @@ export class PostMediaDto {
   @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
   @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
   placeholder?: string;
+
+  /**
+   * The measured sound of a video ({@link PostMediaLoudnessDto}). Declared so `whitelist: true`
+   * keeps it; absent on every post before 2026-11-11 and on a silent video, which play as they are.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PostMediaLoudnessDto)
+  loudness?: PostMediaLoudnessDto;
 }
 
 export class PollOptionInputDto {
@@ -378,19 +405,33 @@ export class CreatePostDto {
   scheduledAt?: string;
 }
 
-export class ListPostsQueryDto {
+/**
+ * The page a list of posts is read by: `?limit=` and `?offset=`, whole numbers or a 400. The
+ * size asked is held to `POST_PAGE_MAX` by the controller (`postPageLimit`), never refused
+ * for being large - an installed client that asks for more receives the largest page.
+ */
+export class PostPageQueryDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(1)
   limit?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(0)
   offset?: number;
+}
 
+/** `GET /posts/search`: the words, and the page. */
+export class SearchPostsQueryDto extends PostPageQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+}
+
+export class ListPostsQueryDto extends PostPageQueryDto {
   /** Default `all` when omitted; `reels` is the CanaReels viewer's list, not a tab (`list-feed.ts`). */
   @IsOptional()
   @IsIn([...LIST_POST_FEEDS])
@@ -405,31 +446,11 @@ export class ListPostsQueryDto {
   kind?: 'post' | 'reel';
 
   /**
-   * With `kind=reel`: the posts whose only content is ONE picture come too - the CanaReels list
-   * (user, 2026-10-19: photos in CanaReels, as on Instagram). Ignored without `kind=reel`. A query
-   * string carries text, so only the literal `true` turns it on.
-   */
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
-  @IsBoolean()
-  singlePhotos?: boolean;
-
-  /**
-   * With `kind=reel`: the posts whose only content is ONE picture OR ONE video come too (owner,
-   * 2026-11-06: a feed video not filmed with the Canari camera is in CanaReels as a picture is).
-   * Wins over `singlePhotos`, which stays for an installed client that asks for pictures alone.
-   * Ignored without `kind=reel`.
-   */
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
-  @IsBoolean()
-  singleMedia?: boolean;
-
-  /**
-   * With `kind=reel`: the posts of TWO TO TEN pictures and videos and nothing else come too, as
-   * well as the single ones (owner, 2026-11-06: a carousel, swiped left and right as on
-   * Instagram). Wins over `singleMedia` and `singlePhotos`, which keep their meaning for an
-   * installed client that cannot draw a carousel. Ignored without `kind=reel`.
+   * With `kind=reel`: the posts whose only content is pictures and videos come too - one, or two to
+   * ten (a carousel), a link in the text allowed (`full-screen-post-sql.ts`). Ignored without
+   * `kind=reel`. A query string carries text, so only the literal `true` turns it on. The older
+   * `singlePhotos`, `singleMedia` and `withLinks` are gone since 2026-11-11 (the floor `1.6.6`
+   * admits no client that relied on them); the whitelisting pipe strips them.
    */
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')
@@ -437,19 +458,8 @@ export class ListPostsQueryDto {
   multiMedia?: boolean;
 
   /**
-   * With `multiMedia`: a post with a LINK in its text comes too, the client drawing the link in the
-   * caption (owner, 2026-11-06). Ignored without `multiMedia`, so an installed client that sends an
-   * older switch keeps the rule it was built for.
-   */
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
-  @IsBoolean()
-  withLinks?: boolean;
-
-  /**
    * A LIVE REPLAY (`kind = 'replay'`, docs/wiki/live-replays.md) comes in this page only when the
-   * client says it can draw one - the `withLinks` precedent: a build that cannot draw a replay never
-   * receives one. With `kind=reel` it joins the CanaReels list; without `kind`, the feed.
+   * client says it can draw one: a build that cannot draw a replay never receives one. With `kind=reel` it joins the CanaReels list; without `kind`, the feed.
    */
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')

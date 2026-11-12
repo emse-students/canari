@@ -14,6 +14,7 @@
   } from '$lib/calendar/feedEvents';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { intlLocale } from '$lib/utils/intlLocale';
 
   interface Props {
     focusDate: Date;
@@ -37,7 +38,7 @@
   );
 
   function formatDayLabel(day: number): string {
-    return new Intl.DateTimeFormat('fr-FR', {
+    return new Intl.DateTimeFormat(intlLocale(), {
       weekday: 'long',
       day: 'numeric',
       month: 'long',

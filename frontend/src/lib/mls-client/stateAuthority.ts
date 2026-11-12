@@ -30,6 +30,9 @@ export function noteMlsStateLoaded(asLeader: boolean): void {
  * Whether a commit must be refused here: a follower, or a leader whose copy was loaded as a follower
  * (promoted in place, reload pending). `undecided` with no load noted (a native shell before its
  * login, a unit test) is not refused - the same reading the follower gate always had.
+ *
+ * THE SAME FACT REFUSES A STATE WRITE (`BaseMlsService.persistCheckpoint`): a copy that may not commit
+ * is not the account's state either, and writing it forks the stored one (owner, web `1.6.10`).
  */
 export function refusesCommitsHere(): boolean {
   return getTabLeadership() === 'follower' || loadedAs === 'follower';

@@ -55,7 +55,8 @@ export class GateRank {
   promote(): void {
     if (this.#lane === 'foreground') return;
     this.#lane = 'foreground';
-    // A snapshot: a watcher that subscribes while this loop runs is not told of this promotion.
+    // A snapshot: a watcher may unsubscribe itself (or another) while being told, and one that
+    // subscribes while this loop runs is not told of this promotion.
     for (const watcher of Array.from(this.#watchers)) watcher();
   }
 

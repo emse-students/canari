@@ -52,8 +52,9 @@ wait_for_default_blueprints "$worker"
 
 if [ -n "${PREVIOUS_REF:-}" ]; then
   # The UPGRADE path, which is the one production takes: build the instance from the blueprints at
-  # PREVIOUS_REF (CI passes main), then apply these over it. A fresh instance alone never runs a
-  # rename entry, since no old name exists on it.
+  # PREVIOUS_REF (CI passes the tested commit's first parent: the main it sits on, never a newer
+  # one, whose blueprints may need what this tree's compose.yml does not give the worker), then apply
+  # these over it. A fresh instance alone never runs a rename entry, since no old name exists on it.
   mkdir -p "$work/previous/blueprints"
   # From the repository ROOT: run inside a subdirectory, `git archive` prefixes even a `ref:path`
   # tree with that subdirectory and extracts nothing.
