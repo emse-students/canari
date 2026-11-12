@@ -122,7 +122,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex A - every row of the backlog
 
-324 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+325 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -450,6 +450,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B393 | legacy tier tags without a consistent issuer: one read-only count | none | other | built-readings-owed | production count | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B394 | LIVE-STALL-1 rerun on the current pre-release: no stall, no hold over the budget | P2 | calls | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B395 | SALON-REVOKE-COMMIT and the RM rows rerun: no redelivered Welcome, every external-join attempt logged | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B399 | a new-device alert is dropped once its device is revoked (D065): one Mi 9T reading | P3 | mls-messaging | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
