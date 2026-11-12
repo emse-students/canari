@@ -11,7 +11,6 @@ import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
-import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
@@ -62,6 +61,7 @@ import {
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -70,6 +70,7 @@ import {
 } from '$lib/utils/chat/messageReactions';
 import {
   notificationGroupName,
+  notificationIsGroup,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
 import {
@@ -97,10 +98,9 @@ import {
 } from '$lib/envelope';
 import {
   encodeAppMessage,
-  mediaEncodingProtoField,
-  mediaPlaceholderProtoField,
+  forwardedMediaMsg,
+  mediaKindFromEnvelope,
   mkMedia,
-  MediaKind,
 } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
@@ -175,6 +175,8 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -219,24 +221,6 @@ export interface MessagingContext {
   signalChannelRead?: (channelId: string) => void;
   /** See `SendMessageDeps.onChannelWriteRefused`. Optional: a context without it keeps the row. */
   onChannelWriteRefused?: SendMessageDeps['onChannelWriteRefused'];
-}
-
-/**
- * Maps an envelope media type to its protobuf {@link MediaKind}. A file has no dedicated kind,
- * so anything unrecognised falls through to UNSPECIFIED, which is what the renderer treats as
- * "generic attachment".
- */
-function mediaKindFromEnvelope(type: string): number {
-  switch (type) {
-    case 'image':
-      return MediaKind.MEDIA_KIND_IMAGE;
-    case 'video':
-      return MediaKind.MEDIA_KIND_VIDEO;
-    case 'audio':
-      return MediaKind.MEDIA_KIND_AUDIO;
-    default:
-      return MediaKind.MEDIA_KIND_UNSPECIFIED;
-  }
 }
 
 /** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
@@ -791,7 +775,10 @@ export function useMessaging() {
         : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
-        : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+        : // In front, but nobody has touched it for the attention window (`windowAttention`).
+          !windowAttention.attentive
+          ? `the window is in front but idle (no gesture for ${ATTENTION_WINDOW_MS / 1000} s)`
+          : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
@@ -815,6 +802,7 @@ export function useMessaging() {
           senderId,
           senderName,
           groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+          isGroup: notificationIsGroup(convo.conversationType),
           body: notificationBody,
           mentionsMe,
           sentAt,
@@ -2163,6 +2151,7 @@ export function useMessaging() {
             caption: captionForFile,
             ...(entry.voiceNote ? { voiceNote: true } : {}),
             ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
+            ...(entry.loudness ? { loudness: entry.loudness } : {}),
           };
           // The quote the placeholder row is drawn with (the real envelope is built from the same
           // reference once the upload names the blob).
@@ -2606,6 +2595,8 @@ export function useMessaging() {
         height: prepared.height,
         // Declared with the message (owner, 2026-11-10): whole ms, never 0 ("not declared").
         durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+        // Declared with the message: what the reader's player normalises to (owner, 2026-11-11).
+        ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
       };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
@@ -2667,7 +2658,15 @@ export function useMessaging() {
    * send: draining the pending queue here would post a half-written caption and any photo staged
    * beside it, neither of which the user asked to send by lifting their finger off a microphone.
    */
-  async function sendVoiceNote(file: File, ctx: MessagingContext) {
+  async function sendVoiceNote(
+    file: File,
+    ctx: MessagingContext,
+    loudness: MediaLoudness | null = null
+  ) {
+    // THE SOUND WAS MEASURED WHILE IT WAS RECORDED (owner, 2026-11-12; `recordingLoudness.ts`):
+    // the send waits for nothing more. Carried in `MediaRef.loudness` to every reader's player, DM,
+    // group and salon alike - all three leave through `buildMediaMessage`. Null (not measured, or
+    // silence) sends the note unmeasured, as every note before this was.
     const ready = await prepareMediaFiles([file], ctx);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
@@ -2675,7 +2674,7 @@ export function useMessaging() {
     // audio file are the same bytes with the same mime type, and the only thing left to read is a
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
-    await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+    await handleSendChat(ctx, '', { files: ready.map((f) => voiceNoteEntry(f, loudness)) });
   }
 
   /**
@@ -3493,22 +3492,7 @@ export function useMessaging() {
           await sendEncryptedChannelMessage(
             targetName,
             encodeAppMessage({
-              ...mkMedia({
-                kind: mediaKindFromEnvelope(env.media.type),
-                mediaId: env.media.mediaId,
-                key: fromHex(env.media.key),
-                iv: fromHex(env.media.iv),
-                mimeType: env.media.mimeType,
-                size: env.media.size,
-                fileName: env.media.fileName ?? '',
-                caption: env.caption,
-                ...(env.media.width && env.media.height
-                  ? { width: env.media.width, height: env.media.height }
-                  : {}),
-                ...mediaPlaceholderProtoField(env.media.placeholder),
-                // A forward relays the blob as it was sealed, so it must relay how.
-                ...mediaEncodingProtoField(env.media.encoding),
-              }),
+              ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
               messageId: crypto.randomUUID(),
               sentAt: Date.now(),
             })
@@ -3537,19 +3521,7 @@ export function useMessaging() {
         const media = env.media;
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
-          ...mkMedia({
-            kind: mediaKindFromEnvelope(media.type),
-            mediaId: media.mediaId,
-            key: fromHex(media.key),
-            iv: fromHex(media.iv),
-            mimeType: media.mimeType,
-            size: media.size,
-            fileName: media.fileName ?? '',
-            caption: env.caption,
-            ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-            ...mediaPlaceholderProtoField(media.placeholder),
-            ...mediaEncodingProtoField(media.encoding),
-          }),
+          ...mkMedia(forwardedMediaMsg(media, env.caption)),
           messageId,
           sentAt: Date.now(),
         });

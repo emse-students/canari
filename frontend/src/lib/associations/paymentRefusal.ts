@@ -62,7 +62,6 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
-    // In the reader's locale: `formatPriceCents` is pinned to fr-FR, so English read '0,50 EUR'.
     const min = formatAmount(minCents);
     return maxCents === null
       ? m.shop_payment_amount_min({ min })

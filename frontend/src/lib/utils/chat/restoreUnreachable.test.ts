@@ -154,6 +154,29 @@ describe('the restore against a server that got no answer', () => {
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('[CATCHUP] the server'));
   });
 
+  // Weak-network audit: the link drops WITH the pass running, after the batch answered.
+  it('stops at the conversation that finds the link known down, owes the rest, says it once', async () => {
+    const conversations = new SvelteMap<string, Conversation>();
+    const service = mls();
+    const skipped = vi.fn();
+    // The first replay's history read gets no answer: it tells the store (twice - one stall is not
+    // an outage) and returns its empty page, as the real delivery API does.
+    replay.mockImplementationOnce(async () => {
+      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable();
+      return undefined;
+    });
+
+    await restore(conversations, service, skipped);
+
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(skipped).toHaveBeenCalledExactlyOnceWith(['g-2']);
+    const lines = warn.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(
+      lines.filter((l: string) => l.includes('[CATCHUP] the server got no answer'))
+    ).toHaveLength(1);
+  });
+
   // Review of #2726: ONE deadline on a slow but working link is not a link known down, and skipping
   // every replay on it would be a regression against the per-group path.
   it('keeps the per-group replay when the batch hit a deadline on a link not known down', async () => {

@@ -1,5 +1,6 @@
 import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
+import { m } from '$lib/paraglide/messages';
 import { inAppPathFromHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
 /**
@@ -84,20 +85,12 @@ export function postAuthorDisplayName(post: PostEntity): string {
   if (first) return first;
   if (last) return last;
   if (post.authorDisplayName?.trim()) return post.authorDisplayName.trim();
-  return post.authorId ?? 'Auteur';
+  return post.authorId ?? m.post_author_fallback();
 }
 
 /** Short title line from post markdown. */
 export function postPreviewTitle(post: PostEntity): string {
   const plain = markdownToPlainText(post.markdown);
-  if (!plain) return 'Publication sans texte';
+  if (!plain) return m.shared_post_no_text();
   return truncateForMeta(plain, 100);
-}
-
-/** Formats a Stripe-style amount stored in cents. */
-export function formatPriceCents(cents: number, currency = 'eur'): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: (currency || 'eur').toUpperCase(),
-  }).format(cents / 100);
 }

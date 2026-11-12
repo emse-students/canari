@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import {
@@ -23,7 +24,6 @@
   } from '$lib/associations/lydiaEnrolmentSteps';
   import { Building2, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { wordingFor } from '$lib/associations/kindWording';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -242,7 +242,7 @@
 
   /** The pause date in the reader's locale. */
   function formatPauseDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 </script>
 

@@ -197,7 +197,7 @@ the USER can do is ONE table** - [backlog](docs/wiki/backlog.md#owed-to-the-user
 
 **CLOSED, DO NOT REOPEN** (user: record closed chantiers so nobody returns to them fifty times):
 section navigation ([section-navigation](docs/wiki/frontend/section-navigation.md)), read-receipt
-privacy ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)), the first pass of community-open
+privacy ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md); reopened by the owner 2026-11-11 for the idle window, rows 17-20), the first pass of community-open
 slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md)), all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)).
 
 ### CANARI - THE QUEUE, IN ORDER
