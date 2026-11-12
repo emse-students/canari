@@ -54,6 +54,24 @@ export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
 /** A ThumbHash is at most a few dozen bytes; its base64 never approaches this. */
 export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 
+/**
+ * A video's sound as the PUBLISHER'S DEVICE measured it while preparing it (ITU-R BS.1770 / EBU R128,
+ * `frontend/src/lib/video/loudnessMeter.ts`): every reader's player brings it toward one loudness
+ * (owner, 2026-11-11, docs/wiki/frontend/modules/video-player.md#loudness). The server cannot measure
+ * a ciphertext, so it only keeps what it is handed, bounded to what a real signal gives.
+ */
+export class PostMediaLoudnessDto {
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-70)
+  @Max(0)
+  integratedLufs: number;
+
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Max(30)
+  @Min(-200)
+  samplePeakDbfs: number;
+}
+
 export class PostMediaDto {
   @IsString()
   @IsNotEmpty()
@@ -123,6 +141,15 @@ export class PostMediaDto {
   @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
   @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
   placeholder?: string;
+
+  /**
+   * The measured sound of a video ({@link PostMediaLoudnessDto}). Declared so `whitelist: true`
+   * keeps it; absent on every post before 2026-11-11 and on a silent video, which play as they are.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PostMediaLoudnessDto)
+  loudness?: PostMediaLoudnessDto;
 }
 
 export class PollOptionInputDto {
@@ -378,19 +405,33 @@ export class CreatePostDto {
   scheduledAt?: string;
 }
 
-export class ListPostsQueryDto {
+/**
+ * The page a list of posts is read by: `?limit=` and `?offset=`, whole numbers or a 400. The
+ * size asked is held to `POST_PAGE_MAX` by the controller (`postPageLimit`), never refused
+ * for being large - an installed client that asks for more receives the largest page.
+ */
+export class PostPageQueryDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(1)
   limit?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(0)
   offset?: number;
+}
 
+/** `GET /posts/search`: the words, and the page. */
+export class SearchPostsQueryDto extends PostPageQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+}
+
+export class ListPostsQueryDto extends PostPageQueryDto {
   /** Default `all` when omitted; `reels` is the CanaReels viewer's list, not a tab (`list-feed.ts`). */
   @IsOptional()
   @IsIn([...LIST_POST_FEEDS])

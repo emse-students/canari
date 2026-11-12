@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onDestroy } from 'svelte';
   import {
@@ -59,7 +60,6 @@
   import TierRiseEditor from './TierRiseEditor.svelte';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
@@ -209,7 +209,7 @@
   });
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 
   function cotisantName(item: CotisantRosterItem): string {

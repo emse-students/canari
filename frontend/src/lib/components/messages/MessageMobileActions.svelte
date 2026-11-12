@@ -36,8 +36,6 @@
     isOwn?: boolean;
     /** When true, hides reply and edit actions (message has been deleted). */
     isDeleted?: boolean;
-    /** When true, hides the edit action (media messages cannot be edited). */
-    hasMedia?: boolean;
     /** When false, hides the reply button. */
     canReply?: boolean;
     /** When false, hides the react button. */
@@ -86,7 +84,6 @@
     anchor = null,
     isOwn = false,
     isDeleted = false,
-    hasMedia = false,
     canReply = true,
     canReact = true,
     canEdit = true,
@@ -164,7 +161,8 @@
         tone: 'text-accent-text hover:bg-accent/10',
         run: onPin,
       });
-    if (isOwn && !hasMedia && canEdit)
+    // A media message's edit is its caption's, so it is offered too (owner, 2026-11-11).
+    if (isOwn && canEdit)
       list.push({
         key: 'edit',
         label: m.common_edit_label(),

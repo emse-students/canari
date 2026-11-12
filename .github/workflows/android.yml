@@ -167,7 +167,6 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -178,7 +177,6 @@ jobs:
             ANDROID_KEY_ALIAS
             ANDROID_KEY_PASSWORD
             ANDROID_STORE_PASSWORD
-            JWT_SECRET
             BASE_URL
             AUTHENTIK_URL
             AUTHENTIK_CLIENT_ID

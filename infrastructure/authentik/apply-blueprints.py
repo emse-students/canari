@@ -177,22 +177,44 @@ def snapshot():
     return state
 
 
-def unresolved_tags(value, entry, blueprint, path="attrs"):
+def unresolved_tags(value, entry, blueprint, path="attrs", finds=True):
     """Every !Find that matches NOTHING and every !Env that is unset. authentik resolves both to null
     and carries on, so a mistyped name would silently clear a nullable reference and a missing
-    variable would blank a secret - both are refused here."""
+    variable would blank a secret - both are refused here. `finds=False` asks the !Env half only."""
     if isinstance(value, Find):
-        if value.resolve(entry, blueprint) is None:
+        if finds and value.resolve(entry, blueprint) is None:
             yield f"{path}: !Find {value.model_name} {value.conditions}"
     elif isinstance(value, Env):
         if not value.resolve(entry, blueprint):
-            yield f"{path}: !Env {value.key} is unset"
+            yield f"{path}: !Env {value.key} is unset in the worker's environment"
     elif isinstance(value, dict):
         for key, inner in value.items():
-            yield from unresolved_tags(inner, entry, blueprint, f"{path}.{key}")
+            yield from unresolved_tags(inner, entry, blueprint, f"{path}.{key}", finds)
     elif isinstance(value, (list, tuple)):
         for index, inner in enumerate(value):
-            yield from unresolved_tags(inner, entry, blueprint, f"{path}[{index}]")
+            yield from unresolved_tags(inner, entry, blueprint, f"{path}[{index}]", finds)
+
+
+def refuse_unresolved(finds):
+    """Logs every unresolved tag of every blueprint and raises if there is one.
+
+    Asked TWICE. BEFORE anything applies, for the !Env tags only (`finds=False`): a variable needs no
+    object to resolve, and an unset one reaches authentik as null, where a non-nullable field fails
+    with a serializer error naming the FIELD and never the variable (`'key': ['This field may not be
+    null.']`, 2026-11-11). AFTER everything applied, for both kinds: a !Find may name an object an
+    earlier entry creates."""
+    missing = []
+    for file_name, importer in importers():
+        for entry in importer.blueprint.iter_entries():
+            # A rename's own !Find names the OLD object, which is gone once it has run.
+            if rename_of(entry, importer.blueprint):
+                continue
+            missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.attrs, entry, importer.blueprint, finds=finds))
+            missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.identifiers, entry, importer.blueprint, "identifiers", finds))
+    if missing:
+        for line in missing:
+            log(f"UNRESOLVED {line}")
+        raise RuntimeError(f"{len(missing)} tag(s) resolved to nothing")
 
 
 def diff(before, after):
@@ -226,6 +248,7 @@ def run():
         return 0
     try:
         with transaction.atomic():
+            refuse_unresolved(finds=False)
             before = snapshot()
             for file_name, importer in importers():
                 with capture_logs() as logs:
@@ -237,18 +260,7 @@ def run():
                         log(f"  {line}")
                     raise RuntimeError(f"{file_name} did not apply")
                 log(f"applied {file_name}")
-            missing = []
-            for file_name, importer in importers():
-                for entry in importer.blueprint.iter_entries():
-                    # A rename's own !Find names the OLD object, which is gone once it has run.
-                    if rename_of(entry, importer.blueprint):
-                        continue
-                    missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.attrs, entry, importer.blueprint))
-                    missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.identifiers, entry, importer.blueprint, "identifiers"))
-            if missing:
-                for line in missing:
-                    log(f"UNRESOLVED {line}")
-                raise RuntimeError(f"{len(missing)} tag(s) resolved to nothing")
+            refuse_unresolved(finds=True)
             # A rename that did not run leaves the old object AND a new one built beside it.
             left = []
             for file_name, importer in importers():

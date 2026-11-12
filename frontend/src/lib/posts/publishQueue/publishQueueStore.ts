@@ -21,6 +21,7 @@
  */
 import type { CreatePostPayload, PostFeed, PostMediaRef } from '$lib/posts/api';
 import type { OutboxResumableUpload } from '$lib/db/types';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
 import { appendLog } from '$lib/utils/sessionLog';
 
@@ -59,6 +60,8 @@ export interface QueuedMedia {
      * what a reader's feed draws before a byte of the video arrives (owner, 2026-11-10).
      */
     placeholder?: string;
+    /** A video's measured sound (`MediaRef.loudness`), measured with its preparation. */
+    loudness?: MediaLoudness;
   };
   /** The resumable session of this media's upload, written before its first part leaves. */
   upload?: OutboxResumableUpload;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -35,7 +36,6 @@
     TriangleAlert,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { SvelteSet } from 'svelte/reactivity';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
@@ -400,9 +400,7 @@
                           {#each childPurchases[child.associationId] as purchase (purchase.id)}
                             <tr class="bg-cn-bg/20">
                               <td class="text-text-muted px-3 py-2 whitespace-nowrap">
-                                {new Date(purchase.paidAt).toLocaleString(
-                                  getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                                )}
+                                {new Date(purchase.paidAt).toLocaleString(intlLocale())}
                               </td>
                               <td class="text-text-main px-3 py-2 font-medium">
                                 {purchaseBuyerName(purchase)}

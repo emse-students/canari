@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -10,7 +11,6 @@
   import { gatewayUrl } from '$lib/utils/apiUrl';
   import { RefreshCw } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import {
     devicesByPlatform,
     layersOf,
@@ -143,7 +143,7 @@
   );
   const versions = $derived(census ? versionShares(census) : []);
   const percent = (share: number) =>
-    new Intl.NumberFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    new Intl.NumberFormat(intlLocale(), {
       style: 'percent',
       maximumFractionDigits: 0,
     }).format(share);
@@ -157,7 +157,7 @@
     {#if lastUpdated}
       <span class="text-text-muted text-xs"
         >{m.admin_status_last_updated_label({
-          time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
+          time: lastUpdated.toLocaleTimeString(intlLocale()),
         })}</span
       >
     {/if}

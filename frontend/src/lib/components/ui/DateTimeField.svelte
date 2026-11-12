@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { opensAsSheet } from './floatingSurface';
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
@@ -19,7 +20,6 @@
   } from './dateTimeField';
   import { monthGridDays, localizedWeekdays } from '$lib/calendar/monthGrid';
   import { Log } from '$lib/utils/Log';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -94,7 +94,7 @@
   let draft = $state<LocalDateTime>(fromDate(new Date()));
   let view = $state({ year: 0, month: 0 });
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
 
   const formatted = $derived.by(() => {
     const dt = parseLocalDateTime(asDateTime(value));

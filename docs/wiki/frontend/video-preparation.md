@@ -41,6 +41,13 @@ prepareVideoForUpload(source: Blob, {
 original to upload: an untranscoded upload is a second format every reader then carries for ever,
 and the exact server cost C3 refused.
 
+### The sound is measured, never altered (2026-11-11)
+
+`PreparedVideo.loudness` is the kept audio's BS.1770 integrated loudness and sample peak, measured
+by one decode of the audio alone beside the conversion; the player normalises to it. The meter, the
+cost, the fields and the readings owed are in
+[video-player](modules/video-player.md#loudness).
+
 ### The movie declares its length (2026-11-10)
 
 The muxer's fragmented output says duration 0 in its `mvhd` (it writes the `moov` before the first

@@ -289,11 +289,6 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
-## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
-
-A production count of legacy tier tags without a consistent issuer is owed to the operator after
-the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
-
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
 **BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
@@ -324,91 +319,7 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
-## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
-
-- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
-  the target is measured from the gaps already seen, so a gap longer than all of them can still run
-  the buffer dry once before the target grows.
-- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
-  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
-  keeps its contract exactly.
-- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
-  this row asks only which rule the board judges by.
-- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
-  the first gap (stricter than the contract), and align the row's definition and its judge in
-  `liverows.mjs` with that decision. Neither is changed until it is taken.
-- **The first reading with #2679** (`1.5.1-alpha.7`, dev.a062d13, 2026-10-29: `FAIL`, nothing
-  forgiven). The figures come from the new `delivery of N appended of M taken` line, in
-  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T11-27-53-820Z-W4.log`:
-  - W4 took 20 deliveries, 11 of two segments. Gaps were 1.2-4.4 s, and the target buffer rose 3663,
-    3790, 4118, 4223, then 4383 ms, once at each new longest gap.
-  - "Ahead" fell to 0.53-1.10 s before each two-segment delivery and rose to about 4-5 s after it.
-  - ONE stall, at 31.55 s with the target at 4118 ms: the next gap was 4223 ms, longer than the
-    3.99 s ahead after the delivery before it. The following delivery then seeked to the live edge.
-  - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
-    zero-after-first-gap rule. That is this decision.
-  - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
-- **The owner decided (2026-10-29): the viewer must NOT stall; fix the cause.** So the contract
-  moved, not the row: branch `fix/live-buffer-from-cadence` bounds the longest wait from the shape
-  of the deliveries (a pair shows its ~5 s wait AT the pair) and re-anchors a buffer shorter than
-  it at once ([buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); W4's
-  trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
-  new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
-  carries it, then delete this entry.
-- **The rerun on `1.5.1-alpha.8` (#2689) still FAILS, and the stall now has a different shape**
-  (dev.7a83364, 2026-10-29; console
-  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T22-23-33-788Z-W4.log`).
-  - W4 had 23 deliveries. Its targets were 4011, then 6023, then 6025 ms. It re-anchored by itself
-    and never ran short.
-  - It stalled ONCE, at 55.56 s, at 23:23:04.085. The delivery before (23:23:00.541) had left it at
-    52.03 s with the buffer ending at 58.19 s, so 6.17 s were ahead. At the stall, 2.6 s of
-    buffered media were still ahead of the play position.
-  - So this is not a buffer running dry over a gap: the player stopped with media in hand. The next
-    delivery's stall seek is what resumed it.
-  - W2 took 0 stalls and 2 seeks. Its targets reached 6015 ms, and it held one short re-anchor
-    (`5.98 s buffered, under the 6015 ms target - no seek`).
-  - The row's failure: "W4 stalled 1 time(s) and seeked 1 time(s) after its first delivery gap".
-- Owed: read why a viewer with 2.6 s buffered reports `waiting` - a hole in the buffered ranges or
-  a decoder wait at a fragment boundary, for example. The delivery line records only the buffer's
-  end, not its ranges. Then rerun LIVE-STALL-1.
-
-## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
-
-- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
-  devices enter its key groups by external commit, and every member's client logs this line once per
-  device at `log::error!`.
-- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
-  - The line fires when a device makes its first entry into a group, by its own commit, under a key
-    that another group pinned, while another device of the same user is already in the tree.
-  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
-  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
-    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
-    <group> - not a conversation, nothing to say`).
-  - The Rust observer does not know the group's kind, so it accuses the normal path.
-- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
-- Owed: give the observer the group's kind where it is already known, so that it does not log the
-  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
-  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
-
-## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
-
-- Run 1 on dev.a062d13, the peer seat (W2). The console was not kept, because that run predates the
-  rig's kept consoles; these are the run's notable lines from the ledger, with ids replaced:
-
-  ```
-  [12:02:20.450] [RUST::INFO] forget_group: <kg>…, min_epoch=0
-  [12:02:20.451] [MLS] dropped local state for <kg>... (the server refused the external commit, minEpoch=0)
-  [12:02:20.451] [MLS] externalJoin REFUSED for <kg>... (base 0, reason epoch_mismatch, group at 1) - attempt 1/3
-  [12:02:21.045] [GRAINE] could not join the distribution group of community <ws> (refused)
-  ```
-
-- The attempt says "1/3", but no attempt 2 is logged before the give-up 0.6 s later. Either the
-  bounded retry did not run, or it ran without a line, which leaves the give-up unexplained.
-- A refused join on the community's key group leaves the device out of its seed distribution.
-- Related: the two-devices race in the P3 "Two devices of one account joining a community at once"
-  ends in the same give-up line, after three logged attempts.
-- Owed: read which path gave up after one attempt, and log every attempt or the reason the retry
-  stopped. Then rerun SALON-REVOKE-COMMIT with consoles kept.
+**Plan (batch 14, 2026-11-12) - the readings moved, one piece left.** The CALL-WEB-4..7 web rows are a row of [the verification table](#owed-a-verification-and-nothing-else). Left: render a call row from `callEvent.outcome` and `starterId` in the bubble that draws it, through Paraglide, instead of the text `recordCallEnded` bakes per side; the stored text stays as the fallback for rows written before `callEvent` existed. Client only, one renderer and its test per outcome; no agent needed.
 
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
@@ -422,6 +333,8 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   device that some route refuses. Holds today only because the provider's ids are 64-hex.
 - Owed: one shared shape for the user id and the device id, asserted by the minting side and every
   validator, rather than four regexes that agree by accident.
+
+**Plan (batch 15, 2026-11-12) - a count first, then one contract.** (1) A read-only count of user ids outside `^[a-zA-Z0-9_-]{1,64}$` on each estate (a column of `users`; the ids are not printed). (2) If 0: a `libs/contracts/user-id.json` like `device-id.json`, asserted by the mint rule (`core-service/src/users/user-id.ts`) and by every user-id validator's spec, and the device-id pattern derived from it. If not 0: the ids outside it are the decision, before any rule is tightened - the mint rule deliberately lets an older plain ASCII id keep signing in. No agent needed for (2).
 
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -463,6 +376,8 @@ info [21:28:49.602] [HISTORY] 1589de4c… holds 6 frame(s) it can never read - r
 Those `TooDistantInThePast` lines are the item already filed above (*A past-epoch frame older than
 the joiner's own Welcome is logged at WARN*). This item is the `AeadError` alone.
 
+**Plan (batch 14, 2026-11-12) - a finding to read, not code to write.** One rig row answers the three questions: DEV-6 re-run with the minted device's console and the server's `[COMMIT]` lines for its group captured, to read (1) why `[READD]` served a device whose Welcome had just landed - the roster seat check before the Welcome's merge was recorded is the first suspect - and (2) whether the epoch-1 frame was sealed after the external commit (an `AeadError` then means the sender used a secret of a branch this device never held). A fix follows the reading; MLS, so an agent of its own.
+
 ## P3 - A commit that has its answer waits for a history bundle applied under its loan (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
 The cause is to be read. On the second minted device (W6), two stray-leaf removals of the revoked
@@ -498,38 +413,7 @@ at 11:58:00. It is the kick's own commit, so it is not tied to a minted device. 
 unread. Until it is read, the line stays dirt in the removal rows: it is not added to the rig's
 classifier.
 
-## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
-
-The salon creator (W1) asked the same member the same question twice: same devices, same community,
-same epoch:
-
-```
-[21:49:56.321] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
-[21:49:56.367] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
-[21:49:56.446] [GRAINE] ignoring "I hold nothing" for community 53844ba7 from <member>: it answers request d6b6eb63…, not the history ask in flight (addressed to <member>)
-```
-
-The second ask replaced the first in `historyRequest`. Both devices' answers to the first ask were
-then dropped at `debug` (`noteHistoryHeldNothing` in `graine/repair.ts`), so W1 printed the
-`ignoring` line twice, and the member answered again. Nothing was lost; the cost is one extra round
-trip per member. The row's other seats (W2, W4) show the same line shape.
-
-The `ignoring` line is correct for a genuinely superseded ask. The defect is the second ask: two
-triggers fire `requestCommunityHistory` for one epoch with nothing deduplicating them.
-
-To do: name the two callers (the log context shows a key-group epoch move to 5 just before), and make
-an ask for an epoch that already has one in flight to the same member a no-op.
-
-## P3 - "Made private" is logged for a privacy flip the removal bound then refuses (RM-6, `1.4.1-alpha.6`, 2026-10-26)
-
-`updateChannelAccess` (`channel.service.ts`) logs `[CHANNEL_ACCESS] made private by <actor>, granting
-them channel=<salon>` when it adds the actor to the list it is about to compute. The removal bound
-is checked after that. On RM-6, the moderator's flip was refused `403 REMOVAL_EXCEEDS_ACTOR`: the salon
-stayed public and no group was minted. The server log still says the salon was made private.
-
-A line that states an outcome before the outcome is decided is false whenever the write is refused,
-so it cannot be narrated. Log the grant after the save, with the save's result, or reword it as the
-intent ("flip to private by ... would grant them").
+**Plan (batch 14, 2026-11-12) - a decision first, then MLS scheduler work.** Recommended: a frame lends nothing while its application persists an encrypted checkpoint - known only after decryption, so the loan is returned before a `history_bundle` system event is APPLIED (the store and the checkpoint run after the commit merges), rather than bounded by a clock. Built in `lendMlsLockWhile` (`mlsPerGroupScheduler.ts`) with a test that a bundle under a loan never delays the lender's merge. MLS locking: an agent of its own, with an adversarial review.
 
 ## P3 - A refused Welcome's leaf stays in a private salon's tree, and the next Add reads it as "already holds a leaf" (RM-5, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -584,6 +468,8 @@ To read:
 - when the stray sweep runs for a salon group;
 - whether `ADMIT ... already hold a leaf` should check the seat (`active`) rather than the leaf.
 
+**Plan (batch 14, 2026-11-12) - the P2 is refuted (the 2026-10-27 reading), two reads left, one change proposed.** (1) Read where the stray sweep runs for a salon's distribution group (`graine/`), and write it beside the seat rule in [channel-encryption](protocols/channel-encryption.md). (2) Proposed: `ADMIT ... already hold a leaf` decides from the device's seat (`active`) rather than from the leaf, so a leaf no seat holds is re-added and the stale one removed in the same commit. MLS client work: an agent of its own.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
@@ -607,6 +493,8 @@ yes because it is a migration: a partial unique index on `(associationId, varian
 `membership` products (plus one for the base tier's null key), after counting the duplicates it
 would refuse.
 
+**The read-only count is written (batch 14, 2026-11-12):** `tools/read-only-sql/membership-tier-key-duplicates.sql` lists every (association, tier key) held by more than one membership product, base tier included, and the total the index would refuse. Not run here: the lead runs it on dev, then on production with the owner. The migration is drafted only once the count is known (0: as proposed; otherwise the duplicates are settled first).
+
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
 Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
@@ -614,13 +502,6 @@ Every `auth_request` reads `platformService.getConfig()` for the maintenance che
 for every request. A per-process read deduplicated across concurrent requests (one in flight, not a
 TTL cache) would remove the config's queries (`ensureDefaults` plus the row read) from most requests. Not done in the liveness change, to keep it to one
 fact. Owed: measure the verifier's query rate on production first.
-
-## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
-
-When creation fails between the remote group's creation and the creator's registration, the
-client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the creator holds no
-seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
-(the creator's own bootstrap, or the orphan sweep), with a spec.
 
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 
@@ -633,6 +514,10 @@ refusal reasons are definitive, and re-plan rather than settle on the others, wi
 A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
 gate still accepts it and drops that admit. Owed: decide whether key groups follow the same
 whole-commit rule, and the client rebuild it needs, with a spec on each side.
+
+**Decided by the lead on 2026-11-12, under the owner's delegation: key groups follow the conversation rule and refuse the whole commit** ([mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)). **Not built yet, and not small:** the key-group Add (`graine/distributionGroup.ts`) reads no `admit_refused` today, so the server half alone would stall every grant that races a kick. Both halves land together, with a spec on each side: the gate refuses in the `admitClaims` loop of `MessagingService` for a key group too, and the key-group Add rebuilds without the named people. MLS gate and client: an agent of its own, with an adversarial review.
+
+**Brief for an agent (2026-11-12; MLS gate and client - opus, adversarial review before the merge, the PR born `--draft`, ONE pull request so neither half ships alone).** (1) Server: in `MessagingService`'s commit transaction (`apps/chat-delivery-service/src/services/messaging.service.ts`, the `admitClaims` loop, `ADMIT_REFUSED`), a key group's refused admit is no longer dropped from `admitted` while the commit is accepted: it refuses the WHOLE commit with the same typed answer a conversation gets (`admit_refused` naming the people, nothing advanced), through the path the conversation refusal already takes - read how that path is chosen today and make the group kind NOT a branch of it. The `heldKeyPackages` drop below it (an account being erased, a revoked device) stays a drop for both kinds, as its comment explains. Spec: a key-group commit naming an unentitled person is refused whole and nothing is written; an entitled one is accepted. (2) Client: the key-group Add (`frontend/src/lib/graine/distributionGroup.ts`, and the native mobile path if it builds its own Add - check `src-tauri/src/mobile/`) reads that refusal the way `addDevicesRebuildingOnRace` (`frontend/src/lib/utils/chat/commitRace.ts`) does: rebuild without the named people, each pass drops at least one, none left = abandoned and logged. Prefer CALLING that helper over a copy. Test: a refused admit is rebuilt without that person and the grant to the others lands. (3) Wiki: [mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25) loses the key-group exception; this entry is deleted with its roadmap row. Owed after a pre-release: one rig pair (a grant racing a kick) reading no stalled grant.
 
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
@@ -951,39 +836,7 @@ directory). Owed: say what serialises two joins of one account into one key grou
 deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
 reproduces the pair. Not narrated: it stays dirt until fixed.
 
-## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
-
-`rosterReconcile.ts` logs `[GRAINE] could not remove N departed member(s) from ...: <error> - they
-can still read it` on every failure of its Remove. On dev `1.5.0-alpha.1` the failure was
-`concurrent_commit`. The line just before it in the same console says the commit log was read and the
-concurrent commit WAS that departure (`refused concurrent_commit at epoch 7: read the commit log, 1
-commit(s) applied, now epoch 8`, with the member gone from the tree). So the line states something
-false, and a reader told "they can still read it" is sent after a leak that did not happen. Owed:
-classify the refusal against the commit log the client just read. Say "still read it" only when the
-departed member's leaves are still in the tree after that read; say "removed by another member's
-commit" when the log already removed them. Never branch on the error's message: the outcome is a
-fact the caller already holds.
-
-## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
-
-`watchUsers` / `unwatchUsers` (`presenceStore.ts`) add to and delete from one `Set`. Several holders
-watch the same peer at once: the DM's `ChatHeader`, that DM's sidebar `ConversationTile`, and a
-salon's `ChannelMembersList` (`ChannelMembersList.svelte:59` releases every member id it watched).
-When one of them releases, the peer leaves the poll for all of them. Leaving a DM therefore stops
-polling a peer whose sidebar tile is still on screen, and the dot freezes until something else
-watches that peer again. Owed: count the holders per id, with the release decrementing. Add a unit
-test with two holders and one release, which must still poll. The WP-PRESENCE push that replaces the
-poll needs the same count for its watch set.
-
-## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
-
-`ConversationTile.svelte` calls `watchUsers([contactName])` in `onMount`. A tile whose `contactName`
-or `isDirect` changes while it stays mounted (a keyed list that reuses the component, or a row whose
-identity resolves after mount) keeps watching the first peer. Owed: an `$effect` on `contactName` and
-`isDirect`, capturing the watched id in its body as `ChatHeader` does
-([architecture](frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)),
-with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
-ref-count entry above.
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Answer first, in the wiki, what serialises two external joins of ONE account into one key group: read the key-group join path (`graine/distributionGroup.ts` `ensureJoined`, the native `mobile/key_group_join.rs`, and the server gate of WP-KEYGROUP-JOIN-GATE in social-service). Expected shape of the fix: the second device of an account does not external-join while a sibling's join of the same group is in flight - it waits for that commit and joins from its base, or is added by the sibling - decided from a fact the server already holds (the sibling's claim), never a larger retry bound. Then re-run LIST-RACE-1-W on the rig and read no give-up line and no past-epoch application frame.
 
 ## P3 - A pass's unconfirmed tree aborts the group's later pending rows (review of #2416, 2026-10-25)
 
@@ -1183,24 +1036,6 @@ account's roster row to the roster delete and its device rows to the sweep's cut
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
 opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
 account was on. Re-read 2026-11-11: unchanged in code; re-read again 2026-12-11.
-
-## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
-
-`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
-(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
-the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
-members would be ended for all of them by one member's erasure, instead of losing that member only.
-Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
-conversation, then either a bound where the roster is written or the erasure deciding by the roster
-size rather than the flag ([account-erasure](account-erasure.md)).
-
-## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
-
-A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
-byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
-is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
-id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
-[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
@@ -1441,6 +1276,8 @@ docblock, which still calls the join's commit staged.
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
 
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Build in the order above, one pull request each, each mergeable alone. **PR0 first:** the host test that a pending external join survives a save and a reload and that dropping the group leaves the key store byte-identical (`mls-core` tests), and the corrected docblock of the external join, which still calls its commit staged. **PR1, the outbox:** one Rust module in the app crate owning both outbox files behind ONE OS file lock (`fs2`/`flock`, one descriptor per acquisition), atomic writes (temp file + rename), a claim before sealing and an incremental settle; the Android drain (`CanariFirebaseMessagingService.kt` `drainOutboxBackground`) and the app's flush call it instead of rewriting the files; tests: two writers interleaved never lose an entry, a claimed entry is sent once. **PR2, the job fence:** a session generation stamped at install (`initialiser_mls`) in the native slot, carried by every command, a typed refusal on mismatch (`state.rs` `live_manager`), with a test that a command of client A after B's install is refused. **PR3, the register:** `Vacant | Foreground | Parked` under the state-file write lock, written from the platform lifecycle callbacks (Android `onStart`/`onStop`, iOS scene phase) and re-read under the lock at every transition, in the lock order written above; a live call counts as visible. **PR4, the stages:** the background key-group join staged in the state file, hidden from listings until settled. Each PR writes its part of the design into the wiki page of the code it changes, and lists the Mi 9T rows (D1-D10) it owes. Do not build a reconcile of the file into the live manager, nor any of the variants REJECTED above.
+
 ## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
 
 Tauri can serialise an error object instead of a string: one `{ code, message }` type, decoded into
@@ -1466,6 +1303,8 @@ separately reviewed.**
 
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Step 2 only, one pull request. Before moving any code: a test per marker PAIR of `classifyIncomingDecryptError` pinning today's decode order (`mlsDecryptError.ts`), green on main. Then move `MLS_MANAGER_ABSENT`, `EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:` and `UNRECOVERABLE:` to the typed `{ code, message }` of step 1, on BOTH crossings (Tauri and WASM, the `MlsError` Display in `mls-core/src/lib.rs`), decoded at the one `invoke` boundary; delete `isMlsManagerAbsent`'s prefix read and every `startsWith` on these markers. The interim two-convention note is deleted with it.
+
 ## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
 
 A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
@@ -1475,6 +1314,8 @@ makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" 
 broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
 stops the unlock with its own typed outcome instead of another lap
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** A durable count of consecutive failed rotations for this install (stored beside the MLS state, reset by the first success), and past a bound decided in the PR, the unlock answers its own typed outcome (a screen that says the device cannot renew its identity and offers sign-out) instead of another lap. Termination from that durable proof, never a clock. Tests: N failures stop the loop; one success resets the count; a count from another account is not read.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -1575,50 +1416,7 @@ On a key-group frame `openDistributionFrame` compares only the envelope's USER w
 
 [chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
 
-## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
-
-A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
-`CompleteUnlessOpen`, the app-side manifest's `Complete` - a locked read deletes nothing, and the
-unlock offers what the lock held back; Android keeps its credential-encrypted storage, with the
-reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
-[sharing](frontend/sharing.md) ("At rest", iOS path item 5). Nothing here compiles iOS, so the
-Swift, the Objective-C and the iOS-only Rust ride the next iOS build.
-
-**Owed on the iPhone, with a passcode set, waiting more than 10 s after each lock** (the key is
-discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and category `share`:
-
-1. Cold launch, unlocked: the `launch sweep:` line appears, and no `deferred` line (the sweep and
-   import no longer ask UIKit before it exists).
-2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
-   (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
-3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
-   the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
-   or handed over` (a refused protection or create must classify as locked, by its code) - the
-   share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
-   Seeing instead a refusal named `NSCocoaErrorDomain 513` WITHOUT an underlying POSIX error is the
-   outcome this reading exists to find, not a regression: Foundation then gave no code to classify
-   by. Record it here as measured, and the classification is redesigned from that fact.
-4. Unlock straight into Canari: the share is offered on the first activation.
-5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
-   and the locked push launch mounts the page: after the unlock it is offered with no new launch
-   (`a share waits (unlock), the page was told`).
-6. A large iCloud video, the phone locked during the capture: with nothing waiting, the share
-   survives; with an older share waiting, that one is not deleted and the new one is refused, said
-   on the extension's card and in its log. KEEP-OLD BY CHOICE: the locked older share cannot be
-   read, and the member was already told it is ready; the member sharing now is told of the
-   failure. The reasons, and the newest-wins alternative rejected, are in
-   [sharing](frontend/sharing.md) ("At rest"). The app side no longer meets this case while
-   locked: it consumes nothing until the unlock, where newest wins as usual.
-7. Sign out while locked, then unlock: the old share is dropped as stale.
-
-## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
-
-A share from another app opens "Envoyer a..." (`IncomingShareHost`), which reuses
-`ForwardMessageModal` and so `shareDestinations` with `order: 'alphabetical'`. The conversation
-list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent'`) all lead with
-the most recent conversation, so the one the member just left is at the top everywhere except
-there. Deciding: whether the forward and the share-in picker split their order, or both go to
-`'recent'` ([sharing](frontend/sharing.md)).
+**Plan (batch 14, 2026-11-12) - four small client pieces, no agent needed.** (a) A text restored during an edit goes to the conversation's saved draft (`editSession.svelte.ts` `begin`'s copy), not into the composer that holds the edited message, so `cancel` and `confirm` cannot drop or absorb it; a test per exit. (b) The salon ledger detour stays until drafts outlive the page (kept as written). (c) The mention list closes on a conversation switch: `useMentionAutocomplete` gets a `dismiss()` that clears the debounce and a generation counter so a late search answer cannot reopen it, called by `MentionComposerInput` when its conversation key changes. (d) `draftByConversation` drops the entry when the conversation is left or deleted, at the same place the conversation leaves the list.
 
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
@@ -1626,6 +1424,8 @@ Seen failing in a full `vitest run` on a loaded machine, and passing when the fi
 Not diagnosed: the test asserts a mount count, so a mount that has not settled yet when the
 assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
 `--repeat` with the full sweep's load, and name the condition before touching the test.
+
+**Plan (batch 14, 2026-11-12).** Reproduce before touching the test: `bunx vitest run --repeat=20` with the whole suite's load (`--pool=forks` and the CI worker count), then name what the mount count waits on - a settle the assertion does not await is the first suspect. Shared with the other flaky test, `outbox.reelResume.test.ts`; both are piece (c) of the 1.4.1 campaign-noise entry. No agent needed.
 
 ## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
 
@@ -1668,6 +1468,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 
 | What | The measurement that closes it |
 | --- | --- |
+| CanaReels "Voir plus" clears the seek line (owner, 2026-11-10; the clearance derived in `seekLineGeometry.ts`, 2026-11-11) | On the Mi 9T and the iPhone 12: a caption of one line (no toggle), just overflowing, long and expanded, with and without the bottom inset - "Voir plus" toggles, the seek line still seeks (the two `getBoundingClientRect` rectangles do not overlap) |
 | a salon banner names its SPEAKER - a v2 author the phone names - with their face or initials, "Quelqu'un" and a "?" otherwise, never the salon's letter (Android #2881, iOS NSE and `canari_push.mm` 2026-11-01; JVM tests and text pins only, [mobile](frontend/mobile.md#notification-service-extension-nse)) | one salon banner on the Mi 9T and one on the iPhone 12 (app killed, then backgrounded), from a member the app has named and one it has not: the name above the line and their initials, then "Quelqu'un" with a "?" and the `[SALON_AUTHOR]` line in the log |
 | the checkpoint every commit awaits under the MLS lock before its first request (`checkpointStageBeforeSend`, the leaf-refresh PR #2269): ~1.4-2 s per commit on a Mi 9T DEBUG capture, a burst of N commits ~2N checkpoints ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)) | in the pre-release carrying #2269, on a RELEASE build on the Mi 9T AND the iPhone 12: the `[COMMIT]` stage-checkpoint duration of one commit (a leaf refresh or an invite), and of a burst (a group creation adding several devices), read from the device log; the rig rows LEAF-REFRESH-1..4 ([cross-client-testing](cross-client-testing.md)) on the same build |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true` - until then a GUEST who pays over capacity is told to nobody but the responses table) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
@@ -1769,6 +1570,12 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a community's past goes only to a proven admission (#2273, #2264, `v1.5.0`; [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)) | the rig rows COMM-26..31; the floor and the cut date (`ADMISSION_PROOF_SINCE` = 2026-10-27, the day `v1.5.0` shipped) are met |
 | six service images run as a non-root user (core, social, chat-delivery as `bun`; frontend-ssr as `node`; chat-gateway, call-service as `nobody`; batch 8, [cicd](cicd.md#container-images-are-scanned-2026-10-23)) | on dev after the next pre-release: each of the six containers up and healthy, no `EACCES` or `permission denied` in their logs; then one message, one media upload and one call on dev |
 | the iPhone native ring (#2305, switched on by #2727 in `1.5.2`: `CALLS_NATIVE_RING_COMPILED`, `kCanariCallsEnabled` and the `voip` mode all on; [calls](frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22)) | the K6, K7, K8 and K8b readings of that page on the iPhone 12 |
+| LIVE-STALL-1, after the owner's "the viewer must not stall" (2026-10-29): the longest wait bounded from the deliveries' shape, and a wait of the engine's own with media ahead held, not seeked, within `LIVE_PLAYER_HELD_WAIT_BUDGET_MS` ([live](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); the rig judge imports the same constant | LIVE-STALL-1 rerun on the current pre-release, consoles kept: no viewer stall and no hold over the budget after the first delivery gap |
+| a key-group join reads its seat after the base it builds on (#2721), and a refused external join logs every attempt and gives up as `refused` only after its third logged refusal (`BaseMlsService.ts`, `externalJoin`: every other exit names its own reason) | SALON-REVOKE-COMMIT and RM-4, RM-4b, RM-5 rerun on the current pre-release with consoles kept: no `already held - redelivered Welcome ignored` line in either spelling (key group, conversation), and any `could not join ... (refused)` preceded by attempts 1/3, 2/3 and 3/3 |
+| the call record's web rows, CALL-WEB-4..7 (B15 and B16 of [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence): one writer, a typed end reason, the busy answer) | on web, W2 calling W4: a cancelled, a declined, an unanswered and a busy call each read their own sentence on both sides, with no duration; the second caller of a busy callee stops ringing at once |
+| a waiting share is locked with the device on iOS (built 2026-10-27; the mechanism and the seven steps are in [sharing](frontend/sharing.md), "At rest", iOS path item 5) | on the iPhone 12 with a passcode, waiting over 10 s after each lock, Console on `[CanariShare]` / `[SHARE]`: (1) cold launch, a `launch sweep:` line and no `deferred`; (2) a text and a photo, `moved copy protection = NSFileProtectionCompleteUnlessOpen`; (3) Canari killed, locked, a push: `locked with the device`, the share kept, no `dropped`/`unreadable` (a bare `NSCocoaErrorDomain 513` is a finding to record, not a regression); (4) unlock, offered at once; (5) already imported, offered with no new launch; (6) a large iCloud video locked mid-capture, the older share kept and the new one refused on the card; (7) sign-out while locked, the old share dropped as stale |
+| legacy tier tags without a consistent issuer ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)) | `tools/read-only-sql/tier-tags-without-a-consistent-issuer.sql`, read-only, on dev then production with the owner: 0 in every column closes it |
+| a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the focus (D056, decided 2026-11-12; [calls](frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call), `CallFocusHold.kt`, `CallService.onAudioFocus`) | on the Mi 9T on a pre-release: ring its SIM during a Canari call with the iPhone - the iPhone shows the microphone cut, the Mi 9T its banner, `focus`/`lost` then `gained` in the app log; once unmuted and once muted before the ring, the second comes back muted; the call is never ended |
 
 ---
 
@@ -2011,7 +1818,6 @@ and confirm Cloudflare revalidates (`cf-cache-status` not a `HIT` with a growing
 photo in MiGallery and watch it appear. If the avatar Cache Rule overrides the origin, the fix is that
 rule.
 
-
 ### P2 - THE NETWORK FOR THE JAVASCRIPT IS SOLVED; 1.62 MB OF IT STILL HAS TO BE PARSED BEFORE ANYTHING RUNS (measured on production 2026-09-16)
 
 Two chunks (the chat engine, 404 879 B, and the protobuf codec, 146 160 B) are 44 % of what `/login`
@@ -2214,7 +2020,6 @@ A row under a v1 session this device still holds carries no author proof. That i
 
 - `fcmMemoryMerge.ts` has no `channel_` guard. It is unreachable today, because the native side never caches a salon push; the guard would be defence in depth.
 - The live frame and the history page used to key a row by different fields. The live path now reads `messageId` alone (#2248). Should the server ever give one row two ids, the first path to open it claims the key, and the other is refused as a replay.
-
 
 ### P3 - MULTI-9 cannot pass on a healthy estate: its precondition is a pending device, and none stays pending (2026-10-22)
 
@@ -2424,7 +2229,6 @@ MiGallery's offsite backup copy still lands on the old VM. **DECIDED 2026-10-18:
 ### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
 **Owed now (both estates deployed `v1.4.0` since):** one `.log.gz` per container in `~/deploy-log-archive/<project>/` and `max-size` on a recreated container ([logging](infrastructure/logging.md)). Authentik's hand-run stack is bounded only when next recreated and is not archived; **no container is recreated unattended for it (owner, 2026-10-24)** ([logging](infrastructure/logging.md#no-unattended-container-recreation-for-log-retention-owner-2026-10-24)).
-
 
 ## Post-campaign projects - decided, not scheduled
 

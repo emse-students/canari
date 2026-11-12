@@ -101,6 +101,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name: the nginx entry, the Vite dev server and the Tauri
+      # WebViews. A page served from anywhere else is named through CANARI_LOCAL_ALLOW_ORIGIN.
+      ALLOW_ORIGIN: "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
@@ -303,6 +306,7 @@ services:
       AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-dev-avatar-token-secret-change-me-0123456789}
       # The sign-in handoff (docs/wiki/sessions.md). Unset locally: no site trusts a local issuer.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # No /adminer/ route on a laptop stack: the database is one `docker exec` away.
       ADMINER_ENABLED: "false"
       DB_HOST: postgres
@@ -409,6 +413,9 @@ services:
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
       # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
       LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # The communities one account may hold as their creator; empty means 20
+      # (apps/social-service/src/channels/community-limits.ts).
+      COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
