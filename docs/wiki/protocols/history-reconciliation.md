@@ -1768,6 +1768,37 @@ duplicate's own rows, as stored), the re-key of a DM onto the group just joined
 only a row no store holds, where none stands), and a sent message whose group was re-keyed mid-send
 (`persistSent`, said when taken). The orphan mirror adoption writes only where no row stands.
 
+**Both DM moves are ONE function, `moveDirectConversationRows` (2026-11-12).** The Welcome re-key used
+to read only the ids of the messages ON SCREEN, and a DM restored as a stub (phase 1 of the boot
+restore, its page not read yet) carries none: nothing moved, nothing said so, and the rows stayed
+under the group the peer had already merged away. The joined group's history bundle then relayed
+those ids and every scoped read warned `[DB] <id> is a message of another conversation` - about 30
+times in 200 ms on dev web - until the next boot's merge. Now the Welcome moves every stored row of
+the old conversation, through the boot merge's own move, and logs the count either way.
+
+- **Order.** The joined group's row is shown and SAVED first; only then, and only if that save
+  succeeded, are the rows moved - AFTER the MLS lock is released (a storage walk of a whole history
+  needs no MLS state, and every group would wait behind it), under the joined group's own
+  exclusivity (`runPendingRekey`). The target is never read - a message id is the store's key, so
+  a row of the old conversation cannot also stand under the new one - and a message only memory
+  holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins. The log
+  gives the rows moved, the rows written from memory, and the rows that did not open.
+- **What waited for the moved rows is settled by the move** (`settlePendingFor(joined, moved)`).
+  The joined group's buffered frames replay BEFORE the move, so a deletion, edit or reaction of an
+  old message found no row under the joined group and was kept there as a pending mutation that
+  nothing settled - after a reload the deleted message was back. The same holds for the user's OWN
+  act in the window between showing the joined group and the end of the move: `persistLocalMutation`
+  writes by compare-and-set and, finding no row, keeps the act as a pending mutation (sender = the
+  user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
+  joined group only after the move, which would have reopened the window at the swap.
+- **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
+  the boot merge's decision. That decision is itself not convergent between the two peers - a
+  separate P1 ([backlog](../backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).
+- **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
+  message landing between the read and the write is written over by the stored body; what is
+  keyed by the conversation rather than the message - read watermarks, mutations still waiting for
+  their row (`pendingMutations`) - stays with the old conversation and goes with its row.
+
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding
 it across a store walk would serialise unrelated groups' commits behind a disk read. The
