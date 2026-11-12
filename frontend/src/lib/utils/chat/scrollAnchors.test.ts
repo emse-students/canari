@@ -1,14 +1,21 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   clearConversationAnchors,
+  dropAnchorsExcept,
   firstRowEndingBelow,
+  peekConversationAnchor,
   rememberConversationAnchor,
   resolveEntryAnchor,
   takeConversationAnchor,
   type ConversationAnchor,
 } from './scrollAnchors';
 
-const anchor: ConversationAnchor = { messageId: 'm42', windowStart: 10, offsetPx: -12 };
+const anchor: ConversationAnchor = {
+  messageId: 'm42',
+  windowStart: 10,
+  offsetPx: -12,
+  lastMessageId: 'm60',
+};
 
 describe('the saved position of a conversation', () => {
   beforeEach(() => clearConversationAnchors());
@@ -25,6 +32,16 @@ describe('the saved position of a conversation', () => {
     rememberConversationAnchor('c1', null);
     expect(takeConversationAnchor('c1')).toBeNull();
     expect(takeConversationAnchor('c2')?.messageId).toBe('other');
+  });
+
+  it('entering another conversation drops every other one, and peeking keeps what it reads', () => {
+    rememberConversationAnchor('c1', anchor);
+    rememberConversationAnchor('c2', anchor);
+    rememberConversationAnchor('c3', anchor);
+    expect(dropAnchorsExcept('c2')).toBe(2);
+    expect(peekConversationAnchor('c1')).toBeNull();
+    expect(peekConversationAnchor('c2')).toEqual(anchor);
+    expect(peekConversationAnchor('c2')).toEqual(anchor);
   });
 
   it('a sign-out drops every one', () => {
@@ -65,11 +82,11 @@ describe('firstRowEndingBelow', () => {
 
 describe('resolveEntryAnchor', () => {
   it('no anchor: the usual entry', () => {
-    expect(resolveEntryAnchor(null, 5, 100)).toEqual({ kind: 'bottom', reason: 'none' });
+    expect(resolveEntryAnchor(null, 5, 100, 'm60')).toEqual({ kind: 'bottom', reason: 'none' });
   });
 
   it('an anchor that holds restores through the window that mounts its row', () => {
-    expect(resolveEntryAnchor(anchor, 30, 100)).toEqual({
+    expect(resolveEntryAnchor(anchor, 30, 100, 'm60')).toEqual({
       kind: 'restore',
       windowStart: 10,
       messageId: 'm42',
@@ -78,20 +95,32 @@ describe('resolveEntryAnchor', () => {
   });
 
   it('a stored window below the target is lowered to the target so the row is mounted', () => {
-    const d = resolveEntryAnchor({ ...anchor, windowStart: 80 }, 30, 100);
+    const d = resolveEntryAnchor({ ...anchor, windowStart: 80 }, 30, 100, 'm60');
     expect(d).toMatchObject({ kind: 'restore', windowStart: 30 });
   });
 
   it('a message gone from the list is stale: fall back, naming why', () => {
-    expect(resolveEntryAnchor(anchor, -1, 100)).toEqual({
+    expect(resolveEntryAnchor(anchor, -1, 100, 'm60')).toEqual({
       kind: 'bottom',
       reason: 'message-not-in-list',
     });
-    expect(resolveEntryAnchor(anchor, 100, 100)).toMatchObject({ kind: 'bottom' });
+    expect(resolveEntryAnchor(anchor, 100, 100, 'm60')).toMatchObject({ kind: 'bottom' });
+  });
+
+  it('newer messages than when the reader left decline the restore (the immediate return only)', () => {
+    expect(resolveEntryAnchor(anchor, 30, 100, 'm61')).toEqual({
+      kind: 'bottom',
+      reason: 'newer-messages',
+    });
   });
 
   it('a corrupt stored window or offset cannot reach the render window', () => {
-    const d = resolveEntryAnchor({ messageId: 'm', windowStart: NaN, offsetPx: NaN }, 3, 10);
+    const d = resolveEntryAnchor(
+      { messageId: 'm', windowStart: NaN, offsetPx: NaN, lastMessageId: null },
+      3,
+      10,
+      null
+    );
     expect(d).toEqual({ kind: 'restore', windowStart: 0, messageId: 'm', offsetPx: 0 });
   });
 });

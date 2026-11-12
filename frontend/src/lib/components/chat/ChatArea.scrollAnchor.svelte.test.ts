@@ -13,16 +13,25 @@ import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import type { ChatMessage, Conversation } from '$lib/types';
 
-const leaving: (() => void)[] = [];
+type Nav = {
+  willUnload?: boolean;
+  from?: { url: URL };
+  to?: { url: URL } | null;
+};
+const leaving: ((nav: Nav) => void)[] = [];
+const landed: (() => void)[] = [];
 vi.mock('$app/navigation', () => ({
   goto: async () => {},
   invalidateAll: async () => {},
-  afterNavigate: () => () => {},
+  afterNavigate: (callback: () => void) => {
+    landed.push(callback);
+    return () => {};
+  },
   disableScrollHandling: () => {},
   pushState: () => {},
   replaceState: () => {},
   preloadCode: async () => {},
-  beforeNavigate: (callback: () => void) => {
+  beforeNavigate: (callback: (nav: Nav) => void) => {
     leaving.push(callback);
     return () => {};
   },
@@ -99,20 +108,18 @@ function conversationOf(count: number, id = 'g1'): Conversation {
   } as Conversation;
 }
 
-function mountArea(id = 'g1') {
+function mountArea(id = 'g1', count = THREAD) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const app = mount(ChatArea, {
-    target,
-    props: {
-      conversation: conversationOf(THREAD, id),
-      messageText: '',
-      onMessageChange: () => {},
-      bindDraftWriter: () => () => {},
-      onSend: () => {},
-      onInviteMembers: () => {},
-    },
+  const props = $state({
+    conversation: conversationOf(count, id),
+    messageText: '',
+    onMessageChange: () => {},
+    bindDraftWriter: () => () => {},
+    onSend: () => {},
+    onInviteMembers: () => {},
   });
+  const app = mount(ChatArea, { target, props });
   flushSync();
   let gone = false;
   const close = () => {
@@ -122,7 +129,7 @@ function mountArea(id = 'g1') {
     target.remove();
   };
   mounted.push(close);
-  return { target, close };
+  return { target, close, props };
 }
 
 async function settleEntry() {
@@ -141,15 +148,38 @@ async function scrollTo(scroller: HTMLElement, top: number) {
   await vi.advanceTimersByTimeAsync(50);
 }
 
-/** The route's teardown: every `beforeNavigate` callback of the live pane runs. */
-function navigateAway(area: { close: () => void }) {
-  for (const callback of leaving) callback();
+const nav = (from: string, to: string): Nav => ({
+  willUnload: false,
+  from: { url: new URL(from, 'http://canari.test') },
+  to: { url: new URL(to, 'http://canari.test') },
+});
+
+/** The route's teardown: every `beforeNavigate` callback of the live pane runs, then it unmounts. */
+function navigateAway(area: { close: () => void }, to = '/profile/u1') {
+  for (const callback of leaving) callback(nav('/chat', to));
   area.close();
   leaving.length = 0;
+  landed.length = 0;
+}
+
+async function scrolledUpReader(id = 'g1') {
+  const area = mountArea(id);
+  await settleEntry();
+  await scrollTo(scrollerOf(area.target), 900);
+  await scrollTo(scrollerOf(area.target), 410);
+  return area;
+}
+
+async function expectBottomEntry(id = 'g1', count = THREAD) {
+  const area = mountArea(id, count);
+  await settleEntry();
+  const rows = rowsOf(area.target);
+  expect(rows[rows.length - 1].getBoundingClientRect().top).toBeLessThan(PANE_PX);
 }
 
 beforeEach(() => {
   leaving.length = 0;
+  landed.length = 0;
   clearConversationAnchors();
   vi.useFakeTimers({
     toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'],
@@ -217,5 +247,59 @@ describe('ChatArea keeps the place of a reader across a profile', () => {
     await settleEntry();
     const rows = rowsOf(third.target);
     expect(rows[rows.length - 1].getBoundingClientRect().top).toBeLessThan(PANE_PX);
+  });
+
+  it('a navigation that is cancelled, or leaves the pane mounted, keeps nothing', async () => {
+    const first = await scrolledUpReader();
+    for (const callback of leaving) callback(nav('/chat', '/profile/u1'));
+    // The overlay/cancelled case: the navigation ends with the pane still mounted.
+    for (const callback of landed) callback();
+    first.close();
+    leaving.length = 0;
+    landed.length = 0;
+    await expectBottomEntry();
+  });
+
+  it('a navigation that stays on the same path, or unloads the page, keeps nothing', async () => {
+    const first = await scrolledUpReader();
+    for (const callback of leaving) callback(nav('/chat', '/chat?c=g1'));
+    for (const callback of leaving) callback({ ...nav('/chat', '/profile/u1'), willUnload: true });
+    first.close();
+    leaving.length = 0;
+    await expectBottomEntry();
+  });
+
+  it('only the immediate return is served: another conversation entered in between ends it', async () => {
+    const first = await scrolledUpReader('g1');
+    navigateAway(first);
+    const other = mountArea('g2');
+    await settleEntry();
+    other.close();
+    await expectBottomEntry('g1');
+  });
+
+  it('a conversation with newer messages than when the reader left opens at the usual entry', async () => {
+    const first = await scrolledUpReader();
+    navigateAway(first);
+    await expectBottomEntry('g1', THREAD + 1);
+  });
+
+  it('a message arriving while the restore is in flight keeps the row', async () => {
+    const first = await scrolledUpReader();
+    const anchorRow = rowsOf(first.target).find((row) => row.getBoundingClientRect().bottom > 0)!;
+    const anchorId = anchorRow.id;
+    const offset = anchorRow.getBoundingClientRect().top;
+    navigateAway(first);
+
+    const second = mountArea();
+    // The window has opened and the row is placed; the reveal frame has not run yet.
+    await vi.advanceTimersByTimeAsync(0);
+    second.props.conversation = conversationOf(THREAD + 1);
+    flushSync();
+    await settleEntry();
+    const back = rowsOf(second.target).find((row) => row.id === anchorId);
+    expect(back).toBeDefined();
+    expect(back!.getBoundingClientRect().top).toBe(offset);
+    expect(scrollerOf(second.target).classList.contains('opacity-100')).toBe(true);
   });
 });

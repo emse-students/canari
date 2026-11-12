@@ -21,6 +21,12 @@ export interface ConversationAnchor {
   windowStart: number;
   /** Row top minus the visible thread's top, in px: negative when the row was partly above it. */
   offsetPx: number;
+  /**
+   * The conversation's newest message id when the reader left. A different newest message at the
+   * return means something arrived meanwhile, and the reader belongs at the usual entry (first
+   * unread) - the anchor serves only the IMMEDIATE return, decided by this fact and not by a clock.
+   */
+  lastMessageId: string | null;
 }
 
 const conversationAnchors = new Map<string, ConversationAnchor>();
@@ -32,6 +38,28 @@ export function rememberConversationAnchor(
 ): void {
   if (anchor === null) conversationAnchors.delete(conversationId);
   else conversationAnchors.set(conversationId, anchor);
+}
+
+/** The saved position, left in place: a caller that may not be able to use it yet looks first. */
+export function peekConversationAnchor(conversationId: string): ConversationAnchor | null {
+  return conversationAnchors.get(conversationId) ?? null;
+}
+
+/**
+ * Erases every saved position except `conversationId`'s. Called at each conversation entry: an
+ * anchor serves the return from a profile to the SAME conversation, so an entry of another one
+ * (A -> profile -> B) ends A's.
+ *
+ * @returns How many were dropped (for the log).
+ */
+export function dropAnchorsExcept(conversationId: string): number {
+  let dropped = 0;
+  for (const id of [...conversationAnchors.keys()]) {
+    if (id === conversationId) continue;
+    conversationAnchors.delete(id);
+    dropped++;
+  }
+  return dropped;
 }
 
 /** Returns the saved position and ERASES it: one return restores one position. */
@@ -73,7 +101,7 @@ export function firstRowEndingBelow(
 
 /** What the entry does with a saved anchor. */
 export type EntryAnchorDecision =
-  | { kind: 'bottom'; reason: 'none' | 'message-not-in-list' }
+  | { kind: 'bottom'; reason: 'none' | 'message-not-in-list' | 'newer-messages' }
   | { kind: 'restore'; windowStart: number; messageId: string; offsetPx: number };
 
 /**
@@ -84,17 +112,23 @@ export type EntryAnchorDecision =
  *   (deleted, or older than the list now in memory). A gone message is the one stale case, and the
  *   caller logs it: a fallback is a signal.
  * @param groupCount Number of groups now.
+ * @param currentLastMessageId The conversation's newest message id now; one that differs from the
+ *   anchor's means messages arrived since the reader left, and the restore is declined.
  * @returns A `restore` whose `windowStart` is at most the target's group (so the row is mounted) and
  *   never past the list, or a `bottom` naming why.
  */
 export function resolveEntryAnchor(
   anchor: ConversationAnchor | null,
   targetGroupIndex: number,
-  groupCount: number
+  groupCount: number,
+  currentLastMessageId: string | null
 ): EntryAnchorDecision {
   if (anchor === null) return { kind: 'bottom', reason: 'none' };
   if (targetGroupIndex < 0 || targetGroupIndex >= groupCount) {
     return { kind: 'bottom', reason: 'message-not-in-list' };
+  }
+  if (anchor.lastMessageId !== currentLastMessageId) {
+    return { kind: 'bottom', reason: 'newer-messages' };
   }
   const stored = Number.isFinite(anchor.windowStart) ? Math.floor(anchor.windowStart) : 0;
   return {
