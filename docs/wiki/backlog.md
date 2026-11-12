@@ -464,6 +464,8 @@ strict replay detection is, since the window then also widens what a stolen cook
 an Opus security review. The test rig's KILL-2 row waits for the cookie to reach disk before its
 kill, because its subject is a commit in flight, not this.
 
+**Production data point, 2026-11-08 (read from the production log, owner-approved): the hole bites without a kill.** A desktop browser with several tabs open, about 28 page loads in 3.7 days, was signed out at 16:33Z by `Refresh token replay detected ... presented=previous rotatedAgo=5095s - session revoked`: it presented the token from BEFORE the rotation of 15:08Z (that browser's last refresh), 85 minutes later. So a superseded token is not only presented by a relaunch inside a 30 s flush window: a multi-tab browser can present one an hour and a half after the rotation (which tab held the stale copy is not read). **The candidate server-side fix above is now the item to build**, not a design for later; it still needs its security review. Sessions and accounts are deliberately unnamed.
+
 **Open observation, unexplained.** The first KILL-2 failure was not a replay: the relaunched
 browser presented a refresh cookie for a DIFFERENT session, refused as `no such session`. That
 session was absent from `auth_sessions` and from every server line since the service last
@@ -1376,6 +1378,9 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a reload of a replica list leaves its proxy with a peer: variable targets per service (#2933, first stable `v1.6.3`; [cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) | across one production deploy carrying it (`v1.6.5` onward qualifies): no `no live upstreams` in the edge's or the frontend's log (`docker logs --since <deploy start>`), read-only |
 | `push_context.json` follows every edit into the App Group (#3075, 2026-11-06; [mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)) | on the iPhone 12, any build `>= 1.6.6-alpha.2`: row R2 of [device-verification](device-verification.md#ios-3075-the-ios-follow-ups-of-3075---owed-on-the-iphone-12) - an account switch in the foreground, a foreground kill, a DM to B |
 | the NSE's boot proof by continuous uptime, replacing `kern.bootsessionuuid` (#3075, 2026-11-06; [mobile](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | on the iPhone 12, any build `>= 1.6.6-alpha.2`: rows R3a (no sandbox refusal) and R3b (a marker from before a reboot) of [device-verification](device-verification.md#ios-3075-the-ios-follow-ups-of-3075---owed-on-the-iphone-12); R3b decides whether the one-sided proof (a marker stamped ahead of the reader's uptime is another boot's) is enough |
+| the "Entre étudiants" switch on association and list posts (migration 133, first stable `v1.6.5`; [profiles-and-access](profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04)) | on dev, on a pre-release: a list officer publishes with the switch ON; a student and a member of the list without a cursus read it, a staff member of a carrier and a named reader whose cell covers the list's space do NOT (feed, search, the post by its link, its bell row); the officer turns it OFF from the edit form and both read it at once |
+| the "Entre étudiants" chip and switch on the phones ([profiles-and-access](profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04)) | on the Mi 9T and the iPhone 12, light and dark: the chip on a card, on a republished card and in the CanaReels viewer; the switch and its one line in the composer, the reel publish step and the edit form (the owner's "clair, propre, le plus user-friendly possible") |
+| whether the "Entre étudiants" switch is used ([profiles-and-access](profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04)) | on production, read-only: `SELECT count(*) FROM posts WHERE "studentsOnly"` |
 
 ---
 
@@ -1892,7 +1897,7 @@ Population, refuted causes and rules are on [key-package-pool](protocols/key-pac
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
-Whether anything is lost is unmeasured; the state is expected to converge. **Owed:** a shared counter or a proof of convergence and its delay ([mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
+**Data point, web log 2026-11-08: one multi-tab collision DID drop a staged commit.** "Whether anything is lost" is therefore no longer unmeasured - at least one loss is on record (the tab, the group and the exact counters were not kept; the next reading should capture them). The state is expected to converge otherwise. **Owed:** a shared counter or a proof of convergence and its delay ([mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
 
 ## Payments
 

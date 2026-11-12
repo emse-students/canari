@@ -11,6 +11,7 @@ import {
   watchUsers,
   whenAnyComesOnline,
 } from './presenceStore';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /** What `/api/version` said about `POST /api/presence`: `null` is "no answer yet". */
 const capability = vi.hoisted(() => ({ presencePost: true as boolean | null }));
@@ -62,6 +63,26 @@ function idsOfCall(call: unknown[]): string[] {
   return new URL(url).searchParams.get('users')?.split(',') ?? [];
 }
 afterEach(() => resetPresenceForTests());
+
+describe('a poll that gets no answer', () => {
+  it('logs a transport failure as one line, an unknown failure as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    fetchMock.mockImplementation(() => Promise.reject(new TransportFailureError('offline')));
+    watchUsers(['user-a']);
+    await checkPresenceNow();
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no answer'));
+
+    resetPresenceForTests();
+    fetchMock.mockImplementation(() => Promise.reject(new RangeError('a defect')));
+    watchUsers(['user-a']);
+    await checkPresenceNow();
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+    log.mockRestore();
+  });
+});
 
 describe('not stacking polls', () => {
   it('coalesces concurrent callers onto the request already in flight', async () => {

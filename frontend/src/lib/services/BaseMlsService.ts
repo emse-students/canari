@@ -1248,6 +1248,15 @@ export abstract class BaseMlsService implements IMlsService {
     this.pausePlatformSocket();
   }
 
+  /**
+   * Whether the socket is paused (a {@link pauseSocket} not yet followed by a {@link connect}). A
+   * lifecycle trigger that finds the socket gone reads this to know WHO owns the next open: while
+   * paused it is the resume sequence, never the trigger.
+   */
+  protected isSocketPaused(): boolean {
+    return this.socketPaused;
+  }
+
   private enqueueSocketStep(step: () => Promise<void>): Promise<void> {
     // A step that throws synchronously still settles THROUGH the queue, as a rejection.
     const runNow = (): Promise<void> => {
