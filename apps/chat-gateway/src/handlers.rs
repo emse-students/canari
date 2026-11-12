@@ -190,6 +190,50 @@ impl Drop for ConnectionGuard {
     }
 }
 
+// ── The origin of an upgrade ──────────────────────────────────────────────
+
+/// Longest origin written to a log line; a real one is a few dozen bytes.
+const LOGGED_ORIGIN_MAX: usize = 120;
+
+/// Refuse, with a 403, an upgrade whose `Origin` this estate does not serve its clients from
+/// (`AppState::upgrade_origins`); a request with no `Origin` passes.
+///
+/// THE REFUSED ORIGIN IS LOGGED, once per distinct value and then at each power of ten: it is the
+/// one fact that identifies a client turned away, and it appears nowhere else on either side. It is
+/// text its sender chose, so it is written escaped and cut.
+fn admit_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+    let origin = match headers.get(axum::http::header::ORIGIN) {
+        None => None,
+        // A header that is not text names no origin this estate could have listed.
+        Some(value) => Some(value.to_str().unwrap_or("")),
+    };
+    let Err(refusal) = state.upgrade_origins.admits(origin) else {
+        return Ok(());
+    };
+    let shown: String = origin
+        .unwrap_or("")
+        .chars()
+        .take(LOGGED_ORIGIN_MAX)
+        .collect();
+    if let Some(n) = state.refused_origins.hit(&shown) {
+        match refusal {
+            crate::origin::OriginRefusal::NotListed => tracing::warn!(
+                "[ws] upgrade REFUSED: origin {:?} is not in ALLOW_ORIGIN - refusal #{} for this origin",
+                shown,
+                n
+            ),
+            crate::origin::OriginRefusal::NoList => tracing::error!(
+                "[ws] upgrade REFUSED: origin {:?} cannot be matched, ALLOW_ORIGIN is '*' and that is not a list - refusal #{} for this origin",
+                shown,
+                n
+            ),
+        }
+    }
+    Err(Box::new(
+        (StatusCode::FORBIDDEN, "Origin not allowed").into_response(),
+    ))
+}
+
 // ── Public WS upgrade handler ─────────────────────────────────────────────
 
 /// Axum handler for `GET /api/ws`.
@@ -197,13 +241,20 @@ impl Drop for ConnectionGuard {
 /// Validates the JWT from the `canari_ws_token` cookie.
 /// Falls back to the `?token=` query parameter for Tauri Android/mobile where
 /// the native WebSocket plugin cannot forward WebView cookies.
-/// Returns `401 Unauthorized` if no valid token is found.
+/// Returns `401 Unauthorized` if no valid token is found, and `403 Forbidden` before that when the
+/// request names an `Origin` that is not an allowed one.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
+    // THE PAGE IS ASKED FIRST: an upgrade that names an origin this estate does not serve its
+    // clients from is refused before its token is read (`crate::origin`).
+    if let Err(refusal) = admit_origin(&state, &headers) {
+        return *refusal;
+    }
+
     // Cookie is preferred (web browser) - query-param is the Tauri mobile fallback.
     let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
         params.token.as_deref().map(|t| {
@@ -966,6 +1017,92 @@ mod tests {
                 token_of(user)
             )
         }
+    }
+
+    /// A handshake naming `origin`, against a gateway that lists `https://app.example`.
+    async fn handshake_from(
+        origin: Option<&str>,
+        listed: crate::origin::UpgradeOrigins,
+    ) -> Result<StatusCode, StatusCode> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        let mut state = state();
+        state.upgrade_origins = listed;
+        let url = serve(Arc::new(state)).await;
+        let mut request = url("user-1", "device-1").into_client_request().unwrap();
+        if let Some(origin) = origin {
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
+        }
+        match tokio_tungstenite::connect_async(request).await {
+            Ok((_socket, answer)) => Ok(answer.status()),
+            Err(WsError::Http(answer)) => Err(answer.status()),
+            Err(other) => panic!("neither an open socket nor an HTTP answer: {other:?}"),
+        }
+    }
+
+    fn app_only() -> crate::origin::UpgradeOrigins {
+        crate::origin::UpgradeOrigins::parse("https://app.example,tauri://localhost")
+    }
+
+    #[tokio::test]
+    async fn a_socket_opens_from_a_listed_origin_and_from_no_origin() {
+        assert_eq!(
+            handshake_from(Some("https://app.example"), app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+        assert_eq!(
+            handshake_from(Some("tauri://localhost"), app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+        // A native client: no page, no Origin.
+        assert_eq!(
+            handshake_from(None, app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_upgrade_from_an_origin_that_is_not_listed_is_a_403_with_a_valid_token() {
+        assert_eq!(
+            handshake_from(Some("https://sibling.app.example"), app_only()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            handshake_from(Some("null"), app_only()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_admits_no_page_and_still_admits_a_native_client() {
+        let wildcard = crate::origin::UpgradeOrigins::Wildcard;
+
+        assert_eq!(
+            handshake_from(Some("https://app.example"), wildcard.clone()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            handshake_from(None, wildcard).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+    }
+
+    #[test]
+    fn a_refused_origin_is_counted_under_its_own_name_and_takes_no_place() {
+        let mut state = state();
+        state.upgrade_origins = app_only();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("origin", "https://other.example".parse().unwrap());
+
+        assert!(super::admit_origin(&state, &headers).is_err());
+        assert!(super::admit_origin(&state, &headers).is_err());
+
+        // Two refusals counted under the origin: the third prints nothing, another origin is new.
+        assert_eq!(state.refused_origins.hit("https://other.example"), None);
+        assert_eq!(state.refused_origins.hit("https://third.example"), Some(1));
+        assert!(state.connected_users.lock().unwrap().is_empty());
     }
 
     /// THE REFUSAL IS AN HTTP ANSWER, NOT A SOCKET THAT OPENS AND CLOSES. A client resets its
