@@ -275,7 +275,12 @@ describe('the audio focus (D056, decided 2026-11-12)', () => {
     expect(onFree.mock.calls).toEqual([['lost'], ['gained']]);
   });
 
-  it('a hang-up from the notification while held releases the hold before the call ends', () => {
+  /**
+   * A HOLD THAT ENDS BECAUSE THE CALL ENDS IS NOT A RELEASE (re-review of #3395): a `released`
+   * handed over before the hang-up would enable the tracks, tell the partner and toast during the
+   * ended summary. The call's own end clears its hold.
+   */
+  it('a hang-up from the notification while held ends the call and hands over no release', () => {
     const { h } = host();
     const order: string[] = [];
     const session = openAndroidCallSession(
@@ -286,7 +291,19 @@ describe('the audio focus (D056, decided 2026-11-12)', () => {
     session.publish(SPEC, 'live');
     h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
     h.emit({ kind: 'hangup' });
-    expect(order).toEqual(['lost', 'released', 'hangup']);
+    session.dispose();
+    expect(order).toEqual(['lost', 'hangup']);
+  });
+
+  it('the page stopping the service once the call is over forgets the hold: the close sends nothing', () => {
+    const { h } = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    session.publish(null, 'the call ended');
+    session.dispose();
+    expect(onFocus.mock.calls).toEqual([['lost']]);
   });
 });
 

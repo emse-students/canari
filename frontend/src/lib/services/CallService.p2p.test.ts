@@ -4298,9 +4298,10 @@ describe('a microphone the system took', () => {
 
     /**
      * A PERMANENT LOSS IS NEVER FOLLOWED BY A GAIN (a video started in another app): the member's tap
-     * is the way back - it asks the focus again; a refusal keeps the hold and says why.
+     * is the way back - ONE tap on a control that shows the call muted asks the focus again and
+     * leaves the member's own mute alone; a refusal keeps the hold and says why.
      */
-    it('LOSS, no gain ever, then the member taps: the tap asks, a refusal keeps the hold, a grant ends it', async () => {
+    it('LOSS, no gain ever, then the member taps once: the tap asks, a refusal keeps the hold, a grant ends it', async () => {
       const { showToast } = await import('$lib/stores/toast.svelte');
       vi.mocked(showToast).mockClear();
       const service = new CallService(fakeMls);
@@ -4310,9 +4311,9 @@ describe('a microphone the system took', () => {
 
       service.onAudioFocus('lost');
       expect(get(service.audioFocusHeld)).toBe(true);
-      service.toggleMute(); // muted
-      service.toggleMute(); // unmuted again: the member wants to be heard
-      expect(ask.mock.calls).toEqual([['a mute tap'], ['an unmute tap']]);
+      service.muteButtonTap(); // the control shows muted: the member wants to be heard
+      expect(ask.mock.calls).toEqual([['an unmute tap while held']]);
+      expect(get(service.isMuted)).toBe(false);
       expect(mic.enabled).toBe(false);
 
       service.onAudioFocus('refused');
@@ -4334,23 +4335,40 @@ describe('a microphone the system took', () => {
       await pairedCaller(service);
       const ask = vi.fn();
       service.setAudioFocusAsker(ask);
-      service.toggleMute();
+      service.muteButtonTap();
       expect(ask).not.toHaveBeenCalled();
+      expect(get(service.isMuted)).toBe(true);
     });
 
-    it("the notification's unmute while held asks the focus and leaves the member's own mute alone", async () => {
+    it('a member who had muted before the hold unmutes with one tap, which also asks the focus', async () => {
+      const service = new CallService(fakeMls);
+      await pairedCaller(service);
+      const ask = vi.fn();
+      service.setAudioFocusAsker(ask);
+      service.muteButtonTap(); // muted by the member
+      service.onAudioFocus('lost');
+
+      service.muteButtonTap();
+      expect(get(service.isMuted)).toBe(false);
+      expect(ask.mock.calls).toEqual([['an unmute tap']]);
+      expect(mic.enabled).toBe(false);
+      service.onAudioFocus('gained');
+      expect(mic.enabled).toBe(true);
+    });
+
+    it("a mute control's unmute while held asks the focus and leaves the member's own mute alone", async () => {
       const service = new CallService(fakeMls);
       await pairedCaller(service);
       const ask = vi.fn();
       service.setAudioFocusAsker(ask);
       service.onAudioFocus('lost');
 
-      service.notificationMuteTap();
-      expect(ask).toHaveBeenCalledWith('the notification unmute action');
+      service.muteButtonTap();
+      expect(ask).toHaveBeenCalledWith('an unmute tap while held');
       expect(get(service.isMuted)).toBe(false);
 
       service.onAudioFocus('gained');
-      service.notificationMuteTap(); // no hold: the member's own toggle
+      service.muteButtonTap(); // no hold: the member's own toggle
       expect(get(service.isMuted)).toBe(true);
     });
 
@@ -4404,6 +4422,32 @@ describe('a microphone the system took', () => {
       expect(mic.enabled).toBe(true);
       expect(get(first.audioFocusHeld)).toBe(false);
       expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+    });
+
+    /**
+     * A hold that ends WITH the call (a hang-up while held) is not given back: no track enabled, no
+     * `MicSuspended: false`, no "suspended for N s" toast - and a `released` landing in the ended
+     * summary changes nothing either (re-review of #3395).
+     */
+    it('a hang-up while held enables nothing, sends nothing and toasts nothing', async () => {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      const service = new CallService(fakeMls);
+      const ws = await pairedCaller(service);
+      service.onAudioFocus('lost');
+      vi.mocked(showToast).mockClear();
+      const framesBefore = ws.framesOfType('MicSuspended').length;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        service.endCall();
+        await settle();
+        service.onAudioFocus('released');
+        expect(mic.enabled).toBe(false);
+        vi.advanceTimersByTime(1_500);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(framesBefore);
+      expect(vi.mocked(showToast).mock.calls.filter((c) => c[1] === 'warning')).toEqual([]);
     });
   });
 

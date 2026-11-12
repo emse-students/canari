@@ -367,7 +367,20 @@ export function openAndroidCallSession(
   let lastSent: string | null = null;
   /** A focus loss was handed to the call and no `gained` has followed: the hold this session owes. */
   let focusHeld = false;
-  /** The service is gone for this call: a hold it handed over can never be released by it now. */
+  /**
+   * The hold ends WITH THE CALL (a hang-up, or the page stopping the service once the call is
+   * over): nothing is handed to the call, whose own end clears its hold - a `released` then would
+   * enable the tracks, tell the partner and toast during the ended summary.
+   */
+  const forgetFocusHold = (why: string) => {
+    if (!focusHeld) return;
+    focusHeld = false;
+    appendLog(`[Call] audio focus hold ends with the call - ${why}`);
+  };
+  /**
+   * The service is gone and the CALL GOES ON (Android stopped it, or the surface closed while it
+   * ran): a hold it handed over can never be released by it now, so the call is told.
+   */
   const releaseFocusHold = (why: string) => {
     if (!focusHeld) return;
     focusHeld = false;
@@ -456,7 +469,7 @@ export function openAndroidCallSession(
         started = false;
         over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
-        releaseFocusHold('hung up from the notification');
+        forgetFocusHold('hung up from the notification');
         onHangUp();
         return;
       case 'output':
@@ -501,6 +514,7 @@ export function openAndroidCallSession(
     if (!started) return;
     started = false;
     lastSent = null;
+    forgetFocusHold(reason);
     appendLog(`[Call] ongoing-call service stop (${reason})`);
     bridge.stop(callId, reason);
   };
@@ -517,8 +531,9 @@ export function openAndroidCallSession(
       send(spec, why);
     },
     dispose() {
-      stop('the call surface closed');
+      // A hold still owed here means the service still ran: the call outlives this surface.
       releaseFocusHold('the call surface closed');
+      stop('the call surface closed');
       host.removeEventListener(NATIVE_CALL_EVENT, onEvent);
     },
     askFocus(why) {

@@ -4015,13 +4015,15 @@ export class CallService {
   }
 
   /**
-   * The ongoing notification's mute action. It shows the call MUTED while the focus is held
-   * ({@link audioFocusHeld}), so a press then means "give me my microphone back": the focus is
-   * asked again and the member's own mute is left as it is. Otherwise it is the member's toggle.
+   * EVERY mute control's tap - the in-app buttons, the ongoing notification, the OS media controls.
+   * Each shows the call MUTED while the focus is held ({@link audioFocusHeld}), so a press then means
+   * "give me my microphone back": the focus is asked again and the member's own mute is left as it
+   * is (flipping it would leave them muted once the focus came back). Otherwise it is the member's
+   * toggle.
    */
-  public notificationMuteTap(): void {
+  public muteButtonTap(): void {
     if (this.focusLostSince !== null && !get(this.isMuted)) {
-      this.askAudioFocus('the notification unmute action');
+      this.askAudioFocus('an unmute tap while held');
       return;
     }
     this.toggleMute();
@@ -4140,9 +4142,10 @@ export class CallService {
   }
 
   /**
-   * Toggles the member's own microphone mute. While the audio focus is held for a loss the tracks
-   * stay disabled whatever the tap says, and the tap ASKS the focus again: a grant ends the hold and
-   * the tap's state is what the microphone follows; a refusal keeps it and says why.
+   * Toggles the member's own microphone mute; a control's tap goes through {@link muteButtonTap}.
+   * While the audio focus is held the tracks stay disabled whatever the mute says, and a toggle then
+   * (a member who had muted, unmuting) ASKS the focus again: a grant ends the hold and the microphone
+   * follows the mute; a refusal keeps it and says why.
    */
   public toggleMute() {
     this.isMuted.set(!get(this.isMuted));

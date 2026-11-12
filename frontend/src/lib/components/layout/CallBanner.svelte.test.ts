@@ -64,6 +64,7 @@ function fakeService() {
     acceptCall: vi.fn(async () => {}),
     endCall: vi.fn(),
     toggleMute: vi.fn(),
+    muteButtonTap: vi.fn(),
     toggleVideo: vi.fn(),
   };
 }
@@ -123,5 +124,32 @@ describe('the minimised bar camera button', () => {
     service.isVideoOff.set(false);
     flushSync();
     expect(button()).not.toBeNull();
+  });
+});
+
+/**
+ * THE MUTE BUTTON SHOWS WHAT THE PEER HEARS (re-review of #3395): while Android's audio focus is held
+ * the microphone is silent, so the button shows the call muted like the notification does, and its
+ * tap goes through the one shared `muteButtonTap` - never the member's own toggle directly.
+ */
+describe('the minimised bar mute button', () => {
+  const mute = () => document.querySelector<HTMLButtonElement>('[data-testid="call-banner-mute"]');
+
+  it('shows the call muted while the focus is held, and routes its tap through muteButtonTap', async () => {
+    const service = fakeService();
+    service.audioFocusHeld.set(true);
+    await render(service);
+    expect(mute()?.getAttribute('aria-pressed')).toBe('true');
+    expect(mute()?.getAttribute('aria-label')).toBe(m.call_unmute_label());
+    mute()!.click();
+    expect(service.muteButtonTap).toHaveBeenCalledTimes(1);
+    expect(service.toggleMute).not.toHaveBeenCalled();
+  });
+
+  it('shows the microphone open when neither the member nor the focus holds it', async () => {
+    const service = fakeService();
+    await render(service);
+    expect(mute()?.getAttribute('aria-pressed')).toBe('false');
+    expect(mute()?.getAttribute('aria-label')).toBe(m.call_mute_label());
   });
 });

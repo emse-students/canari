@@ -99,7 +99,7 @@ function fakeService(state: CallState, hasVideo: boolean) {
     acceptCall: vi.fn(async () => {}),
     endCall: vi.fn(),
     toggleMute: vi.fn(),
-    notificationMuteTap: vi.fn(),
+    muteButtonTap: vi.fn(),
     onAudioFocus: vi.fn(),
     setAudioFocusAsker: vi.fn(),
     toggleVideo: vi.fn(),

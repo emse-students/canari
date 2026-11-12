@@ -148,6 +148,13 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     get audioFocusHeld() {
       return audioFocusHeld;
     },
+    /**
+     * What every mute control SHOWS: muted when the member muted OR the focus is held, since the
+     * microphone is silent either way. Its tap goes through `CallService.muteButtonTap`.
+     */
+    get micShownMuted() {
+      return isMuted || audioFocusHeld;
+    },
     /** The other party's OS holds ITS microphone, as it told us (`CallService.peerMicSuspended`). */
     get peerMicSuspended() {
       return peerMicSuspended;

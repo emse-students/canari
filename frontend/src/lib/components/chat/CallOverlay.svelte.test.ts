@@ -102,7 +102,7 @@ function fakeService(state: CallState) {
     acceptCall: vi.fn(async () => {}),
     endCall: vi.fn(),
     toggleMute: vi.fn(),
-    notificationMuteTap: vi.fn(),
+    muteButtonTap: vi.fn(),
     setAudioFocusAsker: vi.fn(),
     toggleVideo: vi.fn(),
     switchCamera: vi.fn(async () => {}),
