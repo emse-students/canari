@@ -203,6 +203,22 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
 
 Either one failing keeps the switch `off` and reopens this section.
 
+### QUESTION - does a portaled dialog keep the focus `focusTrap` gave it? (2026-11-12)
+
+`portal` moves an overlay under `body` with `appendChild`, AFTER `focusTrap` focused the dialog's
+first control (the action order the wiki states). **What is observed:** in happy-dom the move drops
+the focus - `document.activeElement` is `body` once the node has moved. The web platform added
+`moveBefore` precisely because `appendChild` does not keep the state of what it moves, so a real
+browser may do the same; if it does, no portaled dialog holds its initial focus and Tab starts from
+the page behind it.
+
+**What answers it: one reading in a real browser.** Open any dialog that goes through `portal` and
+read `document.activeElement`. Not taken yet.
+
+**Why it is a question and not a fix.** If confirmed, the repair is in `portal` (focus again what
+held the focus inside the moved node). But that makes every dialog whose first control is a text
+field open the phone keyboard as it appears - a behaviour to decide, not to slip in.
+
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
 Since the sender coalescing, a DM or group watermark was sent when the 2 s window after reading ended (since 2026-11-07 the FIRST mark goes at once and the window only coalesces the marks after it),
