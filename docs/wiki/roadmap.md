@@ -133,10 +133,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
+| 2026-11-12 | Triage batch 25: the engagement chantier (D009) shipped whole by `v1.6.10`, its fragment goes; the readings it owes are B409-B412; D116-D128 re-read against the releases. |
 
 ## Annex A - every row of the backlog
 
-315 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+319 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -455,10 +456,14 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B400 | delete MiConnect's unused Docker service connection (one admin click) | P3 | infra-hosts | open | user one-off | `docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks` |
 | B401 | a reload of a replica list leaves its proxy with a peer (#2933): one production deploy's logs with no `no live upstreams` | P1 | infra-hosts | shipped-verify-owed | production reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B409 | the bell (WP-3): the phone readings | P2 | engagement-follows | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B410 | openings for followers (WP-4): the phone readings | P2 | engagement-follows | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B411 | follow suggestions and Suivre (WP-2, WP-5, WP-6, WP-7): the EXPLAIN on dev and the phone readings | P2 | engagement-follows | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B412 | campus trends and the daily cap (WP-8, WP-10, quieter): the phone readings and the opt-in count | P2 | engagement-follows | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-241 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+240 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -467,7 +472,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D003 | `docs/wiki/backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md` | Call noise suppression (RNNoise) ships OFF by default; a real call on bench phones decides ON | P2 | calls | built-readings-owed | 2026-11-01 | hardware reading (real call on both bench phones) |
 | D005 | `docs/wiki/backlog.d/decided-by-the-owner-on-2026-10-24-migallery-faces-option-c.md` | MiGallery faces: option C (per-photo embeddings, no clustering); deployed in MiGallery v2.18.0 | none | security-privacy | shipped-verify-owed | 2026-10-24; v2.18.0; 2026-11-01; 2026-12-01 | a date (encrypted copy of the old faces kept one month); DPO answer |
 | D008 | `docs/wiki/backlog.d/drop-the-global-association-categories.md` | Drop association_categories table, categoryId column and GET shim left by migration 147 | P3 | ecosystem-sites | blocked | 2026-11-08 | named PR (a rollback floor no longer maps them); held migration approval |
-| D009 | `docs/wiki/backlog.d/engagement-chantier.md` | Engagement: 14 owner decisions, follow suggestions, bell, daily push cap; WP-1/1b built, WP-3 built | P2 | engagement-follows | built-readings-owed | 2026-11-07; 2026-11-08 | user decision (held migration 143 approval merge); hardware reading |
 | D010 | `docs/wiki/backlog.d/envoyer-from-the-camera-tab-several-targets-one-shared-file-decided-by.md` | "Envoyer a..." from the camera tab: several targets, ONE shared file, reel option first | none | reels-composer | built-readings-owed | 2026-10-30 | hardware reading |
 | D011 | `docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md` | Group calls: P2P mesh up to 4 audio / 3 video, relay SFU beyond (decision D-A, input of WP-C11) | none | calls | decided-not-built | 2026-10-31; 2026-10-16/17 | none (feeds WP-C11) |
 | D013 | `docs/wiki/backlog.d/history-withheld-from-a-member-device-that-let-itself-in.md` | History withheld from a member device that let itself in: what is still owed (D1 held shut) | none | mls-messaging | blocked | 2026-10-27; 2026-10-31; 2026-11-01 | named PR (#2832 gates D2/D3, minClientVersion) |
@@ -557,19 +561,19 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D113 | `docs/wiki/mechanism-audit.md` | Backup and restore: refusal codes pinned, round trip not | none | tests-tooling | open | 2026-08-21 | none |
 | D114 | `docs/wiki/mechanism-audit.md` | Follows: four specs now; originally nothing | none | engagement-follows | closed-in-place | 2026-10-19 | none |
 | D115 | `docs/wiki/mechanism-audit.md` | Minesweeper: nothing watches it and nothing is owed (a game) | none | tests-tooling | closed-in-place | - | none |
-| D116 | `docs/wiki/engagement.md` | WP-1: an association's live reaches everyone who can see it (built, #3119) | P2 | engagement-follows | built-readings-owed | 2026-11-07 | named PR (#3119) |
-| D117 | `docs/wiki/engagement.md` | WP-1b: one announced live per association per 6 hours (built, #3119) | P2 | engagement-follows | built-readings-owed | 6 hours | named PR (#3119) |
-| D118 | `docs/wiki/engagement.md` | WP-2: a Suivre chip everywhere a person or entity is named; bulk follow-statuses read | P2 | engagement-follows | built-readings-owed | - | hardware reading (follow request from a post header) |
-| D119 | `docs/wiki/engagement.md` | WP-3: the bell (account_bells), held copy of association mutes (migration 143) | P2 | engagement-follows | built-readings-owed | 2026-11-08 | user decision (approval-line merge of migration 143); phone readings |
-| D120 | `docs/wiki/engagement.md` | WP-4: openings for followers (opening_reminders, held copy of form_reminders), never capped | P2 | engagement-follows | designed | - | WP-3 shipped; held migration approval |
-| D121 | `docs/wiki/engagement.md` | WP-5: the follow-suggestion query, dismissals table, GET /api/suggestions, erasure | P2 | engagement-follows | designed | - | none |
-| D122 | `docs/wiki/engagement.md` | WP-6: suggestion surfaces (feed carousel, Suivez aussi, empty Suivis feed, onboarding banner) | P2 | engagement-follows | designed | - | named PR (WP-5) |
-| D123 | `docs/wiki/engagement.md` | WP-7: suggested posts through the feed's block filter | P2 | engagement-follows | designed | - | named PR (WP-5/WP-6) |
-| D124 | `docs/wiki/engagement.md` | WP-8: the daily push cap (engagement_push_days, 5 per day, new kinds only) | P2 | engagement-follows | designed | - | hardware reading (production read R2 first) |
-| D125 | `docs/wiki/engagement.md` | WP-9: friends' activity pushes with ledger and per-user setting (default ON) | P2 | engagement-follows | designed | - | named PR (WP-8 cap first) |
-| D126 | `docs/wiki/engagement.md` | WP-10: campus trends ("takes off") without a clock heuristic | P2 | engagement-follows | designed | - | named PR (WP-8); production read R1 first |
-| D127 | `docs/wiki/engagement.md` | Held migration: copy of association_push_mutes into account_bells (WP-3, backfill) | P2 | engagement-follows | built-readings-owed | - | user decision (approval line merged by hand, owner or lead under 2026-11-03 delegation) |
-| D128 | `docs/wiki/engagement.md` | Held migration: copy of form_reminders into opening_reminders (WP-4, backfill) | P2 | engagement-follows | designed | - | named PR (WP-4) |
+| D116 | `docs/wiki/engagement.md` | WP-1: an association's live reaches everyone who can see it (built, #3119) | P2 | engagement-follows | closed-in-place | 2026-11-07; v1.6.7 | none |
+| D117 | `docs/wiki/engagement.md` | WP-1b: one announced live per association per 6 hours (built, #3119) | P2 | engagement-follows | closed-in-place | 2026-11-07; v1.6.7 | none |
+| D118 | `docs/wiki/engagement.md` | WP-2: a Suivre chip everywhere a person or entity is named; bulk follow-statuses read | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | hardware reading (B411) |
+| D119 | `docs/wiki/engagement.md` | WP-3: the bell (account_bells), held copy of association mutes (migration 143) | P2 | engagement-follows | built-readings-owed | 2026-11-08; v1.6.8 | hardware reading (B409) |
+| D120 | `docs/wiki/engagement.md` | WP-4: openings for followers (opening_reminders, held copy of form_reminders), never capped | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | hardware reading (B410) |
+| D121 | `docs/wiki/engagement.md` | WP-5: the follow-suggestion query, dismissals table, GET /api/suggestions, erasure | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | dev reading (EXPLAIN, B411) |
+| D122 | `docs/wiki/engagement.md` | WP-6: suggestion surfaces (feed carousel, Suivez aussi, empty Suivis feed, onboarding banner) | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | hardware reading (B411) |
+| D123 | `docs/wiki/engagement.md` | WP-7: suggested posts through the feed's block filter | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | hardware reading (B411) |
+| D124 | `docs/wiki/engagement.md` | WP-8: the daily push cap (engagement_push_days, 5 per day, new kinds only) | P2 | engagement-follows | closed-in-place | 2026-11-09; v1.6.9 | none |
+| D125 | `docs/wiki/engagement.md` | WP-9: friends' activity pushes with ledger and per-user setting (default ON) | P2 | engagement-follows | closed-in-place | 2026-11-09; retired 2026-11-10 | none |
+| D126 | `docs/wiki/engagement.md` | WP-10: campus trends ("takes off") without a clock heuristic | P2 | engagement-follows | built-readings-owed | 2026-11-09; v1.6.9 | hardware reading (B412) |
+| D127 | `docs/wiki/engagement.md` | Held migration: copy of association_push_mutes into account_bells (WP-3, backfill) | P2 | engagement-follows | closed-in-place | 2026-11-08; v1.6.8 | none |
+| D128 | `docs/wiki/engagement.md` | Held migration: copy of form_reminders into opening_reminders (WP-4, backfill) | P2 | engagement-follows | closed-in-place | 2026-11-09; v1.6.9 | none |
 | D129 | `docs/wiki/engagement.md` | Held migration: drop of association_push_mutes (destructive) | P3 | engagement-follows | blocked | - | WP-3 has served one stable and the floor passed it |
 | D130 | `docs/wiki/engagement.md` | Held migration: drop of form_reminders (destructive) | P3 | engagement-follows | blocked | - | WP-4 has served one stable |
 | D131 | `docs/wiki/device-verification.md` | IOS-3075 R1a: Swift lines in clear, the extension | P2 | ios-native | built-readings-owed | 2026-11-06; 1.6.6-alpha.2 | hardware reading (iPhone 12, build >= 1.6.6-alpha.2) |
