@@ -70,14 +70,18 @@ describe('liveAudienceFilter', () => {
     warn.mockRestore();
   });
 
-  it('warns once per outage, re-armed by the next answer', async () => {
+  it('warns once per outage, re-armed by the next answer - even as the panel rebuilds its filter', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    let down = true;
-    const filter = liveAudienceFilter(async (ids) => {
-      if (down) throw new Error('down');
-      return ids;
-    });
+    let down = false;
+    // The live panel builds a new filter on every chat line: each call here is a new one.
+    const filter = (list: typeof users) =>
+      liveAudienceFilter(async (ids) => {
+        if (down) throw new Error('down');
+        return ids;
+      })(list);
+    await filter(users);
+    down = true;
     await filter(users);
     await filter(users);
     await filter(users);

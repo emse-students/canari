@@ -34,7 +34,11 @@ vi.mock('$lib/utils/users/displayName', () => ({
     }),
   seedUserDisplayName: () => {},
 }));
-vi.mock('$lib/users/blocks', () => ({ listBlockedUsers: async () => [] }));
+/** The reader's blocks, as the next read answers them. */
+const blocks = vi.hoisted(() => ({ ids: [] as string[] }));
+vi.mock('$lib/users/blocks', () => ({
+  listBlockedUsers: async () => blocks.ids.map((userId) => ({ userId })),
+}));
 
 const ROSTER: MentionRosterMember[] = [
   { id: 'u-jean', displayName: 'Jean Dupont' },
@@ -72,6 +76,7 @@ beforeEach(() => {
   text = '';
   names.known.clear();
   names.pending = [];
+  blocks.ids = [];
   globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network expected'));
 });
 
@@ -351,6 +356,49 @@ describe('review of #3402', () => {
     expect(failures).toHaveLength(1);
     expect(String(failures[0][1])).toBe('HTTP 503');
     expect(ac.open).toBe(false);
+  });
+
+  it('an empty-roster search, then the roster loads: the answer is dropped and the members stay', async () => {
+    let roster: MentionRosterMember[] = [];
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText: (t) => {
+        text = t;
+      },
+      getCursor: () => text.length,
+      get roster() {
+        return roster;
+      },
+    });
+    typeKeys(ac, '@Je');
+    await flushMacrotask();
+    // No member yet: the directory is asked, "J" in flight and "Je" waiting.
+    expect(calls.map((c) => c.q)).toEqual(['J']);
+    roster = ROSTER;
+    ac.refreshRoster();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jean', 'u-jeanne']);
+    calls[0].answer([{ id: 'u-outsider', displayName: 'Jo Ailleurs' }]);
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jean', 'u-jeanne']);
+    // The waiting directory query is moot now: never sent.
+    expect(calls).toHaveLength(1);
+    ac.handleKeydown(key('ArrowDown'));
+    ac.handleKeydown(key('Enter'));
+    expect(text).toBe('@[u-jean] ');
+  });
+
+  it('a block list that answers after the top-up landed removes the blocked row from it', async () => {
+    const { ac, swap } = livePicker(ROSTER);
+    typeKeys(ac, '@J');
+    await flushMacrotask();
+    calls[0].answer([{ id: 'u-jeff', displayName: 'Jeff Exemple' }]);
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toContain('u-jeff');
+    blocks.ids = ['U-JEFF'];
+    // A chat line re-sends the roster; its preparation reads the blocks again.
+    swap(ROSTER.map((m) => ({ ...m })));
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jean', 'u-jeanne']);
   });
 
   it('applies nothing once disposed, and sends nothing that was waiting', async () => {

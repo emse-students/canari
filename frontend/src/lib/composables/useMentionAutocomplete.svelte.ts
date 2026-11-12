@@ -219,6 +219,10 @@ export function useMentionAutocomplete(opts: {
     }
     if (req.generation !== generation) {
       Log.d('[mention] a search answer for an earlier query dropped');
+    } else if (req.kind === 'search' && rosterLoaded()) {
+      Log.d(
+        '[mention] a directory answer arrived after the roster loaded - dropped, the members stay'
+      );
     } else if (req.kind === 'more') {
       if (found) applyMore(req, found);
     } else if (found) {
@@ -234,8 +238,21 @@ export function useMentionAutocomplete(opts: {
       Log.d('[mention] the waiting query was overtaken - not sent');
       return;
     }
+    if (next.kind === 'search' && rosterLoaded()) {
+      Log.d('[mention] the waiting directory query is moot - the roster loaded, not sent');
+      return;
+    }
     Log.d(`[mention] the waiting ${next.kind} query sent (${next.q.length} char(s))`);
     void runSearch(next);
+  }
+
+  /**
+   * Whether the picker has members to offer. A directory search is only the stand-in for a roster
+   * not loaded yet (review of #3402): its answer - the school's top 10 - landing after the members
+   * loaded replaced them, and Enter then inserted somebody who is not in the conversation.
+   */
+  function rosterLoaded(): boolean {
+    return (opts.roster?.length ?? 0) > 0;
   }
 
   /**
@@ -316,9 +333,11 @@ export function useMentionAutocomplete(opts: {
     // audience top-up and the arrow-key selection under the reader's fingers.
     const selectedId = selectedIdx >= 0 ? suggestions[selectedIdx]?.id.toLowerCase() : undefined;
     const isOffered = (id: string) => offered.some((u) => u.id.toLowerCase() === id);
+    const blocked = (blockedIds ?? []).map((b) => b.toLowerCase());
+    // A block list that answered after the top-up landed is applied to it too.
     const kept = suggestions.filter((u) => {
       const id = u.id.toLowerCase();
-      return topUpIds.includes(id) && !isOffered(id);
+      return topUpIds.includes(id) && !isOffered(id) && !blocked.includes(id);
     });
     const rows = [...offered, ...kept].slice(0, MENTION_MAX_ROWS);
     suggestions = rows;

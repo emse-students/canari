@@ -1014,7 +1014,9 @@ reports, one code path (`useMentionAutocomplete`, `mentionRoster.ts`):
   a row that no longer matches. A roster change drops NOTHING: the live chat re-sends its roster on
   every line (authors added, dropped, reordered), the search asks for the text typed, which a
   roster does not change, and re-reading the roster keeps the rows the audience added and the
-  selected row. The name index keeps only the current roster's members, keyed once per roster
+  selected row, minus any account a late block list names. A directory search is only the stand-in
+  for a roster not loaded yet: once members are there, its answer and any waiting directory query
+  are dropped, so the school's top 10 never replaces them. The name index keeps only the current roster's members, keyed once per roster
   array (sorted ids). A failed search - transport or a non-2xx status - warns once per outage, and
   so does the live chat's audience filter. The endpoint already caps at 10 rows
   (`take(10)`), the picker shows six; measured on dev it answers in 90-190 ms, which is now the
