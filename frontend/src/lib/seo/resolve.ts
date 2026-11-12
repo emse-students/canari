@@ -158,6 +158,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/lists/new': () => m.list_new_create_btn(),
   '/profile': () => m.seo_profile_title(),
   '/settings': () => m.settings_page_title(),
+  '/settings/principes': () => m.settings_principles_label(),
 };
 
 function normalizePath(pathname: string): string {

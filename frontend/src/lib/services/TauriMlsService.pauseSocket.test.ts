@@ -24,9 +24,30 @@ interface Internals {
     addListener: ReturnType<typeof vi.fn>;
   } | null;
   pauseSocket(): void;
+  onDisconnect(cb: () => void): void;
+  requestReconnectUnlessPaused(trigger: string): boolean;
 }
 
 const flush = () => flushMacrotask();
+
+describe('a lifecycle trigger and a paused socket', () => {
+  it('stands down while paused - the resume sequence owns the open - and asks otherwise', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const svc = new TauriMlsService() as unknown as Internals;
+    const reconnect = vi.fn();
+    svc.onDisconnect(reconnect);
+
+    expect(svc.requestReconnectUnlessPaused('app foreground')).toBe(true);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+
+    svc.pauseSocket();
+    expect(svc.requestReconnectUnlessPaused('app foreground')).toBe(false);
+    expect(svc.requestReconnectUnlessPaused('visible again')).toBe(false);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledTimes(2);
+    debug.mockRestore();
+  });
+});
 
 describe('TauriMlsService.pauseSocket', () => {
   it('releases a socket whose disconnect frame was accepted', async () => {

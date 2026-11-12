@@ -2,22 +2,16 @@
 
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 
+**Carried out and pruned (batch 21, 2026-11-12), each checked:** the wry wake pipe aborts on end of
+file (#2974, first stable `v1.6.3`); reform D1 is built and its migrations 129-131 carry their
+approval lines in `infrastructure/migration-approvals.txt`; space pins were built after #2953
+(#2975 the design, #2984 the build, first stable `v1.6.7`); `1.6.3-alpha.3` and the stable `1.6.3`
+were cut; the CanaReels writer switch rides the pre-release builds (its production flip is queue
+item 9); Sky `v1.1.11` shipped #160. The retention answer (90 days kept everywhere) was
+superseded by the owner on 2026-11-11: 5 years on a phone or desktop app, 90 days in a browser
+([history-reconciliation](../protocols/history-reconciliation.md)). What stays is standing: the
+Play rule and the held-migration delegation.
+
 - **Play**: no stable is cut while the previous stable is in Play review, because a new stable
   replaces the one in review. Pre-releases (internal track) are fine.
-- **Android wry wake pipe (#2974, merged)**: on end of file or a read error, log at error then abort
-  deliberately, so the crash is visible in Play Vitals. Never leave a silently frozen UI.
-- **Local message retention**: the 90-day local pruning stays as it is. It was first wrongly reported
-  as dead code, then confirmed with the right facts.
-- **Reform D1**: the proposed "entity -> parent BDE" list is validated as is; the owner may correct it
-  later in production. **Built** (the list is in the reform page, 2.8; migration 130 applies it); its
-  three migrations (129-131) wait for the owner's hand-merge of their approval lines.
-- **Space pins (#2975 design)**: the build starts once #2953 has merged.
-- **`1.6.3-alpha.3`**: cut it once #2949 and #2936 have merged. #2919 may follow in the next alpha.
-- **Stable `1.6.3`**: the lead agent may cut it without the owner if Play has published `1.6.2` and
-  alpha.3 reads well on the bench phones.
-- **CanaReels writer switch (#2861)**: it goes in the alpha after alpha.3, after the RC-0 re-run and
-  its readings. Never straight into a stable.
-- **Sky #160**: its migration drops the `email` columns of `people` and `pending_links`. The owner
-  approved shipping it; both columns were verified empty in that day's backup before release, and Sky
-  `v1.1.11` shipped it.
 - **Held migrations ("Oui, après revue et dev")**: the lead may itself merge a pull request carrying a migration held for the owner (`-- canari:hold-for-owner`) with its approval line drafted in `infrastructure/migration-approvals.txt`, on three conditions: an adversarial Opus review has passed; the migration has run on dev through a pre-release, which takes a backup right before it; each such merge is reported on the owner's private tracking page. Already given case by case for #2964 and #2984. `arm-auto-merge.yml` still never arms such a PR; the lead merges it by hand with `gh pr merge --match-head-commit` ([cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).

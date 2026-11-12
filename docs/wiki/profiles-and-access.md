@@ -2537,8 +2537,17 @@ WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Ca
 
 ### The students-only switch, as built (owner, 2026-11-04)
 
-The owner's eight decisions are in the [backlog entry](backlog.d/p2-a-students-only-switch-on-association-posts.md);
-the rule in one line: an association's or a list's post may be marked "Entre étudiants" when it is
+The owner's decisions (2026-11-04; an audience chosen per post was weighed and turned down as too
+heavy, the association's audience stays the base): (1) one switch when publishing, "Entre
+étudiants", OFF by default, no per-association default; (2) the rule is on WHO READS, never on how
+the post travels - republication, member reposts and pins stay allowed; (3) a student is an
+account with a cursus (a campus and a formation, so a space); (4) it complements the comments
+withheld from named readers, who see nothing of such a post; (5) the author may change it after
+publishing, both ways, at once; (6) the post and its event are independent; (7) associations and
+lists only; (8) a republished post keeps its chip and its rule, with no block or warning. The
+owner's requirement on the result: clear, clean and as user-friendly as possible - one switch, one
+line saying who will and will not see the post, a chip on the card, no new screen.
+The rule in one line: an association's or a list's post may be marked "Entre étudiants" when it is
 published and changed afterwards both ways, and is then read only by STUDENTS and by the MEMBERS
 OF THE ASSOCIATION THAT PUBLISHED IT, whatever the path. Staff without a cursus and named readers
 see nothing of it. OFF by default, for every author.

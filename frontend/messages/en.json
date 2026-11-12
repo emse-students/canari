@@ -4132,6 +4132,8 @@
   "settings_about_log_button": "Save the log",
   "settings_about_log_busy": "Preparing the log…",
   "settings_about_log_failed": "The log could not be read.",
+  "settings_principles_label": "Nos principes",
+  "settings_principles_aria": "Read our principles (in French)",
   "platform_gate_version_prefix": "This version of Canari (",
   "platform_gate_version_middle": ") is no longer supported. Install at least version",
   "platform_gate_version_suffix": "to continue.",

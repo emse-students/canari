@@ -20,6 +20,7 @@
 
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from './apiRefusal';
 import { SegmentedMediaError, isWrittenByNewerClient } from '$lib/mediaSegmented';
+import { isTransportFailure } from './transportFailure';
 
 /** Wire-level marker kept as the message so existing logs stay greppable. */
 export const MEDIA_PURGED_MESSAGE = 'MEDIA_PURGED_BY_RETENTION';
@@ -52,6 +53,24 @@ export class MediaUnreachableError extends Error {
   constructor(cause: unknown) {
     super('Media service unreachable', { cause });
     this.name = 'MediaUnreachableError';
+  }
+}
+
+/**
+ * Resolves the credential a media request needs, typing a failure to REACH the refresh endpoint as
+ * {@link MediaUnreachableError} - the throw is where the cause is known (1.6.8 logs, 2026-11-09: a
+ * refresh failing while the phone was unreachable surfaced as the auth store's transport failure,
+ * which `mediaFailureCause` rightly did not know, so it was `other`: an error with a stack, no retry).
+ * Anything that is NOT a transport failure (a dead session, a sign-out) passes through untouched.
+ *
+ * @param resolve The credential lookup, normally `() => getToken()`.
+ */
+export async function resolveMediaCredential<T>(resolve: () => Promise<T>): Promise<T> {
+  try {
+    return await resolve();
+  } catch (err) {
+    if (isTransportFailure(err)) throw new MediaUnreachableError(err);
+    throw err;
   }
 }
 

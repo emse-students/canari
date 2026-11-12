@@ -12,6 +12,11 @@ and its re-read is a row of the verification table. The boot restore's refusals 
 
 **What is left: P2 - `derived_inert` after salon sends, 48 lines.** The Svelte 5 teardown race
 ([architecture](../frontend/architecture.md)) reached from the salon send path: a `$derived` read
-after its owner was destroyed. Owed: name the component whose effect outlives the send - a salon
-send on a build with the console kept (web is enough: the warning is the runtime's), the stack of the
-first `derived_inert` read - then fix that effect's teardown, with a test that sends and unmounts.
+after its owner was destroyed. Owed: name the component whose effect outlives the send - the stack
+of the first `derived_inert` read on a build with the console kept - then fix that effect's
+teardown, with a test that sends and unmounts.
+**Not reproduced on the web (2026-11-12, dev `1.6.11-alpha.1`):** the W1 rig profile sent three
+messages in a community salon on desktop Chrome, and three more under mobile emulation (412x915,
+touch, after a reload) before going back to the list, the console kept with stack traces: no
+`derived_inert`, no other warning or error. The Pixel's lines came from the Android WebView, so
+the next reading is on the Mi 9T, at `alpha.2`.
