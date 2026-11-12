@@ -7,16 +7,21 @@ import { BadRequestException } from '@nestjs/common';
  * units), or a control character.
  *
  * @param what - the word the refusal names the thing by ("Channel", "Community")
+ * @param code - the stable code the refusal carries, for a client that names it to its user
  * @returns the trimmed name
  * @throws BadRequestException for a name that is not one
  */
-export function validateDisplayName(raw: unknown, max: number, what: string): string {
+export function validateDisplayName(
+  raw: unknown,
+  max: number,
+  what: string,
+  code?: string
+): string {
+  const refuse = (message: string) => new BadRequestException(code ? { code, message } : message);
   const name = typeof raw === 'string' ? raw.trim() : '';
-  if (!name) throw new BadRequestException(`${what} name cannot be empty`);
-  if (Array.from(name).length > max)
-    throw new BadRequestException(`${what} name too long (max ${max} characters)`);
-  if (/\p{Cc}/u.test(name))
-    throw new BadRequestException(`${what} name cannot contain control characters`);
+  if (!name) throw refuse(`${what} name cannot be empty`);
+  if (Array.from(name).length > max) throw refuse(`${what} name too long (max ${max} characters)`);
+  if (/\p{Cc}/u.test(name)) throw refuse(`${what} name cannot contain control characters`);
   return name;
 }
 
@@ -28,7 +33,7 @@ export const MAX_COMMUNITY_SLUG_LENGTH = 48;
 
 /** A community's name as it is stored: {@link validateDisplayName} at {@link MAX_COMMUNITY_NAME_LENGTH}. */
 export function validateCommunityName(raw: unknown): string {
-  return validateDisplayName(raw, MAX_COMMUNITY_NAME_LENGTH, 'Community');
+  return validateDisplayName(raw, MAX_COMMUNITY_NAME_LENGTH, 'Community', 'COMMUNITY_NAME_INVALID');
 }
 
 /**
@@ -42,7 +47,10 @@ export function validateCommunityName(raw: unknown): string {
 export function validateCommunitySlug(raw: unknown): string {
   const slug = typeof raw === 'string' ? raw.trim() : '';
   if (slug.length > MAX_COMMUNITY_SLUG_LENGTH || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-    throw new BadRequestException('Slug de communaute invalide.');
+    throw new BadRequestException({
+      code: 'COMMUNITY_SLUG_INVALID',
+      message: 'Community slug is not valid',
+    });
   }
   return slug;
 }
