@@ -62,7 +62,8 @@ Token is extracted in this priority order:
 1. Cookie `canari_ws_token`
 2. Query parameter `token=`
 
-If the JWT is invalid or absent, the upgrade is refused with HTTP `401`.
+If the JWT is invalid or absent, the upgrade is refused with HTTP `401`. Before that, the request's
+`Origin` is checked ([below](#a-socket-upgrade-must-come-from-an-allowed-origin-2026-11-12)).
 
 **Only an ACCESS token opens a socket** (`decode_access_claims` in `src/models.rs`). core-service
 signs its access token and its refresh token with the same `JWT_SECRET` and HS256, and tells them
@@ -649,6 +650,33 @@ declaration key, for at most 90 s after the device's last pong and gone with the
 clean end - the lifetime and purpose of the presence key it sits beside. The ADMIN's view shrank: it
 no longer shows a list of connected people. The privacy policy needs no change.
 
+## A socket upgrade must come from an allowed origin (2026-11-12)
+
+The rule, in `src/origin.rs`, applied by `admit_origin` (`handlers.rs`) before the token is read:
+
+- an `Origin` header that is **present** must be one of the entries of `ALLOW_ORIGIN`, compared
+  exactly as the CORS layer compares them, or the upgrade is answered `403` and no socket opens;
+- an **absent** `Origin` is accepted. A native client opens its socket outside any page: the Tauri
+  socket plugin builds its request from the URL alone and sends none;
+- **`*` is never a list.** With `ALLOW_ORIGIN=*` there is nothing to match a page against, so every
+  upgrade that names an origin is refused, and the gateway says so at ERROR when it starts. It does
+  not fall back to accepting everything.
+
+So the list below must hold every origin a shipped client's PAGE has: an entry removed costs that
+client its socket. The call signalling socket is opened by the WebView itself, so on a phone its
+origin is the Tauri one.
+
+**The refusal is logged with the origin it refused**, once per distinct value and then at each power
+of ten (`[ws] upgrade REFUSED: origin "..." is not in ALLOW_ORIGIN`). That line is the reading to
+take after a deploy: a client turned away appears there by name, and nowhere else.
+
+The local estate lists the nginx entry, the Vite dev server and the Tauri WebViews
+(`infrastructure/local/docker-compose.yml`); a page served from another address is added through
+`CANARI_LOCAL_ALLOW_ORIGIN`.
+
+Tests: `origin.rs` for the rule, and in `handlers.rs` a real handshake against the served router for
+each side (listed, absent, not listed, `null`, and a wildcard).
+
 ## CORS: the list is a fact about the clients
 
 `ALLOW_ORIGIN` is a comma-separated allowlist, `*` allows all, and `chat_gateway_cors_layer`
@@ -745,5 +773,5 @@ wrong**, and nothing said so for either.
 | `DELIVERY_SERVICE_URL` | yes | - | chat-delivery base, no `/api` (`http://chat-delivery-service:3010`); asked for the conversation half of the presence audience. Unset: every presence read is a 503, logged at boot |
 | `SOCIAL_SERVICE_URL` | yes | - | social-service base, no `/api` (`http://social-service:3014`); asked for the community half. Unset: same |
 | `INTERNAL_SECRET` | yes | - | Sent as `X-Internal-Secret` on both audience questions. Unset: same |
-| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
+| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist, and the origins a socket upgrade may name (`*` admits none of those). `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

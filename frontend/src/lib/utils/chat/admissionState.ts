@@ -1,4 +1,5 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import type { Conversation } from '$lib/types';
 import { isChannelConversationId } from './channelCrypto';
 import { readLocalMembership } from './eviction';
@@ -162,7 +163,10 @@ export async function reconcileRestoredLifecycles(deps: {
     try {
       await persistMlsStructuralCheckpoint({ mlsService });
     } catch (e) {
-      log(`[INIT] checkpoint after dropping ${dropped} evicted state(s) FAILED: ${String(e)}`);
+      // A follower tab's copy is never written (`persistCheckpoint`, said once there): expected.
+      if (!(e instanceof MlsStateWriteRefusedError && e.outcome === 'follower-tab')) {
+        log(`[INIT] checkpoint after dropping ${dropped} evicted state(s) FAILED: ${String(e)}`);
+      }
     }
   }
   return { demoted, promoted, awaiting };
