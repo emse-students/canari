@@ -7,6 +7,7 @@ import { formDraftCopiesDbName } from '$lib/forms/draftCopies';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
+import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { otherAccountOnInstall } from '$lib/utils/installAccounts';
 import {
@@ -425,6 +426,8 @@ export async function wipeDeletedAccountLocalData(
     );
     for (const key of keys) localStorage.removeItem(key);
     console.log(`${tag} removed ${keys.length} per-account local key(s)`);
+    // The pin registers this tab already read are in memory too: the stored copies went above.
+    forgetConversationPins(userId);
     const { ambiguous } = legacyConversationKeysIn(localStorage, userId);
     if (ambiguous.length > 0) {
       console.warn(

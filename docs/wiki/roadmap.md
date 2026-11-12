@@ -44,6 +44,7 @@ Version numbers: a feature batch bumps the minor (`1.7.0` carries the suggestion
 | 2026-12-01 | MiGallery: delete the encrypted copy of the old face data (v2.18.0, option C). | legacy-compatibility |
 | 2026-12-15 | System notice with no message_id: shim to remove. | legacy-compatibility |
 | 2026-12-31 | Revisit the DEVICE_REVOKED refusal that carries no reason. | legacy-compatibility |
+| 2027-02-12 | Remove the pin-register move: a one-shot removal of every `canari_pins_*` key left, then delete `takeLegacyRegister`. | legacy-compatibility |
 | 2027-02-19 | Drop server-composed legacyTitle/legacyBody on social and form pushes: owner decision first (an iOS alert would be empty). | legacy-compatibility |
 | 2027-04-25 | Make baseAccessRevision required on salon access rewrites. | legacy-compatibility |
 | 2027-05-03 | Remove two shims: list profile save resending its unchanged parent; admin preset without EDIT_PROFILE. | legacy-compatibility |
@@ -136,6 +137,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | Backlog triage, batch 24 (the entries of 2026-11-07): D078 and D015 moved to the verification table as B407 and B408 (the seed-mirror residue, the live titles and preview card), their mechanism and decisions into auth and lives; D022 pruned of what was carried out (WP-D2, the Dependances panel, the live chat's two axes), its standing permissions kept; D086 cut to the drafts still open; D009, D014, D081 unchanged (chantiers in progress). |
 | 2026-11-12 | Triage batch 25: the engagement chantier (D009) shipped whole by `v1.6.10`, its fragment goes; the readings it owes are B409-B412; D116-D128 re-read against the releases. Of 2026-11-08: birthdays (D002) and the follower tab's commits (D039) owe only readings, B413 and B414; D088 cut to the video ladder; D060's fragment went with #3170 and its row goes. Of 2026-11-09: #3185's defect entry folds into the nicknames verification row (shipped `v1.6.9`); the owner's decisions of 2026-11-09 lose the carried-out floor raise. Of 2026-11-10: the institution reach (#3314) and the mono capture (#3226) owe only readings, B415 and B416. The old-drafts triage closed nothing: R28 carries every open draft with its verdict, and the pause of 2026-11-07 (D086), whose rows are all on R28 or merged, goes. Of 2026-11-11: the throttled-link reading (#3342, #3337 merged) owes only the Mi 9T re-reading, B417. |
 | 2026-11-12 | Roadmap refresh (batch 26): R01 is now 1.6.11 (1.6.9 and 1.6.10 shipped); engagement R06-R11 are one row, every package shipped by 1.6.10, readings B409-B412; 30 backlog.d fragments created since 2026-11-09 get their D rows (D270-D298, D299). |
+| 2026-11-12 | The pin register belongs to one account (#3424): D275 closed, its fragment deleted; the legacy move's removal is dated 2027-02-12. |
 
 ## Annex A - every row of the backlog
 
@@ -479,7 +481,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-258 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+257 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -716,7 +718,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D272 | `docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md` | A newcomer offline at its Welcome gets no join push: the newcomer asks with register: true on the digest | P2 | mls-messaging | decided-not-built | 2026-11-09 | none |
 | D273 | `docs/wiki/backlog.d/p2-sqlite-bundled-needs-sqlx-release.md` | The bundled SQLite is 3.46 (RUSTSEC-2026-0459): only an sqlx and a tauri-plugin-sql release move it | P2 | security-privacy | blocked | 2026-11-09; 2027-01-31 | an upstream release (fallback re-examined by 2027-01-31) |
 | D274 | `docs/wiki/backlog.d/p2-the-edge-challenges-the-upstream-monitor.md` | Three public names unwatched from outside: the edge challenges GitHub's runners | P2 | observability | open | 2026-11-09 | user decision (the lead chooses a probe) |
-| D275 | `docs/wiki/backlog.d/p3-the-pin-register-outlives-sign-out-and-is-not-per-account.md` | The pin register outlives sign-out and erasure and is shared between accounts | P3 | security-privacy | open | 2026-11-09 | none |
 | D276 | `docs/wiki/backlog.d/video-sound-follows-the-device-volume.md` | The video speaker does not follow the device volume: a native producer on each phone | P3 | other | decided-not-built | 2026-11-09 | none |
 | D277 | `docs/wiki/backlog.d/global-search-to-design-after-1-6-9.md` | Global search over posts, forms, events, associations and people: a design for the owner | P2 | other | decided-not-built | 2026-11-10 | user decision (the design to validate) |
 | D278 | `docs/wiki/backlog.d/rotation-on-video-and-camera-screens.md` | Rotation on the video and camera screens only: the two viewers owed after the video-player stack | P2 | other | built-readings-owed | 2026-11-10 | hardware reading |
