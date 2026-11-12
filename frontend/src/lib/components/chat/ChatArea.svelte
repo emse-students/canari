@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { ChannelWritePolicy } from '$lib/services/ChannelService';
+  import { writePolicyLine } from '$lib/utils/chat/channelWritePolicy';
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import { excludeRightEdgeOver } from '$lib/mobile/edgeGestureExclusion';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -14,7 +16,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { flushSync, onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -51,7 +53,7 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import { countUnreadBelow, countingReadPoint, seenByAnchors } from '$lib/utils/chat/readState';
   import {
     lastRowAbove,
     resolveAnchor,
@@ -83,6 +85,7 @@
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import {
     isNarrowChatLayout,
     isOverlayLayout,
@@ -233,10 +236,12 @@
      * write policy, and a channel row that has not been refreshed must not silence anybody.
      */
     canWrite?: boolean;
+    /** The open salon's write policy, so the read-only line can say who may write. */
+    writePolicy?: ChannelWritePolicy;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Sends a finished recording straight out, without staging it. Enables the microphone. */
-    onSendVoiceNote?: (file: File) => void;
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -310,6 +315,7 @@
     pendingInvites = [],
     mentionRoster,
     canWrite = true,
+    writePolicy,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -445,6 +451,8 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let chatHeaderRef = $state<{ focusSearchToggle: () => void } | null>(null);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -470,7 +478,14 @@
   // other says this device cannot fetch. They were one value until 2026-09-21, and a brand-new
   // conversation was told no device could serve its history because nothing had asked whether
   // there was any.
-  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'complete' | 'unavailable';
+  type ScrollbackState =
+    | 'idle'
+    | 'asking'
+    | 'asked'
+    | 'no-peer'
+    | 'complete'
+    | 'unavailable'
+    | 'main-tab';
   let scrollbackState = $state<ScrollbackState>('idle');
   /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
   let scrollbackAskedAt = $state<number | null>(null);
@@ -916,7 +931,7 @@
     if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
+    const mine = countingReadPoint(convo, currentUserId.trim().toLowerCase());
     return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
   });
   /**
@@ -1081,13 +1096,23 @@
     if (seq !== searchSeq) return; // a newer query superseded this one
 
     if (ids === null) {
-      searchMatches = inMemoryMatches(q);
+      // NEWEST FIRST: match 1 is the one nearest the bottom, as Messenger and WhatsApp land.
+      searchMatches = inMemoryMatches(q).reverse();
       searchLimitedToLoaded = isChannel;
     } else {
-      searchMatches = ids;
+      searchMatches = [...ids].reverse();
       searchLimitedToLoaded = false;
     }
     activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
+    // The list for THIS term is now known (a superseded one returned above): take the reader to
+    // the match the counter calls 1, paging older history in exactly as the arrows do.
+    if (activeSearchIndex === 0) {
+      Log.d(
+        'chat.search',
+        `term settled: ${searchMatches.length} match(es), jumping to 1 (the newest)`
+      );
+      await navigateToMessageEnsureLoaded(searchMatches[0]);
+    }
   }
 
   /**
@@ -1109,7 +1134,41 @@
     await navigateToMessage(messageId);
   }
 
-  async function jumpSearch(delta: 1 | -1) {
+  /**
+   * Opens the bar and focuses its field in the SAME call stack as the tap: `flushSync` mounts the
+   * input now, because iOS raises the keyboard only for a focus made inside the user gesture.
+   */
+  function openSearch() {
+    showSearch = true;
+    flushSync();
+    Log.d('chat.search', `opened, field ${searchInputEl ? 'focused' : 'missing'}`);
+    searchInputEl?.focus();
+  }
+
+  /** Closes the bar, resets the search and hands the focus back to the magnifier. */
+  function closeSearch() {
+    showSearch = false;
+    searchQuery = '';
+    searchMatches = [];
+    activeSearchIndex = -1;
+    searchLimitedToLoaded = false;
+    Log.d('chat.search', 'closed, focus returned to the magnifier');
+    chatHeaderRef?.focusSearchToggle();
+  }
+
+  function onSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      void jumpSearch(e.shiftKey ? 'older' : 'newer');
+    }
+  }
+
+  /** Steps through the newest-first list: `older` is the up arrow, `newer` the down arrow. */
+  async function jumpSearch(direction: 'older' | 'newer') {
+    const delta = direction === 'older' ? 1 : -1;
     if (searchMatches.length === 0) return;
     const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
     activeSearchIndex = next;
@@ -1553,14 +1612,8 @@
         {onStartVideoCall}
         {onOpenMembers}
         {membersActive}
-        onToggleSearch={() => {
-          showSearch = !showSearch;
-          if (!showSearch) {
-            searchQuery = '';
-            searchMatches = [];
-            activeSearchIndex = -1;
-          }
-        }}
+        bind:this={chatHeaderRef}
+        onToggleSearch={() => (showSearch ? closeSearch() : openSearch())}
         searchActive={showSearch}
         {onOpenMedia}
       />
@@ -1572,7 +1625,9 @@
               <Search size={15} class="opacity-60" />
               <input
                 type="text"
+                bind:this={searchInputEl}
                 value={searchQuery}
+                onkeydown={onSearchKeydown}
                 oninput={(e) => (searchQuery = e.currentTarget.value)}
                 placeholder={m.chat_search_in_conversation_placeholder()}
                 class="chat-search-input"
@@ -1601,7 +1656,7 @@
               </span>
               <button
                 type="button"
-                onclick={() => void jumpSearch(-1)}
+                onclick={() => void jumpSearch('older')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_previous_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1610,7 +1665,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => void jumpSearch(1)}
+                onclick={() => void jumpSearch('newer')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_next_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1634,7 +1689,7 @@
             onclick={() => (showPolls = !showPolls)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <ChartColumn size={14} class="text-cn-yellow shrink-0" />
+            <ChartColumn size={14} class="text-accent-icon shrink-0" />
             <span class="font-semibold"
               >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
             >
@@ -1672,7 +1727,7 @@
             onclick={() => (showPinned = !showPinned)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <Pin size={14} class="shrink-0 text-amber-500" />
+            <Pin size={14} class="text-accent-text shrink-0" />
             <span class="font-semibold"
               >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
             >
@@ -1816,6 +1871,15 @@
               <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
               {m.chat_scrollback_no_peer()}
             </div>
+          {:else if scrollbackState === 'main-tab'}
+            <div
+              class="text-muted-foreground flex items-center justify-center gap-2 px-4 py-2 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_main_tab()}
+            </div>
           {/if}
           <ChatMessageGroups
             {visibleMessageGroups}
@@ -1899,7 +1963,7 @@
         </span>
         {#if unreadBelowCount > 0}
           <span
-            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
+            class="text-on-accent text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
             aria-hidden="true"
           >
             {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
@@ -1935,7 +1999,7 @@
           {#if (conversation?.conversationType ?? 'group') === 'group'}
             <button
               onclick={() => onStartAgainWithSamePeople?.()}
-              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+              class="bg-accent/15 hover:bg-accent/25 rounded-lg px-4 py-1.5 text-sm font-medium transition-all active:scale-95"
             >
               {m.chat_unopenable_start_again()}
             </button>
@@ -1959,7 +2023,7 @@
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-[var(--color-surface)] px-4 py-3 dark:border-white/10"
       >
         <p class="text-center text-sm text-[var(--color-text-muted)]">
-          {m.chat_channel_read_only()}
+          {writePolicyLine(writePolicy)}
         </p>
       </div>
     {:else}
@@ -2013,6 +2077,7 @@
           {onCancelReply}
           {nicknameScope}
           editingText={editSession.original}
+          editingAllowsEmpty={editSession.emptyAllowed}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}

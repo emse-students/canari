@@ -223,6 +223,23 @@ class NotificationService: UNNotificationServiceExtension {
     let actor = Self.string(userInfo["actorName"]) ?? ""
     let arg = Self.string(userInfo["contentArg"]) ?? ""
 
+    /// A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named in
+    /// `actorName`, and how many others reacted in `contentCount` - one sentence per count form, so
+    /// the plural is exact; the fixed sentence `fallback` when the server names nobody.
+    func trendBody(_ fallback: String) -> String {
+      if actor.isEmpty { return Self.localized(fallback, locale: locale) }
+      let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
+      switch others {
+      case 0: return Self.localizedFormat("notif.social.campus_trend.liked_by", actor, locale: locale)
+      case 1:
+        return Self.localizedFormat("notif.social.campus_trend.liked_by_one", actor, locale: locale)
+      default:
+        return String(
+          format: Self.localized("notif.social.campus_trend.liked_by_many", locale: locale),
+          actor, String(others))
+      }
+    }
+
     /// Title from the actor, body from the fragment or a fixed sentence when it is empty.
     func actorTitled(_ stem: String) -> (String, String) {
       let body = arg.isEmpty ? Self.localized("notif.social.\(stem).body", locale: locale) : arg
@@ -243,6 +260,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_association_repost": composed = actorTitled("association_repost")
     // WP-F6: the person who reposted names the title.
     case "social_member_repost": composed = actorTitled("member_repost")
+    case "social_friend_reaction": composed = actorTitled("friend_reaction")
+    case "social_friend_comment": composed = actorTitled("friend_comment")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // D38b: an association asks the AUTHOR to republish their personal post.
     case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
@@ -250,6 +269,9 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
     case "social_live_started": composed = actorTitled("live_started")
+    // Someone mentioned the recipient in a live chat: the writer names the title, the body is the
+    // live title or the fixed sentence.
+    case "social_live_mention": composed = actorTitled("live_mention")
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     case "social_follow_request": composed = actorTitled("follow_request")
     case "social_follow_accepted": composed = actorTitled("follow_accepted")
@@ -280,6 +302,28 @@ class NotificationService: UNNotificationServiceExtension {
     // the title, the space's name or the event's title is the body.
     case "social_booking_open": composed = actorTitled("booking_open")
     case "social_event_open": composed = actorTitled("event_open")
+    // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): the title is
+    // "Suggestion : " and the post's opening - "une publication" when the server sends none - and
+    // the body names a followed account who liked it ("Aimée par Léa et 9 autres"), or a fixed
+    // sentence when there is none. A post with no text but a picture or a video has its own key,
+    // so a colon is never followed by nothing.
+    case "social_campus_trend":
+      composed = (
+        arg.isEmpty
+          ? Self.localized("notif.social.campus_trend.untitled", locale: locale)
+          : Self.localizedFormat("notif.social.campus_trend.title", arg, locale: locale),
+        trendBody("notif.social.campus_trend.body")
+      )
+    case "social_campus_trend_photo":
+      composed = (
+        Self.localized("notif.social.campus_trend_photo.title", locale: locale),
+        trendBody("notif.social.campus_trend_photo.body")
+      )
+    case "social_campus_trend_video":
+      composed = (
+        Self.localized("notif.social.campus_trend_video.title", locale: locale),
+        trendBody("notif.social.campus_trend_video.body")
+      )
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":
       composed = (
@@ -1085,10 +1129,12 @@ class NotificationService: UNNotificationServiceExtension {
       noteCause("no-push-context")
       trace?.outcome = "fallback"
       applyMessageContent(
-        content: content, senderName: senderName, groupName: groupName,
+        content: content, senderName: senderName, groupName: groupName, declaredGroup: isGroup,
         // No context means no mirrored locale either, so this one sentence falls back to the main
         // bundle - French. It is the honest answer: nothing on the device knows better here.
-        body: Self.fallbackText(senderName: senderName, locale: nil), groupId: groupId,
+        body: Self.fallbackText(
+          senderName: senderName, groupName: groupName, declared: isGroup, locale: nil),
+        groupId: groupId,
         senderId: senderId, ctx: nil, media: nil,
         level: Self.levelDecision(level: notifLevel, mentioned: nil, myUserId: nil, groupId: groupId))
       return
@@ -1128,7 +1174,10 @@ class NotificationService: UNNotificationServiceExtension {
     }
     trace?.outcome = decrypted != nil ? "decrypted" : "fallback"
 
-    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName, locale: ctx.locale)
+    let body =
+      decrypted?.text
+      ?? Self.fallbackText(
+        senderName: senderName, groupName: groupName, declared: isGroup, locale: ctx.locale)
 
     // Cache decrypted messages so the app can pre-inject them at boot. Do not cache
     // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
@@ -1140,7 +1189,8 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     applyMessageContent(
-      content: content, senderName: senderName, groupName: groupName, body: body,
+      content: content, senderName: senderName, groupName: groupName, declaredGroup: isGroup,
+      body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
       level: Self.levelDecision(
         level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
@@ -1591,12 +1641,20 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Fills the notification with the resolved title/subtitle/body + attachment, then delivers.
   private func applyMessageContent(
-    content: UNMutableNotificationContent, senderName: String, groupName: String, body: String,
+    content: UNMutableNotificationContent, senderName: String, groupName: String,
+    declaredGroup: Bool?, body: String,
     groupId: String, senderId: String, ctx: PushContext?, media: DecryptResult?,
     level: LevelDecision
   ) {
-    let isGroup = !groupName.isEmpty && groupName != senderName
-    content.title = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
+    let isGroup = Self.titledByGroup(
+      groupName: groupName, senderName: senderName, declared: declaredGroup)
+    // An unnamed group is titled "Conversation de groupe", never with its first speaker.
+    let groupTitle =
+      groupName.isEmpty ? Self.localized("notif.group.unnamed", locale: ctx?.locale) : groupName
+    NseLog.log.debug(
+      "[CanariNSE] message shape isGroup=\(isGroup, privacy: .public) declared=\(String(describing: declaredGroup), privacy: .public)"
+    )
+    content.title = isGroup ? groupTitle : (senderName.isEmpty ? "Canari" : senderName)
     // Inside a group, surface who spoke as a subtitle (flat DMs already have it as the title).
     if isGroup, !senderName.isEmpty {
       content.subtitle = senderName
@@ -2712,10 +2770,25 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  private static func fallbackText(senderName: String, locale: String?) -> String {
-    senderName.isEmpty
-      ? localized("notif.message.encrypted", locale: locale)
-      : localizedFormat("notif.message.from", senderName, locale: locale)
+  /// Whether a message notification is titled with a GROUP rather than with its sender. False is a
+  /// direct message, titled with the sender. `declared` is the payload's `isGroup` and wins: a third
+  /// of groups carry no name (`push-payload.ts`); nil (not said) falls back to the name rule.
+  /// Android twin: `ConversationShape.isGroup`.
+  static func titledByGroup(groupName: String, senderName: String, declared: Bool?) -> Bool {
+    declared ?? (!groupName.isEmpty && groupName != senderName)
+  }
+
+  /// The line standing in for a message this extension could not open. A direct message is titled
+  /// with its sender, so it reads "Nouveau message" without repeating the name; a group's title is
+  /// the group, so its line says who wrote (owner, 2026-11-11). Android twin: `FallbackLine`.
+  private static func fallbackText(
+    senderName: String, groupName: String, declared: Bool?, locale: String?
+  ) -> String {
+    if senderName.isEmpty { return localized("notif.message.encrypted", locale: locale) }
+    if titledByGroup(groupName: groupName, senderName: senderName, declared: declared) {
+      return localizedFormat("notif.message.from", senderName, locale: locale)
+    }
+    return localized("notif.message.new", locale: locale)
   }
 
   private static func string(_ value: Any?) -> String? { value as? String }

@@ -31,7 +31,7 @@ import {
 import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { lockPostRow, PERSONAL_REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
-import { RepublicationsService, isWithheldPost } from './republications.service';
+import { RepublicationsService, assertNotReplay, isWithheldPost } from './republications.service';
 
 /**
  * At most this many requests may wait for ONE author's answer at once (D38b): an inbox a few
@@ -166,6 +166,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     // Seen FIRST, so nothing below confirms a post the proposer cannot see - not even that it is
     // anonymous. Grant-free and without the admin's by-id reach: the proposer reads it in their feed.
     await this.assertVisibleWithoutGrant(manager, postId, actorId);
+    assertNotReplay(post, this.logger);
     if (post.associationId) {
       throw refusal(BadRequestException, PERSONAL_REPOST_CODES.notPersonal, 'Not a personal post');
     }
@@ -204,6 +205,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     // Judged again, NOW: the post may have been hidden, or its author restricted, since the ask.
     const post = await this.republications.loadPostRow(proposal.subjectId, manager);
     if (!post || isWithheldPost(post)) throw new NotFoundException('Post not found');
+    assertNotReplay(post, this.logger);
     if (post.associationId) {
       throw refusal(BadRequestException, PERSONAL_REPOST_CODES.notPersonal, 'Not a personal post');
     }

@@ -121,9 +121,7 @@
 {#if ready}
   <div class="space-y-8">
     <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-      >
+      <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
         <Map size={20} />
       </span>
       <div>
@@ -139,7 +137,7 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
@@ -171,14 +169,18 @@
                 class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
               />
               {#if spaces.length > 1}
-                <Picker
-                  value={newProjectSpaceId}
-                  options={spaceOptions}
-                  onValueChange={(v) => (newProjectSpaceId = v)}
-                  label={m.carte_space_pick()}
-                  placeholder={m.carte_space_pick()}
-                  variant="field"
-                />
+                <!-- A field-variant Picker is `w-full`: unwrapped in this row it took the whole width
+                     and squeezed the name input (`flex-1 min-w-0`) to an empty square. -->
+                <div class="sm:w-64 sm:shrink-0" data-carte-space-field>
+                  <Picker
+                    value={newProjectSpaceId}
+                    options={spaceOptions}
+                    onValueChange={(v) => (newProjectSpaceId = v)}
+                    label={m.carte_space_pick()}
+                    placeholder={m.carte_space_pick()}
+                    variant="field"
+                  />
+                </div>
               {/if}
               <Button
                 type="submit"

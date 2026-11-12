@@ -99,8 +99,8 @@
 
       <button
         type="button"
-        class="text-2xs flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
-          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400'
+        class="text-2xs focus-visible:ring-accent/50 flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none active:scale-95 {hasReacted
+          ? 'bg-accent-tint text-accent-text'
           : 'text-text-muted bg-cn-surface hover:text-text-main'}"
         onclick={(e) => {
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
@@ -125,7 +125,7 @@
     {#if folds}
       <button
         type="button"
-        class="text-2xs text-text-muted hover:text-text-main bg-cn-surface flex shrink-0 items-center rounded-full px-1.5 py-0.5 font-bold shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none focus-visible:ring-amber-500/50 active:scale-95"
+        class="text-2xs text-text-muted hover:text-text-main bg-cn-surface focus-visible:ring-accent/50 flex shrink-0 items-center rounded-full px-1.5 py-0.5 font-bold shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none active:scale-95"
         onclick={(e) => {
           e.stopPropagation(); // Same reason as a reaction chip: this is not a tap on the message.
           expanded = true;

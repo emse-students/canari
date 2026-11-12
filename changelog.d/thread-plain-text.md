@@ -1,3 +1,0 @@
-### Changed - the thread's separators and system lines are plain muted text
-
-The thread's day and hour separators and its system lines (device added, call ended) are plain muted text, the conversation list no longer prefixes a system preview with "[Info]", and Settings no longer prints the raw device id ([design-reference](docs/wiki/frontend/design-reference.md)).

@@ -18,7 +18,7 @@ import { Log } from '$lib/utils/Log';
  */
 export const TAB_ICON_CLASSES = {
   normal: 'text-text-main',
-  selected: 'text-amber-600 dark:text-amber-400',
+  selected: 'text-accent-icon',
 } as const;
 
 /** The bar's icon box, in points (`TabBarOverlay.imageSide`). */
@@ -74,7 +74,7 @@ export function rgbToHex(r: number, g: number, b: number): string {
  * The colour a class list gives text right now, as `#rrggbb`.
  *
  * Read from a probe element carrying the classes, so the answer is whatever the design tokens and
- * the current theme make it - `amber-600`, or `amber-400` under `[data-theme='dark']` - and then
+ * the current theme make it - `accent-icon`, light or dark - and then
  * painted onto a 1px canvas, because a token may be `oklch()` and only a pixel gives sRGB.
  */
 export function classColorHex(className: string): string {

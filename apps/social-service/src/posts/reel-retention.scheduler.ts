@@ -31,7 +31,7 @@ export interface ReelPurgeReport {
  * Deletes a CanaReel - the post, its comments and reactions, its notifications AND its media
  * blobs - once its `expiresAt` has passed (decision C6, 30 days after publication).
  *
- * THE STATE IS THE ROW. A reel is due when `kind = 'reel' AND "expiresAt" <= NOW()`, and a deleted
+ * THE STATE IS THE ROW. A reel - or a live replay past its three days (docs/wiki/live-replays.md) - is due when `kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, and a deleted
  * row is a finished one: there is no "last run", no marker and no window that a missed tick could
  * leave a gap in. So the worker is idempotent from durable state alone - a crash between the blobs
  * and the row leaves a due row whose blobs the media service now answers `absent` for (success), and
@@ -45,7 +45,7 @@ export interface ReelPurgeReport {
  * ISOLATION: a `try` per reel, and the failed ids are excluded from the run's own next query, so
  * one reel the store refuses can neither stop the batch nor spin the loop.
  *
- * THE ALLOWLIST: the row delete names `kind = 'reel'` and the expiry in its own `WHERE`, so a
+ * THE ALLOWLIST: the row delete names `kind IN ('reel', 'replay')` and the expiry in its own `WHERE`, so a
  * non-reel post cannot be reached by this code whatever id arrives; and the blobs are deleted by
  * the media service only on their uploader's say-so (`MediaService.purgeReels`).
  *
@@ -95,7 +95,7 @@ export class ReelRetentionScheduler {
       const rows: DueReel[] = await this.postRepo.manager.query(
         `SELECT id, "authorId", images, comments
            FROM posts
-          WHERE kind = 'reel' AND "expiresAt" <= NOW()
+          WHERE kind IN ('reel', 'replay') AND "expiresAt" <= NOW()
             AND id <> ALL($1::uuid[])
           ORDER BY "expiresAt" ASC
           LIMIT $2`,
@@ -181,9 +181,10 @@ export class ReelRetentionScheduler {
 
     await this.postRepo.manager.transaction(async (tx) => {
       await tx.query(`DELETE FROM post_notifications WHERE "postId" = $1`, [row.id]);
-      await tx.query(`DELETE FROM posts WHERE id = $1 AND kind = 'reel' AND "expiresAt" <= NOW()`, [
-        row.id,
-      ]);
+      await tx.query(
+        `DELETE FROM posts WHERE id = $1 AND kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`,
+        [row.id]
+      );
     });
     return true;
   }

@@ -81,7 +81,7 @@
 
   const buttonClass = $derived(
     variant === 'glass'
-      ? 'glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95'
+      ? 'glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-accent-icon active:scale-95'
       : 'ui-icon-button chat-composer-icon-button'
   );
   const panelSkin = $derived(
@@ -182,8 +182,8 @@
           onclick={() => pick(item)}
           onmousedown={holdFocus}
           aria-checked={item.active}
-          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10 {item.active
-            ? 'text-amber-600 dark:text-amber-400'
+          class="hover:bg-accent/10 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors {item.active
+            ? 'text-accent-text'
             : 'text-text-main'}"
         >
           <ItemIcon size={18} strokeWidth={2.25} aria-hidden="true" class="shrink-0" />

@@ -384,3 +384,30 @@ export type LiveRefusalKind =
   | 'retry-segment'
   | 'refused'
   | 'unavailable';
+
+/**
+ * One segment of a live's REPLAY (`GET /api/lives/:id/replay`): the manifest's fields and its place
+ * on the replay's time line. `atMs` is the segment's server arrival time minus the first kept
+ * segment's, the database's clock on both ends - the seek map (the media time stays the fragments'
+ * own, which the player measures).
+ */
+export interface LiveReplaySegment extends LiveManifestSegment {
+  atMs: number;
+}
+
+/**
+ * One page of a replay, as social-service serialises it (`LiveReplayPage`, docs/wiki/live-replays.md
+ * section 2): the live KEY (never logged), the length, the post's expiry and the DATABASE's clock to
+ * read it against (never the phone's), up to 200 segments from `from`, and `nextFrom` - the index of
+ * the next page, `null` on the last.
+ */
+export interface LiveReplayPage {
+  liveId: string;
+  postId: string;
+  key: string;
+  durationMs: number;
+  expiresAt: string;
+  serverNow: string;
+  segments: LiveReplaySegment[];
+  nextFrom: number | null;
+}

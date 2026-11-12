@@ -147,6 +147,27 @@ export interface ReelUsage {
   oldestOverdueMs: number | null;
 }
 
+/**
+ * Live replays (docs/wiki/live-replays.md), as social-service's tables see them. `evictions` is the
+ * replays the TOTAL CAP ended before their three days in the last 30 days (`live_replay_cap_evictions`,
+ * pruned at 30 days by the live sweep, each also a `[LIVE_REPLAY_CAP]` WARN line): zero is the
+ * expected answer and is shown; a non-zero one is the admins' signal that the cap (D5,
+ * `LIVE_REPLAY_TOTAL_MAX_GB`) is too small for what is broadcast. The cap itself is NOT copied here -
+ * it is social-service's setting, and each eviction row carries the value it was judged against.
+ */
+export interface ReplayUsage {
+  /** Replays still within their three days. */
+  live: number;
+  /** Their segments' bytes, the sum the cap is judged on. */
+  bytes: number;
+  /** Replays the cap ended early, in the last 30 days. */
+  evictions: number;
+  /** The latest eviction, or null when none is on record. */
+  lastEvictedAt: string | null;
+  /** The cap the latest eviction was judged against, in bytes; null with no eviction. */
+  lastCapBytes: number | null;
+}
+
 export interface MlsUsage {
   tables: MlsTableUsage[];
   queue: MlsQueueUsage | null;
@@ -166,6 +187,8 @@ export interface BackendStorageUsage {
   media: MediaBucketUsage | null;
   /** CanaReels' retention worker, as the database sees it. `null` when the measurement failed. */
   reels: ReelUsage | null;
+  /** Live replays and the cap's evictions. `null` when the measurement failed. */
+  replays: ReplayUsage | null;
   /**
    * The MLS half. `null` only when the whole block failed; inside it, each measurement fails on its
    * own, exactly like the four above.
@@ -203,12 +226,13 @@ export class AdminStorageController {
   ): Promise<BackendStorageUsage> {
     this.assertGlobalAdmin(headerGlobalAdmin);
 
-    const [disk, postgresBytes, redisBytes, media, reels, mls] = await Promise.all([
+    const [disk, postgresBytes, redisBytes, media, reels, replays, mls] = await Promise.all([
       this.measureDisk(),
       this.measurePostgres(),
       this.measureRedis(),
       this.measureMedia(),
       this.measureReels(),
+      this.measureReplays(),
       this.measureMls(),
     ]);
 
@@ -219,8 +243,50 @@ export class AdminStorageController {
       redisBytes,
       media,
       reels,
+      replays,
       mls,
     };
+  }
+
+  /**
+   * Live replays still showing, their bytes, and the cap's evictions on record - one statement of
+   * scalar subqueries. Independent like every measurement here: `null` and a `warn` on a failure.
+   */
+  private async measureReplays(): Promise<ReplayUsage | null> {
+    try {
+      const [row]: {
+        live: string;
+        bytes: string;
+        evictions: string;
+        lastEvictedAt: Date | null;
+        lastCapBytes: string | null;
+      }[] = await this.dataSource.query(
+        `SELECT (SELECT COUNT(*) FROM posts p
+                  WHERE p.kind = 'replay' AND p."expiresAt" > NOW()) AS live,
+                (SELECT COALESCE(SUM(l."storedBytes"), 0) FROM posts p JOIN lives l ON l.id = p."liveId"
+                  WHERE p.kind = 'replay' AND p."expiresAt" > NOW()) AS bytes,
+                (SELECT COUNT(*) FROM live_replay_cap_evictions) AS evictions,
+                e."evictedAt" AS "lastEvictedAt", e."capBytes" AS "lastCapBytes"
+           FROM (SELECT 1) one
+           LEFT JOIN LATERAL (SELECT "evictedAt", "capBytes" FROM live_replay_cap_evictions
+                               ORDER BY "evictedAt" DESC LIMIT 1) e ON true`
+      );
+      return {
+        live: Number(row?.live ?? 0),
+        bytes: Number(row?.bytes ?? 0),
+        evictions: Number(row?.evictions ?? 0),
+        lastEvictedAt: row?.lastEvictedAt ? new Date(row.lastEvictedAt).toISOString() : null,
+        lastCapBytes:
+          row?.lastCapBytes === null || row?.lastCapBytes === undefined
+            ? null
+            : Number(row.lastCapBytes),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `[STORAGE] replay measurement failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return null;
+    }
   }
 
   /**

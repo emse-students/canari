@@ -731,8 +731,8 @@ describe('the upgrade of a database the previous build left', () => {
 
     const upgraded = await sqliteOver(db);
 
-    expect(SCHEMA_VERSION).toBe(19);
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 19 });
+    expect(SCHEMA_VERSION).toBe(20);
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 20 });
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 0 });
     expect(await upgraded.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
     expect((await upgraded.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);

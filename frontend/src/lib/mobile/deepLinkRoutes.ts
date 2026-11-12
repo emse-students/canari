@@ -1,14 +1,13 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
-import { FOLLOW_REQUESTS_ROUTE, REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
+import {
+  FOLLOW_REQUESTS_ROUTE,
+  POST_COMMENT_PARAM,
+  REPUBLICATION_REQUESTS_ROUTE,
+  postHref,
+} from '$lib/posts/notificationTarget';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 import type { AppPath } from '$lib/utils/internalPath';
 import { BOOKINGS_HREF } from '$lib/bookings/routes';
-
-/**
- * The query parameter naming the comment a post link opens at - written by the server into a
- * comment push (`socialDeepLink` in social-service) and read by the post page.
- */
-export const POST_COMMENT_PARAM = 'comment';
 
 /**
  * The app route behind a `fr.emse.canari://<host>[/<id>]` link that opens a PAGE - the table a
@@ -32,9 +31,7 @@ export function appRouteForDeepLink(u: URL): AppPath | null {
     case 'post': {
       if (!id) return null;
       // A comment, reply or mention push names the comment: the post page scrolls to it.
-      const comment = u.searchParams.get(POST_COMMENT_PARAM);
-      const route: AppPath = `/posts/${encodeURIComponent(id)}`;
-      return comment ? `${route}?${POST_COMMENT_PARAM}=${encodeURIComponent(comment)}` : route;
+      return postHref(id, u.searchParams.get(POST_COMMENT_PARAM));
     }
     case 'form':
       return id ? `/forms/${encodeURIComponent(id)}` : null;

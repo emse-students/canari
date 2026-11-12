@@ -30,7 +30,7 @@
 
   /** The two scale pickers wear the question's own field box, sized to their content. */
   const scaleTriggerClass =
-    'w-auto min-w-[4rem] px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all focus:border-cn-yellow flex items-center justify-between gap-2 text-left';
+    'w-auto min-w-[4rem] px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all focus:border-accent-icon flex items-center justify-between gap-2 text-left';
 </script>
 
 <div

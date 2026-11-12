@@ -13,6 +13,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { stubQueryBuilder } from '../testing/queryBuilder';
 
 /**
  * A HISTORY WALK IS BOUNDED BY THE STREAM HEAD IT WAS GIVEN AT ITS START.
@@ -92,7 +93,11 @@ describe('MessagingService history - the walk is bounded by the head', () => {
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(DeviceGroupMembership),
+          // The reader's earliest device row per group, read once per request: none here.
+          useValue: { ...emptyRepo(), createQueryBuilder: () => stubQueryBuilder() },
+        },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },

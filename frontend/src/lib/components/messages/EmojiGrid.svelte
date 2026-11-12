@@ -169,7 +169,7 @@
       bind:value={query}
       placeholder={m.emoji_picker_search_label()}
       aria-label={m.emoji_picker_search_label()}
-      class="bg-cn-bg text-text-main placeholder:text-text-muted min-w-0 flex-1 rounded-2xl border border-black/5 px-4 py-2 text-sm outline-none focus:border-amber-500/60 dark:border-white/10"
+      class="bg-cn-bg text-text-main placeholder:text-text-muted focus:border-accent/60 min-w-0 flex-1 rounded-2xl border border-black/5 px-4 py-2 text-sm outline-none dark:border-white/10"
     />
     <button
       type="button"
@@ -200,7 +200,7 @@
           onclick={() => chooseTone(option)}
           class="flex size-9 items-center justify-center rounded-xl text-xl hover:bg-black/5 dark:hover:bg-white/10 {option ===
           tone
-            ? 'bg-amber-500/15'
+            ? 'bg-accent/15'
             : ''}"
           aria-label={SKIN_TONE_LABELS[option]()}
           title={SKIN_TONE_LABELS[option]()}
@@ -231,7 +231,7 @@
           onclick={() => jumpTo(section.category)}
           class="flex size-8 items-center justify-center rounded-lg border-b-2 text-lg transition-opacity {section.category ===
           activeCategory
-            ? 'border-amber-500 opacity-100'
+            ? 'border-accent-icon opacity-100'
             : 'border-transparent opacity-60 hover:opacity-100'}"
           aria-label={CATEGORY_LABELS[section.category]()}
           title={CATEGORY_LABELS[section.category]()}
@@ -261,7 +261,7 @@
         <button
           type="button"
           onclick={load}
-          class="rounded-lg bg-amber-500/15 px-3 py-1 text-sm font-semibold text-amber-700 dark:text-amber-400"
+          class="bg-accent/15 text-accent-text rounded-lg px-3 py-1 text-sm font-semibold"
         >
           {m.emoji_picker_retry()}
         </button>

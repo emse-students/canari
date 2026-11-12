@@ -240,6 +240,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "checkpoint_skip_mode IN ('off', 'on')",
     holds: oneOf('checkpoint_skip_mode', ['off', 'on']),
   },
+  CHK_platform_config_live_replays_mode: {
+    sql: "live_replays_mode IN ('off', 'on')",
+    holds: oneOf('live_replays_mode', ['off', 'on']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),
@@ -262,6 +266,28 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
     holds: (r) => r.studentsOnly !== true || given(r.associationId),
   },
+  // `reachPublic` and `reachSpaces` default to NULL since migration 162; the seed writes no reach.
+  CHK_posts_reach_public: {
+    sql: `"reachPublic" IS NULL OR "reachPublic" IN ('all', 'students', 'staff')`,
+    holds: oneOf('reachPublic', ['all', 'students', 'staff'], true),
+  },
+  CHK_posts_reach_together: {
+    sql: `("reachPublic" IS NULL) = ("reachSpaces" IS NULL)
+    AND ("reachPublic" IS NULL OR "associationId" IS NOT NULL)`,
+    holds: (r) =>
+      given(r.reachPublic) === given(r.reachSpaces) &&
+      (!given(r.reachPublic) || given(r.associationId)),
+  },
+  CHK_posts_reach_spaces_shape: {
+    sql: `"reachSpaces" IS NULL
+    OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
+         THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
+    holds: (r) => {
+      if (!given(r.reachSpaces)) return true;
+      const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
+      return Array.isArray(v) && v.length > 0;
+    },
+  },
   // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
   association_calendar_events_presentation_check: {
     sql: "presentation IN ('association', 'neutral')",
@@ -273,17 +299,17 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   },
   // `kind` defaults to 'post'.
   posts_kind_shape: {
-    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)
-       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL)`,
+    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL AND "liveId" IS NULL)
+       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+           AND "liveId" IS NULL)
+       OR (kind = 'replay' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+           AND "liveId" IS NOT NULL)`,
     holds: (r) => {
       const kind = r.kind ?? 'post';
-      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
-      return (
-        kind === 'reel' &&
-        typeof r.durationMs === 'number' &&
-        r.durationMs > 0 &&
-        given(r.expiresAt)
-      );
+      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt) && !given(r.liveId);
+      const timed = typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt);
+      if (kind === 'reel') return timed && !given(r.liveId);
+      return kind === 'replay' && timed && given(r.liveId);
     },
   },
 };

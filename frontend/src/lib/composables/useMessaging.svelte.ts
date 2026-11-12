@@ -6,12 +6,12 @@
  * - Reply/cancel-reply state
  * - File selection + validation
  */
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
-import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
@@ -21,6 +21,7 @@ import {
   resumeUnsentSalonSends,
   forgetSalonSendsOfEndedSession,
   deliverSalonAttachment,
+  quoteReference,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -59,8 +60,9 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
+import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -69,6 +71,7 @@ import {
 } from '$lib/utils/chat/messageReactions';
 import {
   notificationGroupName,
+  notificationIsGroup,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
 import {
@@ -87,6 +90,7 @@ import { capturePosterOf } from '$lib/reels/capturePoster';
 import { buildChatReelTake, type ChatReelTarget } from '$lib/reels/chatReelTake';
 import {
   applyEditToBody,
+  editFitsBody,
   envelopeBodyText,
   getPreviewText,
   mkMediaEnvelope,
@@ -95,10 +99,9 @@ import {
 } from '$lib/envelope';
 import {
   encodeAppMessage,
-  mediaEncodingProtoField,
-  mediaPlaceholderProtoField,
+  forwardedMediaMsg,
+  mediaKindFromEnvelope,
   mkMedia,
-  MediaKind,
 } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
@@ -154,6 +157,7 @@ import {
 } from '$lib/utils/chat/pendingMutations';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
+  keepPendingMutation,
   logDiscarded,
   pendingFor,
   settledChatMessage,
@@ -162,6 +166,7 @@ import {
   type PendingMutationDeps,
 } from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
@@ -173,6 +178,8 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -215,24 +222,8 @@ export interface MessagingContext {
    * a context without one simply never signals rather than failing.
    */
   signalChannelRead?: (channelId: string) => void;
-}
-
-/**
- * Maps an envelope media type to its protobuf {@link MediaKind}. A file has no dedicated kind,
- * so anything unrecognised falls through to UNSPECIFIED, which is what the renderer treats as
- * "generic attachment".
- */
-function mediaKindFromEnvelope(type: string): number {
-  switch (type) {
-    case 'image':
-      return MediaKind.MEDIA_KIND_IMAGE;
-    case 'video':
-      return MediaKind.MEDIA_KIND_VIDEO;
-    case 'audio':
-      return MediaKind.MEDIA_KIND_AUDIO;
-    default:
-      return MediaKind.MEDIA_KIND_UNSPECIFIED;
-  }
+  /** See `SendMessageDeps.onChannelWriteRefused`. Optional: a context without it keeps the row. */
+  onChannelWriteRefused?: SendMessageDeps['onChannelWriteRefused'];
 }
 
 /** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
@@ -614,7 +605,14 @@ export function useMessaging() {
      */
     convo: Pick<
       Conversation,
-      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks' | 'serverReadWatermarks'
+      | 'id'
+      | 'name'
+      | 'contactName'
+      | 'conversationType'
+      | 'messages'
+      | 'readWatermarks'
+      | 'serverReadWatermarks'
+      | 'localReadSeed'
     >,
     senderId: string,
     content: string,
@@ -642,7 +640,7 @@ export function useMessaging() {
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
-    const mine = readPointFor(convo, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
     // still queued for this device, the next connection delivers it, and it used to be announced
@@ -664,7 +662,7 @@ export function useMessaging() {
     // category; this is the half it cannot reach - a frame received over the socket raises its
     // notification here, with no push involved, and it must obey the same set.
     const category = categoryOfConversation(conversationKey);
-    if (!notificationPreferences.isEnabled(category)) {
+    if (!notificationPreferences.pushAllowed(category)) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );
@@ -780,7 +778,10 @@ export function useMessaging() {
         : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
-        : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+        : // In front, but nobody has touched it for the attention window (`windowAttention`).
+          !windowAttention.attentive
+          ? `the window is in front but idle (no gesture for ${ATTENTION_WINDOW_MS / 1000} s)`
+          : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
@@ -804,6 +805,7 @@ export function useMessaging() {
           senderId,
           senderName,
           groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+          isGroup: notificationIsGroup(convo.conversationType),
           body: notificationBody,
           mentionsMe,
           sentAt,
@@ -827,6 +829,7 @@ export function useMessaging() {
       patchSalonEcho: (key, id, change) =>
         void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
       log: ctx.log,
+      onChannelWriteRefused: ctx.onChannelWriteRefused,
     };
   }
 
@@ -1265,7 +1268,7 @@ export function useMessaging() {
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
     // something nobody reads at all.
-    const mineNow = readPointFor(convo, ctx.userId.toLowerCase());
+    const mineNow = countingReadPoint(convo, ctx.userId.toLowerCase());
     const shouldMarkUnread =
       !isConversationOpen &&
       !isSalonMuted(normalized) &&
@@ -1851,7 +1854,7 @@ export function useMessaging() {
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
-    const mine = readPointFor(base, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
       ? 0
@@ -2095,6 +2098,18 @@ export function useMessaging() {
 
     const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
     replyByConversation.delete(sentFrom);
+    // THE REPLY ARMED AT THE TAP GOES WITH THE FIRST FILE, like the caption: a message that answers
+    // another stays an answer whether it is typed or carries a photo (owner, 2026-11-10: the reply
+    // was consumed here and the file went out as a plain message).
+    const quoted = currentReplyingTo ? quoteReference(currentReplyingTo) : undefined;
+    const mediaReplyTo: OutboxEntry['replyTo'] = quoted
+      ? { id: quoted.id, senderId: quoted.senderId, preview: quoted.content }
+      : undefined;
+    if (quoted && fileEntries.length > 0) {
+      ctx.log(
+        `[REPLY] ${sentFrom.slice(0, 8)}… the reply to ${quoted.id.slice(0, 8)}… goes with the first of ${fileEntries.length} file(s)`
+      );
+    }
     ctx.setSendError('');
 
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
@@ -2120,6 +2135,8 @@ export function useMessaging() {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
+          const replyForFile = index === 0 ? mediaReplyTo : undefined;
+          const echoReplyForFile = index === 0 ? quoted : undefined;
           const messageId = crypto.randomUUID();
           const sentAt = tappedAt + index;
 
@@ -2136,7 +2153,18 @@ export function useMessaging() {
             ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
             caption: captionForFile,
             ...(entry.voiceNote ? { voiceNote: true } : {}),
+            ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
+            ...(entry.loudness ? { loudness: entry.loudness } : {}),
           };
+          // The quote the placeholder row is drawn with (the real envelope is built from the same
+          // reference once the upload names the blob).
+          const placeholderReply = echoReplyForFile
+            ? {
+                id: echoReplyForFile.id,
+                senderId: echoReplyForFile.senderId,
+                content: echoReplyForFile.content,
+              }
+            : undefined;
           const placeholder = serializeEnvelope(
             mkMediaEnvelope(
               {
@@ -2151,8 +2179,10 @@ export function useMessaging() {
                 height: entry.height,
                 ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                 ...(entry.voiceNote ? { voiceNote: true } : {}),
+                ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
               },
-              captionForFile
+              captionForFile,
+              placeholderReply
             )
           );
 
@@ -2169,6 +2199,7 @@ export function useMessaging() {
               timestamp: new SvelteDate(sentAt),
               skipDbSave: true,
               salonEcho: true,
+              ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
             });
             // The salon left the map since the tap (`addMessageToChat` buffers instead of drawing):
             // no row means no upload, and the catch gives the file back to the staging.
@@ -2183,6 +2214,7 @@ export function useMessaging() {
               sentAt,
               file: entry.file,
               media: described,
+              replyTo: replyForFile,
               deps: salonAttachmentDeps(ctx, sentFrom, convo, messageId, {
                 width: entry.width,
                 height: entry.height,
@@ -2205,6 +2237,7 @@ export function useMessaging() {
                 sentAt,
                 kind: 'media',
                 media: { ...described, fileBytes },
+                ...(replyForFile ? { replyTo: replyForFile } : {}),
                 status: 'pending',
                 attempts: 0,
                 createdAt: sentAt,
@@ -2267,6 +2300,7 @@ export function useMessaging() {
                   onPairWritten: () => {
                     pairWritten = true;
                   },
+                  ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
                 });
               } catch (pairError) {
                 if (!(pairError instanceof MessagePairWriteError)) throw pairError;
@@ -2360,6 +2394,12 @@ export function useMessaging() {
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
           mediaRestaged = unsent > 0;
+          // THE FIRST FILE WAS NOT SENT: the reply it carried goes back with it, so the retry is
+          // still an answer.
+          if (sentMediaMessageCount === 0 && currentReplyingTo) {
+            replyByConversation.set(sentFrom, currentReplyingTo);
+            ctx.log(`[REPLY] re-armed in "${sentFrom.slice(0, 8)}…": its file was given back`);
+          }
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
@@ -2552,7 +2592,15 @@ export function useMessaging() {
         `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
           `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
       );
-      return { file: prepared.file, width: prepared.width, height: prepared.height };
+      return {
+        file: prepared.file,
+        width: prepared.width,
+        height: prepared.height,
+        // Declared with the message (owner, 2026-11-10): whole ms, never 0 ("not declared").
+        durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+        // Declared with the message: what the reader's player normalises to (owner, 2026-11-11).
+        ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
+      };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
@@ -2613,7 +2661,15 @@ export function useMessaging() {
    * send: draining the pending queue here would post a half-written caption and any photo staged
    * beside it, neither of which the user asked to send by lifting their finger off a microphone.
    */
-  async function sendVoiceNote(file: File, ctx: MessagingContext) {
+  async function sendVoiceNote(
+    file: File,
+    ctx: MessagingContext,
+    loudness: MediaLoudness | null = null
+  ) {
+    // THE SOUND WAS MEASURED WHILE IT WAS RECORDED (owner, 2026-11-12; `recordingLoudness.ts`):
+    // the send waits for nothing more. Carried in `MediaRef.loudness` to every reader's player, DM,
+    // group and salon alike - all three leave through `buildMediaMessage`. Null (not measured, or
+    // silence) sends the note unmeasured, as every note before this was.
     const ready = await prepareMediaFiles([file], ctx);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
@@ -2621,7 +2677,7 @@ export function useMessaging() {
     // audio file are the same bytes with the same mime type, and the only thing left to read is a
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
-    await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+    await handleSendChat(ctx, '', { files: ready.map((f) => voiceNoteEntry(f, loudness)) });
   }
 
   /**
@@ -2780,27 +2836,44 @@ export function useMessaging() {
    *
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
+   *
+   * A MESSAGE SHOWN WITH NO ROW UNDER `conversationId` KEEPS THE ACT (`act`) as a pending mutation,
+   * as a peer's act is kept: the row may be on its way - a re-keyed 1:1 whose stored history is still
+   * moving onto the joined group (review of #3406), a message shown before its writer stored it - and
+   * that writer's own look settles the entry (`settlePendingFor`). Written nowhere, the act was on
+   * screen only, and a reload brought the old body back.
    */
   async function persistLocalMutation(
     conversationId: string,
     msg: ChatMessage,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    act: Pick<PendingMutation, 'kind' | 'slot' | 'rank' | 'text' | 'removed'>
   ): Promise<void> {
     if (!ctx.storage) return;
     try {
       // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
       // one, and a full-row write erased it every time the user reacted.
-      await ctx.storage.updateMessage(
+      const patch = {
+        content: msg.content,
+        reactions: messageReactions.get(msg.id),
+        isDeleted: msg.isDeleted,
+        isEdited: msg.isEdited,
+        ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
+      };
+      const written = await ctx.storage.mergeMessages(
         conversationId,
-        msg.id,
-        {
-          content: msg.content,
-          reactions: messageReactions.get(msg.id),
-          isDeleted: msg.isDeleted,
-          isEdited: msg.isEdited,
-          ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
-        },
+        [msg.id],
+        (current) => mergeStoredMessage(current, patch),
         ctx.deviceKeyB64
+      );
+      if (written.has(msg.id)) return;
+      ctx.log(
+        `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} found no row under ${conversationId.slice(0, 8)}... - kept until its row is stored`
+      );
+      await keepPendingMutation(
+        pendingDeps(ctx),
+        { conversationId, messageId: msg.id, sender: canonicalUserId(ctx.userId), ...act },
+        Date.now()
       );
     } catch (e) {
       ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
@@ -2842,7 +2915,12 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx);
+      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx, {
+        kind: 'reaction',
+        slot: emoji,
+        rank: at,
+        ...(alreadyReacted ? { removed: true } : {}),
+      });
     }
 
     const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
@@ -3196,7 +3274,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
-      await persistLocalMutation(key, msgs[idx], ctx);
+      await persistLocalMutation(key, msgs[idx], ctx, { kind: 'delete', slot: '', rank: 0 });
     }
   }
 
@@ -3299,6 +3377,12 @@ export function useMessaging() {
     // Ownership check: only the sender can edit their own message
     const target = convo.messages.find((m) => m.id === messageId);
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
+    // The same rule every receiver applies: an empty text removes a media message's caption and
+    // empties nothing else (`editFitsBody`).
+    if (!editFitsBody(target.content, text)) {
+      ctx.log(`[EDIT] ${messageId.slice(0, 8)} not sent - an empty text edits only a caption`);
+      return;
+    }
 
     // ONE INSTANT FOR BOTH HALVES - see handleTogglePin below, which has always done this. Taking
     // it twice dated the local apply and the broadcast differently for the same act, and now that
@@ -3324,7 +3408,12 @@ export function useMessaging() {
         content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx);
+      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx, {
+        kind: 'edit',
+        slot: '',
+        rank: editedAt,
+        text,
+      });
     }
   }
 
@@ -3433,22 +3522,7 @@ export function useMessaging() {
           await sendEncryptedChannelMessage(
             targetName,
             encodeAppMessage({
-              ...mkMedia({
-                kind: mediaKindFromEnvelope(env.media.type),
-                mediaId: env.media.mediaId,
-                key: fromHex(env.media.key),
-                iv: fromHex(env.media.iv),
-                mimeType: env.media.mimeType,
-                size: env.media.size,
-                fileName: env.media.fileName ?? '',
-                caption: env.caption,
-                ...(env.media.width && env.media.height
-                  ? { width: env.media.width, height: env.media.height }
-                  : {}),
-                ...mediaPlaceholderProtoField(env.media.placeholder),
-                // A forward relays the blob as it was sealed, so it must relay how.
-                ...mediaEncodingProtoField(env.media.encoding),
-              }),
+              ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
               messageId: crypto.randomUUID(),
               sentAt: Date.now(),
             })
@@ -3477,23 +3551,12 @@ export function useMessaging() {
         const media = env.media;
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
-          ...mkMedia({
-            kind: mediaKindFromEnvelope(media.type),
-            mediaId: media.mediaId,
-            key: fromHex(media.key),
-            iv: fromHex(media.iv),
-            mimeType: media.mimeType,
-            size: media.size,
-            fileName: media.fileName ?? '',
-            caption: env.caption,
-            ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-            ...mediaPlaceholderProtoField(media.placeholder),
-            ...mediaEncodingProtoField(media.encoding),
-          }),
+          ...mkMedia(forwardedMediaMsg(media, env.caption)),
           messageId,
           sentAt: Date.now(),
         });
-        await mlsService.sendMessage(convo.id, protoBytes, messageId);
+        // From whichever tab forwards: a follower hands the frame to the leader (`frameFromAnyTab`).
+        await sendFrameFromThisTab(mlsService, convo.id, protoBytes, { messageId });
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };

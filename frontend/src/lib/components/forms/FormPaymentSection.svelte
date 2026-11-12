@@ -174,12 +174,12 @@
           <div
             class="border-amber-warn/30 bg-amber-warn/10 space-y-2 rounded-2xl border-2 px-4 py-3"
           >
-            <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
+            <p class="text-accent-text text-sm font-semibold">
               {paymentBlocker === 'no-association'
                 ? m.form_payment_needs_association_title()
                 : m.form_payment_needs_setup_title({ association: associationName })}
             </p>
-            <p class="text-xs text-amber-800/80 dark:text-amber-200/70">
+            <p class="text-accent-text text-xs">
               {paymentBlocker === 'no-association'
                 ? m.form_payment_needs_association_desc()
                 : m.form_payment_needs_setup_desc()}
@@ -187,7 +187,7 @@
             <button
               type="button"
               onclick={() => (requiresPayment = false)}
-              class="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-900 transition-colors hover:bg-amber-500/30 dark:text-amber-100"
+              class="bg-accent/20 text-accent-text hover:bg-accent/30 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors"
             >
               {m.form_no_payments_create_free_button()}
             </button>
@@ -258,10 +258,10 @@
             class="flex items-center gap-4 rounded-2xl border-2 px-4 py-3.5 {onlineCopy.state ===
             'unavailable'
               ? 'border-amber-warn/30 bg-amber-warn/10'
-              : 'border-cn-yellow bg-cn-yellow/5'}"
+              : 'border-accent-icon bg-accent/5'}"
           >
             <div
-              class="bg-cn-yellow/20 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+              class="bg-accent/20 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
             >
               <CreditCard size={20} />
             </div>

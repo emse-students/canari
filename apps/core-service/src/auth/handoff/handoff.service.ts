@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type { KeyObject } from 'node:crypto';
 import {
@@ -24,6 +26,12 @@ import {
   signHandoffToken,
   type HandoffPublicJwk,
 } from './handoff-token';
+import {
+  HANDOFF_ACCESS,
+  HandoffAccessClass,
+  HandoffAccessRefused,
+  type HandoffAccess,
+} from './handoff-access';
 
 /** Injection token for the registry, so a test can hand the service a site whose flag is ON. */
 export const HANDOFF_SITES = Symbol('HANDOFF_SITES');
@@ -59,8 +67,9 @@ export function handoffIssuer(frontendUrl: string | undefined): string | null {
  *
  * Stateless here: single use is the SITE's durable ledger (`jti` as a primary key), which is where
  * a replay would land. What this side owes is that only a live Canari session mints, only for a
- * site and a page of the closed registry, and that every mint leaves one audit line - and that the
- * token itself is never logged.
+ * site and a page of the closed registry, only for a person MiConnect would let into that site
+ * ({@link HandoffAccess}, F3-bound - asked before anything is signed), and that every mint leaves
+ * one audit line - and that the token itself is never logged.
  *
  * FAILS CLOSED: without `HANDOFF_SIGNING_KEY`, or with an issuer `FRONTEND_URL` cannot give, the
  * route answers `HANDOFF_NOT_OFFERED` (404) and the JWKS does not exist. A key that is set but
@@ -72,7 +81,10 @@ export class HandoffService {
   private readonly signer: { key: KeyObject; jwk: HandoffPublicJwk; issuer: string } | null;
   private readonly sites: readonly EcosystemSiteContract[];
 
-  constructor(@Optional() @Inject(HANDOFF_SITES) sites?: readonly EcosystemSiteContract[]) {
+  constructor(
+    @Optional() @Inject(HANDOFF_SITES) sites: readonly EcosystemSiteContract[] | undefined,
+    @Inject(HANDOFF_ACCESS) private readonly access: HandoffAccess
+  ) {
     this.sites = sites ?? ECOSYSTEM_SITES;
     this.signer = this.readSigner();
   }
@@ -129,8 +141,14 @@ export class HandoffService {
   /**
    * Mints a token for `userId` - the subject of a VERIFIED, LIVE access token, never a value from
    * the body - towards site `aud`, landing on `dest`. Refusals are typed and logged at `warn`.
+   * MiConnect is asked LAST, after the registry, so a malformed request costs it nothing.
    */
-  mint(userId: string, aud: unknown, dest: unknown, nowMs: number = Date.now()): HandoffMint {
+  async mint(
+    userId: string,
+    aud: unknown,
+    dest: unknown,
+    nowMs: number = Date.now()
+  ): Promise<HandoffMint> {
     const signer = this.requireSigner();
     const found = handoffSite(aud, this.sites);
     if ('refusal' in found) {
@@ -147,6 +165,7 @@ export class HandoffService {
       );
       throw this.refuse(HandoffRefusal.badDest, 'this page cannot be opened with a handoff');
     }
+    await this.assertMayEnter(userId, site);
 
     const iat = Math.floor(nowMs / 1000);
     const jti = newHandoffJti();
@@ -167,10 +186,42 @@ export class HandoffService {
     };
   }
 
+  /**
+   * MiConnect's door ({@link HandoffAccess}): a refusal is logged with its class and answered as a
+   * type - 403 when MiConnect's answer is no, 503 when it could not be asked. Never a fallback to
+   * minting.
+   */
+  private async assertMayEnter(userId: string, site: EcosystemSiteContract): Promise<void> {
+    try {
+      if (!site.miconnectApplication) {
+        throw new HandoffAccessRefused(
+          HandoffAccessClass.notConfigured,
+          'no MiConnect application in the registry'
+        );
+      }
+      await this.access.assertMayEnter(userId, site.miconnectApplication);
+    } catch (e) {
+      if (!(e instanceof HandoffAccessRefused)) throw e;
+      const line = `[HANDOFF] refused class=${e.accessClass} aud=${site.id} user=${userId} (${e.detail})`;
+      if (e.unavailable) this.logger.error(line);
+      else this.logger.warn(line);
+      throw e.unavailable
+        ? this.refuse(HandoffRefusal.miconnectUnavailable, 'MiConnect could not be asked')
+        : this.refuse(HandoffRefusal.accessRefused, 'MiConnect does not let this account in');
+    }
+  }
+
   private refuse(code: HandoffRefusalCode, message: string) {
     const body = { code, message };
-    return code === HandoffRefusal.notOffered
-      ? new NotFoundException(body)
-      : new BadRequestException(body);
+    switch (code) {
+      case HandoffRefusal.notOffered:
+        return new NotFoundException(body);
+      case HandoffRefusal.accessRefused:
+        return new ForbiddenException(body);
+      case HandoffRefusal.miconnectUnavailable:
+        return new ServiceUnavailableException(body);
+      default:
+        return new BadRequestException(body);
+    }
   }
 }

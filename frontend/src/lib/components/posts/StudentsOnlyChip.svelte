@@ -19,7 +19,7 @@
 <span
   class="text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-semibold {onMedia
     ? 'bg-white/15 text-white'
-    : 'bg-amber-warn/10 text-amber-warn'}"
+    : 'bg-amber-warn/10 text-amber-warn-text'}"
   title={m.post_students_only_chip_title()}
   data-students-only-chip
 >

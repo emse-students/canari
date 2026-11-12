@@ -1,0 +1,596 @@
+{
+  "_doc": "The demo week: one integration/party week of invented first names and generic associations. Nothing here is a real person or association. The seed step (verify) checks that dev holds this content; MLS content (chat, communities) cannot be inserted as rows and is created by live clients.",
+  "week": "integration week and its party on Friday",
+  "people": [
+    "Lina",
+    "Mathis",
+    "Sana",
+    "Tom",
+    "Emma",
+    "Yanis",
+    "Chloé",
+    "Noah"
+  ],
+  "associations": [
+    {
+      "name": "Bureau des élèves",
+      "role": "organises the week"
+    },
+    {
+      "name": "Club photo",
+      "role": "covers the party"
+    },
+    {
+      "name": "Club cuisine",
+      "role": "Thursday dinner"
+    },
+    {
+      "name": "Club de randonnée",
+      "role": "Saturday hike"
+    }
+  ],
+  "conversation": {
+    "title": {
+      "fr": "Soirée d'intégration",
+      "en": "Integration party"
+    },
+    "members": [
+      "Lina",
+      "Mathis",
+      "Sana",
+      "Tom"
+    ],
+    "messages": {
+      "fr": [
+        "Qui apporte les enceintes ?",
+        "Moi, je passe les prendre à 18 h",
+        "On se retrouve devant la salle à 20 h ?",
+        "Parfait, j'amène les gobelets",
+        "Je ramène les guirlandes lumineuses",
+        "Top ! Et les chips, qui s'en occupe ?",
+        "Moi, j'ai déjà la liste des courses",
+        "Sana, tu fais les photos ?",
+        "Oui, avec le club photo, rendez-vous à 19 h 30",
+        "Super, on se voit tous vendredi !",
+        "Nickel, on se retrouve à 19 h 30 alors",
+        "Je lance le sondage du thème, vous avez voté ?",
+        "Oui ! Années 80 pour moi",
+        "Années 80 gagne, on sort les perruques",
+        "Les perruques arrivent jeudi, je m'en occupe",
+        "Je prépare la playlist des années 80",
+        "Parfait, je fais l'affiche pour demain",
+        "Tu peux la poster dans le groupe quand elle est prête ?",
+        "Oui, je l'envoie ce soir",
+        "Trop hâte, ça va être top vendredi",
+        "On se retrouve devant la salle, comme prévu",
+        "Parfait, à vendredi alors !",
+        "Hâte d'y être !"
+      ],
+      "en": [
+        "Who brings the speakers?",
+        "I will, picking them up at 6 pm",
+        "Meet in front of the hall at 8 pm?",
+        "Perfect, I will bring the cups",
+        "I will bring the string lights",
+        "Great! And who is on snacks?",
+        "I have the shopping list already",
+        "Sana, will you take the photos?",
+        "Yes, with the photo club, see you at 7:30 pm",
+        "Awesome, see you all on Friday!",
+        "Perfect, so we meet at 7:30 pm",
+        "Did you all vote in the theme poll?",
+        "Yes! 80s for me",
+        "80s wins, time to get the wigs out",
+        "The wigs arrive on Thursday, I'll handle them",
+        "I'm putting together the 80s playlist",
+        "Perfect, I'll make the poster for tomorrow",
+        "Can you post it here when it's ready?",
+        "Sure, I'll send it tonight",
+        "Can't wait, Friday is going to be great",
+        "We meet in front of the hall, as planned",
+        "Perfect, see you Friday then!",
+        "Can't wait!"
+      ]
+    },
+    "speakers": {
+      "fr": [
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "fourth",
+        "peer",
+        "third",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "peer"
+      ],
+      "en": [
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "fourth",
+        "peer",
+        "third",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "peer"
+      ]
+    }
+  },
+  "poll": {
+    "question": {
+      "fr": "Quel thème pour la soirée ?",
+      "en": "Which theme for the party?"
+    },
+    "options": {
+      "fr": [
+        "Années 80",
+        "Pyjama",
+        "Neon"
+      ],
+      "en": [
+        "80s",
+        "Pyjamas",
+        "Neon"
+      ]
+    }
+  },
+  "event": {
+    "title": {
+      "fr": "Soirée d'intégration",
+      "en": "Integration party"
+    },
+    "when": "Friday 20:00, relative to the capture date"
+  },
+  "allowedInitials": {
+    "fr": [],
+    "en": []
+  },
+  "forbiddenOnScreen": [
+    "Canari Test",
+    "Environnement de test",
+    "Test environment",
+    "Fictif",
+    "Fictive",
+    "@example.invalid"
+  ],
+  "shots": [
+    {
+      "id": "1-promise",
+      "ios": [
+        {
+          "tab": 2
+        }
+      ],
+      "route": "/chat",
+      "caption": {
+        "fr": "Ta vie asso, au même endroit",
+        "en": "Your campus life, in one place"
+      },
+      "sub": {
+        "fr": "Messages, actus, agenda",
+        "en": "Messages, news, agenda"
+      },
+      "expect": {
+        "fr": [
+          "Soirée d'intégration"
+        ],
+        "en": [
+          "Integration party"
+        ]
+      }
+    },
+    {
+      "id": "2-messaging",
+      "ios": [
+        {
+          "tab": 2
+        },
+        {
+          "tap": {
+            "fr": "Soirée d'intégration",
+            "en": "Integration party"
+          }
+        }
+      ],
+      "route": "/chat",
+      "open": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
+      "caption": {
+        "fr": "Des messages vraiment privés",
+        "en": "Truly private messages"
+      },
+      "sub": {
+        "fr": "Chiffrés de bout en bout",
+        "en": "End-to-end encrypted"
+      },
+      "expect": {
+        "fr": [
+          "Soirée d'intégration",
+          "Parfait, à vendredi alors"
+        ],
+        "en": [
+          "Integration party",
+          "Perfect, see you Friday then"
+        ]
+      }
+    },
+    {
+      "id": "3-communities",
+      "ios": [
+        {
+          "tab": 1
+        },
+        {
+          "tap": {
+            "fr": "Campus",
+            "en": "Campus"
+          }
+        },
+        {
+          "tap": {
+            "fr": "général",
+            "en": "général"
+          }
+        }
+      ],
+      "route": "/communities",
+      "open": [
+        {
+          "fr": "Campus",
+          "en": "Campus"
+        },
+        {
+          "fr": "général",
+          "en": "général"
+        }
+      ],
+      "caption": {
+        "fr": "Des communautés à ton image",
+        "en": "Communities of your own"
+      },
+      "expect": {
+        "fr": [
+          "Bienvenue dans le campus"
+        ],
+        "en": [
+          "Welcome to the campus"
+        ]
+      }
+    },
+    {
+      "id": "4-feed-polls",
+      "scrollAnchor": {
+        "fr": "votez pour le thème",
+        "en": "vote for the theme"
+      },
+      "ios": [
+        {
+          "tab": 0
+        },
+        {
+          "tap": {
+            "fr": "Associations",
+            "en": "Associations"
+          }
+        }
+      ],
+      "route": "/posts",
+      "caption": {
+        "fr": "Actus et sondages du campus",
+        "en": "Campus news and polls"
+      },
+      "expect": {
+        "fr": [
+          "Quel thème pour la soirée"
+        ],
+        "en": [
+          "Which theme for the party"
+        ]
+      },
+      "open": {
+        "fr": "Associations",
+        "en": "Associations"
+      },
+      "waitFor": {
+        "fr": "votez pour le thème",
+        "en": "vote for the theme"
+      }
+    },
+    {
+      "id": "5-agenda",
+      "ios": [
+        {
+          "tab": 3,
+          "top": true
+        },
+        {
+          "tap": {
+            "fr": "Agenda Événements et calendrier",
+            "en": "Calendar Events and calendar"
+          },
+          "retry": true
+        }
+      ],
+      "waitFor": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
+      "scrollAnchor": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
+      "route": "/calendar",
+      "caption": {
+        "fr": "Agenda et associations réunis",
+        "en": "Agenda and clubs together"
+      },
+      "expect": {
+        "fr": [
+          "Soirée d'intégration"
+        ],
+        "en": [
+          "Integration party"
+        ]
+      }
+    },
+    {
+      "id": "6-privacy",
+      "ios": [
+        {
+          "tab": 3,
+          "top": true
+        },
+        {
+          "tap": {
+            "fr": "Voir mon profil",
+            "en": "View my profile"
+          }
+        },
+        {
+          "tap": {
+            "fr": "Paramètres",
+            "en": "Settings"
+          }
+        },
+        {
+          "tap": {
+            "fr": "Sécurité & appareils",
+            "en": "Security & devices"
+          }
+        }
+      ],
+      "route": "/settings/security",
+      "caption": {
+        "fr": "Ta vie privée, protégée",
+        "en": "Your privacy, protected"
+      },
+      "sub": {
+        "fr": "Un PIN que toi seul connais",
+        "en": "A PIN only you know"
+      },
+      "expect": {
+        "fr": [],
+        "en": []
+      }
+    }
+  ],
+  "featureGraphic": {
+    "caption": {
+      "fr": "Canari, ta vie de campus",
+      "en": "Canari, your campus life"
+    },
+    "shot": "1-promise"
+  },
+  "dms": [
+    {
+      "a": "third",
+      "b": "peer",
+      "messages": {
+        "fr": [
+          [
+            "third",
+            "Tu peux me renvoyer le planning de vendredi ?"
+          ],
+          [
+            "peer",
+            "Bien sûr, je te l'envoie ce soir"
+          ]
+        ],
+        "en": [
+          [
+            "third",
+            "Can you send me Friday's schedule?"
+          ],
+          [
+            "peer",
+            "Sure, I'll send it tonight"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "third",
+      "b": "fourth",
+      "messages": {
+        "fr": [
+          [
+            "third",
+            "Merci pour le coup de main hier !"
+          ],
+          [
+            "fourth",
+            "Avec plaisir, à vendredi"
+          ]
+        ],
+        "en": [
+          [
+            "third",
+            "Thanks for the help yesterday!"
+          ],
+          [
+            "fourth",
+            "Anytime, see you Friday"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "owner",
+      "b": "peer",
+      "messages": {
+        "fr": [
+          [
+            "owner",
+            "Tu viens à la rando samedi ?"
+          ],
+          [
+            "peer",
+            "Oui, je prends le pique-nique"
+          ]
+        ],
+        "en": [
+          [
+            "owner",
+            "Are you coming to the hike on Saturday?"
+          ],
+          [
+            "peer",
+            "Yes, I'll bring the picnic"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "owner",
+      "b": "fourth",
+      "messages": {
+        "fr": [
+          [
+            "owner",
+            "J'ai les photos de la dernière sortie"
+          ],
+          [
+            "fourth",
+            "Génial, envoie-les dans le groupe"
+          ]
+        ],
+        "en": [
+          [
+            "owner",
+            "I have the photos from the last trip"
+          ],
+          [
+            "fourth",
+            "Great, post them in the group"
+          ]
+        ]
+      }
+    }
+  ],
+  "communities": [
+    {
+      "name": "Campus",
+      "owner": "third",
+      "channels": [
+        "soirées",
+        "bons-plans"
+      ],
+      "hello": {
+        "owner": {
+          "fr": "Bienvenue dans le campus, c'est ici qu'on s'organise",
+          "en": "Welcome to the campus, this is where we get organised"
+        },
+        "peer": {
+          "fr": "Super, merci pour l'invitation !",
+          "en": "Great, thanks for the invite!"
+        },
+        "fourth": {
+          "fr": "J'ai déjà plein d'idées de sorties",
+          "en": "I already have plenty of ideas for outings"
+        }
+      }
+    },
+    {
+      "name": "Atelier photo",
+      "owner": "owner",
+      "channels": [
+        "sorties",
+        "expo"
+      ],
+      "hello": {
+        "owner": {
+          "fr": "Prochaine sortie photo samedi matin",
+          "en": "Next photo outing on Saturday morning"
+        },
+        "third": {
+          "fr": "Je viens avec mon objectif grand angle",
+          "en": "I'm coming with my wide-angle lens"
+        },
+        "peer": {
+          "fr": "Moi je prends le trépied",
+          "en": "I'll bring the tripod"
+        }
+      }
+    }
+  ],
+  "photoPosts": [
+    {
+      "seat": "owner",
+      "association": "Bureau des élèves",
+      "photo": "photo-3.jpg",
+      "text": {
+        "fr": "Les décos de la soirée sont prêtes, rendez-vous vendredi à 20 h !",
+        "en": "The party decorations are ready, see you Friday at 8 pm!"
+      }
+    },
+    {
+      "seat": "peer",
+      "association": "Club photo",
+      "photo": "photo-6.jpg",
+      "text": {
+        "fr": "Premières images du campus ce matin",
+        "en": "First pictures of the campus this morning"
+      }
+    },
+    {
+      "seat": "fourth",
+      "association": "Club randonnée",
+      "photo": "photo-5.jpg",
+      "text": {
+        "fr": "Le sentier de samedi, version automne",
+        "en": "Saturday's trail, autumn edition"
+      }
+    }
+  ]
+}

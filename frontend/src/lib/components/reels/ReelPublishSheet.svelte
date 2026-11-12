@@ -17,6 +17,14 @@
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
   import StudentsOnlySwitch from '$lib/components/posts/StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import InstitutionReachPicker from '$lib/components/posts/InstitutionReachPicker.svelte';
+  import {
+    emptyReachDraft,
+    institutionReachOffered,
+    isReachComplete,
+    plainReach,
+    type InstitutionReachDraft,
+  } from '$lib/posts/institutionReach';
   import type { ComposerReelState } from '$lib/posts/composerReelState';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
@@ -33,6 +41,7 @@
     type PublishedReelUpload,
     type PublishReelDeps,
   } from '$lib/reels/publishReel';
+  import { reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
   import { showToast } from '$lib/stores/toast.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
@@ -44,17 +53,13 @@
   /**
    * The step was reached from the new-post composer's camera (user, 2026-10-19: one camera, one
    * behaviour). A member who opened "new post" may not expect a CanaReel, which is DELETED after its
-   * days - so the step says so before "Publier", starts from what the composer held, and offers the
-   * old outcome: the video handed back to the composer, kept as an ordinary post.
+   * lifetime - so the step says so before "Publier" and starts from what the composer held. There is
+   * no "keep as a post" any more (owner, 2026-11-09: every vertical video of 90 s or less IS a
+   * CanaReel, `reels/reelRule.ts`): a filmed take is one, so handing it back would make it one again.
    */
   interface ReelPublishFromComposer {
-    /** The composer's text, identity and "Entre étudiants": where the step starts. */
+    /** The composer's text, identity, "Entre étudiants" and reach: where the step starts. */
     start: ComposerReelState;
-    /**
-     * "Garder comme post": the video goes back to the composer as an attachment, with the state as
-     * the step holds it NOW - an edit made here is the member's, not lost.
-     */
-    onkeep: (kept: ComposerReelState) => void;
     /** The reel was published, as `identity`: the composer closes behind it. */
     onpublished: (identity: string) => void;
   }
@@ -94,6 +99,21 @@
   });
   /** Sent only where offered: a switch left on before the identity changed is not a choice. */
   const sendStudentsOnly = $derived(studentsOnly && studentsOnlyAssociation !== null);
+  /**
+   * The reach of an institution's post (owner, 2026-11-10): no default, mandatory - "Publier" stays
+   * disabled until a space and a public are chosen, and the reach is sent only where it is offered.
+   */
+  let reach = $state<InstitutionReachDraft>(
+    untrack(() => composer?.start.reach ?? emptyReachDraft())
+  );
+  const reachAssociation = $derived.by(() => {
+    const chosen = associations.find((a) => a.id === identity) ?? null;
+    return chosen && institutionReachOffered(chosen.type) ? chosen : null;
+  });
+  const reachMissing = $derived(reachAssociation !== null && !isReachComplete(reach));
+  const sendReach = $derived(
+    reachAssociation !== null && isReachComplete(reach) ? plainReach(reach) : undefined
+  );
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
@@ -192,12 +212,18 @@
           `[reel-publish] publishing with "Entre étudiants" ${sendStudentsOnly ? 'ON' : 'off'}`
         );
       }
+      if (reachAssociation) {
+        console.debug(
+          `[reel-publish] publishing with a reach of ${reach.spaces.length} space(s), public ${reach.public}`
+        );
+      }
       if (clip.blob.type.startsWith('image/')) {
         await publishCameraPhoto({
           clip,
           caption,
           identity,
           studentsOnly: sendStudentsOnly,
+          reach: sendReach,
           onStage,
         });
       } else {
@@ -207,7 +233,9 @@
             caption,
             identity,
             studentsOnly: sendStudentsOnly,
+            reach: sendReach,
             maxDurationMs: limits.maxDurationMs,
+            rule: reelRuleOf(limits),
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
             ...(chatTake
@@ -283,11 +311,16 @@
         bind:this={notice}
         role="note"
         tabindex="-1"
-        class="bg-amber-warn/10 text-amber-warn mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
+        class="bg-amber-warn/10 text-amber-warn-text mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
         data-reel-publish-composer-notice
       >
         <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
-        <span>{m.reels_publish_from_composer_notice({ days: limits.retentionDays })}</span>
+        <span
+          >{m.reels_publish_from_composer_notice({
+            seconds: Math.round(limits.maxDurationMs / 1000),
+            lifetime: reelLifetimeLabel(limits.retentionDays),
+          })}</span
+        >
       </p>
     {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
@@ -296,6 +329,16 @@
         <StudentsOnlySwitch
           bind:checked={studentsOnly}
           associationName={studentsOnlyAssociation.name}
+        />
+      </div>
+    {/if}
+    {#if reachAssociation}
+      <div class="mt-3">
+        <InstitutionReachPicker
+          bind:reach
+          associationId={reachAssociation.id}
+          associationName={reachAssociation.name}
+          busy={publishing}
         />
       </div>
     {/if}
@@ -347,7 +390,7 @@
     {/if}
 
     <p class="text-text-muted text-2xs mt-4">
-      {m.reels_publish_expiry_note({ days: limits.retentionDays })}
+      {m.reels_publish_expiry_note({ lifetime: reelLifetimeLabel(limits.retentionDays) })}
     </p>
   </div>
 
@@ -374,26 +417,11 @@
     <div class="flex items-center justify-end gap-3">
       {#if busyLabel}
         <span class="text-text-muted text-sm" aria-live="polite">{busyLabel}</span>
-      {:else if composer}
-        <Button
-          type="button"
-          variant="secondary"
-          class="shrink-0"
-          disabled={publishing}
-          onclick={() => {
-            console.debug('[reel-publish] kept as a post: the video goes back to the composer');
-            // The switch goes back as the author left it: the composer sends it only where offered.
-            composer.onkeep({ caption, identity, studentsOnly });
-          }}
-          data-reel-keep-as-post
-        >
-          {m.reels_publish_keep_as_post()}
-        </Button>
       {/if}
       <Button
         type="button"
         class="shrink-0"
-        disabled={publishing}
+        disabled={publishing || reachMissing}
         loading={publishing}
         onclick={publish}
         data-reel-publish-submit

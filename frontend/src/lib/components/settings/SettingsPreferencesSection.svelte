@@ -15,7 +15,16 @@
     Compass,
     Lightbulb,
     Smile,
+    Play,
+    Infinity as InfinityIcon,
   } from '@lucide/svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import { Log } from '$lib/utils/Log';
+  import {
+    offeredVideoAutoplayModes,
+    videoAutoplayMode,
+    type VideoAutoplayMode,
+  } from '$lib/video/autoplayPolicy';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { replayGuide } from '$lib/guidance/guidance.svelte';
@@ -26,6 +35,7 @@
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
+  import ActivitySharingSetting from './ActivitySharingSetting.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     EMOJI_STYLES,
@@ -33,6 +43,33 @@
     setEmojiStyle,
     type EmojiStyle,
   } from '$lib/utils/emojiStyle';
+
+  /** The label of each autoplay choice, in the order `VIDEO_AUTOPLAY_MODES` lists them. */
+  const VIDEO_AUTOPLAY_LABELS: Record<VideoAutoplayMode, () => string> = {
+    always: m.settings_video_autoplay_always,
+    wifi: m.settings_video_autoplay_wifi,
+    never: m.settings_video_autoplay_never,
+  };
+
+  /**
+   * This device's autoplay mode as it applies - a "wifi" stored on a device that cannot tell its link
+   * is drawn as Jamais, which is what it does (owner, 2026-11-11).
+   */
+  const autoplayMode = $derived(videoAutoplayMode());
+  /** The choices this device can honour: no "Wi-Fi" where the engine reports no link. */
+  const autoplayModes = $derived(offeredVideoAutoplayModes());
+
+  /** "Lecture automatique des vidéos" (owner, 2026-11-10): kept per device, applied at the next start. */
+  function setVideoAutoplay(mode: VideoAutoplayMode) {
+    Log.d('SETTINGS', `video autoplay: ${mode}`);
+    settings.setVideoAutoplay(mode);
+  }
+
+  /** "Défilement infini des CanaReels" (owner, 2026-11-10): read at the next feed video opened. */
+  function setInfiniteReels(enabled: boolean) {
+    Log.d('SETTINGS', `infinite CanaReels: ${enabled ? 'on' : 'off'}`);
+    settings.setInfiniteReelsEnabled(enabled);
+  }
 
   /** The label of each emoji choice, in the order `EMOJI_STYLES` lists them. */
   const EMOJI_STYLE_LABELS: Record<EmojiStyle, () => string> = {
@@ -99,8 +136,8 @@
         aria-checked={settings.soundsEnabled}
         aria-label={m.profile_pref_sounds_aria()}
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
-        class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+        class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.soundsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
       >
         <span
           class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -132,8 +169,8 @@
           aria-checked={settings.vibrationsEnabled}
           aria-label={m.profile_pref_vibrations_aria()}
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.vibrationsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -162,8 +199,8 @@
           aria-checked={settings.shareSuggestionsEnabled}
           aria-label={m.settings_share_suggestions_aria()}
           onclick={() => settings.setShareSuggestionsEnabled(!settings.shareSuggestionsEnabled)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.shareSuggestionsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.shareSuggestionsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -204,9 +241,9 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="focus-visible:ring-cn-yellow flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
  {themeStore.preference === opt.value
-              ? 'bg-cn-yellow text-cn-ink shadow'
+              ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
@@ -241,6 +278,48 @@
 
     <RepostConsentSetting />
 
+    <ActivitySharingSetting />
+
+    <div data-infinite-reels-setting>
+      <Toggle
+        layout="row"
+        icon={InfinityIcon}
+        checked={settings.infiniteReelsEnabled}
+        label={m.settings_infinite_reels_label()}
+        hint={m.settings_infinite_reels_hint()}
+        onchange={setInfiniteReels}
+      />
+    </div>
+
+    <div
+      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+      data-video-autoplay-setting
+    >
+      <div class="flex items-center gap-3.5">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+          <Play size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-text-main text-sm font-bold">{m.settings_video_autoplay_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">
+            {m.settings_video_autoplay_desc()}
+          </p>
+        </div>
+      </div>
+
+      <SegmentedControl
+        items={autoplayModes.map((mode) => ({
+          key: mode,
+          label: VIDEO_AUTOPLAY_LABELS[mode](),
+        }))}
+        value={autoplayMode}
+        onSelect={setVideoAutoplay}
+        label={m.settings_video_autoplay_label()}
+        tone="yellow"
+        class="w-full shrink-0 sm:w-64"
+      />
+    </div>
+
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
@@ -265,9 +344,9 @@
             aria-label={LOCALE_LABELS[locale]}
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
-            class="focus-visible:ring-cn-yellow rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
  {getLocale() === locale
-              ? 'bg-cn-yellow text-cn-ink shadow'
+              ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             {locale}
@@ -291,7 +370,7 @@
         type="button"
         onclick={replayWelcomeTour}
         data-guide-replay="welcome-tour"
-        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-cn-yellow shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
       >
         {m.guide_replay_button()}
       </button>
@@ -313,7 +392,7 @@
             type="button"
             onclick={() => replayHint(hint)}
             data-guide-replay={hint.id}
-            class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-cn-yellow rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+            class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
           >
             {hint.replay!.label()}
           </button>

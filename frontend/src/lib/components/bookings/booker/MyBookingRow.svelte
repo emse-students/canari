@@ -64,7 +64,7 @@
   onclick={() => (open = true)}
 >
   <span
-    class="bg-cn-yellow/15 text-text-muted flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+    class="bg-accent/15 text-text-muted flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
     aria-hidden="true"
   >
     <CalendarClock size={20} />

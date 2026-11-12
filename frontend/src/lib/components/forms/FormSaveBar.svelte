@@ -74,14 +74,14 @@
   <div class="min-w-0 space-y-1">
     <p class="text-text-muted min-h-5 text-sm">
       {#if titleMissing}
-        <span class="text-amber-warn font-medium">{m.form_title_required_hint()}</span>
+        <span class="text-amber-warn-text font-medium">{m.form_title_required_hint()}</span>
       {:else}
         {summary}
       {/if}
     </p>
     {#if statusLine}
       <p
-        class="text-xs {statusLine.warn ? 'text-amber-warn font-medium' : 'text-text-muted'}"
+        class="text-xs {statusLine.warn ? 'text-amber-warn-text font-medium' : 'text-text-muted'}"
         data-testid="autosave-status"
         data-status={autosaveStatus}
         role="status"
@@ -90,7 +90,7 @@
       </p>
     {/if}
     {#if publish?.blockedReason}
-      <p class="text-amber-warn text-sm font-medium" data-testid="publish-blocked-reason">
+      <p class="text-amber-warn-text text-sm font-medium" data-testid="publish-blocked-reason">
         {publish.blockedReason}
       </p>
     {/if}

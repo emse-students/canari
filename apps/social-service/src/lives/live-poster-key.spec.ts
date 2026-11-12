@@ -3,7 +3,8 @@
  * `frontend/src/lib/live/livePosterCrypto.test.ts` asserts for the WebCrypto derivation, so the
  * broadcaster's seal and the list's key cannot drift apart.
  */
-import { derivePosterKey, LIVE_POSTER_KEY_INFO } from './live-poster-key';
+import { Logger } from '@nestjs/common';
+import { derivePosterKey, LIVE_POSTER_KEY_INFO, servedPoster } from './live-poster-key';
 
 const LIVE_KEY = 'ab'.repeat(32);
 const LIVE_ID = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';
@@ -25,5 +26,24 @@ describe('derivePosterKey', () => {
   it('refuses what is not a live key or a live id', () => {
     expect(() => derivePosterKey('zz', LIVE_ID)).toThrow(RangeError);
     expect(() => derivePosterKey(LIVE_KEY, 'not-a-uuid')).toThrow(RangeError);
+  });
+});
+
+describe('servedPoster', () => {
+  const stored = { liveKey: LIVE_KEY, liveKeyCiphertext: null, liveKeyVersion: null };
+  it('serves the name, its age and the poster key together', () => {
+    expect(servedPoster(LIVE_ID, { ...stored, posterName: 'n', posterAgeMs: 1500 })).toEqual({
+      poster: { name: 'n', ageMs: 1500 },
+      posterKey: derivePosterKey(LIVE_KEY, LIVE_ID),
+    });
+  });
+  it('serves nothing without a name, or for a name whose time is unknown - never an age of 0', () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const none = { poster: null, posterKey: null };
+    expect(servedPoster(LIVE_ID, { ...stored, posterName: null, posterAgeMs: 5 })).toEqual(none);
+    expect(servedPoster(LIVE_ID, { ...stored, posterName: 'n', posterAgeMs: null })).toEqual(none);
+    expect(servedPoster(LIVE_ID, { ...stored, posterName: 'n', posterAgeMs: undefined })).toEqual(
+      none
+    );
   });
 });

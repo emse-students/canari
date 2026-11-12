@@ -78,6 +78,9 @@ describe('FormBuilder - a question image', () => {
     expect(state.item.imageUrl).toBe(URL_A);
     const thumb = target.querySelector('img') as HTMLImageElement;
     expect(thumb.getAttribute('src')).toMatch(/11111111-1111-4111-8111-111111111111$/);
+    // The preview shows the whole picture, never a crop.
+    expect(thumb.className).toContain('object-contain');
+    expect(thumb.className).not.toContain('object-cover');
     expect(affordances(target)).toContain(m.form_builder_replace_image());
   });
 

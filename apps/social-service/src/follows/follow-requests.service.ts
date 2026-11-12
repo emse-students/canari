@@ -392,7 +392,7 @@ export class FollowRequestsService {
   private async notifyQuietly(
     recipientId: string,
     actorId: string,
-    type: string,
+    type: typeof FOLLOW_REQUEST_NOTIFICATION | typeof FOLLOW_ACCEPTED_NOTIFICATION,
     requestClaimed?: boolean
   ): Promise<void> {
     // The notice is keyed by the FOLLOW pair, whichever side is told.

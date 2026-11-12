@@ -62,7 +62,7 @@
     /** This conversation's nickname scope: a sender's nickname set here replaces their name. */
     nicknameScope?: string | null;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
-    onBeginEdit?: (messageId: string, text: string) => void;
+    onBeginEdit?: (messageId: string, text: string, captionOnly?: boolean) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
     /**
@@ -327,7 +327,7 @@
                 {:else}
                   <a
                     href={profileHref(msg.senderId)}
-                    class="hover:text-text-main rounded-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    class="hover:text-text-main focus-visible:ring-accent-icon rounded-sm transition-colors outline-none focus-visible:ring-2"
                     data-sender-profile-link={msg.senderId}
                     onclick={(e) => e.stopPropagation()}
                   >

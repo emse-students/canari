@@ -4,7 +4,7 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import {
@@ -32,7 +32,11 @@
   import { classifyMapAssociations, parkedPlacements } from '$lib/carte/mapEntries';
   import { carteSpaceLabel } from '$lib/carte/spaceLabel';
   import { refusalCode } from '$lib/utils/apiRefusal';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
+  import MenuList from '$lib/components/ui/MenuList.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import { opensAsSheet } from '$lib/components/ui/floatingSurface';
+  import type { MenuListSection } from '$lib/components/ui/menuList';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { CARTE_STYLE, DEFAULT_SCRIM_OPACITY } from '$lib/carte/theme';
@@ -46,13 +50,27 @@
     findUnitOverlaps,
     unitInkShapes,
     STAGE_HEIGHT,
+    STAGE_WIDTH,
     TEXT_BASE_WIDTH,
+    directoryRect,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
   import { CARTE_SHAPES, shapeRadius, LOGO_SHAPES, logoShape } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
+  import {
+    CARTE_DRAG_MIME,
+    decodeDrag,
+    encodeDrag,
+    groupAssociationsByZone,
+    moveZoneId,
+    planDrop,
+    type CarteDrag,
+  } from '$lib/carte/editorDnd';
+  import { barPublishAction, overflowActions, type OverflowAction } from '$lib/carte/publishAction';
   import { buildPublishedCarte, fingerprintPublishedCarte } from '$lib/carte/publish';
+  import { publishAfterSave } from '$lib/carte/publishAfterSave';
+  import ZoneGrip from '$lib/carte/ZoneGrip.svelte';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import { MonitorSmartphone } from '@lucide/svelte';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -74,8 +92,10 @@
     TextAlignStart,
     TextAlignCenter,
     TextAlignEnd,
-    Maximize,
-    Minimize,
+    ArrowLeft,
+    Ellipsis,
+    PanelRightClose,
+    PanelRightOpen,
     ZoomIn,
     ZoomOut,
     Pencil,
@@ -92,6 +112,9 @@
   import { m } from '$lib/paraglide/messages';
   import { portalWhile } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
+  import { inertAppShell } from '$lib/actions/inertAppShell';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
+  import { appPathFromPathname } from '$lib/utils/internalPath';
 
   let ready = $state(false);
   let loading = $state(true);
@@ -219,28 +242,6 @@
   /** Pending debounced-autosave timer (cleared on every change). */
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // ── Full-page editing ─────────────────────────────────────────────────────────
-  // An in-app overlay (fixed inset-0) that fills the browser window while keeping its chrome - NOT
-  // the Fullscreen API, which hides the whole browser interface.
-  //
-  // ITS RUNG IS `--z-page-overlay`, AND THAT IS A SENTENCE ABOUT WHAT IT IS: a page's own surface
-  // expanded to the window, not a claim against the window. Everything ambient or interruptive
-  // stays over it - a toast (60) reporting the autosave, the banner column (120), any sheet or
-  // modal opened from here - which is also what the raw `z-50` did, so nothing a user can see
-  // changes. What changes is that the number is no longer comparable with nothing: at 50 it sat
-  // between two rungs, in the same gap that put the agenda admin's reject dialog under a toast.
-  //
-  // AND IT IS PORTALLED TO THE BODY WHILE ON (`portalWhile`), because the rung means nothing where it
-  // was written: `.page-scroll-wrap` is a containing block (`app.css`), so `fixed inset-0` covered
-  // the SCROLLED wrapper, shifted by its scrollTop - measured 2026-09-28 at 219 px, the overlap
-  // warning showing under the poster.
-  let isFullPage = $state(false);
-
-  /** Toggles the in-app full-page overlay so authoring can use the whole window. */
-  function toggleFullPage() {
-    isFullPage = !isFullPage;
-  }
-
   const projectId = $derived(page.params.id ?? '');
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
   const content = $derived(model ? indexBubbleContent(model) : {});
@@ -292,23 +293,57 @@
       .map((asso) => asso.name)
   );
 
-  // ── Scaled preview (poster renders at its natural A2 frame, scaled to fit the column width) ──
-  let previewWidth = $state(0);
+  // ── The canvas fills the window (owner, 2026-11-11) ───────────────────────────────────────
+  /** Which half of the poster the canvas shows: the whole map, or the directory column alone. */
+  let view = $state<'map' | 'directory'>('map');
+  /** The scroll area's size, from which the fit scale is derived. */
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
+  let viewportEl = $state<HTMLElement>();
+  /** The un-scaled poster node: what the PDF export captures. */
   let posterEl = $state<HTMLElement>();
-  /** User zoom multiplier on top of the fit-to-width scale (1 = fit; >1 scrolls the preview). */
+  /** Room kept around the poster inside the scroll area (px). */
+  const CANVAS_PAD = 24;
+  /** User zoom multiplier on top of the fit scale (1 = fit; >1 scrolls). */
   let zoom = $state(1);
   const MIN_ZOOM = 0.4;
   const MAX_ZOOM = 4;
-  /** Scale that fits the whole A2 width into the preview column. */
-  const fitScale = $derived(previewWidth > 0 ? Math.min(1, previewWidth / 1600) : 1);
+  const dirBox = directoryRect();
+  /** Scale that fits what the current view shows into the window. */
+  const fitScale = $derived.by(() => {
+    if (viewportWidth <= 0 || viewportHeight <= 0) return 1;
+    const room = { w: viewportWidth - 2 * CANVAS_PAD, h: viewportHeight - 2 * CANVAS_PAD };
+    const box = view === 'directory' ? dirBox : { w: STAGE_WIDTH, h: STAGE_HEIGHT };
+    return Math.max(0.05, Math.min(2, room.w / box.w, room.h / box.h));
+  });
   /** Effective on-screen scale (fit * zoom); drives the poster transform + pointer math. */
   const viewScale = $derived(fitScale * zoom);
-  // The wrapper keeps the fit height so the page layout is stable; zoom overflows + scrolls inside.
-  const previewHeight = $derived(STAGE_HEIGHT * fitScale);
 
   function zoomBy(delta: number) {
     zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 100) / 100));
   }
+
+  /** Switches the canvas between the map and the directory, then frames what it now shows. */
+  async function selectView(next: 'map' | 'directory'): Promise<void> {
+    Log.d('admin.carte.id.selectView', { from: view, to: next });
+    view = next;
+    zoom = 1;
+    await tick();
+    if (!viewportEl) return;
+    if (next === 'directory') {
+      // The canvas is padded by CANVAS_PAD on every side, which shifts the poster's own origin.
+      viewportEl.scrollLeft =
+        CANVAS_PAD + (dirBox.x + dirBox.w / 2) * viewScale - viewportWidth / 2;
+      viewportEl.scrollTop =
+        CANVAS_PAD + (dirBox.y + dirBox.h / 2) * viewScale - viewportHeight / 2;
+    } else {
+      viewportEl.scrollLeft = 0;
+      viewportEl.scrollTop = 0;
+    }
+  }
+
+  /** The side panel is folded away to give the canvas its whole width. */
+  let panelOpen = $state(true);
 
   /**
    * Rebuilds the drawn model from the switches and zones, keeping every placement: those of the
@@ -434,18 +469,17 @@
     );
   }
 
-  /** The space's associations as the panel lists them: new first, then by name, filtered by search. */
-  const panelAssociations = $derived(
-    spaceAssociations
-      .filter((a) => {
+  /** The panel's rows: filtered by the search, grouped by zone (the no-zone group first). */
+  const zoneGroups = $derived(
+    groupAssociationsByZone(
+      spaceAssociations.filter((a) => {
         const q = assoSearch.trim().toLocaleLowerCase();
         return !q || a.name.toLocaleLowerCase().includes(q);
-      })
-      .sort(
-        (x, y) =>
-          Number(classified.fresh.has(y.id)) - Number(classified.fresh.has(x.id)) ||
-          x.name.localeCompare(y.name)
-      )
+      }),
+      zones.map((z) => z.id),
+      classified.zoneOf,
+      classified.fresh
+    )
   );
   const zoneOptions = $derived<PickerOption[]>([
     { value: '', label: m.carte_zone_uncategorized() },
@@ -456,27 +490,41 @@
   );
 
   let newZoneLabel = $state('');
-  let zoneBusy = $state(false);
+  /** Zone writes queued or running; the add and delete buttons wait while it is above zero. */
+  let zonePending = $state(0);
+  const zoneBusy = $derived(zonePending > 0);
+  /** The tail of the zone writes: each one runs after the previous, in the order it was asked. */
+  let zoneQueue: Promise<void> = Promise.resolve();
   /** Bumped by a refused zone write: re-draws the inputs from the stored zones. */
   let zoneRefusals = $state(0);
 
-  /** Runs one zone write, then redraws the directory groups. */
-  async function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
-    if (!project || zoneBusy) return;
-    zoneBusy = true;
-    error = null;
-    try {
-      await run();
-      rebuildModel();
-      void refreshPublishFingerprint();
-      Log.d(`admin.carte.id.${label}`, { zones: zones.length });
-    } catch (e) {
-      Log.d(`admin.carte.id.${label} failed`, e);
-      error = m.common_save_error();
-      zoneRefusals++;
-    } finally {
-      zoneBusy = false;
-    }
+  /**
+   * Runs one zone write, then redraws the directory groups.
+   *
+   * QUEUED, never dropped: a rename commits on blur, and the blur that follows a click on the grip
+   * or on another row lands while the previous write is still running - dropping it lost the
+   * author's text without a trace.
+   */
+  function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
+    if (!project) return Promise.resolve();
+    zonePending++;
+    const job = zoneQueue.then(async () => {
+      error = null;
+      try {
+        await run();
+        rebuildModel();
+        void refreshPublishFingerprint();
+        Log.d(`admin.carte.id.${label}`, { zones: zones.length });
+      } catch (e) {
+        Log.d(`admin.carte.id.${label} failed`, e);
+        error = m.common_save_error();
+        zoneRefusals++;
+      } finally {
+        zonePending--;
+      }
+    });
+    zoneQueue = job;
+    return job;
   }
 
   function addZone(): Promise<void> {
@@ -514,18 +562,85 @@
     });
   }
 
-  function moveZone(index: number, delta: -1 | 1): Promise<void> {
-    const target = index + delta;
-    if (!project || target < 0 || target >= zones.length) return Promise.resolve();
-    const reordered = [...zones];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+  /** Writes a new zone order (a drop, or the keyboard twin of one). */
+  function applyZoneOrder(ids: string[] | null): Promise<void> {
+    if (!ids || !project) return Promise.resolve();
     const id = project.id;
-    return zoneWrite('moveZone', async () => {
-      zones = await reorderPosterZones(
-        id,
-        reordered.map((z) => z.id)
-      );
+    return zoneWrite('reorderZones', async () => {
+      zones = await reorderPosterZones(id, ids);
     });
+  }
+
+  /** What a screen reader hears after a keyed move (a polite live region in the panel). */
+  let zoneAnnouncement = $state('');
+
+  /**
+   * Keyboard path of the zone drag: the grip's Up and Down move the zone one step, and the new
+   * position is announced. The grip itself guards against a press while this write is running.
+   */
+  async function moveZone(zone: PosterZone, delta: -1 | 1): Promise<void> {
+    const ids = moveZoneId(
+      zones.map((z) => z.id),
+      zone.id,
+      delta
+    );
+    if (!ids) return;
+    await applyZoneOrder(ids);
+    const position = zones.findIndex((z) => z.id === zone.id) + 1;
+    if (position === ids.indexOf(zone.id) + 1) {
+      zoneAnnouncement = m.carte_zone_moved({
+        label: zone.label,
+        position,
+        total: zones.length,
+      });
+    }
+  }
+
+  // -- Drag and drop in the panel: an association onto a zone, a zone onto a zone --
+  /** What is being dragged now (`dataTransfer` cannot be read while hovering, only on the drop). */
+  let dragging = $state<CarteDrag | null>(null);
+  /** The zone group under the pointer (`''` = the no-zone group), for the drop highlight. */
+  let dropTarget = $state<string | null>(null);
+
+  function startDrag(e: DragEvent, drag: CarteDrag): void {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(CARTE_DRAG_MIME, encodeDrag(drag));
+    e.dataTransfer.effectAllowed = 'move';
+    dragging = drag;
+    Log.d('admin.carte.id.startDrag', drag);
+  }
+
+  function endDrag(): void {
+    dragging = null;
+    dropTarget = null;
+  }
+
+  /** Whether the current drag may land on this zone group (an association on any, a zone on a zone). */
+  function acceptsDrop(zoneId: string | null): boolean {
+    if (!dragging) return false;
+    return dragging.kind === 'asso' || zoneId !== null;
+  }
+
+  function overZone(e: DragEvent, zoneId: string | null): void {
+    if (!acceptsDrop(zoneId)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dropTarget = zoneId ?? '';
+  }
+
+  function dropOnZone(e: DragEvent, zoneId: string | null): void {
+    e.preventDefault();
+    const drag = decodeDrag(e.dataTransfer?.getData(CARTE_DRAG_MIME)) ?? dragging;
+    endDrag();
+    const plan = planDrop(
+      drag,
+      zoneId,
+      zones.map((z) => z.id),
+      classified.zoneOf
+    );
+    Log.d('admin.carte.id.drop', { zoneId, plan: plan?.kind ?? null });
+    if (plan?.kind === 'assign') void writeEntries(plan.rows);
+    else if (plan?.kind === 'reorder') void applyZoneOrder(plan.order);
   }
 
   /** Attaches a map left without a space by migration 147, then reopens it. */
@@ -674,12 +789,6 @@
    */
   let liveFingerprint = $state<string | null>(null);
   let savedFingerprintValue = $state<string | null>(null);
-  /** True only when BOTH are known AND they differ: an unknown answers nothing. */
-  const publicationStale = $derived(
-    liveFingerprint !== null &&
-      savedFingerprintValue !== null &&
-      liveFingerprint !== savedFingerprintValue
-  );
 
   /**
    * Recomputes the fingerprint of what would be published.
@@ -712,20 +821,32 @@
   /**
    * Publishes this poster to the public showcase (portail-etu), replacing whatever was live - the
    * server allows exactly one published map at a time.
+   *
+   * It saves FIRST, abandons if that save failed, and publishes the document read BEFORE the save,
+   * so an edit made while the save was in flight is never put online unsaved
+   * ({@link publishAfterSave}).
    */
+  const publishOnce = publishAfterSave({
+    snapshot: () => ({ key: fingerprint, params: $state.snapshot(publishParams()) }),
+    save: handleSave,
+    savedKey: () => savedFingerprint,
+    publish: async (params) => {
+      if (!project) return;
+      const carte = buildPublishedCarte(params);
+      const published = await fingerprintPublishedCarte(carte);
+      project = await publishPosterProject(project.id, carte, published);
+      liveFingerprint = published;
+    },
+  });
+
   async function handlePublish() {
     if (!project || publishing) return;
     Log.d('admin.carte.id.handlePublish', { projectId: project.id });
     publishing = true;
     error = null;
     try {
-      // A publish saves FIRST, and abandons if that save failed: putting a map online that no
-      // reopen could reproduce is worse than not publishing at all.
-      if (!(await handleSave())) return;
-      const carte = buildPublishedCarte(publishParams());
-      const fingerprint = await fingerprintPublishedCarte(carte);
-      project = await publishPosterProject(project.id, carte, fingerprint);
-      liveFingerprint = fingerprint;
+      const outcome = await publishOnce();
+      Log.d('admin.carte.id.handlePublish outcome', { outcome });
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
       const code = refusalCode(e);
@@ -769,6 +890,54 @@
     }
   }
 
+  const publicationFacts = $derived({
+    isPublished,
+    liveFingerprint,
+    savedFingerprint: savedFingerprintValue,
+  });
+  // Nothing is offered about a LIVE map until its saved fingerprint is known: before that the facts
+  // read "unknown", which asks for an update - a button that flashed on every open.
+  const barAction = $derived(
+    isPublished && savedFingerprintValue === null ? null : barPublishAction(publicationFacts)
+  );
+
+  // The "..." menu: the rare actions, out of the bar's way (owner, 2026-11-11).
+  let menuOpen = $state(false);
+  let menuAsSheet = $state(false);
+  let menuAnchor = $state<HTMLElement | null>(null);
+  const menuSections = $derived<MenuListSection[]>([
+    {
+      items: overflowActions(publicationFacts).map((action) => {
+        switch (action) {
+          case 'update':
+            return { key: action, label: m.carte_publish_update_button(), Icon: RefreshCw };
+          case 'unpublish':
+            return { key: action, label: m.carte_unpublish_button(), Icon: GlobeLock };
+          case 'export':
+            return { key: action, label: m.carte_export_button(), Icon: Download };
+        }
+      }),
+    },
+  ]);
+
+  function toggleMenu(): void {
+    if (menuOpen) {
+      menuOpen = false;
+      return;
+    }
+    menuAsSheet = opensAsSheet();
+    menuOpen = true;
+  }
+
+  function pickMenuAction(key: string): void {
+    menuOpen = false;
+    Log.d('admin.carte.id.menu', { action: key });
+    const action = key as OverflowAction;
+    if (action === 'update') void handlePublish();
+    else if (action === 'unpublish') void handleUnpublish();
+    else void handleExport();
+  }
+
   async function handleExport() {
     if (!posterEl || !project || exporting) return;
     exporting = true;
@@ -799,6 +968,35 @@
   let coarsePointer = $state(false);
   const canEdit = $derived(!coarsePointer);
 
+  // -- Leaving the editor with work that is not on the server --
+  /** Edits the server has not taken: a save is queued, running, or failed (the state still differs). */
+  const workPending = $derived(saving || unsavedChanges);
+
+  // In-app navigation: flush the save and WAIT for it, then go. A failed save keeps the author here,
+  // where its error is on screen. No timer: the autosave's 4 s is a debounce, never a promise.
+  beforeNavigate((nav) => {
+    if (!workPending || nav.willUnload || !nav.to) return;
+    nav.cancel();
+    const to = nav.to.url;
+    Log.d('admin.carte.id.beforeNavigate flushing the save', { to: to.pathname });
+    void handleSave().then((ok) => {
+      if (ok) void gotoAppPath(appPathFromPathname(to.pathname) + to.search + to.hash);
+      else Log.d('admin.carte.id.beforeNavigate save failed, staying');
+    });
+  });
+
+  // Closing the tab or following an external link cannot wait on a request: the browser's own
+  // prompt, and only while something is unsaved.
+  $effect(() => {
+    if (!workPending) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  });
+
   // An `$effect` rather than `onMount`: this one is async, and Svelte honours a returned teardown
   // only from a synchronous `onMount`. The subscription would never be detached.
   $effect(() => {
@@ -818,18 +1016,47 @@
 </script>
 
 {#if ready}
-  <div class="space-y-6">
+  <!-- THE EDITOR LEAVES THE ADMIN FRAME (owner, 2026-11-11: "ca ne prend qu'une petite partie de
+       l'ecran"). It is portalled to the body at `--z-page-overlay` - the rung the old "full page"
+       mode used, and the reason it is a portal: `.page-scroll-wrap` is a containing block, so a
+       `fixed inset-0` left inside it would cover the scrolled wrapper, not the window. Toasts,
+       sheets and the confirm dialog stay above it. -->
+  <div
+    use:portalWhile={true}
+    use:coversScreen
+    use:inertAppShell
+    class="bg-cn-bg text-text-main fixed inset-0 z-(--z-page-overlay) flex flex-col pt-(--safe-area-inset-top,0px)"
+  >
     {#if loading}
-      <div class="flex justify-center py-16">
+      <div class="flex flex-1 items-center justify-center">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error && !project}
-      <p class="text-sm text-red-500" role="alert">{error}</p>
+      <div class="flex flex-1 flex-col items-center justify-center gap-3">
+        <p class="text-sm text-red-500" role="alert">{error}</p>
+        <Button variant="secondary" size="compact" href={resolve('/admin/carte')}>
+          <ArrowLeft size={16} />
+          {m.carte_back_to_list()}
+        </Button>
+      </div>
     {:else if project && model}
-      <!-- ONE action bar on one line (owner, 2026-11-08): it scrolls sideways rather than wrapping. -->
-      <header class="flex items-center gap-2 overflow-x-auto pb-1 whitespace-nowrap">
+      <!-- ONE top bar: where I am, the state of my work, the one action that matters, and "..." for
+           the rest. It scrolls sideways on a narrow window rather than wrapping. -->
+      <header
+        class="border-cn-border bg-cn-surface flex shrink-0 items-center gap-2 overflow-x-auto border-b px-3 py-2 whitespace-nowrap"
+      >
+        <Button
+          variant="ghost"
+          size="compact"
+          icon
+          href={resolve('/admin/carte')}
+          aria-label={m.carte_back_to_list()}
+          title={m.carte_back_to_list()}
+        >
+          <ArrowLeft size={18} />
+        </Button>
         {#if !canEdit}
           <h2 class="font-display text-text-main text-lg font-bold">{project.name}</h2>
         {:else if editingName}
@@ -842,17 +1069,18 @@
               if (e.key === 'Escape') cancelRename();
             }}
             maxlength={120}
-            class="text-text-main border-cn-yellow border-b-2 bg-transparent px-0 py-0 text-lg font-bold outline-none"
+            class="text-text-main border-accent-icon border-b-2 bg-transparent px-0 py-0 text-lg font-bold outline-none"
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
           <Button
             variant="ghost"
+            size="compact"
             class="group"
             onclick={startRenamingName}
             title={m.admin_carte_rename_project_title()}
           >
-            <span class="text-text-main text-lg font-bold">{project.name}</span>
+            <span class="text-text-main text-base font-bold">{project.name}</span>
             <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />
           </Button>
         {/if}
@@ -863,24 +1091,39 @@
             {carteSpaceLabel(space)}
           </span>
         {/if}
+
+        {#if canEdit}
+          <SegmentedControl
+            class="mx-2 w-48 shrink-0"
+            label={m.carte_view_label()}
+            idPrefix="carte-editor-"
+            value={view}
+            items={[
+              { key: 'map', label: m.carte_tab_map() },
+              { key: 'directory', label: m.carte_tab_directory() },
+            ]}
+            onSelect={(key) => void selectView(key)}
+          />
+        {/if}
+
         <div class="ml-auto flex shrink-0 items-center gap-2">
           {#if canEdit}
-            <Button variant="secondary" size="compact" onclick={handleSave} disabled={saving}>
-              {#if saved}
-                <Check size={16} />
+            <!-- The save state is a STATUS, not a button's label. -->
+            <span
+              class="text-text-muted inline-flex items-center gap-1.5 text-xs"
+              aria-live="polite"
+            >
+              {#if saving}
+                {m.carte_saving_label()}
+              {:else if saved}
+                <Check size={14} class="text-green-600" />
                 {m.carte_saved_label()}
-              {:else}
-                <Save size={16} />
-                {saving
-                  ? m.carte_saving_label()
-                  : unsavedChanges
-                    ? m.carte_unsaved_label()
-                    : m.carte_save_button()}
+              {:else if unsavedChanges}
+                {m.carte_unsaved_label()}
               {/if}
-            </Button>
+            </span>
           {/if}
-          <!-- BEING LIVE IS A STATE, NOT A BUTTON. The status only reports; taking the map off the
-               portail is its own action, and it confirms. -->
+          <!-- BEING LIVE IS A STATE, NOT A BUTTON. The chip only reports. -->
           {#if isPublished}
             <span
               class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-green-600/40 bg-green-600/10 px-2.5 py-1 text-xs font-bold text-green-700 dark:text-green-400"
@@ -888,30 +1131,21 @@
               <Globe size={13} />
               {m.carte_published_since({ date: publishedOn })}
             </span>
-            <!-- The live map is older than what is saved. Nothing republishes on its own: an
-                 autosave that reached the portail would put half-arranged layouts online (D2). -->
-            {#if publicationStale}
-              <Button
-                size="compact"
-                onclick={handlePublish}
-                disabled={publishing}
-                title={m.carte_publish_update_hint()}
-              >
-                <RefreshCw size={16} />
-                {publishing ? m.carte_publishing_label() : m.carte_publish_update_button()}
-              </Button>
-            {/if}
+          {/if}
+          <!-- The live map is older than what is saved (or cannot be compared): one click puts the
+               saved version online. Nothing republishes on its own: an autosave that reached the
+               portail would put half-arranged layouts online (D2). -->
+          {#if barAction === 'update'}
             <Button
-              variant="secondary"
               size="compact"
-              onclick={handleUnpublish}
+              onclick={handlePublish}
               disabled={publishing}
-              title={m.carte_unpublish_hint()}
+              title={m.carte_publish_update_hint()}
             >
-              <GlobeLock size={16} />
-              {publishing ? m.carte_publishing_label() : m.carte_unpublish_button()}
+              <RefreshCw size={16} />
+              {publishing ? m.carte_publishing_label() : m.carte_publish_update_button()}
             </Button>
-          {:else}
+          {:else if barAction === 'publish'}
             <Button
               variant="secondary"
               size="compact"
@@ -923,153 +1157,186 @@
               {publishing ? m.carte_publishing_label() : m.carte_publish_button()}
             </Button>
           {/if}
-          <Button size="compact" onclick={handleExport} disabled={exporting}>
-            <Download size={16} />
-            {exporting ? m.carte_exporting_label() : m.carte_export_button()}
-          </Button>
-        </div>
-      </header>
-
-      {#if error}
-        <p class="text-sm text-red-500" role="alert">{error}</p>
-      {/if}
-
-      <!-- A background tab throttles the animation frames the capture runs on, and an export that
-           took minutes looked like a hung button. Say so while it runs. -->
-      {#if exporting}
-        <p class="text-text-muted text-sm">{m.carte_export_foreground_hint()}</p>
-      {/if}
-
-      {#if !space}
-        <div
-          class="border-cn-border bg-cn-surface-alt flex flex-wrap items-center gap-3 rounded-2xl border p-4"
-        >
-          <TriangleAlert size={18} class="text-cn-yellow shrink-0" />
-          <div class="min-w-0 flex-1">
-            <p class="text-text-main text-sm font-bold">{m.carte_unattached_title()}</p>
-            <p class="text-text-muted mt-0.5 text-sm">{m.carte_unattached_body()}</p>
-          </div>
-          {#if attachOptions.length > 0}
-            <Picker
-              value={attachSpaceId}
-              options={attachOptions}
-              onValueChange={(v) => (attachSpaceId = v)}
-              label={m.carte_space_pick()}
-              placeholder={m.carte_space_pick()}
-              variant="field"
-            />
-            <Button size="compact" onclick={attachToSpace} disabled={!attachSpaceId}>
-              {m.carte_attach_button()}
+          {#if canEdit}
+            <Button
+              variant={unsavedChanges ? 'primary' : 'secondary'}
+              size="compact"
+              onclick={handleSave}
+              disabled={saving}
+            >
+              <Save size={16} />
+              {m.carte_save_button()}
+            </Button>
+          {/if}
+          <span bind:this={menuAnchor} class="inline-flex shrink-0">
+            <Button
+              variant="ghost"
+              size="compact"
+              icon
+              onclick={toggleMenu}
+              aria-label={m.carte_more_actions()}
+              title={m.carte_more_actions()}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+            >
+              <Ellipsis size={18} />
+            </Button>
+          </span>
+          {#if canEdit}
+            <Button
+              variant="ghost"
+              size="compact"
+              icon
+              onclick={() => (panelOpen = !panelOpen)}
+              aria-label={panelOpen ? m.carte_panel_collapse() : m.carte_panel_expand()}
+              title={panelOpen ? m.carte_panel_collapse() : m.carte_panel_expand()}
+              aria-expanded={panelOpen}
+            >
+              {#if panelOpen}<PanelRightClose size={18} />{:else}<PanelRightOpen size={18} />{/if}
             </Button>
           {/if}
         </div>
-      {/if}
+      </header>
 
-      <!-- New associations of the space: switched off until the author decides (owner, 2026-11-08). -->
-      {#if canEdit && freshNames.length > 0}
-        <div
-          class="border-cn-yellow/50 bg-cn-yellow/10 flex items-start gap-3 rounded-2xl border p-4"
-        >
-          <Sparkles size={18} class="text-cn-dark mt-0.5 shrink-0" />
-          <div class="min-w-0 flex-1">
-            <p class="text-text-main text-sm font-bold">
-              {m.carte_new_assos_title({ count: freshNames.length })}
-            </p>
-            <p class="text-text-muted mt-0.5 text-sm">{m.carte_new_assos_body()}</p>
-            <p class="text-text-muted mt-1.5 text-sm">{freshNames.join(' - ')}</p>
-          </div>
-          <Button variant="secondary" size="compact" onclick={dismissNewAssociations}>
-            {m.carte_new_assos_dismiss()}
-          </Button>
-        </div>
-      {/if}
-
-      {#if canEdit && (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0) > 0}
-        <div class="space-y-2">
-          <Button
-            variant="ghost"
-            size="compact"
-            onclick={() => (alertsOpen = !alertsOpen)}
-            aria-expanded={alertsOpen}
-          >
-            <TriangleAlert size={14} />
-            {m.carte_alerts_toggle({
-              count: (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0),
-            })}
-            {#if alertsOpen}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
-          </Button>
-          {#if alertsOpen}
-            <!-- Associations whose roster is empty. They stay on the poster (D10) - this is for their
-           bureau to act on, and an empty blob otherwise looks like a broken render. -->
-            {#if canEdit && memberlessNames.length > 0}
-              <div
-                class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
-              >
-                <TriangleAlert size={18} class="text-text-muted mt-0.5 shrink-0" />
-                <div class="min-w-0">
-                  <p class="text-text-main text-sm font-bold">
-                    {m.carte_no_members_title({ count: memberlessNames.length })}
-                  </p>
-                  <p class="text-text-muted mt-0.5 text-sm">{m.carte_no_members_body()}</p>
-                  <p class="text-text-muted mt-1.5 text-sm">{memberlessNames.join(' - ')}</p>
-                </div>
-              </div>
-            {/if}
-
-            <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->
-            {#if canEdit && overlaps.length > 0}
-              <div
-                class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
-              >
-                <TriangleAlert size={18} class="text-cn-yellow mt-0.5 shrink-0" />
-                <div class="min-w-0">
-                  <p class="text-text-main text-sm font-bold">
-                    {m.carte_overlaps_title({ count: overlaps.length })}
-                  </p>
-                  <p class="text-text-muted mt-0.5 text-sm">{m.carte_overlaps_body()}</p>
-                  <ul class="text-text-muted mt-1.5 space-y-0.5 text-sm">
-                    {#each overlaps as pair (pair.a + pair.b)}
-                      <li>{m.carte_overlaps_pair({ a: assoName(pair.a), b: assoName(pair.b) })}</li>
-                    {/each}
-                  </ul>
-                  <button
-                    type="button"
-                    onclick={() => (showOverlaps = !showOverlaps)}
-                    class="text-text-main mt-2 text-sm font-bold underline"
-                  >
-                    {showOverlaps ? m.carte_overlaps_hide() : m.carte_overlaps_show()}
-                  </button>
-                </div>
-              </div>
-            {/if}
-          {/if}
-        </div>
-      {/if}
-
-      {#if !canEdit}
-        <div
-          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
-        >
-          <MonitorSmartphone size={18} class="text-text-muted mt-0.5 shrink-0" />
-          <div>
-            <p class="text-text-main text-sm font-bold">{m.carte_desktop_only_title()}</p>
-            <p class="text-text-muted mt-0.5 text-sm">{m.carte_desktop_only_body()}</p>
-          </div>
-        </div>
-      {/if}
-
-      <div
-        use:portalWhile={isFullPage}
-        use:coversScreen={isFullPage}
-        class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
-          ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5 pt-[max(1.25rem,var(--safe-area-inset-top,0px))]'
-          : ''}"
+      <FloatingSurface
+        open={menuOpen}
+        asSheet={menuAsSheet}
+        anchor={menuAnchor}
+        label={m.carte_more_actions()}
+        popoverWidth="content"
+        onClose={(refocus) => {
+          menuOpen = false;
+          if (refocus) menuAnchor?.querySelector('button')?.focus();
+        }}
       >
-        <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->
-        <div class="space-y-2">
-          <div class="flex items-center gap-1.5">
+        <div class="min-w-56">
+          <MenuList
+            sections={menuSections}
+            label={m.carte_more_actions()}
+            onSelect={pickMenuAction}
+          />
+        </div>
+      </FloatingSurface>
+
+      <div class="flex min-h-0 flex-1">
+        <!-- THE CANVAS: it takes every pixel the panel leaves. -->
+        <div class="relative flex min-w-0 flex-1 flex-col">
+          {#if error}
+            <p class="shrink-0 px-4 pt-2 text-sm text-red-500" role="alert">{error}</p>
+          {/if}
+
+          <!-- A background tab throttles the animation frames the capture runs on, and an export
+               that took minutes looked like a hung button. Say so while it runs. -->
+          {#if exporting}
+            <p class="text-text-muted shrink-0 px-4 pt-2 text-sm">
+              {m.carte_export_foreground_hint()}
+            </p>
+          {/if}
+
+          {#if !space}
+            <div
+              class="border-cn-border bg-cn-surface-alt m-3 flex shrink-0 flex-wrap items-center gap-3 rounded-2xl border p-3"
+            >
+              <TriangleAlert size={18} class="text-accent-icon shrink-0" />
+              <div class="min-w-0 flex-1">
+                <p class="text-text-main text-sm font-bold">{m.carte_unattached_title()}</p>
+                <p class="text-text-muted mt-0.5 text-sm">{m.carte_unattached_body()}</p>
+              </div>
+              {#if attachOptions.length > 0}
+                <Picker
+                  value={attachSpaceId}
+                  options={attachOptions}
+                  onValueChange={(v) => (attachSpaceId = v)}
+                  label={m.carte_space_pick()}
+                  placeholder={m.carte_space_pick()}
+                  variant="field"
+                />
+                <Button size="compact" onclick={attachToSpace} disabled={!attachSpaceId}>
+                  {m.carte_attach_button()}
+                </Button>
+              {/if}
+            </div>
+          {/if}
+
+          {#if !canEdit}
+            <div
+              class="border-cn-border bg-cn-surface-alt m-3 flex shrink-0 items-start gap-3 rounded-2xl border p-3"
+            >
+              <MonitorSmartphone size={18} class="text-text-muted mt-0.5 shrink-0" />
+              <div>
+                <p class="text-text-main text-sm font-bold">{m.carte_desktop_only_title()}</p>
+                <p class="text-text-muted mt-0.5 text-sm">{m.carte_desktop_only_body()}</p>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Scroll area. The un-scaled inner element is the exact node captured for the PDF; the
+               directory tab only scrolls and scales this same poster to the directory column. -->
+          <div
+            bind:this={viewportEl}
+            bind:clientWidth={viewportWidth}
+            bind:clientHeight={viewportHeight}
+            role="tabpanel"
+            id="carte-editor-tabpanel-{view}"
+            aria-labelledby="carte-editor-tab-{view}"
+            tabindex="-1"
+            class="min-h-0 flex-1 overflow-auto"
+          >
+            <div class="flex min-h-full w-max min-w-full" style:padding="{CANVAS_PAD}px">
+              <div
+                class="m-auto shrink-0 shadow-lg"
+                style:width="{STAGE_WIDTH * viewScale}px"
+                style:height="{STAGE_HEIGHT * viewScale}px"
+              >
+                <div
+                  style:transform="scale({viewScale})"
+                  style:transform-origin="top left"
+                  style:width="{STAGE_WIDTH}px"
+                  style:height="{STAGE_HEIGHT}px"
+                >
+                  <PosterCanvas
+                    bind:el={posterEl}
+                    {model}
+                    {content}
+                    bubbles={positioned}
+                    {decorations}
+                    {theme}
+                    {background}
+                    {directoryVisible}
+                    editable={canEdit}
+                    {viewScale}
+                    {selectedId}
+                    {selectedDecorationId}
+                    flaggedIds={showOverlaps ? overlapIds : undefined}
+                    title={project.name}
+                    onSelect={(id) => (selectedId = id)}
+                    onSelectDecoration={(id) => (selectedDecorationId = id)}
+                    onChange={patchBubble}
+                    onChangeDecoration={patchDecoration}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {#if view === 'directory' && !directoryVisible}
+            <div
+              class="border-cn-border bg-cn-surface absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-2xl border p-4 text-center shadow-lg"
+            >
+              <p class="text-text-main text-sm font-bold">{m.carte_directory_hidden_title()}</p>
+              <p class="text-text-muted text-sm">{m.carte_directory_hidden_body()}</p>
+              <Button size="compact" onclick={() => (directoryVisible = true)}>
+                {m.carte_directory_show()}
+              </Button>
+            </div>
+          {/if}
+
+          <!-- Zoom: floats over the canvas corner instead of taking a row of its own. -->
+          <div
+            class="border-cn-border bg-cn-surface absolute bottom-3 left-3 flex items-center gap-1 rounded-full border p-1 shadow-md"
+          >
             <Button
-              variant="secondary"
+              variant="ghost"
               size="compact"
               icon
               onclick={() => zoomBy(-0.25)}
@@ -1077,16 +1344,11 @@
             >
               <ZoomOut size={15} />
             </Button>
-            <Button
-              variant="secondary"
-              size="compact"
-              class="min-w-[3.5rem]"
-              onclick={() => (zoom = 1)}
-            >
+            <Button variant="ghost" size="compact" class="min-w-14" onclick={() => (zoom = 1)}>
               {Math.round(zoom * 100)}%
             </Button>
             <Button
-              variant="secondary"
+              variant="ghost"
               size="compact"
               icon
               onclick={() => zoomBy(0.25)}
@@ -1095,274 +1357,17 @@
               <ZoomIn size={15} />
             </Button>
           </div>
-          <!-- Scrollable stage: the outer div is sized to the scaled poster so zoom overflows +
-               scrolls; the inner (un-scaled) element is the exact node captured for PDF export. -->
-          <div
-            bind:clientWidth={previewWidth}
-            class="border-cn-border overflow-auto rounded-2xl border"
-            style:height="{previewHeight}px"
-          >
-            <div style:width="{1600 * viewScale}px" style:height="{STAGE_HEIGHT * viewScale}px">
-              <div
-                style:transform="scale({viewScale})"
-                style:transform-origin="top left"
-                style:width="1600px"
-                style:height="{STAGE_HEIGHT}px"
-              >
-                <PosterCanvas
-                  bind:el={posterEl}
-                  {model}
-                  {content}
-                  bubbles={positioned}
-                  {decorations}
-                  {theme}
-                  {background}
-                  {directoryVisible}
-                  editable={canEdit}
-                  {viewScale}
-                  {selectedId}
-                  {selectedDecorationId}
-                  flaggedIds={showOverlaps ? overlapIds : undefined}
-                  title={project.name}
-                  onSelect={(id) => (selectedId = id)}
-                  onSelectDecoration={(id) => (selectedDecorationId = id)}
-                  onChange={patchBubble}
-                  onChangeDecoration={patchDecoration}
-                />
-              </div>
-            </div>
-          </div>
         </div>
 
-        <!-- Settings + per-bubble property panel. Every control in it writes the layout, so the
-             column is absent rather than disabled where editing is not offered. -->
-        {#if canEdit}
-          <div class="space-y-4">
-            {#if space}
-              <!-- Associations: every association of the space, with its switch and its zone. -->
-              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-                <h3 class="text-text-main text-sm font-bold">{m.carte_assos_heading()}</h3>
-                <div class="flex items-center gap-2">
-                  <Search size={14} class="text-text-muted shrink-0" />
-                  <Input
-                    bind:value={assoSearch}
-                    type="search"
-                    placeholder={m.carte_assos_search()}
-                    aria-label={m.carte_assos_search()}
-                    density="compact"
-                    class="min-w-0 flex-1"
-                  />
-                </div>
-                {#if spaceAssociations.length === 0}
-                  <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
-                {:else}
-                  <!-- Re-keyed on a refused write: a switch the server did not take flips back. -->
-                  {#key entryRefusals}
-                    <ul class="max-h-80 space-y-2 overflow-y-auto pr-1">
-                      {#each panelAssociations as asso (asso.id)}
-                        <li class="space-y-1">
-                          <div class="flex items-center gap-2">
-                            <div class="min-w-0 flex-1">
-                              <Toggle
-                                checked={classified.on.has(asso.id)}
-                                label={asso.name}
-                                busy={busyEntries.includes(asso.id)}
-                                onchange={(on) =>
-                                  void writeEntries([{ associationId: asso.id, enabled: on }])}
-                              />
-                            </div>
-                            {#if classified.fresh.has(asso.id)}
-                              <span
-                                class="bg-cn-yellow text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
-                              >
-                                {m.carte_asso_new_badge()}
-                              </span>
-                            {/if}
-                          </div>
-                          {#if classified.on.has(asso.id) && zones.length > 0}
-                            <Picker
-                              value={classified.zoneOf[asso.id] ?? ''}
-                              options={zoneOptions}
-                              onValueChange={(v) =>
-                                void writeEntries([{ associationId: asso.id, zoneId: v || null }])}
-                              label={m.carte_asso_zone({ name: asso.name })}
-                              variant="field"
-                              density="compact"
-                            />
-                          {/if}
-                        </li>
-                      {/each}
-                    </ul>
-                  {/key}
-                {/if}
-              </section>
-
-              <!-- Zones: the map's own, created, renamed, ordered and deleted here. -->
-              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-                <h3 class="text-text-main text-sm font-bold">{m.carte_zones_heading()}</h3>
-                {#if zones.length === 0}
-                  <p class="text-text-muted text-xs">{m.carte_zones_empty()}</p>
-                {:else}
-                  <!-- Re-keyed on a refused write, so a rejected rename shows the stored label again. -->
-                  {#key zoneRefusals}
-                    <ul class="space-y-1">
-                      {#each zones as zone, index (zone.id)}
-                        <li class="flex items-center gap-1">
-                          <div class="flex">
-                            <Button
-                              variant="ghost"
-                              size="compact"
-                              icon
-                              onclick={() => void moveZone(index, -1)}
-                              disabled={index === 0 || zoneBusy}
-                              aria-label={m.carte_category_move_up()}
-                            >
-                              <ChevronUp size={14} />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="compact"
-                              icon
-                              onclick={() => void moveZone(index, 1)}
-                              disabled={index === zones.length - 1 || zoneBusy}
-                              aria-label={m.carte_category_move_down()}
-                            >
-                              <ChevronDown size={14} />
-                            </Button>
-                          </div>
-                          <Input
-                            value={zone.label}
-                            maxlength={120}
-                            aria-label={m.carte_zone_rename({ label: zone.label })}
-                            onblur={(e: FocusEvent & { currentTarget: HTMLInputElement }) =>
-                              void renameZone(zone, e.currentTarget.value)}
-                            disabled={zoneBusy}
-                            density="compact"
-                            class="min-w-0 flex-1"
-                          />
-                          <Button
-                            variant="danger-outline"
-                            size="compact"
-                            icon
-                            onclick={() => void deleteZone(zone)}
-                            disabled={zoneBusy}
-                            aria-label={m.common_remove_label()}
-                          >
-                            <Trash2 size={13} />
-                          </Button>
-                        </li>
-                      {/each}
-                    </ul>
-                  {/key}
-                {/if}
-                <form
-                  class="flex items-center gap-2"
-                  onsubmit={(e) => {
-                    e.preventDefault();
-                    void addZone();
-                  }}
-                >
-                  <Input
-                    bind:value={newZoneLabel}
-                    maxlength={120}
-                    placeholder={m.carte_zone_add_placeholder()}
-                    aria-label={m.carte_zone_add_placeholder()}
-                    density="compact"
-                    class="min-w-0 flex-1"
-                  />
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    size="compact"
-                    disabled={zoneBusy || !newZoneLabel.trim()}
-                  >
-                    <Plus size={13} />
-                    {m.carte_zone_add_button()}
-                  </Button>
-                </form>
-              </section>
-            {/if}
-
-            <section class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-text-main text-sm font-bold">
-                  {m.carte_settings_heading()}
-                </h3>
-                <Button variant="secondary" size="compact" onclick={toggleFullPage}>
-                  {#if isFullPage}
-                    <Minimize size={14} />
-                    {m.carte_fullpage_exit()}
-                  {:else}
-                    <Maximize size={14} />
-                    {m.carte_fullpage_enter()}
-                  {/if}
-                </Button>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-3">
-                <span class="text-text-muted block text-xs font-semibold"
-                  >{m.carte_background_label()}</span
-                >
-                <label
-                  class="border-cn-border text-text-main hover:bg-cn-bg inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
-                >
-                  <ImagePlus size={15} />
-                  {m.carte_background_upload()}
-                  <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
-                </label>
-                {#if bgDataUrl}
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    onclick={() => {
-                      bgDataUrl = null;
-                      bgVersion++;
-                    }}
-                  >
-                    <X size={15} />
-                    {m.carte_background_clear()}
-                  </Button>
-                  <label class="text-text-muted inline-flex items-center gap-2 text-xs">
-                    {m.carte_scrim_label()}
-                    <input
-                      type="range"
-                      min="0"
-                      max="80"
-                      bind:value={scrimOpacity}
-                      class="accent-cn-yellow"
-                    />
-                  </label>
-                {/if}
-              </div>
-
-              <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
-                <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
-                {m.carte_directory_toggle()}
-              </label>
-
-              <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
-                <span>{m.carte_title_color_label()}</span>
-                <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
-              </div>
-
-              <p class="text-text-muted text-xs">{m.carte_editor_hint()}</p>
-              <p class="text-text-muted text-xs">{m.carte_generated_note()}</p>
-            </section>
-
-            <!-- Add-element palette -->
-            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-              <h3 class="text-text-main text-sm font-bold">
-                {m.carte_elements_heading()}
-              </h3>
-              <Button variant="secondary" size="compact" onclick={addText}>
-                <Type size={15} />
-                {m.carte_add_text()}
-              </Button>
-            </section>
-
+        <!-- THE SIDE PANEL: collapsible. Every control in it writes the layout, so it is absent
+             rather than disabled where editing is not offered. -->
+        {#if canEdit && panelOpen}
+          <aside
+            class="border-cn-border bg-cn-surface w-88 shrink-0 divide-y divide-(--cn-border) overflow-y-auto border-l"
+          >
             {#if selectedDecoration}
               <!-- Selected-decoration property panel -->
-              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+              <section class="space-y-3 p-3">
                 <h3 class="text-text-main text-sm font-bold">
                   {m.carte_deco_heading()}
                 </h3>
@@ -1402,7 +1407,7 @@
                           patchDecoration(selectedTextDeco.id, {
                             bold: e.currentTarget.checked,
                           })}
-                        class="accent-cn-yellow"
+                        class="accent-accent"
                       />
                       {m.carte_deco_bold()}
                     </label>
@@ -1421,7 +1426,7 @@
                           })}
                         class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
  {selectedTextDeco.align === opt.v
-                          ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                          ? 'border-accent-icon bg-accent/15 text-cn-dark'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <opt.icon size={14} />
@@ -1458,9 +1463,8 @@
                 </div>
               </section>
             {/if}
-
             <!-- Selected-bubble property panel -->
-            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+            <section class="space-y-3 p-3">
               <h3 class="text-text-main text-sm font-bold">
                 {m.carte_panel_heading()}
               </h3>
@@ -1501,7 +1505,7 @@
                         aria-label={m.carte_shape_option({ n: i + 1 })}
                         onclick={() => patchBubble(selectedBubble.assoId, { shape: sh.key })}
                         class="h-8 w-8 border p-1 transition-colors {selectedBubble.shape === sh.key
-                          ? 'border-cn-yellow text-cn-yellow'
+                          ? 'border-accent-icon text-accent-text'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <span
@@ -1529,7 +1533,7 @@
                           })}
                         class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
                         ls.key
-                          ? 'border-cn-yellow text-cn-yellow'
+                          ? 'border-accent-icon text-accent-text'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <span
@@ -1585,7 +1589,7 @@
                                 selectedBureau: next,
                               });
                             }}
-                            class="accent-cn-yellow"
+                            class="accent-accent"
                           />
                           {member.name}
                           {member.role ? `- ${member.role}` : ''}
@@ -1625,7 +1629,7 @@
                                 selectedBureau: next,
                               });
                             }}
-                            class="accent-cn-yellow"
+                            class="accent-accent"
                           />
                           {member.name}
                           {member.role ? `- ${member.role}` : ''}
@@ -1665,7 +1669,332 @@
                 <p class="text-text-muted text-xs">{m.carte_panel_empty()}</p>
               {/if}
             </section>
-          </div>
+
+            <!-- New associations of the space: switched off until the author decides (owner, 2026-11-08). -->
+            {#if freshNames.length > 0}
+              <div class="bg-accent/10 flex items-start gap-2 p-3">
+                <Sparkles size={16} class="text-cn-dark mt-0.5 shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <p class="text-text-main text-sm font-bold">
+                    {m.carte_new_assos_title({ count: freshNames.length })}
+                  </p>
+                  <p class="text-text-muted mt-0.5 text-xs">{m.carte_new_assos_body()}</p>
+                  <p class="text-text-muted mt-1 text-xs">{freshNames.join(' - ')}</p>
+                </div>
+                <Button variant="secondary" size="compact" onclick={dismissNewAssociations}>
+                  {m.carte_new_assos_dismiss()}
+                </Button>
+              </div>
+            {/if}
+
+            {#if space}
+              <!-- Associations and zones in ONE list: a zone is a header the rows hang under. A row
+                   is dragged onto a zone to file it there, a zone header is dragged to reorder
+                   (owner, 2026-11-11); the picker and the grip's arrow keys are the keyboard path. -->
+              <section class="space-y-2 p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <h3 class="text-text-main text-sm font-bold">{m.carte_assos_heading()}</h3>
+                  <span class="text-text-muted text-xs"
+                    >{classified.on.size}/{spaceAssociations.length}</span
+                  >
+                </div>
+                <div class="flex items-center gap-2">
+                  <Search size={14} class="text-text-muted shrink-0" />
+                  <Input
+                    bind:value={assoSearch}
+                    type="search"
+                    placeholder={m.carte_assos_search()}
+                    aria-label={m.carte_assos_search()}
+                    density="compact"
+                    class="min-w-0 flex-1"
+                  />
+                </div>
+                {#if spaceAssociations.length === 0}
+                  <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
+                {:else}
+                  <p class="text-text-muted text-xs">{m.carte_assos_drag_hint()}</p>
+                  <!-- The keyed move of a zone has no other feedback for a screen reader. -->
+                  <p class="sr-only" aria-live="polite">{zoneAnnouncement}</p>
+                  <!-- Re-keyed on a refused write: a switch or a label the server did not take is
+                       drawn from what the map stores again. -->
+                  {#key `${entryRefusals}-${zoneRefusals}`}
+                    <div class="space-y-1">
+                      {#each zoneGroups as group (group.zoneId ?? '')}
+                        {@const zone = zones.find((z) => z.id === group.zoneId)}
+                        {#if zone || group.zoneId === null}
+                          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                          <div
+                            role="group"
+                            aria-label={zone ? zone.label : m.carte_zone_uncategorized()}
+                            class="rounded-lg py-0.5 transition-colors {dropTarget ===
+                            (group.zoneId ?? '')
+                              ? 'bg-accent/15 ring-accent/60 ring-2'
+                              : ''}"
+                            ondragover={(e) => overZone(e, group.zoneId)}
+                            ondragleave={(e) => {
+                              // Moving onto a child fires dragleave on the group first: only a
+                              // pointer that really left it clears the highlight.
+                              const into = e.relatedTarget;
+                              if (into instanceof Node && e.currentTarget.contains(into)) return;
+                              if (dropTarget === (group.zoneId ?? '')) dropTarget = null;
+                            }}
+                            ondrop={(e) => dropOnZone(e, group.zoneId)}
+                          >
+                            {#if zone}
+                              <div data-zone-head class="flex items-center gap-1 px-0.5">
+                                <ZoneGrip
+                                  zoneId={zone.id}
+                                  label={m.carte_zone_drag({ label: zone.label })}
+                                  onMove={(delta) => moveZone(zone, delta)}
+                                  onDragStart={(e) => {
+                                    const head = (e.currentTarget as HTMLElement).closest(
+                                      '[data-zone-head]'
+                                    );
+                                    if (head) e.dataTransfer?.setDragImage(head, 12, 12);
+                                    startDrag(e, { kind: 'zone', id: zone.id });
+                                  }}
+                                  onDragEnd={endDrag}
+                                />
+                                <Input
+                                  value={zone.label}
+                                  maxlength={120}
+                                  aria-label={m.carte_zone_rename({ label: zone.label })}
+                                  onblur={(e: FocusEvent & { currentTarget: HTMLInputElement }) =>
+                                    void renameZone(zone, e.currentTarget.value)}
+                                  density="compact"
+                                  class="min-w-0 flex-1 font-bold"
+                                />
+                                <span class="text-text-muted shrink-0 text-xs">
+                                  {group.items.filter((a) => classified.on.has(a.id)).length}/{group
+                                    .items.length}
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="compact"
+                                  icon
+                                  onclick={() => void deleteZone(zone)}
+                                  disabled={zoneBusy}
+                                  aria-label={m.common_remove_label()}
+                                  title={m.common_remove_label()}
+                                >
+                                  <Trash2 size={13} />
+                                </Button>
+                              </div>
+                            {:else if zones.length > 0}
+                              <p class="text-text-muted px-2 py-1 text-xs font-bold">
+                                {m.carte_zone_uncategorized()}
+                              </p>
+                            {/if}
+                            {#each group.items as asso (asso.id)}
+                              <div
+                                draggable="true"
+                                role="listitem"
+                                ondragstart={(e) => startDrag(e, { kind: 'asso', id: asso.id })}
+                                ondragend={endDrag}
+                                class="hover:bg-cn-bg flex cursor-grab items-center gap-2 rounded-md px-2 py-1 {classified.on.has(
+                                  asso.id
+                                )
+                                  ? ''
+                                  : 'opacity-60'}"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={classified.on.has(asso.id)}
+                                  disabled={busyEntries.includes(asso.id)}
+                                  aria-label={m.carte_asso_shown({ name: asso.name })}
+                                  onchange={(e) =>
+                                    void writeEntries([
+                                      { associationId: asso.id, enabled: e.currentTarget.checked },
+                                    ])}
+                                  class="accent-accent size-4 shrink-0 cursor-pointer"
+                                />
+                                <span
+                                  class="text-text-main min-w-0 flex-1 truncate text-sm"
+                                  title={asso.name}
+                                >
+                                  {asso.name}
+                                </span>
+                                {#if classified.fresh.has(asso.id)}
+                                  <span
+                                    class="bg-accent text-on-accent shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
+                                  >
+                                    {m.carte_asso_new_badge()}
+                                  </span>
+                                {/if}
+                                {#if zones.length > 0}
+                                  <div class="w-28 min-w-0 shrink-0">
+                                    <Picker
+                                      value={classified.zoneOf[asso.id] ?? ''}
+                                      options={zoneOptions}
+                                      onValueChange={(v) =>
+                                        void writeEntries([
+                                          { associationId: asso.id, zoneId: v || null },
+                                        ])}
+                                      label={m.carte_asso_zone({ name: asso.name })}
+                                    />
+                                  </div>
+                                {/if}
+                              </div>
+                            {:else}
+                              {#if zone}
+                                <p class="text-text-muted px-2 py-1 text-xs italic">
+                                  {m.carte_zone_drop_here()}
+                                </p>
+                              {/if}
+                            {/each}
+                          </div>
+                        {/if}
+                      {/each}
+                    </div>
+                  {/key}
+                {/if}
+                <form
+                  class="flex items-center gap-2 pt-1"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void addZone();
+                  }}
+                >
+                  <Input
+                    bind:value={newZoneLabel}
+                    maxlength={120}
+                    placeholder={m.carte_zone_add_placeholder()}
+                    aria-label={m.carte_zone_add_placeholder()}
+                    density="compact"
+                    class="min-w-0 flex-1"
+                  />
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    size="compact"
+                    disabled={zoneBusy || !newZoneLabel.trim()}
+                  >
+                    <Plus size={13} />
+                    {m.carte_zone_add_button()}
+                  </Button>
+                </form>
+              </section>
+            {/if}
+
+            {#if (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0) > 0}
+              <div class="space-y-2 p-3">
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  onclick={() => (alertsOpen = !alertsOpen)}
+                  aria-expanded={alertsOpen}
+                >
+                  <TriangleAlert size={14} />
+                  {m.carte_alerts_toggle({
+                    count: (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0),
+                  })}
+                  {#if alertsOpen}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
+                </Button>
+                {#if alertsOpen}
+                  <!-- Associations whose roster is empty. They stay on the poster (D10) - this is
+                       for their bureau to act on, and an empty blob otherwise looks like a broken
+                       render. -->
+                  {#if memberlessNames.length > 0}
+                    <div class="flex items-start gap-2">
+                      <TriangleAlert size={16} class="text-text-muted mt-0.5 shrink-0" />
+                      <div class="min-w-0">
+                        <p class="text-text-main text-sm font-bold">
+                          {m.carte_no_members_title({ count: memberlessNames.length })}
+                        </p>
+                        <p class="text-text-muted mt-0.5 text-xs">{m.carte_no_members_body()}</p>
+                        <p class="text-text-muted mt-1 text-xs">{memberlessNames.join(' - ')}</p>
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->
+                  {#if overlaps.length > 0}
+                    <div class="flex items-start gap-2">
+                      <TriangleAlert size={16} class="text-accent-icon mt-0.5 shrink-0" />
+                      <div class="min-w-0">
+                        <p class="text-text-main text-sm font-bold">
+                          {m.carte_overlaps_title({ count: overlaps.length })}
+                        </p>
+                        <p class="text-text-muted mt-0.5 text-xs">{m.carte_overlaps_body()}</p>
+                        <ul class="text-text-muted mt-1 space-y-0.5 text-xs">
+                          {#each overlaps as pair (pair.a + pair.b)}
+                            <li>
+                              {m.carte_overlaps_pair({ a: assoName(pair.a), b: assoName(pair.b) })}
+                            </li>
+                          {/each}
+                        </ul>
+                        <button
+                          type="button"
+                          onclick={() => (showOverlaps = !showOverlaps)}
+                          class="text-text-main mt-2 text-sm font-bold underline"
+                        >
+                          {showOverlaps ? m.carte_overlaps_hide() : m.carte_overlaps_show()}
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
+
+            <section class="space-y-3 p-3">
+              <h3 class="text-text-main text-sm font-bold">{m.carte_settings_heading()}</h3>
+
+              <div class="flex flex-wrap items-center gap-3">
+                <span class="text-text-muted block text-xs font-semibold"
+                  >{m.carte_background_label()}</span
+                >
+                <label
+                  class="border-cn-border text-text-main hover:bg-cn-bg inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
+                >
+                  <ImagePlus size={15} />
+                  {m.carte_background_upload()}
+                  <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
+                </label>
+                {#if bgDataUrl}
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    onclick={() => {
+                      bgDataUrl = null;
+                      bgVersion++;
+                    }}
+                  >
+                    <X size={15} />
+                    {m.carte_background_clear()}
+                  </Button>
+                  <label class="text-text-muted inline-flex items-center gap-2 text-xs">
+                    {m.carte_scrim_label()}
+                    <input
+                      type="range"
+                      min="0"
+                      max="80"
+                      bind:value={scrimOpacity}
+                      class="accent-accent"
+                    />
+                  </label>
+                {/if}
+              </div>
+
+              <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
+                <input type="checkbox" bind:checked={directoryVisible} class="accent-accent" />
+                {m.carte_directory_toggle()}
+              </label>
+
+              <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
+                <span>{m.carte_title_color_label()}</span>
+                <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
+              </div>
+
+              <Button variant="secondary" size="compact" onclick={addText}>
+                <Type size={15} />
+                {m.carte_add_text()}
+              </Button>
+
+              <p class="text-text-muted text-xs">{m.carte_editor_hint()}</p>
+              <p class="text-text-muted text-xs">{m.carte_generated_note()}</p>
+            </section>
+          </aside>
         {/if}
       </div>
     {/if}

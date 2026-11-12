@@ -191,8 +191,8 @@ describe('the one tile keeps what the copies did not have', () => {
     // BELOW the description, in the same yellow pill, pinned to the card's bottom edge.
     expect(all.indexOf('Trésorier')).toBeGreaterThan(all.indexOf('About us.'));
     const pill = [...withRole.querySelectorAll('span')].find((s) => s.textContent === 'Trésorier')!;
-    expect(pill.classList.contains('bg-cn-yellow/20')).toBe(true);
-    expect(pill.parentElement!.classList.contains('mt-auto')).toBe(true);
+    expect(pill.classList.contains('bg-accent/20')).toBe(true);
+    expect(pill.parentElement!.parentElement!.classList.contains('mt-auto')).toBe(true);
     // And the count survives untouched where no role is known.
     expect(text(await render(association({ memberCount: 3 })))).toContain(
       m.assoc_member_count_many({ count: 3 })

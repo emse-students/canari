@@ -212,7 +212,7 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
       [PENDING_NEW]: pending(0),
     });
 
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
 
     expect(stats.pendingReelCount).toBe(2);
     expect(stats.pendingReelBytes).toBe(20);

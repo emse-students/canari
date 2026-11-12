@@ -99,6 +99,8 @@ interface Attachment {
   sentAt: number;
   file: File;
   media: NonNullable<OutboxEntry['media']>;
+  /** The message this attachment answers, carried into its proto and its envelope. */
+  replyTo?: OutboxEntry['replyTo'];
   deps: SalonAttachmentDeps;
   attempts: number;
   /** The running attempt's abort; null while none runs. */
@@ -123,6 +125,8 @@ export function startSalonAttachment(input: {
   sentAt: number;
   file: File;
   media: NonNullable<OutboxEntry['media']>;
+  /** The reply armed when the file was sent: the attachment goes out as that reply. */
+  replyTo?: OutboxEntry['replyTo'];
   deps: SalonAttachmentDeps;
 }): void {
   const item: Attachment = { ...input, attempts: 0, control: null };
@@ -278,12 +282,17 @@ async function runAttempt(messageId: string): Promise<void> {
       deps.log(`[MEDIA] ${id}… uploaded after its cancel - not sent`);
       return;
     }
-    const prepared = buildMediaMessage({ id: messageId, sentAt: item.sentAt }, item.media, {
-      mediaId: ref.mediaId,
-      key: ref.key,
-      iv: ref.iv,
-      ...(ref.encoding ? { encoding: ref.encoding } : {}),
-    });
+    const prepared = buildMediaMessage(
+      { id: messageId, sentAt: item.sentAt },
+      item.media,
+      {
+        mediaId: ref.mediaId,
+        key: ref.key,
+        iv: ref.iv,
+        ...(ref.encoding ? { encoding: ref.encoding } : {}),
+      },
+      item.replyTo
+    );
     // From here the salon send machinery owns the row (its Retry and Discard): this module lets go
     // BEFORE the swap, so the bubble never offers two retries for one message.
     forget(item);

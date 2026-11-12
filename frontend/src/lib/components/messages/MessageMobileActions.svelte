@@ -36,8 +36,6 @@
     isOwn?: boolean;
     /** When true, hides reply and edit actions (message has been deleted). */
     isDeleted?: boolean;
-    /** When true, hides the edit action (media messages cannot be edited). */
-    hasMedia?: boolean;
     /** When false, hides the reply button. */
     canReply?: boolean;
     /** When false, hides the react button. */
@@ -86,7 +84,6 @@
     anchor = null,
     isOwn = false,
     isDeleted = false,
-    hasMedia = false,
     canReply = true,
     canReact = true,
     canEdit = true,
@@ -161,10 +158,11 @@
         key: 'pin',
         label: pinned ? m.msg_unpin_label() : m.msg_pin_label(),
         icon: pinned ? PinOff : Pin,
-        tone: 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-500',
+        tone: 'text-accent-text hover:bg-accent/10',
         run: onPin,
       });
-    if (isOwn && !hasMedia && canEdit)
+    // A media message's edit is its caption's, so it is offered too (owner, 2026-11-11).
+    if (isOwn && canEdit)
       list.push({
         key: 'edit',
         label: m.common_edit_label(),
@@ -292,7 +290,7 @@
             <button
               type="button"
               class="flex h-11 w-11 items-center justify-center rounded-full text-2xl leading-none transition-transform active:scale-75 {isActive
-                ? 'bg-amber-400/20 ring-2 ring-amber-400'
+                ? 'bg-accent/20 ring-accent-icon ring-2'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
               aria-label={m.msg_react_with_emoji({ emoji })}
               aria-pressed={isActive}

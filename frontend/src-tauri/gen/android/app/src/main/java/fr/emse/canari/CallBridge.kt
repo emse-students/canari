@@ -190,6 +190,19 @@ object CallBridge {
         }
 
         /**
+         * The member tapped mute or unmute while the call is held for a focus loss: ask the audio
+         * focus again (`CallFocusHold`, D056). The answer comes back as a `focus` event.
+         */
+        @JavascriptInterface
+        fun askFocus(callId: String, why: String) {
+            if (callId.isBlank()) {
+                Log.e(TAG, "focus ask refused: no call id ($why)")
+                return
+            }
+            deliver(CallServiceCommand.AskFocus(callId, why.ifBlank { "unspecified" }), "ask-focus")
+        }
+
+        /**
          * The page shows an incoming call: ring it natively, on the RINGTONE stream, with Canari's
          * ring ([CallRingPlayer]). [json] is `{callId, groupId, callerId, hasVideo, appSounds}` - the
          * facts the native CallStyle ring needs when the app leaves the screen while it rings.

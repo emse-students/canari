@@ -1,6 +1,6 @@
 <script lang="ts">
   import { internalPath } from '$lib/utils/internalPath';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { CalendarClock, LayoutDashboard, Plus, Settings } from '@lucide/svelte';
@@ -24,9 +24,18 @@
   interface Props {
     /** The owning entity, or `null` for the reader's personal spaces. */
     associationId: string | null;
+    /**
+     * The managed-spaces read, ALREADY STARTED by a page that knows it will mount this tab (the
+     * Reservations page asks it beside its own two reads, so the tab does not wait for them to end
+     * before asking - one round trip less on a slow link). Awaited instead of asking again; the
+     * refresh after a failure still asks for itself.
+     */
+    managed?: Promise<ManagedSpaceRow[]>;
   }
 
-  let { associationId }: Props = $props();
+  let { associationId, managed }: Props = $props();
+  /** The page's read, taken by the first load only. */
+  let headStart: Promise<ManagedSpaceRow[]> | undefined = untrack(() => managed);
   const personal = $derived(associationId === null);
 
   let spaces = $state<ManagedSpaceRow[]>([]);
@@ -47,7 +56,9 @@
     loading = true;
     error = '';
     try {
-      spaces = await listManagedSpaces(associationId);
+      const head = headStart;
+      headStart = undefined; // single use: a later load() asks for itself
+      spaces = await (head ?? listManagedSpaces(associationId));
     } catch (e) {
       error = describeBookingRefusal(e, m.common_load_error());
     } finally {
@@ -129,7 +140,7 @@
   {#if loading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if spaces.length === 0}
@@ -149,7 +160,7 @@
             class="text-text-main hover:bg-cn-border/20 flex min-w-0 flex-1 items-center gap-3 p-4 transition-colors"
           >
             <span
-              class="bg-cn-yellow/15 text-text-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+              class="bg-accent/15 text-text-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
               aria-hidden="true"
             >
               <CalendarClock size={22} />

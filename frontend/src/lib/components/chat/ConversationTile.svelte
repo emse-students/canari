@@ -5,7 +5,6 @@
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
-  import { onMount } from 'svelte';
   import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
@@ -126,11 +125,13 @@
         : resolvedDisplayName)
   );
 
-  onMount(() => {
-    // Only poll presence for real user IDs (direct conversations).
+  $effect(() => {
+    // Only poll presence for real user IDs (direct conversations). AN EFFECT, NOT `onMount`: a tile
+    // the list reuses for another row, or whose peer resolves after mount, moves its watch with the
+    // props instead of watching the first peer for ever (review of #2618, 2026-10-27).
     // The teardown names the peer it watched, captured here: a prop read in a teardown can re-run a
     // parent derived with stale values and rewire it (frontend/architecture, on teardowns).
-    if (isDirect) {
+    if (isDirect && contactName) {
       const watched = contactName;
       watchUsers([watched]);
       return () => unwatchUsers([watched]);
@@ -202,7 +203,7 @@
   data-removed={isRemoved}
   data-awaiting-admission={awaitingAdmission}
   data-selected={isSelected}
-  class="group focus-visible:ring-cn-yellow flex h-18 w-full items-center gap-3 rounded-2xl px-3 text-left transition-all duration-200 outline-none focus-visible:ring-2 active:scale-[0.98] {isSelected
+  class="group focus-visible:ring-accent-icon flex h-18 w-full items-center gap-3 rounded-2xl px-3 text-left transition-all duration-200 outline-none focus-visible:ring-2 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
       ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'
@@ -264,7 +265,7 @@
         -->
         {#if pendingAsks > 0}
           <span
-            class="text-2xs bg-cn-yellow text-cn-ink inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
+            class="text-2xs bg-accent text-on-accent inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
             data-join-asks={pendingAsks}
             role="img"
             aria-label={m.join_request_pending_badge_label({ count: pendingAsks })}

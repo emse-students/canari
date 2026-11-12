@@ -62,6 +62,33 @@ export async function claimReelMedia(
 }
 
 /**
+ * Which of `mediaIds` `ownerId` uploaded (`POST media/internal/owned`, read-only): the proof a
+ * comment or a post needs that the pictures it cites are its writer's own, since ids are not
+ * secrets and deleting a citing row releases the blob it names.
+ *
+ * It THROWS on a transport or HTTP failure and returns nothing partial, like {@link claimReelMedia}.
+ */
+export async function refusedMediaOf(
+  http: HttpService,
+  mediaIds: string[],
+  ownerId: string
+): Promise<string[]> {
+  const refused: string[] = [];
+  const unique = [...new Set(mediaIds)];
+  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+    const res = await firstValueFrom(
+      http.post<{ owned: string[]; refused: string[] }>(
+        mediaUrl('media/internal/owned'),
+        { mediaIds: unique.slice(i, i + BATCH_SIZE), ownerId },
+        { headers: internalHeaders() }
+      )
+    );
+    refused.push(...(res.data?.refused ?? []));
+  }
+  return refused;
+}
+
+/**
  * Ends blobs, each on its owner's say-so (the media service's allowlist is ownership), for the
  * REASON named, and returns ONE outcome per media id. An id listed twice under different owners
  * keeps the WORSE outcome, so a caller never reads a success that one of the entries did not earn.

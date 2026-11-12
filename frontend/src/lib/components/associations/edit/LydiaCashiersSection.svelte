@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import {
     addLydiaCashier,
@@ -16,7 +17,6 @@
   import { toE164Phone } from '$lib/associations/lydiaPhone';
   import { LYDIA_PRO_HELP_ROUTE } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import { CONTROL_LABEL_CLASS, controlClass } from '$lib/components/ui/controlClasses';
@@ -76,7 +76,7 @@
 
   /** The date a cashier was added, in the reader's locale. */
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 
   /** The label a roster row is picked by. */
@@ -204,7 +204,7 @@
             )}
           </p>
           {#if cashier.state === 'unconfirmed'}
-            <p class="text-amber-warn text-xs" role="status">
+            <p class="text-amber-warn-text text-xs" role="status">
               {m.asso_lydia_cashier_state_unconfirmed()}
             </p>
           {:else if cashier.state === 'revoke-unconfirmed'}

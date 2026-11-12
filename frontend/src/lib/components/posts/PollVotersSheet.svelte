@@ -49,7 +49,7 @@
           aria-pressed={opt.id === active.id}
           class="min-h-11 max-w-[11rem] shrink-0 truncate rounded-full border px-3 text-xs font-semibold transition-colors {opt.id ===
           active.id
-            ? 'text-text-main border-amber-500 bg-amber-500/10'
+            ? 'text-text-main border-accent-icon bg-accent/10'
             : 'border-cn-border text-text-muted'}"
           onclick={() => (activeId = opt.id)}
         >

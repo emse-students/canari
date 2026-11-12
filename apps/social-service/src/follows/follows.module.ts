@@ -8,6 +8,8 @@ import { AccountBell } from './entities/account-bell.entity';
 import { AccountBellsService } from './account-bells.service';
 import { AccountBellsController } from './account-bells.controller';
 import { FollowsService } from './follows.service';
+import { SuggestionsController } from './suggestions.controller';
+import { SuggestionsService } from './suggestions.service';
 
 @Module({
   imports: [
@@ -19,8 +21,8 @@ import { FollowsService } from './follows.service';
       Association,
     ]),
   ],
-  controllers: [AccountBellsController],
-  providers: [FollowsService, AccountBellsService],
+  controllers: [AccountBellsController, SuggestionsController],
+  providers: [FollowsService, AccountBellsService, SuggestionsService],
   exports: [FollowsService, AccountBellsService],
 })
 export class FollowsModule {}

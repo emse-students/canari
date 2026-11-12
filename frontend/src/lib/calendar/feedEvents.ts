@@ -1,7 +1,7 @@
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import { associationAccentHex } from '$lib/associations/accent';
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { intlLocale } from '$lib/utils/intlLocale';
 
 /**
  * WHAT A CALENDAR FEED EVENT LOOKS LIKE ON A ROW, IN ONE PLACE.
@@ -442,20 +442,8 @@ export function pendingRingStyle(color: string): string {
   return `border:1.5px dashed ${color};`;
 }
 
-/**
- * The locale every calendar surface formats in.
- *
- * `getLocale()` answers `'fr'`/`'en'`, which `Intl` accepts but resolves to `en-GB`-ish defaults for
- * the second; the two region tags are named here so a date reads the same everywhere it is drawn.
- * `formatTime` hardcoded `'fr-FR'` until 2026-09-16 while the copy in the admin agenda did this,
- * so an English user read one surface in their locale and the next in French.
- */
-function calendarLocale(): string {
-  return getLocale() === 'en' ? 'en-US' : 'fr-FR';
-}
-
 function formatTime(iso: string): string {
-  return new Intl.DateTimeFormat(calendarLocale(), {
+  return new Intl.DateTimeFormat(intlLocale(), {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(iso));
@@ -483,7 +471,7 @@ export function formatEventDateTimeRange(event: {
   startsAt: string;
   endsAt?: string | null;
 }): string {
-  const locale = calendarLocale();
+  const locale = intlLocale();
   const withDay = new Intl.DateTimeFormat(locale, {
     weekday: 'short',
     day: 'numeric',

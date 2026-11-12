@@ -101,3 +101,19 @@ export function frameReachesBottom(stage: StageSize, box: FrameBox): boolean {
 export function frameToPixels(point: { x: number; y: number }, size: StageSize) {
   return { x: point.x * size.width, y: point.y * size.height };
 }
+
+/** The most of a clip's picture a `cover` may crop, per dimension (owner, 2026-11-09). */
+export const REEL_COVER_MAX_CROP = 0.2;
+
+/**
+ * How a reel's video is fitted to its frame (owner, 2026-11-09: "Certains posts ont des bords noirs,
+ * ils ne sont pas etires"): it FILLS the frame (`cover`, as Instagram and TikTok do) whenever doing
+ * so crops at most {@link REEL_COVER_MAX_CROP} of either dimension, and is letterboxed (`contain`)
+ * only when its shape is clearly different, i.e. a landscape clip in a portrait frame. An unknown
+ * shape (metadata not yet read) fills: the frame is already drawn at the clip's own ratio.
+ */
+export function reelVideoFit(videoAspect: number, frameAspect: number): 'cover' | 'contain' {
+  if (!(videoAspect > 0) || !(frameAspect > 0)) return 'cover';
+  const kept = Math.min(videoAspect, frameAspect) / Math.max(videoAspect, frameAspect);
+  return 1 - kept <= REEL_COVER_MAX_CROP ? 'cover' : 'contain';
+}

@@ -39,6 +39,13 @@ export function useMentionAutocomplete(opts: {
    * still loading - it falls back to the server search over the whole directory.
    */
   roster?: MentionRosterMember[];
+  /**
+   * Narrows the accounts a NAME SEARCH found to those a mention here may reach (a live's audience,
+   * owner 2026-11-09). Applied to the server search - the whole directory - never to the roster,
+   * whose members are in the conversation already. With a roster it ALSO tops the roster's rows up
+   * from that search, once a name is being typed. Absent: the search is unfiltered, as before.
+   */
+  audienceFilter?: (users: MentionUser[]) => Promise<MentionUser[]>;
 }) {
   let query = $state('');
   let suggestions = $state<MentionUser[]>([]);
@@ -86,11 +93,10 @@ export function useMentionAutocomplete(opts: {
    */
   async function search(q: string) {
     try {
-      const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const data: MentionUser[] = await res.json();
+      const found = await searchDirectory(q);
+      if (found) {
         const me = currentUserId();
-        suggestions = filterUserSuggestions(data, {
+        suggestions = filterUserSuggestions(found, {
           excludeIds: me ? [me] : [],
         }).slice(0, MENTION_MAX_ROWS);
         open = suggestions.length > 0;
@@ -99,6 +105,37 @@ export function useMentionAutocomplete(opts: {
     } catch {
       suggestions = [];
       open = false;
+    }
+  }
+
+  /** The directory search, then `audienceFilter`; null when the server did not answer 2xx. */
+  async function searchDirectory(q: string): Promise<MentionUser[] | null> {
+    const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return null;
+    const data: MentionUser[] = await res.json();
+    return opts.audienceFilter ? opts.audienceFilter(data) : data;
+  }
+
+  /**
+   * Tops the roster's rows up with accounts of the directory the audience filter let through - the
+   * live chat's "first the people who are here, then anyone who may see it". Rows already offered
+   * stay first and are never repeated; a stale answer (the query moved on) is dropped.
+   */
+  async function searchMore(q: string) {
+    try {
+      const found = await searchDirectory(q);
+      if (!found || q !== query || start < 0) return;
+      const me = currentUserId();
+      const have = suggestions.map((u) => u.id.toLowerCase());
+      const extra = filterUserSuggestions(found, {
+        excludeIds: [...(me ? [me] : []), ...have, ...(blockedIds ?? [])],
+      });
+      if (extra.length === 0) return;
+      const merged = [...suggestions, ...extra].slice(0, MENTION_MAX_ROWS);
+      suggestions = merged;
+      open = merged.length > 0;
+    } catch (e) {
+      console.warn('[mention] the audience search failed, the roster rows stay', e);
     }
   }
 
@@ -114,7 +151,7 @@ export function useMentionAutocomplete(opts: {
    */
   function suggestLocally(roster: MentionRosterMember[]) {
     const me = currentUserId();
-    suggestions = suggestFromRoster(roster, query, {
+    const offered = suggestFromRoster(roster, query, {
       excludeIds: [...(me ? [me] : []), ...(blockedIds ?? [])],
       resolveName: peekUserDisplayName,
       onUnnamed: (id) => {
@@ -123,7 +160,8 @@ export function useMentionAutocomplete(opts: {
         console.warn(`[mention] member ${id.slice(0, 8)} has no known name and is not offered`);
       },
     }).slice(0, MENTION_MAX_ROWS);
-    open = suggestions.length > 0;
+    suggestions = offered;
+    open = offered.length > 0;
     selectedIdx = -1;
   }
 
@@ -188,6 +226,9 @@ export function useMentionAutocomplete(opts: {
       if (debounceTimer) clearTimeout(debounceTimer);
       suggestLocally(roster);
       void prepareRoster(roster);
+      if (opts.audienceFilter && m[1].length > 0) {
+        debounceTimer = setTimeout(() => void searchMore(query), 250);
+      }
     } else if (m && m[1].length > 0) {
       if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
       start = cursor - m[0].length;
@@ -195,6 +236,13 @@ export function useMentionAutocomplete(opts: {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => void search(query), 250);
     } else {
+      // The mention ended: a search still waiting for its delay would otherwise run for a query
+      // that no longer exists and reopen the picker on plain text (start -1, nothing to select).
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+        Log.d('[mention] the mention ended before its search ran - search dropped');
+      }
       open = false;
       suggestions = [];
       query = '';

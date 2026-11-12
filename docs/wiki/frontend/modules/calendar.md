@@ -397,6 +397,11 @@ agenda) were two implementations of the same form under three names, 840 and 732
 same six fields twice - and neither could do what the other could. They are now one component,
 `$lib/components/calendar/EventFormModal.svelte`, over one module, `$lib/calendar/eventForm.ts`.
 
+It draws its own panel rather than the shared `Modal`, and reads the keyboard the way `Modal` does:
+`focusTrap` on the panel (Tab stays inside, the focus goes back when the form is gone), and a
+`keydown` on the panel that stops the key and closes on Escape - one Escape, one dialog
+(`EventFormModal.keyboard.svelte.test.ts`).
+
 **What differed was never the form. It was which fields each surface may DECIDE**, so that is a
 prop:
 
@@ -509,6 +514,10 @@ change beyond deleting a fill.
 landscape sheet, rasterised and re-drawn as vector text by `$lib/pdf/searchableRaster.ts`. The live
 preview is rendered **in-document** (not an iframe) so it uses the app's real fonts and matches the
 export pixel-for-pixel.
+
+Each slider of the settings panel is inside the `<label>` that holds its caption, so the caption
+(which carries the value) is its name. `utils/rangeInputNames.guard.test.ts` reads every component
+for a `<input type="range">` with no name - a label around it, an `aria-label`, or a `<label for>`.
 
 ### THE SHEET IS A REPRODUCTION, AND THE THING IT REPRODUCES IS A CANVA
 
@@ -783,7 +792,8 @@ creator's name, which no agenda surface shows anyone. The form's hint says exact
 (`asso_calendar_event_neutral_hint`: "only the agenda's managers see which association filed it").
 
 **The label is "Campus"** (`calendar_neutral_label`, the same word in both locales). The UI had no
-better existing word: the agenda's filter says "Toutes les associations", which names associations,
+better existing word: (the agenda's filter then said "Toutes les associations", which named
+associations; it is now the [space filter](../../profiles-and-access.md#the-agendas-space-filter-owner-2026-11-10))
 and "Campus" is already the axis of the spaces model (a reader's campus) and of the public feed
 selection. It is also the word the server can write itself, untranslated, in the anonymous `.ics`
 (`NEUTRAL_EVENT_LABEL`), which has no locale.

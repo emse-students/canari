@@ -21,10 +21,12 @@ import { profilePhotoPromptStage } from './profilePhotoPromptStage';
  */
 function stage() {
   return profilePhotoPromptStage({
+    eligible: seenHelps.profilePhotoPromptEligible,
     hasPhoto: ownProfilePhoto.hasPhoto,
     firstSeen: seenHelps.has('prompt-profile-photo'),
     reminderSeen: seenHelps.has('prompt-profile-photo-reminder'),
     firstAgeSeconds: seenHelps.ageSeconds('prompt-profile-photo'),
+    month: new Date().getMonth() + 1,
   });
 }
 

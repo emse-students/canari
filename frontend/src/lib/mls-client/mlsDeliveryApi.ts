@@ -6,7 +6,13 @@ import {
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
-import type { DeviceMembershipRow, DistributionSeat, GroupMeta, UserGroupRow } from './IMlsService';
+import type {
+  DeviceMembershipRow,
+  DismissedGroupsRead,
+  DistributionSeat,
+  GroupMeta,
+  UserGroupRow,
+} from './IMlsService';
 import { parseSeat } from '$lib/utils/chat/noHolder.svelte';
 import type { DatedKeyPackage } from './keyPackages';
 import type {
@@ -3083,23 +3089,24 @@ export class MlsDeliveryApi {
   /**
    * Lists the groups THIS user deliberately dismissed (manual deletion/leave).
    * Discovery purges every local conversation present in this set - across all of the user's
-   * devices. Returns `[]` on failure (never purge on a doubt).
+   * devices. Never rejects and never logs: the outcome is a {@link DismissedGroupsRead}, and the
+   * caller says a failure where it USES the list (a failure reads as nothing dismissed - never purge
+   * on a doubt).
    */
-  async getDismissedGroups(): Promise<string[]> {
+  async getDismissedGroups(): Promise<DismissedGroupsRead> {
     try {
       const res = await this.f(
         `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
         { headers: await this.auth() }
       );
-      if (!res.ok) {
-        console.warn(`[MLS] dismissed-groups read answered ${res.status} - treated as none`);
-        return [];
-      }
+      if (!res.ok) return { kind: 'refused', status: res.status };
       const arr = await res.json();
-      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
+      return {
+        kind: 'listed',
+        groupIds: Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [],
+      };
     } catch (e) {
-      console.warn('[MLS] dismissed-groups read did not reach the server - treated as none:', e);
-      return [];
+      return { kind: 'failed', transport: isTransportFailure(e), error: e };
     }
   }
 

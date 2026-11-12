@@ -83,6 +83,7 @@
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
   import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface ReplyTo {
     id: string;
@@ -120,6 +121,11 @@
      * aside, and Escape cancels. The text field's own content (`messageText`) is the edit.
      */
     editingText?: string | null;
+    /**
+     * The edit is a media message's CAPTION (owner, 2026-11-11), which may be emptied: the photo
+     * stays and loses its caption. A text message's edit may not be empty.
+     */
+    editingAllowsEmpty?: boolean;
     /** Abandons the edit and gives the draft back. */
     onCancelEdit?: () => void;
     /** Saves the edit. Called instead of `onSend`; the parent restores the draft itself. */
@@ -139,7 +145,8 @@
      * the clock and lifting the finger away from the bin IS the send. Staging it asked for the
      * same consent twice, behind a "files pending" banner.
      */
-    onSendVoiceNote?: (file: File) => void;
+    /** A finished recording, and its sound measured while recorded (null: unmeasured). */
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -170,6 +177,7 @@
     replyingTo,
     onCancelReply,
     editingText = null,
+    editingAllowsEmpty = false,
     onCancelEdit,
     onConfirmEdit,
     onFilesSelected,
@@ -528,10 +536,12 @@
   /** The attachments, GIF, poll and microphone give way while a message is edited or recorded. */
   const actionsHidden = $derived(isVoiceActive || isEditing);
 
-  // SAVE NEEDS A CHANGE: an empty text would erase the message and an identical one says nothing.
+  // SAVE NEEDS A CHANGE: an empty text would erase the message and an identical one says nothing -
+  // except on a caption, which an empty text removes while the media stays.
   const isSendDisabled = $derived(
     isEditing
-      ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
+      ? (!messageText.trim() && !editingAllowsEmpty) ||
+          messageText.trim() === (editingText ?? '').trim()
       : !messageText.trim() && pendingFiles.length === 0
   );
 
@@ -770,7 +780,7 @@
     return file.type.startsWith('audio/');
   }
 
-  function handleVoiceRecording(audioBlob: Blob) {
+  function handleVoiceRecording(audioBlob: Blob, loudness: MediaLoudness | null) {
     if (!onSendVoiceNote) return;
 
     const mimeType = audioBlob.type || 'audio/webm';
@@ -786,7 +796,7 @@
       type: mimeType,
     });
 
-    onSendVoiceNote(audioFile);
+    onSendVoiceNote(audioFile, loudness);
   }
 
   $effect(() => {
@@ -911,12 +921,10 @@
         class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
-          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+          class="bg-accent absolute top-0 bottom-0 left-0 w-1.5 shadow-[0_0_12px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
         ></div>
         <div class="min-w-0 flex-1 pl-1.5">
-          <div
-            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
-          >
+          <div class="text-accent-text mb-0.5 flex items-center gap-1.5 text-xs font-bold">
             <span class="truncate">{m.chat_editing_message_label()}</span>
           </div>
           <div class="text-text-muted truncate text-xs leading-snug font-medium">
@@ -926,7 +934,7 @@
         {#if onCancelEdit}
           <button
             onclick={onCancelEdit}
-            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_edit_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -943,12 +951,10 @@
         class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
-          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+          class="bg-accent absolute top-0 bottom-0 left-0 w-1.5 shadow-[0_0_12px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
         ></div>
         <div class="min-w-0 flex-1 pl-1.5">
-          <div
-            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
-          >
+          <div class="text-accent-text mb-0.5 flex items-center gap-1.5 text-xs font-bold">
             <span class="truncate"
               >{m.chat_reply_to_message({
                 replySenderDisplayName: replySenderDisplayName || m.user_unknown_label(),
@@ -966,7 +972,7 @@
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -1144,7 +1150,7 @@
           class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl shadow-amber-500/20"
+            class="text-on-accent bg-accent shadow-accent/20 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl"
           >
             <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}

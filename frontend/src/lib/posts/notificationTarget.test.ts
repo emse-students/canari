@@ -29,6 +29,16 @@ describe('notificationHref', () => {
     expect(notificationHref({ type: 'mention', postId: 'p1' })).toBe('/posts/p1');
   });
 
+  it('opens a row a comment wrote AT that comment, as its push does', () => {
+    for (const type of ['comment', 'reply', 'mention', 'friend_comment']) {
+      expect(notificationHref({ type, postId: 'p1', commentId: 'c 1' }), type).toBe(
+        '/posts/p1?comment=c%201'
+      );
+    }
+    // A row written before migration 132 names no comment: the post alone.
+    expect(notificationHref({ type: 'comment', postId: 'p1', commentId: null })).toBe('/posts/p1');
+  });
+
   it('sends a form reminder to its form', () => {
     expect(notificationHref({ type: 'form_reminder', postId: 'f1' })).toBe('/forms/f1');
   });
@@ -81,9 +91,15 @@ describe('notificationHref', () => {
     }
   });
 
+  it("opens the post of a friend's activity (engagement WP-9)", () => {
+    expect(notificationHref({ type: 'friend_reaction', postId: 'p1' })).toBe('/posts/p1');
+    expect(notificationHref({ type: 'friend_comment', postId: 'p1' })).toBe('/posts/p1');
+    expect(notificationHref({ type: 'campus_trend', postId: 'p1' })).toBe('/posts/p1');
+  });
+
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(45);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(48);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];

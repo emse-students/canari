@@ -4,6 +4,7 @@
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import StudentsOnlyChip from './StudentsOnlyChip.svelte';
+  import InstitutionReachChip from './InstitutionReachChip.svelte';
   import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import { Pin, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
@@ -68,7 +69,7 @@
   {#if authorHref}
     <a
       href={authorHref}
-      class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="focus-visible:ring-accent-icon shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2"
       aria-label={authorLinkLabel}
     >
       <span class="block h-10 w-10"><PostAuthorAvatar {post} fill /></span>
@@ -84,7 +85,7 @@
       {#if authorHref}
         <a
           href={authorHref}
-          class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
+          class="text-text-main hover:text-accent-text text-sm font-bold transition-colors outline-none focus-visible:underline"
         >
           <EmojiText text={getPostAuthorName()} />
         </a>
@@ -100,23 +101,56 @@
       />
     {/if}
     <div
-      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium"
       data-post-time-line
     >
-      <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      <span class="shrink-0 opacity-80" title={exactDate(post.publishedAt)}
+        >{timeAgo(post.publishedAt)}</span
+      >
       {#if post.pinned}
         <!-- A PINNED POST IS A MUTED WORD ON THE TIME'S LINE, as Facebook marks a pinned or sponsored post - no coloured sticker over the card's edge. -->
-        <span class="flex shrink-0 items-center gap-1" data-post-pinned>
+        <span class="flex shrink-0 items-center gap-1 opacity-80" data-post-pinned>
           <Pin size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
           {m.post_pinned()}
         </span>
       {/if}
       {#if post.studentsOnly}
-        <StudentsOnlyChip />
+        <span class="shrink-0 opacity-80"><StudentsOnlyChip /></span>
+      {/if}
+      {#if post.feedSuggested}
+        <!-- "Suggestion" is a muted word here, as the pinned mark is - no yellow badge over the card's edge (owner, 2026-11-10). -->
+        <span class="flex shrink-0 items-center gap-1.5 opacity-80" data-post-suggestion>
+          <span aria-hidden="true">&#183;</span>
+          {m.suggestion_post_badge()}
+        </span>
+      {/if}
+      {#if showFollow && post.association}
+        <!--
+          THE LINE IS NOT DIMMED AS A WHOLE: an opacity on a parent cannot be undone by a child, and
+          "Suivre" must stay at full strength, so each muted item carries its own `opacity-80`.
+          "Suivre" for whoever published this, when the reader does not follow them yet (engagement
+          WP-2), a quiet text link on this line and never a button (owner, 2026-11-10). An association
+          post offers the association; a personal post its author; an anonymous post nothing (a revealed
+          author is never turned into a link); the moderation preview (`showFollow` off) nothing.
+        -->
+        <FollowChip
+          kind="association"
+          targetId={post.association.id}
+          name={post.association.name}
+          dotted
+        />
+      {:else if showFollow && post.authorId && !post.anonymous}
+        <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} dotted />
+      {/if}
+      {#if post.reach}
+        <InstitutionReachChip reach={post.reach} />
       {/if}
       {#if republished}
         <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
-        <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
+        <span
+          class="flex max-w-full min-w-0 items-center gap-1.5 opacity-80"
+          data-post-republished-unit
+        >
           <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
           <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
         </span>
@@ -131,21 +165,4 @@
       </div>
     {/if}
   </div>
-  <!--
-    "Suivre" for whoever published this, when the reader does not follow them yet (engagement WP-2).
-    An association post offers the association; a personal post offers its author; an anonymous post
-    offers nothing - there is nobody to follow, and a revealed author is never turned into a button.
-  -->
-  {#if !showFollow}
-    <!-- the moderation preview: a moderator reads the post, they do not follow its author from there -->
-  {:else if post.association}
-    <FollowChip
-      kind="association"
-      targetId={post.association.id}
-      name={post.association.name}
-      iconOnlyOnPhone
-    />
-  {:else if post.authorId && !post.anonymous}
-    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} iconOnlyOnPhone />
-  {/if}
 </div>

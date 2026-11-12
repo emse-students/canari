@@ -72,7 +72,7 @@
             class="text-text-main hover:bg-cn-border/20 flex items-center gap-3 p-4 transition-colors"
           >
             <div
-              class="bg-cn-yellow/15 text-text-muted relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl"
+              class="bg-accent/15 text-text-muted relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl"
             >
               {#if space.poster}
                 <SpacePoster poster={space.poster} alt="" cover />

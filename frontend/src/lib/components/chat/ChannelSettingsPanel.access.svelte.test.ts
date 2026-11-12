@@ -32,7 +32,10 @@ vi.mock('$lib/utils/graine/commitRemoval', () => ({
   commitSalonRevoke,
   committingDeviceId: () => 'web-actor',
 }));
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+  appendLog: vi.fn(),
+  globalChannels: { rolePermissions: {} },
+}));
 const showConfirmMock = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
 // Each member row mounts an `Avatar`, which resolves its image on mount - and happy-dom really
@@ -158,7 +161,34 @@ async function mountOnAccessTab(channelId: string, canManage = true) {
   return props;
 }
 
+/** The two-option access choice (Public / Restreint), absent for a member who cannot manage. */
+function accessChoiceList(): Element | null {
+  return document.querySelector(`[role=tablist][aria-label="${m.chat_channel_access_title()}"]`);
+}
+
+/** One option of the access choice, by its label. */
+function accessChoice(which: 'public' | 'restricted'): HTMLButtonElement {
+  const label =
+    which === 'public'
+      ? m.chat_channel_access_option_public()
+      : m.chat_channel_access_option_restricted();
+  const tab = [...(accessChoiceList()?.querySelectorAll('button[role=tab]') ?? [])].find(
+    (b) => b.textContent?.trim() === label
+  );
+  return tab as HTMLButtonElement;
+}
+
 describe('ChannelSettingsPanel - access tab', () => {
+  it('is a choice, not a switch: the real state is the selected option, with both explained', async () => {
+    await mountOnAccessTab('public-salon');
+    expect(document.querySelector('button[role=switch]')).toBeNull();
+    expect(accessChoice('public').getAttribute('aria-selected')).toBe('true');
+    expect(accessChoice('restricted').getAttribute('aria-selected')).toBe('false');
+    const text = document.querySelector('[data-testid=channel-access-options]')?.textContent;
+    expect(text).toContain(m.chat_channel_public_description());
+    expect(text).toContain(m.chat_channel_private_description());
+  });
+
   it('writes the allowlist on the server the moment a member is added', async () => {
     await mountOnAccessTab('salon-a');
 
@@ -185,6 +215,26 @@ describe('ChannelSettingsPanel - access tab', () => {
     // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grant is
     // followed by the admission into the salon's own key group, after the server accepted it.
     expect(admitSalonGrantee).toHaveBeenCalledWith('salon-a', 'peer', expect.any(Function));
+  });
+
+  it('moves focus on an arrow key without opening the confirmation or writing', async () => {
+    await mountOnAccessTab('public-salon');
+    accessChoice('public').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    );
+    await settle();
+    expect(document.activeElement).toBe(accessChoice('restricted'));
+    expect(showConfirmMock).not.toHaveBeenCalled();
+    expect(service.updateChannelAccess).not.toHaveBeenCalled();
+  });
+
+  it('selects Restreint for a restricted salon, and writing nothing when the current one is picked again', async () => {
+    await mountOnAccessTab('salon-a');
+    expect(accessChoice('restricted').getAttribute('aria-selected')).toBe('true');
+    accessChoice('restricted').click();
+    await settle();
+    expect(showConfirmMock).not.toHaveBeenCalled();
+    expect(service.updateChannelAccess).not.toHaveBeenCalled();
   });
 
   it('names a coded removal refusal instead of the generic error', async () => {
@@ -275,7 +325,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     );
     await mountOnAccessTab('public-salon');
 
-    (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
+    accessChoice('restricted').click();
     await settle();
 
     expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', REVISION, true, []);
@@ -298,7 +348,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     await mountOnAccessTab('public-salon');
     expect(document.getElementById('channel-access-autocomplete')).toBeNull();
 
-    (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
+    accessChoice('restricted').click();
     await settle();
 
     expect(showConfirmMock).toHaveBeenCalledWith(m.chat_channel_make_private_confirm(), {
@@ -312,7 +362,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     showConfirmMock.mockResolvedValue(false);
     await mountOnAccessTab('public-salon');
 
-    (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
+    accessChoice('restricted').click();
     await settle();
 
     expect(service.updateChannelAccess).not.toHaveBeenCalled();
@@ -340,6 +390,33 @@ describe('ChannelSettingsPanel - access tab', () => {
       true,
       ['owner'],
       'admins'
+    );
+  });
+
+  // Production 2026-11-10: "Admins and moderators" read as if the role CALLED Moderateur counted,
+  // while that community's Moderateur role granted nothing. The panel names who really qualifies.
+  it('names the roles the policy admits, and warns when only administrators qualify', async () => {
+    service.getChannelAccess.mockImplementation((id: string) =>
+      Promise.resolve({
+        channelId: id,
+        isPrivate: true,
+        allowedUsers: ['owner'],
+        writePolicy: 'admins_moderators',
+        accessRevision: REVISION,
+        writerRoles: {
+          admins: [{ id: 'r-admin', name: 'Administrateur', displayLabel: null }],
+          admins_moderators: [{ id: 'r-admin', name: 'Administrateur', displayLabel: null }],
+        },
+      })
+    );
+    await mountOnAccessTab('salon-a');
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain(m.chat_channel_write_roles_qualifying({ roles: m.chat_role_admin() }));
+    expect(text).toContain(
+      m.chat_channel_write_no_moderator_role_warning({
+        permission: m.chat_permission_moderate_label(),
+      })
     );
   });
 });
@@ -522,6 +599,7 @@ describe('ChannelSettingsPanel - a member without channel.manage', () => {
     await mountOnAccessTab('salon-a', false);
 
     expect(document.querySelector('button[role=switch]')).toBeNull();
+    expect(accessChoiceList()).toBeNull();
     const writePolicy = document.querySelector(
       `[aria-label^="${m.chat_channel_who_can_write()}"]`
     ) as HTMLButtonElement;

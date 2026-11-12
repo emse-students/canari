@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import {
@@ -23,7 +24,6 @@
   } from '$lib/associations/lydiaEnrolmentSteps';
   import { Building2, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { wordingFor } from '$lib/associations/kindWording';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -242,7 +242,7 @@
 
   /** The pause date in the reader's locale. */
   function formatPauseDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 </script>
 
@@ -283,7 +283,7 @@
     {#if view?.adminCanClearInFlight}
       <div class="space-y-2">
         {#if view.responsableInFlight}
-          <p class="text-amber-warn text-sm leading-relaxed" role="status">
+          <p class="text-amber-warn-text text-sm leading-relaxed" role="status">
             {m.asso_lydia_resp_in_flight_admin()}
           </p>
         {/if}
@@ -303,7 +303,7 @@
 
   {#snippet responsableLine(responsable: LydiaResponsable)}
     {#if responsable.confirmed === false}
-      <p class="text-amber-warn text-sm leading-relaxed" role="status">
+      <p class="text-amber-warn-text text-sm leading-relaxed" role="status">
         {m.asso_lydia_resp_unconfirmed({ name: responsable.name, phoneEnd: responsable.phoneEnd })}
       </p>
       {#if isGlobalAdmin()}
@@ -390,7 +390,7 @@
             class="{step.state === 'done'
               ? 'bg-green-ok/20 text-green-ok'
               : step.state === 'current' || step.state === 'in-flight'
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-on-accent'
                 : step.state === 'paused'
                   ? 'bg-red-err/10 text-red-err'
                   : 'bg-cn-bg text-text-muted'} text-2xs mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold"
@@ -405,7 +405,7 @@
 
             {#if step.id === 'details'}
               {#if step.state === 'in-flight'}
-                <p class="text-amber-warn text-sm leading-relaxed" role="status">
+                <p class="text-amber-warn-text text-sm leading-relaxed" role="status">
                   {m.asso_lydia_in_flight_notice()}
                 </p>
               {:else if step.state === 'current'}

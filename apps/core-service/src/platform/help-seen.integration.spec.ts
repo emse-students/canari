@@ -11,7 +11,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BadRequestException, Logger } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, type Repository } from 'typeorm';
+import type { User } from '../users/entities/user.entity';
 import { HelpSeen } from './entities/help-seen.entity';
 import { HelpSeenService } from './help-seen.service';
 import { HelpSeenController } from './help-seen.controller';
@@ -48,7 +49,9 @@ maybe('help_seen against PostgreSQL', () => {
     await ds.query(migration);
     // Applied twice, as the deploy ledger may replay a file: it must be a no-op the second time.
     await ds.query(migration);
-    controller = new HelpSeenController(new HelpSeenService(ds.getRepository(HelpSeen)));
+    controller = new HelpSeenController(
+      new HelpSeenService(ds.getRepository(HelpSeen), {} as Repository<User>)
+    );
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   }, 60_000);
@@ -67,16 +70,25 @@ maybe('help_seen against PostgreSQL', () => {
   }
 
   it('is idempotent: the same id twice is one row and the same answer', async () => {
-    await expect(controller.list(SUBJECT)).resolves.toEqual({ seen: [], ageSeconds: {} });
+    await expect(controller.list(SUBJECT)).resolves.toEqual({
+      seen: [],
+      ageSeconds: {},
+      profilePhotoPromptEligible: false,
+    });
     await expect(controller.markSeen(SUBJECT, 'welcome-tour')).resolves.toEqual({ success: true });
     await expect(controller.markSeen(SUBJECT, 'welcome-tour')).resolves.toEqual({ success: true });
     expect(await rows(SUBJECT)).toBe(1);
     await expect(controller.list(SUBJECT)).resolves.toEqual({
       seen: ['welcome-tour'],
       ageSeconds: { 'welcome-tour': expect.any(Number) },
+      profilePhotoPromptEligible: false,
     });
     // Another account's state is its own.
-    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [], ageSeconds: {} });
+    await expect(controller.list(OTHER)).resolves.toEqual({
+      seen: [],
+      ageSeconds: {},
+      profilePhotoPromptEligible: false,
+    });
   });
 
   it('refuses an id outside the allowlist and writes nothing', async () => {
@@ -91,7 +103,11 @@ maybe('help_seen against PostgreSQL', () => {
 
   it('a row a later release retired is kept in the table and never handed out', async () => {
     await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'retired-hint')`, [OTHER]);
-    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [], ageSeconds: {} });
+    await expect(controller.list(OTHER)).resolves.toEqual({
+      seen: [],
+      ageSeconds: {},
+      profilePhotoPromptEligible: false,
+    });
   });
 
   it("is erased by the account erasure's statement, and only for that account", async () => {

@@ -78,7 +78,7 @@
         aria-hidden="true"
       ></span>
     {:else if SectionIcon}
-      <span class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
+      <span class="bg-accent/15 text-cn-dark rounded-xl p-2">
         <SectionIcon size={20} />
       </span>
     {/if}
