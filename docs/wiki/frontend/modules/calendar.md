@@ -397,6 +397,11 @@ agenda) were two implementations of the same form under three names, 840 and 732
 same six fields twice - and neither could do what the other could. They are now one component,
 `$lib/components/calendar/EventFormModal.svelte`, over one module, `$lib/calendar/eventForm.ts`.
 
+It draws its own panel rather than the shared `Modal`, and reads the keyboard the way `Modal` does:
+`focusTrap` on the panel (Tab stays inside, the focus goes back when the form is gone), and a
+`keydown` on the panel that stops the key and closes on Escape - one Escape, one dialog
+(`EventFormModal.keyboard.svelte.test.ts`).
+
 **What differed was never the form. It was which fields each surface may DECIDE**, so that is a
 prop:
 

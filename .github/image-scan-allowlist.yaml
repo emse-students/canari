@@ -345,6 +345,15 @@ vulnerabilities:
     purls:
       - "pkg:apk/alpine/libxslt@1.1.43-r3"
     statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
+  # CVE-2026-125350 (2026-11-12): a third advisory on the same libxslt build, same reach. Read that
+  # day: nginx:1.31.8-alpine (sha256:713fc2eb...) and nginx:stable-alpine (sha256:583b7f2f...) are
+  # the digests measured on 2026-11-10, not rebuilt; postgres:18-alpine has a newer digest
+  # (sha256:9ba53c7d..., pushed 2026-11-11) whose content is NOT measured here - moving that pin is
+  # its own change, and this purl stops covering it the day it carries 1.1.43-r4.
+  - id: CVE-2026-125350
+    purls:
+      - "pkg:apk/alpine/libxslt@1.1.43-r3"
+    statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
 
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
