@@ -1,7 +1,7 @@
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import { associationAccentHex } from '$lib/associations/accent';
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { intlLocale } from '$lib/utils/intlLocale';
 
 /**
  * WHAT A CALENDAR FEED EVENT LOOKS LIKE ON A ROW, IN ONE PLACE.
@@ -451,7 +451,7 @@ export function pendingRingStyle(color: string): string {
  * so an English user read one surface in their locale and the next in French.
  */
 function calendarLocale(): string {
-  return getLocale() === 'en' ? 'en-US' : 'fr-FR';
+  return intlLocale();
 }
 
 function formatTime(iso: string): string {

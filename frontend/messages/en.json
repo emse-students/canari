@@ -4525,6 +4525,7 @@
   "shared_post_open_reel_label": "Open the CanaReel by {author}",
   "shared_post_failed_hint": "Preview not loaded. Tap to open the post.",
   "shared_post_no_text": "Post without text",
+  "post_author_fallback": "Author",
   "link_preview_profile_member": "Canari member",
   "link_preview_join_community": "Join the community",
   "link_preview_join_conversation": "Join the conversation",
