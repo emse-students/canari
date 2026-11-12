@@ -1,11 +1,11 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { CalendarDays, GraduationCap, Info, MapPin } from '@lucide/svelte';
   import type { UserProfile } from '$lib/stores/user';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import ProfileCorrectionRequest from '$lib/components/profile/ProfileCorrectionRequest.svelte';
   import { campusLabel } from '$lib/profile/miconnectProfile';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   let { profile }: { profile: UserProfile } = $props();
 
@@ -56,10 +56,11 @@
           {m.profile_member_since_label()}
         </p>
         <p class="text-text-main text-sm font-bold capitalize">
-          {new Date(profile.createdAt).toLocaleDateString(
-            getLocale() === 'en' ? 'en-US' : 'fr-FR',
-            { year: 'numeric', month: 'long', day: 'numeric' }
-          )}
+          {new Date(profile.createdAt).toLocaleDateString(intlLocale(), {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })}
         </p>
       </div>
     </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -51,7 +52,6 @@
   import '@fontsource/leckerli-one/400.css';
   import '@fontsource/chewy/400.css';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { showToast } from '$lib/stores/toast.svelte';
 
   // ── Month navigation ─────────────────────────────────────────────
@@ -61,7 +61,7 @@
   let filterAssociationId = $state('');
 
   const titleMonth = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    new Intl.DateTimeFormat(intlLocale(), {
       month: 'long',
       year: 'numeric',
     }).format(focusDate)
