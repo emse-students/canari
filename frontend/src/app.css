@@ -36,6 +36,9 @@
      (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
      in dark mode and wreck contrast. */
   --color-cn-ink: #151b2c;
+  /* The ink one step lighter, the middle stop of a brand gradient that runs from `cn-ink` to the
+     accent. Fixed in both themes for the same reason. */
+  --color-cn-ink-soft: #1e2848;
   /* The other two fixed colours, same reasoning as `cn-ink`: surfaces that are deliberately dark
      in BOTH themes, so they must not be built from `cn-surface`. `cn-scrim` is the call/video
      chrome, `cn-tooltip` the dark tooltip bubble - both always carry white text. */
