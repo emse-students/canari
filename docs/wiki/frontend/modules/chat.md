@@ -92,11 +92,39 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
   page itself owns visibility (blocks, review cohort), so a link is only a navigation.
-- **Scroll on return is NOT preserved**: the chat route unmounts on navigation and reopens at its entry
-  window; no per-conversation scroll memory exists. Open item, with the mechanism it needs:
-[backlog](../../backlog.d/p3-conversation-scroll-kept-when-returning-from-a-profile.md).
+- **Scroll on return IS preserved, for the session** (2026-11-13): the thread's position is saved
+  when the reader navigates away and restored THROUGH THE ENTRY - see
+  [the position of a reader across a profile](#the-position-of-a-reader-across-a-profile-2026-11-13).
 
 Held by `ChatProfileEntryPoints.svelte.test.ts`.
+
+### The position of a reader across a profile (2026-11-13)
+
+The chat route unmounts on navigation, and a profile is a navigation. The thread keeps where the reader
+stood by one mechanism with no clock and no scroll listener (`utils/chat/scrollAnchors.ts`):
+
+- **Written at the leave, only.** `ChatArea` registers `beforeNavigate` (the DOM is still mounted):
+  `rememberReaderPosition` saves, per conversation id, `{ messageId, windowStart, offsetPx }` - the first
+  mounted row with any part below the top of the visible thread (a binary search, O(log n) rects; the
+  top is the scroller's box plus its `padding-top`, the floating chrome), the render window's start, and
+  the row's offset from that top. A reader at the bottom (`isNearBottom`) or still entering saves
+  NOTHING: the usual entry (first unread, bottom) is where they belong.
+- **Read by the entry, only.** In the entry effect (`hasConversationChanged`) `decideEntryAnchor` takes
+  the saved position (taking erases it: one return restores one position) and `resolveEntryAnchor`, a
+  pure function, decides `restore` or `bottom`. A `restore` skips `fillViewportThenPin` for
+  `restoreEntryAnchor`: the window opens at `min(windowStart, the anchor's group)`, the row is put back at
+  its offset, and the reveal is the usual one (`entryWidening`, `widenEntryWindow`, which compensates
+  `scrollTop`). `isNearBottom` is false from the entry, so growth after the reveal is `keep-row`.
+- **A stale anchor is a signal.** A message gone from the list (deleted, older than the page in memory)
+  falls back to the usual entry with one `Log.w('chat.anchor', ...)` line naming why; a row that is not
+  mounted after the window opened does the same.
+- **In memory, for the session.** Dropped at sign-out (`clearUserLocally`). A conversation not left since
+  start has none and opens as before. Known limit: the window's end is the end of the list, so a deep
+  anchor mounts every group below it at the restore (the same cost as `navigateToMessage`).
+  Held by `scrollAnchors.test.ts` (the decision, the search, the store) and
+  `ChatArea.scrollAnchor.svelte.test.ts` (a modelled geometry: back to the same row at the same offset,
+  bottom stays bottom, a position is spent once). **Owed: one phone reading** (the rig row of the brief -
+  open a profile from a sender name half-way up a long conversation, come back - is a reading, not a test).
 
 - **It floats over the thread.** `ChatArea` puts header, search, polls and pinned into one layer,
   `.chat-chrome-slot`, and publishes its height as `--chat-header-height`, the way the composer

@@ -82,6 +82,14 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
+  import { beforeNavigate } from '$app/navigation';
+  import {
+    firstRowEndingBelow,
+    rememberConversationAnchor,
+    resolveEntryAnchor,
+    takeConversationAnchor,
+    type EntryAnchorDecision,
+  } from '$lib/utils/chat/scrollAnchors';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
@@ -573,6 +581,122 @@
       // false - its floor at 60, so the 40 rows mounted in one flush.
       if (epoch !== entryEpoch) return;
       // In the SAME flush as the reveal, so the floor never rises between the two.
+      entryWidening = true;
+      entering = false;
+      void widenEntryWindow(epoch);
+    });
+  }
+
+  /**
+   * Where the reader stands, kept for their return from another page (a profile opened from a sender,
+   * a members row or a direct header). WRITTEN ONLY WHEN THEY LEAVE (`beforeNavigate`, the DOM still
+   * mounted) - never by a scroll listener or a timer - and read by the next entry of this
+   * conversation (`decideEntryAnchor`). A reader at the bottom saves nothing: the usual entry (first
+   * unread, bottom) is where they belong.
+   */
+  function rememberReaderPosition() {
+    const c = conversation;
+    if (!c) return;
+    if (!chatContainer || entering || isNearBottom) {
+      rememberConversationAnchor(c.id, null);
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} left at the bottom - nothing kept`);
+      return;
+    }
+    const drawnIds = new Set(
+      visibleMessageGroups.filter(isMessageGroupRow).map((group) => group.message.id)
+    );
+    const rows = Array.from(chatContainer.querySelectorAll<HTMLElement>('[id^="msg-"]')).filter(
+      (row) => drawnIds.has(row.id.slice('msg-'.length))
+    );
+    // The top of what the reader SEES: the scroller runs under the floating chrome, whose height is
+    // its padding-top (the same edge the sticky date is measured from).
+    const visibleTop =
+      chatContainer.getBoundingClientRect().top +
+      (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+    const index = firstRowEndingBelow(
+      rows.length,
+      (i) => rows[i].getBoundingClientRect().bottom,
+      visibleTop
+    );
+    if (index < 0) {
+      rememberConversationAnchor(c.id, null);
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} no row in view on leaving - nothing kept`);
+      return;
+    }
+    const messageId = rows[index].id.slice('msg-'.length);
+    rememberConversationAnchor(c.id, {
+      messageId,
+      windowStart: renderWindow.start,
+      offsetPx: rows[index].getBoundingClientRect().top - visibleTop,
+    });
+    Log.d(
+      'chat.anchor',
+      `${c.id.slice(0, 8)} kept at ${messageId.slice(0, 8)} (window ${renderWindow.start})`
+    );
+  }
+  beforeNavigate(() => rememberReaderPosition());
+
+  /**
+   * THE ONE PLACE A SAVED POSITION ENTERS THE ENTRY (`resolveEntryAnchor` decides). A stale anchor -
+   * its message no longer in the list - falls back to the usual entry, and says so: a fallback is a
+   * signal.
+   */
+  function decideEntryAnchor(conversationId: string): EntryAnchorDecision {
+    const anchor = takeConversationAnchor(conversationId);
+    const index =
+      anchor === null
+        ? -1
+        : messageGroups.findIndex(
+            (group) => isMessageGroupRow(group) && group.message.id === anchor.messageId
+          );
+    const decision = resolveEntryAnchor(anchor, index, messageGroups.length);
+    if (decision.kind === 'bottom' && decision.reason !== 'none') {
+      Log.w(
+        'chat.anchor',
+        `${conversationId.slice(0, 8)} saved position is stale (${decision.reason}) - opening at the usual entry`
+      );
+    }
+    return decision;
+  }
+
+  /**
+   * Opens the conversation where the reader left it: the render window opens at the saved start, the
+   * anchor row is put back at its saved offset, and only then is the list revealed. It goes through
+   * the entry's own machinery - the hidden frame, `entering`, the widen after the reveal - so nothing
+   * about it is a second mechanism; only the landing differs from `fillViewportThenPin`.
+   */
+  async function restoreEntryAnchor(decision: Extract<EntryAnchorDecision, { kind: 'restore' }>) {
+    const epoch = ++entryEpoch;
+    windowStart = decision.windowStart;
+    await tick();
+    if (epoch !== entryEpoch) return;
+    const place = (): boolean => {
+      const row = document.getElementById(`msg-${decision.messageId}`);
+      if (!row || !chatContainer) return false;
+      const visibleTop =
+        chatContainer.getBoundingClientRect().top +
+        (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+      chatContainer.scrollTop += row.getBoundingClientRect().top - visibleTop - decision.offsetPx;
+      return true;
+    };
+    if (!place()) {
+      Log.w(
+        'chat.anchor',
+        `row ${decision.messageId.slice(0, 8)} not mounted after the window opened at ${decision.windowStart} - usual entry`
+      );
+      isNearBottom = true;
+      void fillViewportThenPin();
+      return;
+    }
+    Log.d(
+      'chat.anchor',
+      `restored ${decision.messageId.slice(0, 8)} (window ${decision.windowStart})`
+    );
+    requestAnimationFrame(() => {
+      if (epoch !== entryEpoch) return;
+      place();
+      // The same reveal as the usual entry: one flush, the floor held at the entry frame's until the
+      // widen after it has finished.
       entryWidening = true;
       entering = false;
       void widenEntryWindow(epoch);
@@ -1263,6 +1387,7 @@
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
+        const entryAnchor = decideEntryAnchor(c.id);
         hasMoreInDb = !isChannel;
         // The previous conversation's older-history load and scroll offset are not this one's.
         olderLoadToken++;
@@ -1277,8 +1402,13 @@
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
         entryReportOwed = true;
-        tick().then(() => fillViewportThenPin());
-        isNearBottom = true;
+        if (entryAnchor.kind === 'restore') {
+          isNearBottom = false;
+          tick().then(() => restoreEntryAnchor(entryAnchor));
+        } else {
+          tick().then(() => fillViewportThenPin());
+          isNearBottom = true;
+        }
       } else if (hasNewMessage) {
         // WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION IS ONE DECISION, AND IT IS NOT HERE.
         // `respondToNewMessage` holds it, tested on its own; this branch only carries it out.

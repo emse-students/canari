@@ -10,6 +10,7 @@ import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { endPeerNames } from '$lib/utils/users/peerNameDirectory';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
+import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { currentUserId as signedInUserId } from '$lib/stores/userState.svelte';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
@@ -121,6 +122,8 @@ export function clearUserLocally(): void {
   forgetStoredFeeds('sign-out');
   // And the remembered peer names with it, in memory now and by the same epoch on disk.
   endPeerNames('sign-out');
+  // Where the reader stood in each conversation (kept for a return from a profile) ends with it.
+  clearConversationAnchors();
   // The nickname registers too: names other members set, text about people that a sign-out must
   // not leave on a shared install (review of #3177).
   const leaving = signedInUserId();
