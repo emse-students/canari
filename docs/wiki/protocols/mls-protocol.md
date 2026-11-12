@@ -1539,8 +1539,18 @@ member as `new-person`. The server takes the report from a member of the group o
 **The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un
 appareil d'un utilisateur deja present se fait automatiquement. La confirmation est demandee pour
 un utilisateur pas encore present (donc la barriere est une barriere utilisateur, pas
-appareil)."*). It applies the 2026-10-30 decision
-([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
+appareil)."*). It applies the 2026-10-30 decision, taken on *"je ne veux pas importuner les
+utilisateurs du tout"*: a member's new device enters with no tap and no ask, receives the history
+its person was entitled to (rule 2 of [history-answer-addressing](history-answer-addressing.md)),
+and is made VISIBLE instead of gated - a silent "X a ajouté un appareil" line in each of X's
+conversations and the "Nouvel appareil connecté" alert with "Ce n'est pas moi" on X's other devices.
+**Accepted residual risk, stated plainly:** a device added through a compromised login reads new
+messages and history until X reacts. **Rejected the same day:** one approval per device (a tap,
+account-wide, plus a server row when the owner has no other device); self-entry on revoking old
+devices (it reopens the stolen-session lock-in); an account recovery key (it costs users an action).
+New PERSONS are unchanged: a newcomer receives nothing from before their arrival, and a link join
+waits for a member's Add. **iOS has no background add path**, so a group whose members' devices are
+all shut iPhones waits for one of them to open the app.
 
 - **A member's new device is added automatically**, by the same automatic adders a recovering
   device always had: the pending-invitation sweep and the `welcome_request` handler.
@@ -1643,8 +1653,7 @@ for approval in that DM (owner's screenshot, 2026-10-31).
 
 **A device vouched for by a signature of its own user** (cross-signing, or a user signing key) was
 scoped as the interim's real fix and **rejected on 2026-10-30**: it costs users an action, and the
-owner chose visibility over a gate
-([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
+owner chose visibility over a gate ([the decision](#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ## Key packages
 
