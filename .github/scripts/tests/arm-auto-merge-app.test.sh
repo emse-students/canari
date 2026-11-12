@@ -54,9 +54,15 @@ if ! grep -q 'canari-auto-merge\[bot\]' "$work/step.raw"; then
   exit 1
 fi
 
-# `${{ ... == 'dependabot[bot]' }}` is a GitHub expression; the run replaces it with its value.
-make_script() { # <true|false>
-  sed "s/\${{ github.event.pull_request.user.login == 'dependabot\[bot\]' }}/$1/" "$work/step.raw" >"$work/step.sh"
+# The step reads `$IS_DEPENDABOT`, which its `env:` sets from a GitHub expression; the run passes
+# the value the case names. A script that still carries an expression would fail on it here.
+make_script() {
+  # shellcheck disable=SC2016  # `${{` is GitHub Actions syntax and is matched literally
+  if grep -q '\${{' "$work/step.raw"; then
+    fail "the authz step's run block carries a GitHub expression; it must read it from env"
+    exit 1
+  fi
+  cp "$work/step.raw" "$work/step.sh"
 }
 
 mkdir -p "$work/bin"
@@ -139,10 +145,10 @@ edit() { # <fixture> <jq filter> - break the well-formed case in one place
 
 # run_case <dependabot expr> <author> <head ref>  (FAKE_* in the environment) -> sets $out, $st
 run_case() {
-  make_script "$1"
+  make_script
   : >"$work/output"
   : >"$work/gh.log"
-  out="$(cd "$work" && PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/output" REPO=o/r PR=5 AUTHOR="$2" HEAD_REF="$3" GH_TOKEN=x \
+  out="$(cd "$work" && PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/output" IS_DEPENDABOT="$1" REPO=o/r PR=5 AUTHOR="$2" HEAD_REF="$3" GH_TOKEN=x \
     HEAD_SHA="${CASE_HEAD:-$M2}" EVENT_ACTION="${CASE_ACTION:-synchronize}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
   st=$?
 }

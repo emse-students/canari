@@ -2639,6 +2639,19 @@ normalised lines. The threshold is four rather than five on purpose: the only id
 acknowledged by name, and a threshold chosen to clear the awkward case silences it without anybody
 reading it, plus every future case that happens to be the same length.
 
+### A value reaches a workflow script through `env:`, never written into its text (2026-11-12)
+
+Every value a `run:` script uses - an input, an event field, a secret, a job output, a matrix
+entry, a step output - is bound in that step's `env:` (or the job's, or the workflow's) and read as
+a shell variable; no `${{ ... }}` expression stands inside a script, in a workflow or in a composite
+action under `.github/actions/`. A comparison stays a GitHub expression and moves to `env:` whole
+(`IS_DEPENDABOT: ${{ ... == 'dependabot[bot]' }}`), so the script only compares its result to
+`'true'`. `.github/scripts/tests/workflow-expressions.test.sh`, run by `make test-ci-scripts`,
+holds it: it first plants an expression in each `run:` shape it reads (a block, one line, a
+continued plain scalar, an indentation indicator, a spaced dash) and fails unless it finds them
+all, then scans every workflow and action and fails with `file:line: text` on each expression it
+finds in a script. The file is kept byte-identical with the sibling repositories' copies.
+
 ### Verifying a change to the CI scripts
 
 The decisions live in `.github/scripts/lib/` precisely so they can be exercised on inputs GitHub

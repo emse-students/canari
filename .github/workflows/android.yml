@@ -90,10 +90,13 @@ jobs:
       # they could when each chain derived its own.
       - name: Resolve the Play track
         id: release_tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
-          VERSION="${{ inputs.version }}"
-          PRERELEASE="${{ inputs.prerelease }}"
+          VERSION="$INPUT_VERSION"
+          PRERELEASE="$INPUT_PRERELEASE"
           if [ "$PRERELEASE" = "true" ]; then TRACK=internal; else TRACK=production; fi
           {
             echo "version=${VERSION}"
