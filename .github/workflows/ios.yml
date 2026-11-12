@@ -126,13 +126,16 @@ jobs:
       # track and the estate cannot disagree.
       - name: Read the release under way
         id: release_tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           {
-            echo "version=${{ inputs.version }}"
-            echo "prerelease=${{ inputs.prerelease }}"
+            echo "version=${INPUT_VERSION}"
+            echo "prerelease=${INPUT_PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
+          echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
       # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
       # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles

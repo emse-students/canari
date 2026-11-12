@@ -316,6 +316,7 @@ lint-ci-scripts:
 test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
+	@bash .github/scripts/tests/workflow-expressions.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
