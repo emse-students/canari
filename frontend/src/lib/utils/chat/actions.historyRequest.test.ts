@@ -210,6 +210,7 @@ describe('handleHistoryRequest - a probe that never arrives', () => {
     // store that is not the asker's.
     noteProbeReceived(GROUP, digestIdentity(REQUESTER_USER, 'some-other-device'), {
       kind: 'digest',
+      requestId: 'ask-00000001',
       digest: { mode: 'ids', ids: ['a'] },
       since: 0,
     });
@@ -296,6 +297,7 @@ describe('handleHistoryRequest - with a digest', () => {
   async function postDigest(entries: HistoryEntry[], idModeMax?: number, since = 0): Promise<void> {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
+      requestId: 'ask-00000001',
       digest: await buildHistoryDigest(entries, idModeMax),
       since,
     });
@@ -318,7 +320,7 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // `since: 0` is the requester's own window, restated: this digest stated none.
-      { to: REQUESTER, since: 0, withTombstones: true }
+      { requestId: 'ask-00000001', to: REQUESTER, since: 0, withTombstones: true }
     );
   });
 
@@ -330,6 +332,7 @@ describe('handleHistoryRequest - with a digest', () => {
     await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
+      requestId: 'ask-00000001',
       to: REQUESTER,
       since: 0,
       withTombstones: true,
@@ -386,7 +389,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { to: REQUESTER, since: 0, withTombstones: true }
+      { requestId: 'ask-00000001', to: REQUESTER, since: 0, withTombstones: true }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.
@@ -415,6 +418,7 @@ describe('handleHistoryRequest - with a digest', () => {
       );
 
       expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
+        requestId: 'ask-00000001',
         to: REQUESTER,
         since: THEIR_SINCE,
         withTombstones: true,
@@ -482,6 +486,7 @@ describe('handleHistoryRequest - the solicitation outlives the wait', () => {
     // ours to record, so nothing is left for the late road to find and answer a second time.
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
+      requestId: 'ask-00000001',
       digest: await buildHistoryDigest([]),
       since: 0,
     });
@@ -511,6 +516,7 @@ describe('handleHistoryRequest - scrollback', () => {
   it('answers a range probe with the bounded page it named', async () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'range',
+      requestId: 'ask-00000001',
       before: at('2026-01-05T00:00:00Z'),
       limit: 50,
       since: at('2020-01-01T00:00:00Z'),
@@ -518,6 +524,7 @@ describe('handleHistoryRequest - scrollback', () => {
     await handleHistoryRequest(baseParams());
 
     expect(sendHistoryRangeBundle).toHaveBeenCalledWith(GROUP, expect.anything(), {
+      requestId: 'ask-00000001',
       to: REQUESTER,
       before: at('2026-01-05T00:00:00Z'),
       limit: 50,
@@ -556,6 +563,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
   it('states where our history begins when the asker asked from below it', async () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
+      requestId: 'ask-00000001',
       digest: await buildHistoryDigest([]),
       since: BELOW_FLOOR,
     });
@@ -620,6 +628,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
     sendHistoryCoverage.mockImplementation(async () => void order.push('coverage'));
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
+      requestId: 'ask-00000001',
       digest: await buildHistoryDigest([]),
       since: BELOW_FLOOR,
     });
@@ -638,6 +647,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
   it('states it after a scrollback answer too - the same fact bounds that ask as well', async () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'range',
+      requestId: 'ask-00000001',
       before: at('2026-08-01T00:00:00Z'),
       limit: 50,
       since: BELOW_FLOOR,
