@@ -179,10 +179,11 @@ pads its sides with `utils/sideSafeArea.ts`.
   a replay and a media of unknown size change nothing.
   - **Landscape is the media's own shape** (`isLandscapeVideo`, `reels/fullScreenPost.ts`: width >
     height through `resolveMediaSize`): the DECLARED size first (it wins, and exists before the player
-    mounts), else what this device measured (`measuredMediaSize`, which `MediaFrame` filled when the
-    feed drew the post), else the decoded video's own size once its `loadedmetadata` is caught on the
-    viewer (a `$state` map by media id). The last two serve videos posted before 2026-09-29, which
-    declare no size. Still unknown: portrait.
+    mounts), else what this device measured (`measuredMediaSize`: filled only by the chat and GIF embeds,
+    so it helps a video already seen in a chat, never a feed post), else the decoded video's own size
+    once its `loadedmetadata` is caught on the viewer (a `$state` map by media id). The last two serve
+    videos posted before 2026-09-29, which declare no size: an old FEED post opens portrait and turns
+    once its metadata loads (the `loadedmetadata` map is what works there). Still unknown: portrait.
   - **One request per run of landscape items**: the effect reads a `$derived` boolean ("the item on
     show - the page's media, or a carousel's visible one - is a landscape video"), so a swipe from one
     landscape video to the next keeps the SAME request (the lightbox's `videoShown` pattern); a swipe

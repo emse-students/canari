@@ -240,9 +240,10 @@
   // A DERIVED boolean: a swipe from one landscape video to the next flips nothing, so the SAME
   // request lives on instead of posting portrait and auto back to back (the lightbox's `videoShown`).
   /**
-   * What the decoded videos reported (`loadedmetadata`), by media id: the last resort for a video
-   * posted before 2026-09-29, which declares no size and which this device never measured. A
-   * `$state`, so the boolean below turns true once the video reports - and stays ONE boolean.
+   * What the decoded videos reported (`loadedmetadata`), by media id: what actually serves a video
+   * posted before 2026-09-29, which declares no size: a feed post is never measured (only the chat
+   * and GIF embeds file sizes in the cache), so such a post opens portrait and turns once its
+   * metadata loads. A `$state`, so the boolean below turns true once the video reports - and stays ONE boolean.
    */
   let decodedSizes = $state<Record<string, MediaSize>>({});
   /** Items whose read failed, so the accusing line is written once per item, not per recompute. */

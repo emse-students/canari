@@ -87,9 +87,9 @@ export function fullScreenMediaListOf(
  * Whether the media on show is a LANDSCAPE VIDEO - the one case where the pager turns with the phone
  * (owner, 2026-11-12, issue #3407; screen-orientation.md). Landscape is the media's own shape,
  * width > height, from `resolveMediaSize`: the DECLARED size first (it wins, and exists before the
- * player mounts), else `measured` - what this device measured of an older post (videos posted before
- * 2026-09-29 declare no size): the shared size cache, then the decoded video's own size once it
- * reported. A square or vertical video, a photo, a replay and a media of unknown size are `false`,
+ * player mounts), else `measured` - for a video posted before 2026-09-29 (no declared size), the size
+ * measured earlier (the shared size cache: it only holds videos a chat or GIF embed drew) or the
+ * decoded video's own size once its metadata loaded - so such a feed post opens portrait first. A square or vertical video, a photo, a replay and a media of unknown size are `false`,
  * so the pager stays portrait for them.
  */
 export function isLandscapeVideo(
