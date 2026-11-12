@@ -310,4 +310,68 @@ describe('review of #3402', () => {
     expect(ac.open).toBe(false);
     expect(calls).toHaveLength(1);
   });
+
+  it('F1: a name batch landing after Escape does not reopen the picker, and Enter reaches the composer', async () => {
+    const ac = picker([{ id: 'u-camille', displayName: null }, ...ROSTER]);
+    typeKeys(ac, '@J');
+    expect(ac.open).toBe(true);
+    expect(names.pending).toHaveLength(1);
+    expect(ac.handleKeydown(key('Escape'))).toBe(true);
+    names.pending[0].land({ 'u-camille': 'Camille Exemple' });
+    await flushMacrotask();
+    expect(ac.open).toBe(false);
+    expect(ac.handleKeydown(key('Enter'))).toBe(false);
+  });
+
+  it('F2: the same members in a new array keep the answer on its way and the waiting query', async () => {
+    let roster: MentionRosterMember[] = ROSTER;
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText: (t) => {
+        text = t;
+      },
+      getCursor: () => text.length,
+      get roster() {
+        return roster;
+      },
+      audienceFilter: async (users) => users,
+    });
+    typeKeys(ac, '@Je');
+    await flushMacrotask();
+    expect(calls.map((c) => c.q)).toEqual(['J']);
+    // A busy live chat: every line rebuilds the roster, same members.
+    roster = ROSTER.map((m) => ({ ...m }));
+    ac.refreshRoster();
+    roster = ROSTER.map((m) => ({ ...m }));
+    ac.refreshRoster();
+    calls[0].answer([]);
+    await flushMacrotask();
+    expect(calls.map((c) => c.q)).toEqual(['J', 'Je']);
+    calls[1].answer([{ id: 'u-jeff', displayName: 'Jeff Exemple' }]);
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toContain('u-jeff');
+  });
+
+  it('warns once per outage, not once per key typed while offline', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failures = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes('the name search failed')).length;
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('offline'));
+    const ac = picker();
+    typeKeys(ac, '@abc');
+    await flushMacrotask();
+    await flushMacrotask();
+    typeKeys(ac, 'd');
+    await flushMacrotask();
+    expect(failures()).toBe(1);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(Response.json([{ id: 'u-x', displayName: 'Abcde Exemple' }]));
+    typeKeys(ac, 'e');
+    await flushMacrotask();
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('offline'));
+    typeKeys(ac, 'f');
+    await flushMacrotask();
+    expect(failures()).toBe(2);
+  });
 });

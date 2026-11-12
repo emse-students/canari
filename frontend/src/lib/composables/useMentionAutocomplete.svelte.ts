@@ -28,6 +28,16 @@ export type MentionUser = { id: string; displayName: string | null };
 type SearchRequest = { q: string; kind: 'search' | 'more'; generation: number };
 
 /** Whether a query holds a space, i.e. names more than one word. */
+/** A roster's identity for the picker: its member ids, in order - never the array holding them. */
+function rosterKey(roster: readonly MentionRosterMember[] | undefined): string {
+  return roster ? roster.map((m) => m.id.toLowerCase()).join(',') : '';
+}
+
+/** The names a roster carries, in order: a change re-reads the rows without making answers stale. */
+function rosterNames(roster: readonly MentionRosterMember[] | undefined): string {
+  return roster ? JSON.stringify(roster.map((m) => m.displayName ?? '')) : '';
+}
+
 function hasSpace(q: string): boolean {
   return /\s/.test(q);
 }
@@ -83,9 +93,11 @@ export function useMentionAutocomplete(opts: {
   /**
    * A mention the reader gave up on - Escape, or a query with a space that matched nobody (the text
    * after the `@` is plain text then). Typing on at the same `@` keeps it closed and asks nothing;
-   * editing it back to something it no longer extends revives it.
+   * editing it back to something it no longer extends revives it. `by` says which: only an end the
+   * FACTS decided (`no-match`) may be undone by new facts - an Escape is the reader's own word, and
+   * a roster batch landing afterwards never reopens over it (review of #3402).
    */
-  let ended: { start: number; query: string } | null = null;
+  let ended: { start: number; query: string; by: 'no-match' | 'reader' } | null = null;
   /**
    * Bumped by every change of the mention (a keystroke in it, its end). A server answer is applied
    * only if nothing changed since its request - a SEQUENCE, so an answer that arrives late, or out of
@@ -96,10 +108,14 @@ export function useMentionAutocomplete(opts: {
   let searching = false;
   /** The latest search asked for while one was in flight; the ones it replaced are never sent. */
   let waiting: SearchRequest | null = null;
-  /** The roster the name index was last pruned to (see `suggestLocally`). */
-  let indexedRoster: MentionRosterMember[] | undefined;
-  /** The roster `refreshRoster` last saw: a different one makes every answer on its way stale. */
-  let refreshedRoster: MentionRosterMember[] | undefined = opts.roster;
+  /** The members (see {@link rosterKey}) the name index was last pruned to (see `suggestLocally`). */
+  let indexedKey: string | null = null;
+  /** The members `refreshRoster` last saw: different ones make every answer on its way stale. */
+  let refreshedKey = rosterKey(opts.roster);
+  /** The names `refreshRoster` last saw ({@link rosterNames}). */
+  let refreshedNames = rosterNames(opts.roster);
+  /** A search failed and none has answered since (see `runSearch`). */
+  let searchFailing = false;
   /** Set by `dispose`: nothing on its way may write to a picker whose composer is gone. */
   let disposed = false;
   /** Accounts the reader blocked, read once when a roster picker first opens (null = not read). */
@@ -149,7 +165,7 @@ export function useMentionAutocomplete(opts: {
     open = suggestions.length > 0;
     selectedIdx = -1;
     Log.d(`[mention] search answer applied: ${suggestions.length} row(s) of ${found.length}`);
-    if (!open && hasSpace(req.q)) endMention('no account matches the words typed');
+    if (!open && hasSpace(req.q)) endMention('no account matches the words typed', 'no-match');
   }
 
   /**
@@ -179,8 +195,12 @@ export function useMentionAutocomplete(opts: {
     try {
       found = await searchDirectory(req.q);
     } catch (e) {
-      console.warn(`[mention] the name search failed (${req.kind})`, e);
+      // ONE LINE PER OUTAGE, not one per key typed while offline: the next answer re-arms it.
+      if (!searchFailing) console.warn(`[mention] the name search failed (${req.kind})`, e);
+      else Log.d(`[mention] the name search still fails (${req.kind})`);
+      searchFailing = true;
     }
+    if (found) searchFailing = false;
     searching = false;
     if (disposed) {
       Log.d('[mention] a search answer arrived after the picker was destroyed - dropped');
@@ -229,7 +249,7 @@ export function useMentionAutocomplete(opts: {
     const merged = [...suggestions, ...matchingWholeQuery(extra, req.q)].slice(0, MENTION_MAX_ROWS);
     suggestions = merged;
     open = merged.length > 0;
-    if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches');
+    if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches', 'no-match');
   }
 
   /**
@@ -243,10 +263,11 @@ export function useMentionAutocomplete(opts: {
    * reader) is not known to the client and stays offered.
    */
   function suggestLocally(roster: MentionRosterMember[]) {
-    if (roster !== indexedRoster) {
-      // A new roster (a list that finished loading, another conversation): the index keeps only its
-      // members, so it never grows with every conversation the composer has shown.
-      indexedRoster = roster;
+    const key = rosterKey(roster);
+    if (key !== indexedKey) {
+      // Other members (a list that finished loading, another conversation): the index keeps only
+      // them, so it never grows with every conversation the composer has shown.
+      indexedKey = key;
       nameIndex.retain(roster.map((m) => m.id.toLowerCase()));
     }
     const me = currentUserId();
@@ -301,10 +322,15 @@ export function useMentionAutocomplete(opts: {
     const next = blocks.map((b) => b.userId);
     const blocksChanged = next.join(',') !== (blockedIds ?? []).join(',');
     blockedIds = next;
-    if (disposed || !(unnamed.length > 0 || blocksChanged) || opts.roster !== roster) return;
+    if (
+      disposed ||
+      !(unnamed.length > 0 || blocksChanged) ||
+      rosterKey(opts.roster) !== rosterKey(roster)
+    )
+      return;
     if (start >= 0) {
       suggestLocally(roster);
-    } else if (ended && unnamed.length > 0) {
+    } else if (ended?.by === 'no-match' && unnamed.length > 0) {
       // A MENTION ENDED WHILE ITS NAMES WERE STILL ON THEIR WAY (review of #3402): on a slow link
       // "@Camille " can be typed before the batch names Camille, and the space found nobody. The
       // names that just landed are a new fact, so the end is undone and the caret read again.
@@ -328,13 +354,21 @@ export function useMentionAutocomplete(opts: {
    */
   function refreshRoster() {
     const roster = opts.roster;
-    // The effect calling this also re-runs when a mention begins (it reads `start`); only a roster
-    // that really changed makes the answers on their way stale.
-    if (roster !== refreshedRoster) {
-      refreshedRoster = roster;
+    // THE SAME MEMBERS IN A NEW ARRAY ARE THE SAME ROSTER (review of #3402). The live chat builds its
+    // roster afresh on every chat line (`liveMentionRoster`), and comparing arrays by identity made
+    // each line of a busy live drop the waiting query and the answer on its way, so the audience
+    // top-up never landed. Only other members make those answers stale and the rows worth re-reading.
+    // A NAME that changed (a member list that resolved its names) re-reads the rows, and drops nothing.
+    const key = rosterKey(roster);
+    const named = rosterNames(roster);
+    if (key === refreshedKey && named === refreshedNames) return;
+    if (key !== refreshedKey) {
+      Log.d('[mention] the roster changed - answers on their way are dropped');
+      refreshedKey = key;
       generation += 1;
       waiting = null;
     }
+    refreshedNames = named;
     if (start < 0 || !roster || roster.length === 0) return;
     suggestLocally(roster);
     void prepareRoster(roster);
@@ -370,7 +404,8 @@ export function useMentionAutocomplete(opts: {
       suggestLocally(roster);
       void prepareRoster(roster);
       if (opts.audienceFilter && query.length > 0) requestSearch(query, 'more');
-      else if (!open && hasSpace(query)) endMention('no member matches the words typed');
+      else if (!open && hasSpace(query))
+        endMention('no member matches the words typed', 'no-match');
     } else if (query.length > 0) {
       if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
       // The rows on screen answer an earlier query: hidden until this one's answer, so Enter or Tab
@@ -397,9 +432,9 @@ export function useMentionAutocomplete(opts: {
   }
 
   /** The reader gave up on this mention (see {@link ended}); `why` is logged. */
-  function endMention(why: string) {
+  function endMention(why: string, by: 'no-match' | 'reader') {
     Log.d(`[mention] mention closed: ${why}`);
-    ended = { start, query };
+    ended = { start, query, by };
     closeMention();
   }
 
@@ -486,7 +521,7 @@ export function useMentionAutocomplete(opts: {
       return true;
     }
     if (e.key === 'Escape') {
-      endMention('Escape');
+      endMention('Escape', 'reader');
       return true;
     }
     return false;
