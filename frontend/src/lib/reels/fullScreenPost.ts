@@ -1,6 +1,7 @@
 import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
 import { isReplay } from '$lib/live/replayTimeline';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
+import { resolveMediaSize, type MediaSize } from '$lib/utils/mediaFrame';
 
 /**
  * WHAT THE CANAREELS VIEWER DRAWS AS A FULL-SCREEN PAGE (user, 2026-10-19; videos and carousels
@@ -80,4 +81,35 @@ export function fullScreenMediaListOf(
   post: Partial<Pick<PostEntity, 'media' | 'images'>>
 ): PostMediaRef[] {
   return mediaOf(post);
+}
+
+/**
+ * Whether the media on show is a LANDSCAPE VIDEO - the one case where the pager turns with the phone
+ * (owner, 2026-11-12, issue #3407; screen-orientation.md). Landscape is the media's own shape,
+ * width > height, from `resolveMediaSize`: the DECLARED size first (it wins, and exists before the
+ * player mounts), else `measured` - for a video posted before 2026-09-29 (no declared size), the size
+ * measured earlier (the shared size cache: it only holds videos a chat or GIF embed drew) or the
+ * decoded video's own size once its metadata loaded - so such a feed post opens portrait first. A square or vertical video, a photo, a replay and a media of unknown size are `false`,
+ * so the pager stays portrait for them.
+ */
+export function isLandscapeVideo(
+  media: PostMediaRef | undefined,
+  measured: MediaSize | null = null
+): boolean {
+  if (!media || fullScreenMediaKindOf(media) !== 'video') return false;
+  const size = resolveMediaSize({ width: media.width, height: media.height }, measured);
+  return size !== null && size.width > size.height;
+}
+
+/**
+ * The media of `post` that is on show: the page's one media, or a carousel's visible one (clamped).
+ * `undefined` for a replay, which carries no media of its own.
+ */
+export function visibleMediaOf(
+  post: Partial<Pick<PostEntity, 'media' | 'images'>> | undefined,
+  mediaIndex: number
+): PostMediaRef | undefined {
+  if (!post) return undefined;
+  const list = mediaOf(post);
+  return list[Math.min(Math.max(mediaIndex, 0), Math.max(list.length - 1, 0))];
 }

@@ -35,9 +35,10 @@ is letterboxed in the vertical pager.
      released when the item changes to an image or the lightbox closes) - photos stay portrait, as the
      owner scoped it. The `RotateButton` in the glass bar, `glass={false}` there (the bar is already
      glass - design-reference section 3); the bar and the caption padded on the sides as above.
-   - **`ReelViewer` / the pager**: stays PORTRAIT (no request). A landscape reel is letterboxed by
-     `ReelFrame` with the media's own ratio - already the case for a gallery import; read it on the
-     phones with a reel filmed in landscape (below).
+   - **`ReelViewer` / the pager** (owner, 2026-11-12, replacing "stays portrait"): portrait, EXCEPT
+     while the item on show is a LANDSCAPE VIDEO (stored width > height) - then `auto` and the
+     rotate button, one request across landscape-to-landscape swipes. Vertical or square videos and
+     photos change nothing. Draft PR, refs #3407 ([mechanism](../frontend/screen-orientation.md)).
 
 ### Readings owed on a pre-release
 
@@ -46,8 +47,11 @@ is letterboxed in the vertical pager.
   with the lock on, then back; a photo in the same gallery stays upright (swipe video -> photo ->
   video, the log shows `auto` / `portrait` / `auto`); closing returns to portrait; the header clears
   the notch on both sides. The live viewer on a live filmed in landscape: turns, chat as a column
-  with the reaction bar at its right, the button forces landscape. A reel filmed in landscape stays
-  portrait and letterboxed.
+  with the reaction bar at its right, the button forces landscape. The reel pager (a video tapped in a feed
+  post): a landscape video turns with the phone (lock off) and with the rotate button (lock on), the
+  log shows `auto` then `portrait` on a swipe to a vertical item or a photo, closing returns to
+  portrait; the caption and the action column clear the notch and do not bury the picture; a swipe up
+  or down while turned still pages; a vertical or square video never turns.
 
 Native is verified by COMPILING (CI's Compile Android / Compile iOS), which proves nothing about
 running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation lock OFF and then ON:
