@@ -94,7 +94,7 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    window as wide as the selection, and it reaches more characters (or fewer, off). **If the check
    fails NOTHING is written**: the text comes back unchanged, the member sees the toast `md_toolbar_refused` ("Impossible d'appliquer ce style ici", decided by the owner on 2026-11-06), and the app log (`appendLog`, which reaches the collected logs, so the rate can be measured) accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
    marker shape around it (letters blanked, never the text). A render that throws is a refusal too.
-   The marked check judges BOTH sides after `tolerateEmphasisWhitespace`, as the published post is drawn (a text the old toolbar wrote, `**TOP 5 MINIMOYS **`, is judged by what readers see). Known refusal, owed: [un-bolding the last word of a bold that ends in an italic](../backlog.d/p3-toolbar-refuses-to-unbold-the-last-word-of-a-bold-ending-in-an-italic.md).
+   The marked check judges BOTH sides after `tolerateEmphasisWhitespace`, as the published post is drawn (a text the old toolbar wrote, `**TOP 5 MINIMOYS **`, is judged by what readers see). The refusal of un-bolding the last word of a bold that ends in an italic (`Le **prix *reduit***`, bold off on `reduit`) is gone, and its cause was not the spelling: the preview paired the closing `***` as bold plus a stray star, so the model never saw the italic. `sharedClosingRun` (`inlinePreview.ts`) moves a `**` closer one star right when the run is exactly three stars and the content then ends on an italic of its own; the output is `Le **prix** *reduit*`, a row of `markdownParity.test.ts`, and the fuzz stays within its bounds.
    Measured on the seeded fuzz (`composerFormatFuzz.test.ts`): realistic lines, whole words 4
    refusals in 36444 presses and any range 228 in 50061; the wild generator (`***`, a style inside
    itself, underscores, glued spans, three levels) 9811 in 32712 and 12144 in 48222 (a run of four stars or underscores, or three tildes, in the paragraph is refused up front, because preview and marked pair it differently), which are
@@ -168,7 +168,17 @@ checked against marked directly instead).
 | link on a selection | the selection becomes the link text, the word `url` as destination (selected), edge spaces outside |
 | link on an existing link | off: the label alone |
 
-Ctrl+Z does not undo a toolbar action (older than this page, [backlog](../backlog.d/p3-ctrl-z-does-not-undo-a-toolbar-action.md)).
+### Ctrl+Z over a toolbar action
+
+The editor is a contenteditable rebuilt from the text, so the browser's undo never sees a toolbar
+rewrite. `MarkdownComposerField` keeps its own stack (`ComposerFormatHistory`,
+`composerFormatHistory.ts`) of `(text, selection)` snapshots, one entry per applied toolbar action
+(a refusal records nothing). Ctrl/Cmd+Z undoes and Ctrl/Cmd+Shift+Z or Ctrl+Y redoes, only while
+the current text is EXACTLY the one the entry left: typed or pasted text since means the key goes
+to the browser (and the caller's own `onkeydown`), and the redo side is dropped, so a redo can never
+overwrite typing. `execCommand` was not used: it is deprecated and the rebuilt editor would lose
+what it records. Tests: `composerFormatHistory.test.ts` and the field's `toolbar.svelte.test.ts`.
+
 
 Heading containing bold (`# **x**`) and bold in a heading both render bold in the post
 (`h1 > strong`), and the preview shows the same.

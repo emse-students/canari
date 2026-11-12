@@ -4,6 +4,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { appendLog } from '$lib/utils/sessionLog';
 import { tolerateEmphasisWhitespace } from './emphasisTolerance';
 import { m } from '$lib/paraglide/messages';
+import type { ComposerFormatHistory } from './composerFormatHistory';
 import { inlineSpans, type InlineSpan } from './inlinePreview';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
 
@@ -846,12 +847,14 @@ export async function applyComposerMarkdownFormat(
   type: string,
   getText: () => string,
   setText: (text: string) => void,
-  composer: MentionComposerInput | null
+  composer: MentionComposerInput | null,
+  history?: ComposerFormatHistory
 ): Promise<void> {
   if (!composer) return;
 
   const { start, end } = composer.getSelectionRange();
-  const result = computeComposerFormat(type, getText(), start, end);
+  const before = getText();
+  const result = computeComposerFormat(type, before, start, end);
   if (!result) return;
   if (result.refused) {
     // The text stays as it is; the member is told, and the console already counted the shape.
@@ -859,6 +862,10 @@ export async function applyComposerMarkdownFormat(
     return;
   }
 
+  history?.record(
+    { text: before, start, end },
+    { text: result.text, start: result.selStart, end: result.selEnd }
+  );
   setText(result.text);
   await tick();
   composer.focusEditor();
