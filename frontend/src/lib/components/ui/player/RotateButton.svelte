@@ -19,10 +19,12 @@
     onrotate: () => void;
     /** Off while the orientation is frozen (a take, a live on air). */
     disabled?: boolean;
+    /** False inside a bar that is already glass (the full-screen viewer's header). */
+    glass?: boolean;
     class?: string;
   }
 
-  let { onrotate, disabled = false, class: klass = '' }: Props = $props();
+  let { onrotate, disabled = false, glass = true, class: klass = '' }: Props = $props();
 
   const landscape = $derived(viewportOrientation.landscape);
   const label = $derived(landscape ? m.screen_rotate_portrait() : m.screen_rotate_landscape());
@@ -32,6 +34,7 @@
   {label}
   onclick={onrotate}
   {disabled}
+  {glass}
   class={klass}
   data-rotate-button={landscape ? 'to-portrait' : 'to-landscape'}
 >

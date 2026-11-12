@@ -160,8 +160,19 @@ pads its sides with `utils/sideSafeArea.ts`.
   the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
   A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
   offered - the sheet and the chat are out of it (`data-no-double-tap`).
-- **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
-  being rewritten by the video-player stack).
+- **The full-screen video viewer** (`MediaLightbox`, built 2026-11-12, issue #3407: a landscape video
+  of a post could not be watched turned): it requests `auto` ONLY while a video is on show - the
+  effect reads `videoChrome.present` through a `$derived`, so a swipe from one video to the next keeps
+  the SAME request (no portrait/auto pair posted back to back), a photo or the close releases it. The
+  rotate button sits in the header (`RotateButton glass={false}`: the header is already glass, so the
+  44px target takes the header's white hover instead of a second disc) and forces landscape past the
+  lock until the video leaves. The header and the dots footer take the side safe areas
+  (`FullScreenViewer`, immersive only). A photo stays portrait (owner's scope).
+- **The live viewer** (`LiveViewer`, built 2026-11-12): `useScreenOrientation('live-viewer')` for its
+  whole mount, the rotate button beside the sound and share buttons, the top bar and the bottom row
+  padded by the side safe areas, the chat panel `landscape:max-w-md` with the reaction bar a column
+  at its right. The `<video>` was already `object-contain`.
+- **The reel viewer** requests nothing and stays portrait; a landscape CanaReel is letterboxed.
 
 ## Known and accepted
 

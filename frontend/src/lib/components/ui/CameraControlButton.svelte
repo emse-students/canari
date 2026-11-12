@@ -18,6 +18,12 @@
     /** A toggle's state, announced as pressed / not pressed. */
     pressed?: boolean;
     disabled?: boolean;
+    /**
+     * The translucent black disc (the default, over a camera or a live picture). False inside a bar
+     * that is already glass (the full-screen viewer's header): the same 44px target with the bar's own
+     * white hover, as its siblings draw.
+     */
+    glass?: boolean;
     /** Extra classes of the button (a destructive tint). */
     class?: string;
     children: Snippet;
@@ -29,6 +35,7 @@
     onclick,
     pressed,
     disabled = false,
+    glass = true,
     class: klass = '',
     children,
     ...markers
@@ -37,7 +44,9 @@
 
 <button
   type="button"
-  class="ui-icon-button camera-glyph-turn focus-visible:ring-accent-icon rounded-full bg-black/30 text-white outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40 {klass}"
+  class="ui-icon-button camera-glyph-turn focus-visible:ring-accent-icon rounded-full text-white outline-none focus-visible:ring-2 disabled:opacity-40 {glass
+    ? 'bg-black/30 hover:bg-black/50'
+    : 'transition-colors hover:bg-white/15'} {klass}"
   aria-label={label}
   aria-pressed={pressed}
   title={label}

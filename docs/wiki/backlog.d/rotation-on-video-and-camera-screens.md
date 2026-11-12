@@ -1,4 +1,4 @@
-## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera and the broadcaster built, two viewers owed after the video-player stack
+## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera, the broadcaster and both viewers built (step 4, 2026-11-12), phone readings owed
 
 The owner's decisions and the mechanism are in [screen-orientation](../frontend/screen-orientation.md):
 portrait everywhere; the full-screen video viewer, the live viewer, the live broadcaster and the
@@ -21,7 +21,7 @@ is letterboxed in the vertical pager.
    the preview, frozen on air, the rotate button; and the owner's double tap on the preview to switch
    the lens, 2026-11-09). The button is `ui/player/RotateButton.svelte`, the sides' padding
    `utils/sideSafeArea.ts` - both for step 4 to reuse.
-4. **Owed after the stack lands** (#3201 rewrites `MediaLightbox.svelte` and the player kit, #3202
+4. **BUILT 2026-11-12 (draft PR, refs issue #3407; readings below still owed)** - after the stack landed (#3201 rewrites `MediaLightbox.svelte` and the player kit, #3202
    `LiveViewer.svelte`; neither may be edited under them):
    - **`LiveViewer.svelte`**: `const orientation = useScreenOrientation('live-viewer')` for its whole
      mount; a `RotateButton` (step 3's kit button) in the top bar, beside the close, drawn when
@@ -40,6 +40,14 @@ is letterboxed in the vertical pager.
      phones with a reel filmed in landscape (below).
 
 ### Readings owed on a pre-release
+
+- **Step 4, both viewers (issue #3407, iPhone 11 / iOS 18.7.6)**: on the iPhone 12 and the Mi 9T, a
+  landscape video opened from a post turns with the phone (lock off) and the rotate button turns it
+  with the lock on, then back; a photo in the same gallery stays upright (swipe video -> photo ->
+  video, the log shows `auto` / `portrait` / `auto`); closing returns to portrait; the header clears
+  the notch on both sides. The live viewer on a live filmed in landscape: turns, chat as a column
+  with the reaction bar at its right, the button forces landscape. A reel filmed in landscape stays
+  portrait and letterboxed.
 
 Native is verified by COMPILING (CI's Compile Android / Compile iOS), which proves nothing about
 running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation lock OFF and then ON:

@@ -57,6 +57,14 @@
   import { Log } from '$lib/utils/Log';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { claimTouchMove } from '$lib/utils/touchClaim';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
+  import {
+    orientationCanBeForced,
+    requestOrientation,
+    rotateTarget,
+    viewportOrientation,
+    type OrientationRequest,
+  } from '$lib/mobile/screenOrientation.svelte';
   import { provideViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -177,6 +185,33 @@
   $effect(() => {
     if (videoChrome.present && !videoChrome.videoControlsHidden) chromeHidden = false;
   });
+  // ---- Rotation: a VIDEO turns, a photo stays portrait (owner, 2026-11-09; screen-orientation.md) ----
+  /** The hold on the orientation while a video is on show, or null. */
+  let videoOrientation: OrientationRequest | null = null;
+  // `videoChrome.present` is "a video player is on screen": true when the item is a video, false once
+  // it becomes a photo (its player leaves), and the effect's cleanup releases on that and on closing.
+  // A DERIVED boolean, so a swipe from one video to the next (the old player leaves, the new one
+  // reports, in one flush) keeps the SAME request instead of posting portrait and auto back to back
+  // - on a phone held sideways that would snap the screen upright for a frame.
+  const videoShown = $derived(open && videoChrome.present);
+  $effect(() => {
+    if (!videoShown) return;
+    const held = requestOrientation('auto', 'lightbox-video');
+    videoOrientation = held;
+    Log.d('mediaLightbox.orientation', { requested: 'auto' });
+    return () => {
+      held.release();
+      if (videoOrientation === held) videoOrientation = null;
+      Log.d('mediaLightbox.orientation', { released: true });
+    };
+  });
+  /** The rotate button: the other orientation, kept until the video leaves (forced past the lock). */
+  function rotateVideo() {
+    const target = rotateTarget(viewportOrientation.landscape);
+    Log.i('mediaLightbox.orientation', { rotate: target });
+    videoOrientation?.set(target);
+  }
+
   let infoOpen = $state(false);
 
   // ---- Swipes: where the picture sits while a finger drags it, and the snap after ----
@@ -770,6 +805,10 @@
     {/snippet}
 
     {#snippet headerActions()}
+      {#if videoChrome.present && orientationCanBeForced()}
+        <!-- The header is already glass: the button draws no disc of its own. -->
+        <RotateButton onrotate={rotateVideo} glass={false} />
+      {/if}
       {#if onDownload}
         <button
           type="button"
