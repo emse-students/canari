@@ -72,6 +72,10 @@ import {
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
 import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
+import { createChangeLatch } from '$lib/utils/changeLatch';
+
+/** The `[DISCOVERY] UI group ... kept` verdicts already said, by group - see `createChangeLatch`. */
+export const uiKeptLatch = createChangeLatch();
 
 /**
  * A NEW PERSON asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to
@@ -1291,6 +1295,26 @@ export async function discoverMissingGroups(params: {
           showToast(m.chat_admission_ended_toast(), 'info');
           continue;
         }
+        // A KEY-DISTRIBUTION GROUP IS NO CONVERSATION, AND THIS DEVICE KNOWS IT WITHOUT ASKING. A row
+        // already `removed` skips the status read below (it is never re-queried), so a seed carrier
+        // that had been marked removed - one id was in BOTH this list and the sweep's `key-distribution
+        // group` list in a 1.6.8 log - was kept "awaiting a manual deletion" on every connection, a
+        // sidebar row nobody can have wanted. The device's own registry answers; the row alone goes,
+        // never the MLS state (the sweep owns that and spares it).
+        if (convo.lifecycle === 'removed' && mlsService.isDistributionGroup(convo.id)) {
+          log(
+            `[DISCOVERY] UI group "${convo.name || convo.id}" is a registered Graine distribution group, not a conversation - removing the removed row`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            userId,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
         // other reconcilers). We only query the server for genuinely undecided cases: a conv
         // already `deletedRemotely` short-circuits without a network call.
@@ -1371,7 +1395,11 @@ export async function discoverMissingGroups(params: {
           unansweredStatus.push(label.slice(0, 8));
           continue;
         }
-        log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
+        // ONCE PER CHANGE: a removed row awaiting its manual deletion was said again on every
+        // connection (300 lines in one 1.6.8 log); the first line is the whole information.
+        if (uiKeptLatch.changed(convo.id, fate.reason)) {
+          log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
+        }
         continue;
       }
     }

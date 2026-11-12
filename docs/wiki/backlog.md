@@ -464,6 +464,8 @@ strict replay detection is, since the window then also widens what a stolen cook
 an Opus security review. The test rig's KILL-2 row waits for the cookie to reach disk before its
 kill, because its subject is a commit in flight, not this.
 
+**Production data point, 2026-11-08 (read from the production log, owner-approved): the hole bites without a kill.** A desktop browser with several tabs open, about 28 page loads in 3.7 days, was signed out at 16:33Z by `Refresh token replay detected ... presented=previous rotatedAgo=5095s - session revoked`: it presented the token from BEFORE the rotation of 15:08Z (that browser's last refresh), 85 minutes later. So a superseded token is not only presented by a relaunch inside a 30 s flush window: a multi-tab browser can present one an hour and a half after the rotation (which tab held the stale copy is not read). **The candidate server-side fix above is now the item to build**, not a design for later; it still needs its security review. Sessions and accounts are deliberately unnamed.
+
 **Open observation, unexplained.** The first KILL-2 failure was not a replay: the relaunched
 browser presented a refresh cookie for a DIFFERENT session, refused as `no such session`. That
 session was absent from `auth_sessions` and from every server line since the service last
@@ -1892,7 +1894,7 @@ Population, refuted causes and rules are on [key-package-pool](protocols/key-pac
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
-Whether anything is lost is unmeasured; the state is expected to converge. **Owed:** a shared counter or a proof of convergence and its delay ([mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
+**Data point, web log 2026-11-08: one multi-tab collision DID drop a staged commit.** "Whether anything is lost" is therefore no longer unmeasured - at least one loss is on record (the tab, the group and the exact counters were not kept; the next reading should capture them). The state is expected to converge otherwise. **Owed:** a shared counter or a proof of convergence and its delay ([mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
 
 ## Payments
 
