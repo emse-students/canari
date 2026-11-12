@@ -166,6 +166,12 @@ export type DischargeReason =
 const historyAsked = new Set<string>();
 
 /**
+ * The history ask of each community that is running now, so a second trigger waits for it instead
+ * of racing it ({@link requestCommunityHistory}).
+ */
+const historyAskRunning = new Map<string, Promise<void>>();
+
+/**
  * Communities there was nobody to ask, and the distribution epoch at which that was true.
  *
  * **"Nobody to ask" is a statement about a ROSTER, and a roster has a version.** It used to be
@@ -1262,7 +1268,34 @@ export async function requestCommunityHistory(
    * the frames of the epochs it skipped were acknowledged unreadable, so what it holds is no longer
    * evidence that it holds the past.
    */
-  { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
+  options: { evenIfSeedsHeld?: boolean } = {}
+): Promise<void> {
+  // ONE ASK OF A COMMUNITY RUNS AT A TIME. "Asked" is recorded only once the send returns, so two
+  // triggers 46 ms apart (RM-4, 2026-10-26: a key-group epoch move and the join path) both passed
+  // the check, both asked the same member the same question, and the second replaced the first -
+  // discarding the answers already on their way. Run in turn, the second reads the first's outcome
+  // ("asked", "nobody to ask", "final") and asks only if that outcome still leaves a question.
+  const before = historyAskRunning.get(workspaceId);
+  if (before) {
+    console.debug(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is already being asked - this trigger waits for that ask`
+    );
+  }
+  const run = (before ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => askCommunityHistory(workspaceId, options));
+  historyAskRunning.set(workspaceId, run);
+  try {
+    await run;
+  } finally {
+    if (historyAskRunning.get(workspaceId) === run) historyAskRunning.delete(workspaceId);
+  }
+}
+
+/** The body of {@link requestCommunityHistory}, run one at a time per community. */
+async function askCommunityHistory(
+  workspaceId: string,
+  { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean }
 ): Promise<void> {
   // A WIDENED PAST IS ASKED FOR AGAIN TOO, whatever is held (see {@link historyWidening}): what
   // this device holds was handed over floored at its member's arrival, so it is no evidence that it
@@ -1905,6 +1938,7 @@ export function resetGraineRepairState(): void {
   declined.clear();
   outstanding.clear();
   historyAsked.clear();
+  historyAskRunning.clear();
   historyUnanswerableAt.clear();
   historyRequest.clear();
   for (const { cancel } of parked.values()) cancel();

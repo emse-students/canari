@@ -330,7 +330,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
               ...(typeof media.expiresAtMs === 'number' && media.expiresAtMs > 0
                 ? { expiresAtMs: media.expiresAtMs }
                 : {}),
-              // A video's measured sound: kept only when it is one a player may apply.
+              // A video's or voice note's measured sound: kept only when it is one a player may apply.
               ...(isMediaLoudness(media.loudness) ? { loudness: media.loudness } : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,

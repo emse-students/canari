@@ -11,6 +11,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import VideoPlayer from './VideoPlayer.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { dbToGain } from '$lib/video/loudnessPlayback';
+import { isArbitrated } from '$lib/actions/playbackArbiter';
 import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 const sourced = new WeakSet<object>();
@@ -155,3 +156,17 @@ it('a new object with the same numbers changes nothing', async () => {
   expect(contexts[0].gains).toHaveLength(1);
   unmount(component);
 });
+
+it.each(['lightbox', 'reel', 'feed', 'chat', 'conversation'] as const)(
+  'a %s video is registered with the playback arbiter - the route only takes a registered element',
+  (variant) => {
+    // The output's lifetime rests on the arbiter's pauses (review of #3394): an unregistered
+    // element is never routed, so every variant must register its element.
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(VideoPlayer, { target, props: { src: 'blob:clip', variant } });
+    flushSync();
+    expect(isArbitrated(target.querySelector('video')!)).toBe(true);
+    unmount(component);
+  }
+);
