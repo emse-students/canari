@@ -52,6 +52,16 @@ JWT HS256 validation against `JWT_SECRET`, and only an ACCESS token is accepted
 (`decode_access_claims`): a token whose `type` claim is anything but `"access"` - the refresh token
 says `"refresh"` - is refused, as in [chat-gateway](chat-gateway.md#websocket-authentication).
 
+**A socket upgrade must come from an allowed origin (2026-11-12).** Before the token is read, an
+`Origin` header that is present must be one of the entries of `ALLOW_ORIGIN`, compared exactly, or
+the upgrade is answered `403`; a request with no `Origin` is accepted; `*`, or no variable at all,
+is never a list and admits no page (`src/origin.rs`, the module chat-gateway carries). The app's
+WebView opens this socket, so on every client the upgrade names an origin: an entry missing from
+the list costs that client its calls. A refusal is logged with the origin it refused, once per
+distinct value and then at each power of ten (`[ws] upgrade REFUSED: origin "..."`), which is the
+reading to take after a deploy. `tests/p2p_signalling.rs` drives each side over a real handshake,
+and the browser harness below names its own page.
+
 ### Signal frames
 
 All frames are JSON-encoded `SignalMessage`:
@@ -416,6 +426,7 @@ and this call is what any port would have to pass.
 |---|---|---|---|
 | `JWT_SECRET` | yes | - | HS256 secret (shared with all services) |
 | `CALL_ROOM_SECRET` | **yes** | - | Secret for room access tokens. Unset or empty, the service REFUSES TO START (it used to disable room access control; no dev flag exists, the local compose supplies a dev value) |
+| `ALLOW_ORIGIN` | **yes** | - | The origins a socket upgrade may name, comma-separated; the value chat-gateway reads. Unset or `*`, every upgrade from a page is refused and the service says so at ERROR ([above](#websocket-protocol)) |
 | `PORT` | no | `3004` | Listen port |
 | `CALL_P2P_SEAT_GRACE_SEC` | no | `60` | How long a p2p seat whose socket dropped without a Close frame waits for its device to resume ([above](#peer-to-peer-mode-2026-10-17)). Not a number -> logged, default kept |
 | `CALL_KEEPALIVE_MS` | no | `10000` | Keepalive ping period; two pings in a row unanswered end the socket `keepalive-lost` ([above](#peer-to-peer-mode-2026-10-17)). Set only by the integration tests. Not a positive number -> logged, default kept |

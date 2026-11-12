@@ -37,6 +37,8 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
 
+mod log_repeat;
+mod origin;
 mod p2p;
 
 use p2p::{count_relayed, JoinOutcome, P2pPeer, P2pRoom, PartnerState, RelayedKind, ResumeOutcome};
@@ -250,6 +252,10 @@ struct AppState {
     p2p_seat_grace: std::time::Duration,
     /// Ping period, and the unit of the liveness proof - see [`DEFAULT_KEEPALIVE`].
     keepalive: std::time::Duration,
+    /// The origins a socket upgrade may come from ([`origin`]), read from `ALLOW_ORIGIN`.
+    upgrade_origins: origin::UpgradeOrigins,
+    /// Says an origin's refused upgrades once, then at each power of ten of their count.
+    refused_origins: log_repeat::RepeatCounter,
 }
 
 struct Room {
@@ -906,6 +912,21 @@ async fn main() -> anyhow::Result<()> {
     // service refuses to start rather than run open.
     let call_room_secret = require_room_secret(std::env::var("CALL_ROOM_SECRET").ok())?;
 
+    // EVERY CLIENT OF THIS SOCKET IS A PAGE (the app's WebView opens it), so every upgrade names an
+    // origin and an estate that lists none serves no call. Each compose file declares the variable;
+    // reaching either branch below means the declaration was lost, and it is said as an accusation.
+    let upgrade_origins = match std::env::var("ALLOW_ORIGIN") {
+        Ok(raw) => origin::UpgradeOrigins::parse(&raw),
+        Err(_) => origin::UpgradeOrigins::Wildcard,
+    };
+    if upgrade_origins == origin::UpgradeOrigins::Wildcard {
+        error!(
+            "ALLOW_ORIGIN is unset or '*': there is no list to match a page against, so every \
+             socket upgrade that names an Origin will be REFUSED. Set ALLOW_ORIGIN to the origins \
+             this estate serves its clients from."
+        );
+    }
+
     let state = Arc::new(AppState {
         rooms: DashMap::new(),
         p2p_rooms: DashMap::new(),
@@ -913,6 +934,8 @@ async fn main() -> anyhow::Result<()> {
         call_room_secret,
         p2p_seat_grace: seat_grace_from(std::env::var("CALL_P2P_SEAT_GRACE_SEC").ok()),
         keepalive: keepalive_from(std::env::var("CALL_KEEPALIVE_MS").ok()),
+        upgrade_origins,
+        refused_origins: log_repeat::RepeatCounter::new(256),
     });
 
     // Background task: evict rooms idle for more than 30 minutes.
@@ -938,6 +961,49 @@ async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+/// Longest origin written to a log line; a real one is a few dozen bytes.
+const LOGGED_ORIGIN_MAX: usize = 120;
+
+/// Refuse, with a 403, an upgrade whose `Origin` this estate does not serve its clients from
+/// (`AppState::upgrade_origins`); a request with no `Origin` passes.
+///
+/// THE REFUSED ORIGIN IS LOGGED, once per distinct value and then at each power of ten: it is the
+/// one fact that identifies a client turned away, and it appears nowhere else on either side. It is
+/// text its sender chose, so it is written escaped and cut.
+fn admit_origin(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), Box<axum::response::Response>> {
+    let origin = match headers.get(axum::http::header::ORIGIN) {
+        None => None,
+        // A header that is not text names no origin this estate could have listed.
+        Some(value) => Some(value.to_str().unwrap_or("")),
+    };
+    let Err(refusal) = state.upgrade_origins.admits(origin) else {
+        return Ok(());
+    };
+    let shown: String = origin
+        .unwrap_or("")
+        .chars()
+        .take(LOGGED_ORIGIN_MAX)
+        .collect();
+    if let Some(n) = state.refused_origins.hit(&shown) {
+        match refusal {
+            origin::OriginRefusal::NotListed => warn!(
+                "[ws] upgrade REFUSED: origin {:?} is not in ALLOW_ORIGIN - refusal #{} for this origin",
+                shown, n
+            ),
+            origin::OriginRefusal::NoList => error!(
+                "[ws] upgrade REFUSED: origin {:?} cannot be matched, ALLOW_ORIGIN is unset or '*' and that is not a list - refusal #{} for this origin",
+                shown, n
+            ),
+        }
+    }
+    Err(Box::new(
+        (StatusCode::FORBIDDEN, "Origin not allowed").into_response(),
+    ))
+}
+
 /// Extract a cookie value from the `Cookie` header.
 fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -960,6 +1026,12 @@ async fn ws_handler(
 ) -> impl IntoResponse {
     if state.jwt_secret.is_empty() {
         return (StatusCode::INTERNAL_SERVER_ERROR, "JWT not configured").into_response();
+    }
+
+    // THE PAGE IS ASKED FIRST: an upgrade that names an origin this estate does not serve its
+    // clients from is refused before its token is read (`origin`).
+    if let Err(refusal) = admit_origin(&state, &headers) {
+        return *refusal;
     }
 
     // Cookie is preferred (same-origin web); query param is the Tauri mobile fallback.
