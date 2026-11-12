@@ -228,12 +228,16 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
-  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
-  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
-  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
-  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
-  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
-  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
+  **The window is what the local collector enforces (owner, 2026-11-11: 5 years on a phone or
+  desktop app, 90 days in a browser).** The only local deletion is the garbage collector in
+  `ChatBackgroundService.svelte`, every 6 hours, and it calls `deleteOldMessages()` with no age: both
+  stores (`db/indexeddb.ts`, `db/sqlite.ts`) default it to `deviceWindowMs()`, so the window a device
+  claims and the one it keeps are one value (`db/retentionWindow.test.ts`: native keeps a
+  1-year-old message, a browser drops a 91-day-old one). Until then the collector deleted at 90 days
+  on every platform while native claimed 5 years (found 2026-10-22). **What it costs, accepted:** a
+  native store now grows past 90 days - storage on the phone, a heavier backup, a larger store for
+  cold queries, and a longer window of history at rest on a lost device. A native store holds
+  nothing older than 90 days on the day this ships, so the growth starts then.
 
 ### Completeness is asked from the requester's side
 
@@ -867,7 +871,11 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
 - **The server's own stream is held to the same span (2026-10-31).** `GET /history` and
   `/history/batch` drop every row inside the READER's `withheld` windows in a group conversation -
   the gaps AND the span before their arrival (`ownWithheldWindows`, `withholdsArrivalSpan`, the one
-  predicate the exclusions route reads too). Before, they dropped the gaps only, so a newcomer walking
+  predicate the exclusions route reads too). The arrival facts behind that span (each group's row and
+  the reader's earliest device row in it) are read ONCE per request, the batch's 50 groups included
+  (`arrivalFactsOf`, 2026-11-12); unreadable, the batch answers every group empty with one ERROR,
+  never unfiltered. A window is NOT dropped by the cursor's instant: a row's `timestamp` is
+  `receivedAt`, taken before the `XADD`, so it is not in stream order (D062). Before, they dropped the gaps only, so a newcomer walking
   the stream was served the ciphertexts of the whole past and only their client discarded them
   (`dropOwnExcludedMessages`); a newcomer's state cannot open frames sealed before its Welcome, but
   their absence no longer rests on the client. A new device of a continuous member is unchanged: the
@@ -1190,7 +1198,14 @@ Three more things made it unsafe:
 - the client did not check that a `skipTo` lay ahead of its cursor and at or before the walk head;
 - a client with an empty local store clears its cursor on every launch, so it never helped there.
 
-What a future version must prove first is in the [backlog](../backlog.md) (P3).
+A future version must prove three things before it moves a cursor past rows it did not hand:
+
+- every window touching the skipped span is CLOSED and ends after the span;
+- the windows were repaired before the filter ran (no roster member is left without an open
+  interval);
+- the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
+
+Until then the rescan is the accepted cost, and nothing is owed on it (backlog triage of 2026-11-11).
 
 **The interval read repairs before it filters**: a roster member with no open interval gets one from
 their roster row's `joinedAt` (`openMissingIntervals`, shared with `GET .../exclusions`, one ERROR
@@ -1701,7 +1716,7 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   are tens of kilobytes per conversation, and a clock would decide wrongly in both directions. Why
   200 per sender: a fifth of that, so at least five senders fill a conversation before the larger
   bound has anything to choose between;
-- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` also removes the entries whose
+- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` (the device window by default) also removes the entries whose
   FRAME is older than the same cutoff, on both backends. The frame's time is an upper bound on its
   target's, so the message such an entry waits for is older still, and would be collected the moment
   it arrived;
@@ -1756,6 +1771,37 @@ duplicate's own rows, as stored), the re-key of a DM onto the group just joined
 (`setupMessageHandler.ts`, which moves the STORED rows - proofs included - and writes from memory
 only a row no store holds, where none stands), and a sent message whose group was re-keyed mid-send
 (`persistSent`, said when taken). The orphan mirror adoption writes only where no row stands.
+
+**Both DM moves are ONE function, `moveDirectConversationRows` (2026-11-12).** The Welcome re-key used
+to read only the ids of the messages ON SCREEN, and a DM restored as a stub (phase 1 of the boot
+restore, its page not read yet) carries none: nothing moved, nothing said so, and the rows stayed
+under the group the peer had already merged away. The joined group's history bundle then relayed
+those ids and every scoped read warned `[DB] <id> is a message of another conversation` - about 30
+times in 200 ms on dev web - until the next boot's merge. Now the Welcome moves every stored row of
+the old conversation, through the boot merge's own move, and logs the count either way.
+
+- **Order.** The joined group's row is shown and SAVED first; only then, and only if that save
+  succeeded, are the rows moved - AFTER the MLS lock is released (a storage walk of a whole history
+  needs no MLS state, and every group would wait behind it), under the joined group's own
+  exclusivity (`runPendingRekey`). The target is never read - a message id is the store's key, so
+  a row of the old conversation cannot also stand under the new one - and a message only memory
+  holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins. The log
+  gives the rows moved, the rows written from memory, and the rows that did not open.
+- **What waited for the moved rows is settled by the move** (`settlePendingFor(joined, moved)`).
+  The joined group's buffered frames replay BEFORE the move, so a deletion, edit or reaction of an
+  old message found no row under the joined group and was kept there as a pending mutation that
+  nothing settled - after a reload the deleted message was back. The same holds for the user's OWN
+  act in the window between showing the joined group and the end of the move: `persistLocalMutation`
+  writes by compare-and-set and, finding no row, keeps the act as a pending mutation (sender = the
+  user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
+  joined group only after the move, which would have reopened the window at the swap.
+- **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
+  the boot merge's decision. That decision is itself not convergent between the two peers - a
+  separate P1 ([backlog](../backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).
+- **Not carried, as in the boot merge (residuals, not fixed):** an edit or deletion of an old-group
+  message landing between the read and the write is written over by the stored body; what is
+  keyed by the conversation rather than the message - read watermarks, mutations still waiting for
+  their row (`pendingMutations`) - stays with the old conversation and goes with its row.
 
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding

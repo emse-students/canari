@@ -1,4 +1,5 @@
 import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
+import { isReplay } from '$lib/live/replayTimeline';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
 
 /**
@@ -14,11 +15,15 @@ import { resolveMediaType } from '$lib/utils/mediaLayout';
  * renderer (`PostMarkdown`); only its preview card is not drawn. A post of text alone is out:
  * there is nothing to look at.
  *
- * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true&withLinks=true`, the same rule in SQL,
+ * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true`, the same rule in SQL,
  * docs/wiki/services/reels.md); this is the CLIENT's reading of one row, so the slide knows which
  * page to draw and a row the rule does not cover is said in a log instead of drawn wrong.
+ *
+ * A LIVE REPLAY (`kind = 'replay'`, owner, 2026-11-09) IS A PAGE TOO, drawn as a reel from the live's
+ * own segments (`ReplayPane`): it carries NO media of its own, so no rule about media applies to it,
+ * and it comes only to a client that asked (`withReplays`).
  */
-export type FullScreenPage = 'reel' | 'photo' | 'carousel';
+export type FullScreenPage = 'reel' | 'photo' | 'carousel' | 'replay';
 
 /** The most media a carousel page draws (the server's `CAROUSEL_MAX_MEDIA`, Instagram's cap). */
 export const CAROUSEL_MAX_MEDIA = 10;
@@ -49,6 +54,7 @@ export function fullScreenPageOf(
     'kind' | 'media' | 'images' | 'polls' | 'forms' | 'attachedFormId' | 'linkedCalendarEventId'
   >
 ): FullScreenPage | null {
+  if (isReplay(post)) return 'replay';
   if (isReel(post)) return 'reel';
   const media = mediaOf(post);
   if (media.length === 0 || media.length > CAROUSEL_MAX_MEDIA) return null;

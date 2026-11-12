@@ -3,7 +3,7 @@
 **Backend**: `apps/social-service/` (associations, user tags, products)
 **Frontend**: `frontend/src/lib/components/associations/edit/`, `frontend/src/routes/shop/`,
 `frontend/src/routes/admin/cercle/`
-**Payments**: routed through `core-service` (Stripe Connect)
+**Payments**: Lydia only, shown as "Paiement Canari", or cash where the association allows it; Stripe left the product on 2026-10-07 ([payments](frontend/modules/payments.md), [stripe-archive](stripe-archive.md)). The Stripe passages further down this page describe the removed flow.
 
 Cotisation is how an association records that a user has paid their membership dues. Canari does not
 store this as a boolean on the user or the association: it is modelled as a (possibly time-bounded)

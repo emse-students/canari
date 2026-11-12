@@ -15,7 +15,7 @@ use std::sync::{
 use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, TokenRejection, decode_access_claims};
-use crate::state::AppState;
+use crate::state::{AdmissionRefusal, AppState};
 
 /// Heartbeat cadence: one WebSocket ping every this many seconds.
 const PING_INTERVAL_SECS: u64 = 15;
@@ -190,6 +190,50 @@ impl Drop for ConnectionGuard {
     }
 }
 
+// ── The origin of an upgrade ──────────────────────────────────────────────
+
+/// Longest origin written to a log line; a real one is a few dozen bytes.
+const LOGGED_ORIGIN_MAX: usize = 120;
+
+/// Refuse, with a 403, an upgrade whose `Origin` this estate does not serve its clients from
+/// (`AppState::upgrade_origins`); a request with no `Origin` passes.
+///
+/// THE REFUSED ORIGIN IS LOGGED, once per distinct value and then at each power of ten: it is the
+/// one fact that identifies a client turned away, and it appears nowhere else on either side. It is
+/// text its sender chose, so it is written escaped and cut.
+fn admit_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+    let origin = match headers.get(axum::http::header::ORIGIN) {
+        None => None,
+        // A header that is not text names no origin this estate could have listed.
+        Some(value) => Some(value.to_str().unwrap_or("")),
+    };
+    let Err(refusal) = state.upgrade_origins.admits(origin) else {
+        return Ok(());
+    };
+    let shown: String = origin
+        .unwrap_or("")
+        .chars()
+        .take(LOGGED_ORIGIN_MAX)
+        .collect();
+    if let Some(n) = state.refused_origins.hit(&shown) {
+        match refusal {
+            crate::origin::OriginRefusal::NotListed => tracing::warn!(
+                "[ws] upgrade REFUSED: origin {:?} is not in ALLOW_ORIGIN - refusal #{} for this origin",
+                shown,
+                n
+            ),
+            crate::origin::OriginRefusal::NoList => tracing::error!(
+                "[ws] upgrade REFUSED: origin {:?} cannot be matched, ALLOW_ORIGIN is '*' and that is not a list - refusal #{} for this origin",
+                shown,
+                n
+            ),
+        }
+    }
+    Err(Box::new(
+        (StatusCode::FORBIDDEN, "Origin not allowed").into_response(),
+    ))
+}
+
 // ── Public WS upgrade handler ─────────────────────────────────────────────
 
 /// Axum handler for `GET /api/ws`.
@@ -197,13 +241,20 @@ impl Drop for ConnectionGuard {
 /// Validates the JWT from the `canari_ws_token` cookie.
 /// Falls back to the `?token=` query parameter for Tauri Android/mobile where
 /// the native WebSocket plugin cannot forward WebView cookies.
-/// Returns `401 Unauthorized` if no valid token is found.
+/// Returns `401 Unauthorized` if no valid token is found, and `403 Forbidden` before that when the
+/// request names an `Origin` that is not an allowed one.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
+    // THE PAGE IS ASKED FIRST: an upgrade that names an origin this estate does not serve its
+    // clients from is refused before its token is read (`crate::origin`).
+    if let Err(refusal) = admit_origin(&state, &headers) {
+        return *refusal;
+    }
+
     // Cookie is preferred (web browser) - query-param is the Tauri mobile fallback.
     let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
         params.token.as_deref().map(|t| {
@@ -221,22 +272,6 @@ pub async fn ws_handler(
 
     match decode_access_claims(&token, state.jwt_secret.as_bytes()) {
         Ok(claims) => {
-            // Enforce a hard cap to prevent resource exhaustion under a connection flood.
-            const MAX_CONNECTIONS: usize = 1_000;
-            let total: usize = {
-                let map = state.connected_users.lock().unwrap();
-                map.values().map(|senders| senders.len()).sum()
-            };
-            if total >= MAX_CONNECTIONS {
-                tracing::warn!(
-                    "[ws] Connection limit reached ({}/{}) - rejecting upgrade for {}",
-                    total,
-                    MAX_CONNECTIONS,
-                    claims.sub
-                );
-                return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
-            }
-
             // Use the device_id provided by the client to keep the same routing key
             // across reconnections (otherwise group:members becomes stale).
             // Security relies on the JWT: only the userId from the token can access messages.
@@ -270,8 +305,40 @@ pub async fn ws_handler(
                 params.platform.as_deref(),
                 params.app_version.as_deref(),
             );
+            // THE PLACE IS TAKEN BEFORE THE UPGRADE (`AppState::admit`): counted and registered
+            // under the map lock, per account and for the process. A request past either limit is
+            // answered 503 and never upgraded, so the client's socket FAILS before it opens and
+            // its reconnection delay climbs; a socket opened and then closed would reset that
+            // delay on every attempt.
+            let conn_key = format!("{}:{}", claims.sub, device_id);
+            // A unique monotonic id, so the guard removes exactly this connection from the map.
+            let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = mpsc::channel::<String>(256);
+            match state.admit(&claims.sub, &conn_key, conn_id, tx.clone(), declared) {
+                Ok(active) => tracing::info!(
+                    "Registered connection key: {} (conn_id={}, {} active)",
+                    conn_key,
+                    conn_id,
+                    active
+                ),
+                Err(refusal) => return refuse_admission(&state, &claims.sub, &refusal),
+            }
+            // The guard travels INSIDE the upgrade callback: an upgrade that never completes drops
+            // the callback unrun, and the place with it.
+            let admitted = Admitted {
+                guard: ConnectionGuard {
+                    state: state.clone(),
+                    field: crate::addressing::session_field(&state.instance_id, conn_id),
+                    conn_key,
+                    conn_id,
+                },
+                tx,
+                rx,
+            };
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, claims.sub, device_id, declared, client)
+                handle_socket(
+                    socket, state, claims.sub, device_id, declared, client, admitted,
+                )
             })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
@@ -288,12 +355,40 @@ pub async fn ws_handler(
     }
 }
 
+/// A socket's place on this process, held from before its upgrade until its task ends.
+struct Admitted {
+    /// Frees the place when dropped, whether the socket ran or was never upgraded.
+    guard: ConnectionGuard,
+    /// The sender registered in `AppState::connected_users`.
+    tx: mpsc::Sender<String>,
+    /// Its receiver; a frame published between admission and upgrade waits here.
+    rx: mpsc::Receiver<String>,
+}
+
+/// Answer a request `AppState::admit` refused: 503, before any upgrade.
+///
+/// Logged once per subject and episode, then at each power of ten (`AppState::note_refusal`): a
+/// client that keeps asking is a RATE, and the count is what says so.
+fn refuse_admission(state: &AppState, user_id: &str, refusal: &AdmissionRefusal) -> Response {
+    if let Some(n) = state.note_refusal(user_id, refusal) {
+        tracing::warn!(
+            "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} of this episode",
+            user_id,
+            refusal,
+            state.max_connections_per_account,
+            state.max_connections,
+            n
+        );
+    }
+    (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response()
+}
+
 // ── Socket lifecycle ──────────────────────────────────────────────────────
 
 /// Drive a single authenticated WebSocket connection.
 ///
 /// Responsibilities:
-/// - Registers the outbound sender in `AppState::connected_users`.
+/// - Receives its place already taken (`Admitted`, registered by `ws_handler` before the upgrade).
 /// - Sets (and periodically refreshes) the `user:online:{userId}:{deviceId}` Redis key.
 /// - Drains `pending_welcome_notify:{userId}` - welcome_request signals stored while
 ///   all group members were offline - and forwards them so this device can handle them.
@@ -308,6 +403,7 @@ async fn handle_socket(
     device_id: String,
     declared: crate::addressing::SessionCaps,
     client: crate::census::ClientKind,
+    admitted: Admitted,
 ) {
     tracing::info!(
         "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}, platform={}, version={}",
@@ -319,14 +415,15 @@ async fn handle_socket(
         client.version
     );
 
-    let (mut ws_sender, mut receiver) = socket.split();
-    let (tx, mut rx) = mpsc::channel::<String>(256);
-    let conn_key = format!("{}:{}", user_id, device_id);
-
-    // Assign a unique monotonic ID to this connection so ConnectionGuard::drop
-    // can remove it from the map without relying on is_closed(), which has a
-    // race with abort() on the send task.
-    let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+    // The guard lives as long as this task: cleanup happens on every exit.
+    let Admitted {
+        guard: _guard,
+        tx,
+        mut rx,
+    } = admitted;
+    let conn_key = _guard.conn_key.clone();
+    let conn_id = _guard.conn_id;
+    let field = _guard.field.clone();
 
     // THE DUPLICATE-CONNECTION RULE: A NEW SOCKET FOR A DEVICE IS ADDED BESIDE ITS SIBLINGS, NEVER
     // REPLACES OR REFUSES THEM. Several sessions of one device id are legitimate - two tabs of one
@@ -335,31 +432,9 @@ async fn handle_socket(
     // this process could not see, let alone close, a sibling held by another. Replacing would also
     // turn two live tabs into a reconnect duel. What this rule costs: a socket its client forgot
     // keeps answering pings and keeps the device online, so the CLIENT owns releasing every socket
-    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count below is
-    // the reading that shows one.
-    {
-        let mut map = state.connected_users.lock().unwrap();
-        map.entry(conn_key.clone())
-            .or_default()
-            .insert(conn_id, tx.clone());
-        // Recorded while the map lock is held, so the pub/sub loop never sees this session without
-        // its declaration (the edge filter, `crate::addressing::addressed_recipients`).
-        state.note_session_caps(conn_id, declared);
-        tracing::info!(
-            "Registered connection key: {} (conn_id={}, {} active)",
-            conn_key,
-            conn_id,
-            map[&conn_key].len()
-        );
-    }
-
-    let field = crate::addressing::session_field(&state.instance_id, conn_id);
-    let _guard = ConnectionGuard {
-        state: state.clone(),
-        conn_key: conn_key.clone(),
-        field: field.clone(),
-        conn_id,
-    };
+    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count is
+    // the reading that shows one, taken at admission (`ws_handler`).
+    let (mut ws_sender, mut receiver) = socket.split();
 
     // Consecutive-pings-without-Pong counter. Incremented on each ping tick,
     // reset to zero as soon as a frame (Pong or Text) proves the client is responsive.
@@ -891,5 +966,276 @@ mod tests {
         // session end as normal is strictly worse than the noise this change removes.
         let foreign = axum::Error::new(std::io::Error::other("not a websocket error"));
         assert_eq!(classify_socket_error(&foreign), SocketEnd::Unreadable);
+    }
+
+    // ── Admission, as a client sees it ────────────────────────────────────
+
+    use super::{Admitted, ConnectionGuard, refuse_admission, ws_handler};
+    use crate::audience::PresenceAudience;
+    use crate::state::{AdmissionRefusal, AppState};
+    use axum::{Router, http::StatusCode, routing::get};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    const SECRET: &str = "test-secret";
+
+    /// An `AppState` with no I/O: `Client::open` only parses the URL.
+    fn state() -> AppState {
+        AppState::new(
+            redis::Client::open("redis://127.0.0.1:1/").unwrap(),
+            SECRET.to_string(),
+            PresenceAudience::new(String::new(), String::new(), String::new()),
+        )
+    }
+
+    /// An access token for `user`, signed with [`SECRET`].
+    fn token_of(user: &str) -> String {
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &crate::models::Claims {
+                sub: user.to_string(),
+                exp: 4_000_000_000,
+                kind: Some("access".to_string()),
+            },
+            &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    /// Serve `/api/ws` over `state` on a free local port; returns the socket URL of `user`'s
+    /// `device`.
+    async fn serve(state: Arc<AppState>) -> impl Fn(&str, &str) -> String {
+        let app = Router::new()
+            .route("/api/ws", get(ws_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        move |user: &str, device: &str| {
+            format!(
+                "ws://{addr}/api/ws?token={}&device_id={device}",
+                token_of(user)
+            )
+        }
+    }
+
+    /// A handshake naming `origin`, against a gateway that lists `https://app.example`.
+    async fn handshake_from(
+        origin: Option<&str>,
+        listed: crate::origin::UpgradeOrigins,
+    ) -> Result<StatusCode, StatusCode> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        let mut state = state();
+        state.upgrade_origins = listed;
+        let url = serve(Arc::new(state)).await;
+        let mut request = url("user-1", "device-1").into_client_request().unwrap();
+        if let Some(origin) = origin {
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
+        }
+        match tokio_tungstenite::connect_async(request).await {
+            Ok((_socket, answer)) => Ok(answer.status()),
+            Err(WsError::Http(answer)) => Err(answer.status()),
+            Err(other) => panic!("neither an open socket nor an HTTP answer: {other:?}"),
+        }
+    }
+
+    fn app_only() -> crate::origin::UpgradeOrigins {
+        crate::origin::UpgradeOrigins::parse("https://app.example,tauri://localhost")
+    }
+
+    #[tokio::test]
+    async fn a_socket_opens_from_a_listed_origin_and_from_no_origin() {
+        assert_eq!(
+            handshake_from(Some("https://app.example"), app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+        assert_eq!(
+            handshake_from(Some("tauri://localhost"), app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+        // A native client: no page, no Origin.
+        assert_eq!(
+            handshake_from(None, app_only()).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_upgrade_from_an_origin_that_is_not_listed_is_a_403_with_a_valid_token() {
+        assert_eq!(
+            handshake_from(Some("https://sibling.app.example"), app_only()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            handshake_from(Some("null"), app_only()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_admits_no_page_and_still_admits_a_native_client() {
+        let wildcard = crate::origin::UpgradeOrigins::Wildcard;
+
+        assert_eq!(
+            handshake_from(Some("https://app.example"), wildcard.clone()).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            handshake_from(None, wildcard).await,
+            Ok(StatusCode::SWITCHING_PROTOCOLS)
+        );
+    }
+
+    #[test]
+    fn a_refused_origin_is_counted_under_its_own_name_and_takes_no_place() {
+        let mut state = state();
+        state.upgrade_origins = app_only();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("origin", "https://other.example".parse().unwrap());
+
+        assert!(super::admit_origin(&state, &headers).is_err());
+        assert!(super::admit_origin(&state, &headers).is_err());
+
+        // Two refusals counted under the origin: the third prints nothing, another origin is new.
+        assert_eq!(state.refused_origins.hit("https://other.example"), None);
+        assert_eq!(state.refused_origins.hit("https://third.example"), Some(1));
+        assert!(state.connected_users.lock().unwrap().is_empty());
+    }
+
+    /// THE REFUSAL IS AN HTTP ANSWER, NOT A SOCKET THAT OPENS AND CLOSES. A client resets its
+    /// reconnection delay when its socket OPENS, so a refusal delivered after the upgrade would be
+    /// asked again at the shortest delay, forever. Here the handshake itself fails.
+    #[tokio::test]
+    async fn a_request_past_the_limit_fails_before_the_socket_opens() {
+        let mut state = state();
+        state.max_connections_per_account = 1;
+        let state = Arc::new(state);
+        let url = serve(state.clone()).await;
+
+        let (_held, answer) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .expect("the first socket of the account opens");
+        assert_eq!(answer.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+        let refused = tokio_tungstenite::connect_async(url("user-1", "device-2")).await;
+
+        match refused {
+            Err(WsError::Http(answer)) => {
+                assert_eq!(answer.status(), StatusCode::SERVICE_UNAVAILABLE)
+            }
+            other => panic!("the handshake must fail with a 503, got {other:?}"),
+        }
+        assert!(
+            !state
+                .connected_users
+                .lock()
+                .unwrap()
+                .contains_key("user-1:device-2")
+        );
+
+        // Another account is not refused by the first one's limit.
+        tokio_tungstenite::connect_async(url("user-2", "device-1"))
+            .await
+            .expect("another account still opens a socket");
+    }
+
+    /// The place is held by the guard the upgrade callback owns: a callback dropped unrun (an
+    /// upgrade that never completed) gives it back.
+    #[tokio::test]
+    async fn a_place_whose_upgrade_never_ran_is_given_back() {
+        let state = Arc::new(state());
+        let (tx, rx) = mpsc::channel::<String>(1);
+        state
+            .admit(
+                "user-1",
+                "user-1:device-1",
+                7,
+                tx.clone(),
+                crate::addressing::SessionCaps::default(),
+            )
+            .unwrap();
+        let admitted = Admitted {
+            guard: ConnectionGuard {
+                state: state.clone(),
+                conn_key: "user-1:device-1".to_string(),
+                field: crate::addressing::session_field(&state.instance_id, 7),
+                conn_id: 7,
+            },
+            tx,
+            rx,
+        };
+
+        drop(admitted);
+
+        assert!(state.connected_users.lock().unwrap().is_empty());
+        assert!(!state.session_caps.lock().unwrap().contains_key(&7));
+    }
+
+    #[test]
+    fn a_refusal_is_a_503() {
+        let state = state();
+
+        let answer = refuse_admission(&state, "user-a", &AdmissionRefusal::Process { held: 1_000 });
+
+        assert_eq!(answer.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// A raw client that hangs up the moment the server starts answering, without ever speaking
+    /// the protocol: the place taken before the answer comes back. (A client that hangs up BEFORE
+    /// the server reads its request never reaches the handler, so it takes no place at all; the
+    /// upgrade that fails after admission is covered by `a_place_whose_upgrade_never_ran_is_given_back`.)
+    #[tokio::test]
+    async fn a_client_that_hangs_up_as_the_answer_starts_leaves_no_place_taken() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let url = url("user-1", "device-1");
+        let rest = url.strip_prefix("ws://").unwrap();
+        let (host, path) = rest.split_once('/').unwrap();
+
+        let mut link = tokio::net::TcpStream::connect(host).await.unwrap();
+        link.write_all(
+            format!(
+                "GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut first = [0u8; 1];
+        link.read_exact(&mut first).await.unwrap();
+        drop(link);
+
+        // Bounded by a count of turns, so a place that never comes back FAILS instead of hanging.
+        let mut emptied = false;
+        for _ in 0..500 {
+            if state.connected_users.lock().unwrap().is_empty()
+                && state
+                    .next_conn_id
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    == 1
+            {
+                emptied = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            emptied,
+            "the place taken for the upgrade was never given back (ids handed out: {}, keys held: {:?})",
+            state
+                .next_conn_id
+                .load(std::sync::atomic::Ordering::Relaxed),
+            state
+                .connected_users
+                .lock()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>()
+        );
     }
 }

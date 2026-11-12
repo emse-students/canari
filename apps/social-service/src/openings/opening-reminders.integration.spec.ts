@@ -32,7 +32,11 @@ import { AccountBellsService } from '../follows/account-bells.service';
 import { FormReminderScheduler } from '../forms/forms-reminder.scheduler';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import {
+  createEngagementPushCapTables,
+  createPostNotificationsTable,
+  givePushDevices,
+} from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { announceSpaceOpening } from '../bookings/booking-spaces.service';
 import type { PushContent } from '../push/push-content';
@@ -193,6 +197,9 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     );
     await q(migration('151_opening_reminders.sql'));
     await q(migration('152_opening_reminders_copy_form_reminders.sql'));
+    // An opening is counted by the daily push cap (owner, 2026-11-10).
+    await createEngagementPushCapTables((sql) => q(sql));
+    await givePushDevices(q, [FAN, FAN_ASKER, MUTED_FAN, FAR_FAN, PUBLISHER, ASKER]);
     // Applied twice, as a re-run of a deploy would: nothing changes.
     await q(migration('151_opening_reminders.sql'));
     await q(migration('152_opening_reminders_copy_form_reminders.sql'));
@@ -245,6 +252,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
   describe('after the copy', () => {
     beforeEach(async () => {
       pushed.length = 0;
+      await q(`DELETE FROM engagement_push_days`);
       await q(`DELETE FROM form_reminders; DELETE FROM opening_reminders;
                DELETE FROM association_follows; DELETE FROM account_bells;
                DELETE FROM post_notifications; DELETE FROM association_members`);

@@ -46,6 +46,8 @@
     show: boolean;
     /** Whether the frame reaches the screen bottom: the player's progress line clears the inset. */
     playerSafeBottom: boolean;
+    /** A reel's declared length (`post.durationMs`), so its stream can be sought before it is whole. */
+    durationMs?: number | null;
     /** The active media is SETTLED: whole and, for a video, playing (or decidedly failed). */
     onReady?: () => void;
     /** The media service answered `410`: the file is gone for good. */
@@ -61,6 +63,7 @@
     preload,
     show,
     playerSafeBottom,
+    durationMs = null,
     onReady,
     onMediaGone,
   }: Props = $props();
@@ -70,7 +73,9 @@
   /**
    * WHAT A VIDEO SHOWS BEFORE ITS FIRST FRAME IS DECODED (owner, 2026-10-31: never a play glyph on a
    * loading reel): the sharp first frame this device decoded (`reelPosters`), else the publisher's
-   * ThumbHash of it, else nothing - the frame's black. A picture not yet mounted shows its ThumbHash.
+   * ThumbHash of it, else nothing - the frame's black. A PICTURE shows its ThumbHash until its file
+   * is in, mounted or not (owner, 2026-11-11: a photo page was black, a spinner, until its file came;
+   * pictures carry a ThumbHash since then, `publishQueue.svelte.ts`).
    */
   const posterUrl = $derived(
     video
@@ -225,6 +230,7 @@
       {authToken}
       galleryMode
       announceLoading={active}
+      poster={posterUrl}
       onLoaded={active ? onMediaLoaded : undefined}
       onPlaybackBlocked={active ? onPlaybackBlocked : undefined}
     />
@@ -235,6 +241,7 @@
       galleryMode
       minimalPlayer
       {playerSafeBottom}
+      {durationMs}
       poster={posterUrl}
       onLoaded={onMediaLoaded}
       {onPlaybackBlocked}

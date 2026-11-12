@@ -50,12 +50,12 @@
           onclick={() => toggle(option.value)}
           aria-pressed={on}
           class="inline-flex items-center gap-2 rounded-xl border-2 px-3 py-2 text-left text-sm font-semibold transition-colors {on
-            ? 'border-cn-yellow bg-cn-yellow/10 text-text-main'
-            : 'border-cn-border text-text-muted hover:border-cn-yellow/40'}"
+            ? 'border-accent-icon bg-accent/10 text-text-main'
+            : 'border-cn-border text-text-muted hover:border-accent/40'}"
         >
           <span
             class="flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 {on
-              ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
+              ? 'border-accent-icon bg-accent text-on-accent'
               : 'border-cn-border'}"
           >
             {#if on}<Check size={11} strokeWidth={3} />{/if}

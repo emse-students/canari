@@ -1,4 +1,5 @@
-import { RequestGate } from './requestGate';
+import { vi } from 'vitest';
+import { GateRank, RequestGate } from './requestGate';
 
 /**
  * WHAT THE CAP HAS TO GUARANTEE, and nothing about timing.
@@ -123,5 +124,120 @@ describe('RequestGate', () => {
     holding.resolve();
     await held;
     await expect(after).resolves.toBe('ran');
+  });
+});
+
+/**
+ * THE BACKGROUND LANE (owner, 2026-11-11: the reel viewer fetches the next pages in parallel). What
+ * it must guarantee: bytes fetched ahead never take the last free slot, and every foreground task
+ * - what is on screen - goes before every background one.
+ */
+describe('RequestGate background lane', () => {
+  it('never lets background tasks fill the gate: one slot stays free for the foreground', async () => {
+    const gate = new RequestGate(3);
+    const holds = Array.from({ length: 5 }, () => deferred());
+    let running = 0;
+    const runs = holds.map((d) =>
+      gate.run(
+        async () => {
+          running++;
+          await d.promise;
+          running--;
+        },
+        undefined,
+        'background'
+      )
+    );
+    await Promise.resolve();
+    expect(running).toBe(2);
+    expect(gate.queued).toBe(3);
+
+    // A foreground task finds the free slot at once.
+    let fg = false;
+    const front = gate.run(async () => void (fg = true));
+    await Promise.resolve();
+    expect(fg).toBe(true);
+    await front;
+
+    for (const d of holds) d.resolve();
+    await Promise.all(runs);
+    expect(gate.inFlight).toBe(0);
+  });
+
+  it('hands a freed slot to a waiting foreground task before any background one', async () => {
+    const gate = new RequestGate(2);
+    const order: string[] = [];
+    const a = deferred();
+    const b = deferred();
+    const busy = [gate.run(() => a.promise), gate.run(() => b.promise)];
+    const bg = gate.run(async () => void order.push('bg'), undefined, 'background');
+    const fg = gate.run(async () => void order.push('fg'));
+    a.resolve();
+    await fg;
+    expect(order).toEqual(['fg']);
+    b.resolve();
+    await Promise.all([...busy, bg]);
+    expect(order).toEqual(['fg', 'bg']);
+  });
+
+  it('a background task abandoned while queued never starts', async () => {
+    const gate = new RequestGate(3);
+    const hold = deferred();
+    const fg = [gate.run(() => hold.promise), gate.run(() => hold.promise)];
+    const abort = new AbortController();
+    let started = false;
+    const bg = gate.run(async () => void (started = true), abort.signal, 'background');
+    expect(gate.queued).toBe(1);
+    abort.abort(new DOMException('passed', 'AbortError'));
+    await expect(bg).rejects.toThrow('passed');
+    expect(gate.queued).toBe(0);
+    hold.resolve();
+    await Promise.all(fg);
+    expect(started).toBe(false);
+  });
+
+  /**
+   * PRIORITY INVERSION (review of #3337, F2): the page the reader reaches joins the head fetched
+   * for it ahead - queued in the background lane behind the other pages' work. Promoted, it goes
+   * before every other background task, and as a foreground one.
+   */
+  it('a queued background task raised to the foreground is admitted before other background work', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const gate = new RequestGate(3);
+    const order: string[] = [];
+    const a = deferred();
+    const b = deferred();
+    const busy = [gate.run(() => a.promise), gate.run(() => b.promise)];
+    const other = gate.run(async () => void order.push('other ahead'), undefined, 'background');
+    const rank = new GateRank('background');
+    const joined = gate.run(async () => void order.push('the page on screen'), undefined, rank);
+    expect(gate.queued).toBe(2);
+
+    rank.promote();
+    // A foreground task takes the free slot the background lane may not.
+    await joined;
+    expect(order).toEqual(['the page on screen']);
+    a.resolve();
+    b.resolve();
+    await Promise.all([...busy, other]);
+    expect(order).toEqual(['the page on screen', 'other ahead']);
+  });
+
+  it('a raised task abandoned afterwards still leaves the queue', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const gate = new RequestGate(1);
+    const hold = deferred();
+    const busy = gate.run(() => hold.promise);
+    const rank = new GateRank('background');
+    const abort = new AbortController();
+    let started = false;
+    const raised = gate.run(async () => void (started = true), abort.signal, rank);
+    rank.promote();
+    abort.abort(new DOMException('passed', 'AbortError'));
+    await expect(raised).rejects.toThrow('passed');
+    expect(gate.queued).toBe(0);
+    hold.resolve();
+    await busy;
+    expect(started).toBe(false);
   });
 });

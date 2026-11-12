@@ -22,6 +22,22 @@ export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies 
 export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
 
 /**
+ * The query parameter naming the comment a post link opens at - written by the server into a
+ * comment push (`socialDeepLink` in social-service), by the bell for a row a comment wrote, and read
+ * by the post page.
+ */
+export const POST_COMMENT_PARAM = 'comment';
+
+/**
+ * A post's page, opened at one comment when one is named - the one spelling shared by the bell
+ * (`notificationHref`) and a notification tap (`appRouteForDeepLink`), so the two land alike.
+ */
+export function postHref(postId: string, commentId?: string | null): AppPath {
+  const route: AppPath = `/posts/${encodeURIComponent(postId)}`;
+  return commentId ? `${route}?${POST_COMMENT_PARAM}=${encodeURIComponent(commentId)}` : route;
+}
+
+/**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
  *
  * The bell dropdown and `/notifications` render the same rows and, until this existed, each decided
@@ -37,7 +53,7 @@ export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
 export function notificationHref(
-  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta' | 'commentId'>
 ): AppPath | null {
   switch (notif.type) {
     case 'form_reminder':
@@ -111,10 +127,17 @@ export function notificationHref(
     case 'association_repost':
     // WP-F6: a person the reader follows reposted the post.
     case 'member_repost':
+    // Engagement WP-9: a person the reader follows reacted to or commented on the post.
+    case 'friend_reaction':
+    case 'friend_comment':
+    // Engagement WP-10: a post of the reader's space took off.
+    case 'campus_trend':
     // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
     case 'repost_personal_accepted':
     case 'repost_personal_refused':
-      return `/posts/${notif.postId}`;
+      // A row a comment wrote (a comment, a reply, a mention in a comment, a friend's comment)
+      // names it since migration 132, and opens the post AT that comment, as its push does.
+      return postHref(notif.postId, notif.commentId);
     // A live a moderator cut (`postId` is the live, deleted when it ended): the row tells the
     // broadcaster and goes nowhere - there is no page of a live that no longer exists. The same for
     // the right to broadcast suspended or withdrawn (WP-L8b; `postId` is the member's own id).
@@ -159,6 +182,9 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'followed_post',
   'association_repost',
   'member_repost',
+  'friend_reaction',
+  'friend_comment',
+  'campus_trend',
   'repost_proposed',
   'coorganise_proposed',
   'repost_personal_requested',
@@ -243,7 +269,7 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
  * notification could not be opened, rather than sending the reader somewhere else.
  */
 export async function resolveNotificationHref(
-  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>,
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta' | 'commentId'>,
   lookupSlug: (associationId: string) => Promise<string>
 ): Promise<AppPath | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];

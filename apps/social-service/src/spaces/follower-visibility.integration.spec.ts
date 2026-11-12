@@ -130,7 +130,7 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false);
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),

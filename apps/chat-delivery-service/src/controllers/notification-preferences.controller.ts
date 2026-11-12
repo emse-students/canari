@@ -16,11 +16,19 @@ import { Repository } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { sanitizeQueryValue } from '../utils/sanitize';
-import { isNotificationCategory, NOTIFICATION_CATEGORIES } from '../services/push-category';
 import {
-  readDisabledCategoriesStrict,
+  categoriesNameableBy,
+  isNotificationCategory,
+  isOptInCategory,
+  NOTIFICATION_CATEGORIES,
+  OPT_IN_CATEGORIES,
+  type NotificationCategory,
+} from '../services/push-category';
+import { CLIENT_VERSION_HEADER } from '../utils/app-version';
+import {
   readGroupCallPermissionsStrict,
   readGroupNotificationLevelsStrict,
+  readSwitchesStrict,
   writeDisabledCategories,
   writeGroupCallsAllowed,
   writeGroupNotificationLevel,
@@ -49,22 +57,26 @@ export class NotificationPreferencesController {
   ) {}
 
   /**
-   * The categories this account has switched off (empty = everything on), and every conversation it
-   * made quieter than `all` (absent = `all`) - the two things a client needs to gate the
-   * notifications it raises itself, in the one read it already makes at sign-in.
+   * The account's switches AS STORED - `disabled` (categories switched off; nothing for an account
+   * that never saved) and `enabled` (the opt-in categories whose PUSH it turned on, `OPT_IN_CATEGORIES`)
+   * - and every conversation it made quieter than `all` (absent = `all`): what a client needs to draw
+   * the settings and gate the notifications it raises itself, in the one read it makes at sign-in.
+   * `disabled` never carries the push-only reading of an opt-in category: a build up to
+   * 1.6.10-alpha.1 reads it as its whole answer and saves it back.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/notification-preferences')
   async get(@Headers('x-user-id') userIdRaw: string): Promise<{
     disabled: string[];
+    enabled: string[];
     groupLevels: Record<string, GroupNotificationLevel>;
     groupCalls: Record<string, boolean>;
   }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
-    const disabled = await readDisabledCategoriesStrict(this.prefRepo.manager, userId);
+    const { disabled, enabled } = await readSwitchesStrict(this.prefRepo.manager, userId);
     const groupLevels = await readGroupNotificationLevelsStrict(this.prefRepo.manager, userId);
     const groupCalls = await readGroupCallPermissionsStrict(this.prefRepo.manager, userId);
-    return { disabled: [...disabled], groupLevels, groupCalls };
+    return { disabled, enabled, groupLevels, groupCalls };
   }
 
   /**
@@ -134,13 +146,22 @@ export class NotificationPreferencesController {
     return { groupId, level };
   }
 
-  /** Replaces the disabled set. Unknown ids are refused: a typo must not read as "saved". */
+  /**
+   * Replaces the disabled set for the categories the CALLER'S BUILD names
+   * (`X-Canari-Client-Version`, none = a build up to 1.6.9), and keeps the stored choice for every
+   * other one: a build that draws no switch for a category made no choice about it. `enabled` (the
+   * opt-in categories whose PUSH is on) is read ONLY when present: its presence is how a build declares
+   * it knows the opt-in reading, and a save without it - 1.6.10-alpha.1's - never turns a push on.
+   * Unknown ids, and a non-opt-in id in `enabled`, are refused: a typo must not read as "saved".
+   * Answers the two sets as now stored.
+   */
   @UseGuards(HeaderAuthGuard)
   @Put('mls/notification-preferences')
   async put(
     @Headers('x-user-id') userIdRaw: string,
-    @Body() body: { disabled?: unknown }
-  ): Promise<{ disabled: string[] }> {
+    @Body() body: { disabled?: unknown; enabled?: unknown },
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string
+  ): Promise<{ disabled: string[]; enabled: string[] }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     if (!Array.isArray(body?.disabled)) {
       throw new BadRequestException('disabled must be an array of category ids');
@@ -152,8 +173,30 @@ export class NotificationPreferencesController {
         `unknown category; expected a subset of ${NOTIFICATION_CATEGORIES.join(', ')}`
       );
     }
-    await writeDisabledCategories(this.prefRepo.manager, userId, disabled);
-    this.logger.log(`[NOTIF_PREF] user=${userId} disabled=[${disabled.join(',')}]`);
-    return { disabled };
+    let pushEnabled: NotificationCategory[] | undefined;
+    if (body.enabled !== undefined) {
+      const asked: unknown[] = Array.isArray(body.enabled) ? body.enabled : [null];
+      pushEnabled = [...new Set(asked.filter(isNotificationCategory).filter(isOptInCategory))];
+      if (pushEnabled.length !== new Set(asked).size) {
+        throw new BadRequestException(
+          `enabled must be a subset of the opt-in categories ${OPT_IN_CATEGORIES.join(', ')}`
+        );
+      }
+    }
+    const nameable = new Set(categoriesNameableBy(clientVersion));
+    const keep = NOTIFICATION_CATEGORIES.filter((category) => !nameable.has(category));
+    const stored = await writeDisabledCategories(
+      this.prefRepo.manager,
+      userId,
+      disabled,
+      keep,
+      pushEnabled
+    );
+    this.logger.log(
+      `[NOTIF_PREF] user=${userId} disabled=[${stored.disabled.join(',')}] push-on=[${stored.enabled.join(',')}]` +
+        (pushEnabled === undefined ? ' (no enabled field: push untouched)' : '') +
+        (keep.length ? ` kept-unnamed=[${keep.join(',')}] client=${clientVersion ?? 'none'}` : '')
+    );
+    return stored;
   }
 }

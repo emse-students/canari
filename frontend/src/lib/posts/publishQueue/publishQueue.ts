@@ -49,7 +49,9 @@
  * broadcast, and hand their Retry, Pause and Delete to it ({@link PublishQueue.nudge}).
  */
 import type { CreatePostPayload, PostMediaRef } from '$lib/posts/api';
+import { reelDeclarationFor, type ReelRule } from '$lib/reels/reelRule';
 import type { ImageDimensions, MediaRef } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { OutboxResumableUpload } from '$lib/db/types';
 import type { ResumableBlobEncoding } from '$lib/utils/resumableUpload';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
@@ -58,6 +60,12 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
+import {
+  INSTITUTION_REACH_INVALID,
+  INSTITUTION_REACH_NOT_OFFERED,
+  INSTITUTION_REACH_OUTSIDE_AUDIENCE,
+  INSTITUTION_REACH_REQUIRED,
+} from '$lib/posts/institutionReach';
 import type {
   PublishQueueStore,
   QueuedFile,
@@ -89,6 +97,8 @@ export interface PublishView {
   step: number;
   /** The sentence of a post that stopped for good. */
   failure?: string;
+  /** Its refusal is one a Retry cannot cure (`retryCannotCure`): only Delete is offered. */
+  final?: true;
 }
 
 /** The arguments of one media upload, as the queue hands them to the transport. */
@@ -111,7 +121,19 @@ export interface PublishQueueDeps {
     file: File,
     onProgress: (fraction: number) => void,
     signal: AbortSignal
-  ) => Promise<{ file: File; dims?: ImageDimensions }>;
+  ) => Promise<{
+    file: File;
+    dims?: ImageDimensions;
+    durationMs?: number;
+    placeholder?: string;
+    loudness?: MediaLoudness;
+  }>;
+  /**
+   * The served CanaReel rule (`reelRuleOf` of `GET /api/posts/reel-limits`), or `null` from an estate
+   * older than it - then no post becomes a reel, as there. A failure to ask is a failure of the
+   * create step (waited out or retried like any), never a post published without the rule.
+   */
+  reelRule: () => Promise<ReelRule | null>;
   /** The blob format of a prepared file (`writesSegmented`: a video, when the writer is on). */
   encodingFor: (mimeType: string) => ResumableBlobEncoding;
   upload: (args: PublishUploadArgs) => Promise<MediaRef>;
@@ -184,6 +206,29 @@ class StepAbortedError extends Error {
 
 /** The `ApiRefusalError` statuses that are no answer about the post: asked again, never a failure. */
 const RETRIED_STATUSES = new Set([408, 425, 429]);
+
+/**
+ * The refusal codes about the post's own PAYLOAD that a Retry cannot cure: the queue re-sends the
+ * payload it stored, so the server would refuse it again identically. An institution's reach (owner,
+ * 2026-11-10): a build older than the reach queues an institution post without one, and every Retry
+ * would meet `institution_reach_required` again (review of #3314).
+ */
+const FINAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  INSTITUTION_REACH_REQUIRED,
+  INSTITUTION_REACH_NOT_OFFERED,
+  INSTITUTION_REACH_INVALID,
+  INSTITUTION_REACH_OUTSIDE_AUDIENCE,
+]);
+
+/** Whether `error` is an answer about the stored payload that a Retry would only repeat. */
+export function retryCannotCure(error: unknown): boolean {
+  return (
+    error instanceof ApiRefusalError &&
+    error.code !== null &&
+    error.status < 500 &&
+    FINAL_REFUSAL_CODES.has(error.code)
+  );
+}
 
 /** What a failure says about this post, read by {@link classifyPublishFailure}. */
 export type PublishFailureVerdict = 'wait' | 'busy' | 'halt' | 'failed';
@@ -312,6 +357,13 @@ export class PublishQueue {
   async retry(postId: string): Promise<void> {
     const post = await this.deps.store.get(postId);
     if (!post) return;
+    if (post.failure?.final) {
+      // ACCUSED: the banner offers no Retry on a final refusal, so reaching here is a caller's bug.
+      console.warn(
+        `[PUBLISH-QUEUE] ${postId} Retry refused: its refusal at ${post.failure.stage} is final`
+      );
+      return;
+    }
     if (post.failure || post.paused) {
       this.deps.log(
         `[PUBLISH-QUEUE] ${postId} resumed by the member after: ${post.failure?.stage ?? 'a pause'}`
@@ -413,12 +465,14 @@ export class PublishQueue {
     if (post.failure) {
       view.phase = 'failed';
       view.failure = post.failure.message;
+      if (post.failure.final) view.final = true;
     } else if (post.withdrawn) {
       view.phase = 'withdrawing';
     } else if (post.paused) {
       view.phase = 'paused';
     }
     if (!post.failure) delete view.failure;
+    if (!post.failure?.final) delete view.final;
     this.views.set(post.id, view);
     if (emit) this.emitViews();
   }
@@ -491,6 +545,40 @@ export class PublishQueue {
     if (stoppedHere()) throw new StepAbortedError();
   }
 
+  /**
+   * `{ kind: 'reel', durationMs }` when the post is a CanaReel by the served rule, `null` when it is a
+   * post. Logged either way for a single video, the one case the rule reads.
+   */
+  private async reelDeclaration(
+    post: QueuedPost
+  ): Promise<{ kind: 'reel'; durationMs: number } | null> {
+    if (post.media.length !== 1 || !post.media[0].prepared?.type.startsWith('video/')) return null;
+    const rule = await this.deps.reelRule();
+    if (!rule) {
+      this.deps.log(
+        `[PUBLISH-QUEUE] ${post.id} one video, but the estate serves no reel rule: a post`
+      );
+      return null;
+    }
+    const prepared = post.media[0].prepared;
+    const reel = reelDeclarationFor(
+      post.payload,
+      [
+        {
+          type: prepared.type,
+          width: prepared.width,
+          height: prepared.height,
+          durationMs: prepared.durationMs,
+        },
+      ],
+      rule
+    );
+    this.deps.log(
+      `[PUBLISH-QUEUE] ${post.id} one video ${prepared.width ?? '?'}x${prepared.height ?? '?'}, ${prepared.durationMs ?? '?'} ms: ${reel ? 'a CanaReel' : 'a post'}`
+    );
+    return reel;
+  }
+
   /** Takes one post as far as it can go. */
   private async process(post: QueuedPost): Promise<Outcome> {
     const abort = new AbortController();
@@ -514,7 +602,13 @@ export class PublishQueue {
           const original = await this.deps.store.readFile(post.id, i);
           // Durations are logged only: the measurement the weak-network page quotes, never a bound.
           const preparedAt = performance.now();
-          const { file: prepared, dims } = await this.deps.prepare(
+          const {
+            file: prepared,
+            dims,
+            durationMs,
+            placeholder,
+            loudness,
+          } = await this.deps.prepare(
             new File([original.bytes], original.name, { type: original.type }),
             (f) => this.setView(post, { phase: 'preparing', index: i, step: f }),
             abort.signal
@@ -526,6 +620,9 @@ export class PublishQueue {
             size: file.bytes.byteLength,
             ...(dims?.width ? { width: dims.width } : {}),
             ...(dims?.height ? { height: dims.height } : {}),
+            ...(durationMs ? { durationMs } : {}),
+            ...(placeholder ? { placeholder } : {}),
+            ...(loudness ? { loudness } : {}),
           };
           if (!(await this.deps.store.update(post, { index: i, file }))) return 'gone';
           this.deps.log(
@@ -566,6 +663,8 @@ export class PublishQueue {
         });
         media.ref = {
           ...ref,
+          ...(prepared.placeholder ? { placeholder: prepared.placeholder } : {}),
+          ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
           ...(media.caption ? { caption: media.caption } : {}),
         } as PostMediaRef;
         if (!(await this.deps.store.update(post))) return 'gone';
@@ -589,8 +688,12 @@ export class PublishQueue {
         post.createSent = true;
         if (!(await this.deps.store.update(post))) return 'gone';
       }
+      // EVERY VERTICAL VIDEO OF 90 S OR LESS IS A CANAREEL (owner, 2026-11-09): decided here, on the
+      // PREPARED frame and length - what the server is told - for a post whose only content is it.
+      const reel = await this.reelDeclaration(post);
       await this.deps.createPost({
         ...post.payload,
+        ...reel,
         id: post.id,
         media: post.media.map((m) => m.ref!),
       });
@@ -707,7 +810,11 @@ export class PublishQueue {
       // ACCUSED, not debug-logged: this is the one failure a member reports.
       console.error(`[PUBLISH-QUEUE] ${post.id} refused at ${stage}`, error);
       this.busy = 0;
-      post.failure = { stage, message: this.deps.failureMessage(error) };
+      post.failure = {
+        stage,
+        message: this.deps.failureMessage(error),
+        ...(retryCannotCure(error) ? { final: true as const } : {}),
+      };
       const kept = await this.deps.store.update(post).catch((e) => {
         this.deps.log(`[PUBLISH-QUEUE] ${post.id} failure not recorded: ${String(e)}`);
         return true;

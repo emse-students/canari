@@ -86,5 +86,11 @@ Each is one pull request or more; none is built by the D3 change.
    outside a transform, as `fault-transform-late` does for 1:1.
 6. **Open point 4** is read against the B7 meter once WP-GC2 runs on the bench, not before.
 
+**And one decision WP-C11 owes** (moved here 2026-11-11 from the review of #1997):
+`refuseIfBlocked` (`calls.service.ts`) lets ANY block between the caller and ANY other member refuse
+the whole call, at `initiate`, `ring` and `join-token`. Right for 1:1; for a group, decide whether one
+block refuses the call or only drops that member
+([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+
 Delete this entry when WP-C11 ships; its rule goes to `durable-rules.md`, the mechanism to
 [calls](../frontend/modules/calls.md).

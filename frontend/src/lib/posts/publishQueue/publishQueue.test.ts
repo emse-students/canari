@@ -23,6 +23,7 @@ import {
   PublishAccountMismatchError,
   PublishQueue,
   classifyPublishFailure,
+  retryCannotCure,
   type PublishUploadArgs,
   type PublishView,
 } from './publishQueue';
@@ -129,6 +130,12 @@ interface Rig {
   withdrawLanded: boolean;
   /** The account the session would carry the next request as. */
   sessionUser: string;
+  /** Every create payload, whole: what the server was told the post IS. */
+  payloads: Array<Record<string, unknown>>;
+  /** The served reel rule (`null`: an estate older than it). */
+  rule: { maxDurationMs: number; maxAspectRatio: number } | null;
+  /** What preparing a video yields: its frame and length. */
+  video: { width: number; height: number; durationMs: number };
   /** Called at every account check, before the check - a test's hook between two steps. */
   onCheckpoint: (() => void) | null;
   views: PublishView[];
@@ -151,6 +158,9 @@ function rig(store = memoryStore()): Rig {
     viewSources: [] as boolean[],
     withdrawLanded: false,
     sessionUser: 'alice',
+    payloads: [] as Array<Record<string, unknown>>,
+    rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
+    video: { width: 720, height: 1280, durationMs: 41_250 },
     onCheckpoint: null,
     views: [] as PublishView[],
   } as Rig;
@@ -159,6 +169,16 @@ function rig(store = memoryStore()): Rig {
     store,
     prepare: async (file) => {
       r.calls.push(`prepare:${file.name}`);
+      if (file.type.startsWith('video/')) {
+        return {
+          file: new File([await file.arrayBuffer()], file.name.replace(/\.\w+$/, '.mp4'), {
+            type: 'video/mp4',
+          }),
+          dims: { width: r.video.width, height: r.video.height },
+          durationMs: r.video.durationMs,
+          placeholder: 'AAAA',
+        };
+      }
       return {
         file: new File(
           [await file.arrayBuffer(), new Uint8Array([9])],
@@ -170,6 +190,7 @@ function rig(store = memoryStore()): Rig {
         dims: { width: 40, height: 30 },
       };
     },
+    reelRule: async () => r.rule,
     encodingFor: () => 'single-block',
     upload: async (a) => {
       r.uploads.push(a);
@@ -214,6 +235,7 @@ function rig(store = memoryStore()): Rig {
       const step = r.createPlan.shift();
       if (step) await step();
       r.created.push({ id: p.id, media: p.media! });
+      r.payloads.push({ ...p });
     },
     assertNotMuted: async () => undefined,
     failureMessage: (e) => `refused: ${(e as Error).message}`,
@@ -367,6 +389,33 @@ describe('PublishQueue', () => {
     expect(r.published).toEqual(['post-2', 'post-1']);
     // The retry did not upload the media again: its ref was durable.
     expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+  });
+
+  it('a refusal a Retry cannot cure (an institution post with no reach) is FINAL: Delete alone, no endless Retry', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0, 1);
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, 'institution_reach_required', 'no reach');
+    });
+    await r.queue.drain();
+    expect(r.store.posts.get('post-1')!.failure).toEqual({
+      stage: 'createPost',
+      message: 'refused: no reach',
+      final: true,
+    });
+    expect(r.views.find((v) => v.id === 'post-1')).toMatchObject({
+      phase: 'failed',
+      final: true,
+    });
+    // A Retry pressed anyway (another tab, an old banner) sends nothing and keeps the failure.
+    await r.queue.retry('post-1');
+    expect(r.published).toEqual([]);
+    expect(r.store.posts.get('post-1')!.failure?.final).toBe(true);
+    // An ordinary refusal stays curable.
+    expect(retryCannotCure(new ApiRefusalError(400, null, 'bad poll'))).toBe(false);
+    expect(retryCannotCure(new ApiRefusalError(503, 'institution_reach_required', 'x'))).toBe(
+      false
+    );
   });
 
   it('back on screen after a suspension: the transfer in flight is aborted and restarted at once', async () => {
@@ -744,5 +793,98 @@ describe('PublishQueue - Pause, and the rows of another tab', () => {
     expect(other.calls).toEqual([]);
     // Rows read from the store are never handed to the other tabs: they carry no progress.
     expect(other.viewSources.every((fromRunner) => !fromRunner)).toBe(true);
+  });
+});
+
+/** One post holding the files named, each `name:type`, with `payload` added to its own. */
+function queueFiles(
+  store: ReturnType<typeof memoryStore>,
+  id: string,
+  files: Array<[string, string]>,
+  payload: Record<string, unknown> = {}
+) {
+  store.posts.set(id, {
+    id,
+    queuedAt: 1,
+    payload: { markdown: '', ...payload },
+    media: files.map(([name, type]) => ({ name, type, size: 3 })),
+    landing: 'all',
+  });
+  files.forEach(([name, type], i) =>
+    store.files.set(`${id}/${i}`, { bytes: new Uint8Array([1, 2, 3]).buffer, name, type })
+  );
+}
+
+describe('PublishQueue - every vertical video of 90 s or less is a CanaReel (owner, 2026-11-09)', () => {
+  it('publishes ONE vertical video within the cap as a reel, with its prepared length', async () => {
+    const r = rig();
+    queueFiles(r.store, 'v-1', [['IMG_1.mov', 'video/quicktime']]);
+    await r.queue.drain();
+    expect(r.payloads).toHaveLength(1);
+    expect(r.payloads[0]).toMatchObject({ kind: 'reel', durationMs: 41_250, id: 'v-1' });
+  });
+
+  /** A reader's feed draws the first frame before a byte arrives (owner, 2026-11-10). */
+  it("a video's first-frame placeholder travels with its media ref into the post", async () => {
+    const r = rig();
+    queueFiles(r.store, 'v-2', [['IMG_2.mov', 'video/quicktime']]);
+    await r.queue.drain();
+    const media = r.payloads[0].media as Array<{ placeholder?: string }>;
+    expect(media[0].placeholder).toBe('AAAA');
+  });
+
+  it('reads the 4:5 boundary and the 90 s cap as the server does', async () => {
+    const at = async (video: Rig['video']) => {
+      const r = rig();
+      r.video = video;
+      queueFiles(r.store, 'v', [['v.mp4', 'video/mp4']]);
+      await r.queue.drain();
+      return r.payloads[0].kind;
+    };
+    expect(await at({ width: 1080, height: 1350, durationMs: 90_000 })).toBe('reel');
+    expect(await at({ width: 1081, height: 1350, durationMs: 30_000 })).toBeUndefined();
+    expect(await at({ width: 720, height: 1280, durationMs: 90_001 })).toBeUndefined();
+  });
+
+  it.each([
+    ['landscape', { width: 1280, height: 720, durationMs: 20_000 }],
+    ['square', { width: 1080, height: 1080, durationMs: 20_000 }],
+  ])('keeps a %s video an ordinary post', async (_label, video) => {
+    const r = rig();
+    r.video = video;
+    queueFiles(r.store, 'v-2', [['clip.mp4', 'video/mp4']]);
+    await r.queue.drain();
+    expect(r.payloads[0].kind).toBeUndefined();
+    expect(r.payloads[0].durationMs).toBeUndefined();
+  });
+
+  it.each([
+    ['a poll', { polls: [{ question: 'q', options: [] }] }],
+    ['an attached form', { attachedFormId: 'f-1' }],
+    ['a linked event', { linkedCalendarEventId: 'e-1' }],
+    ['a schedule', { scheduledAt: '2030-01-01T00:00:00Z' }],
+  ])('keeps a vertical video carrying %s a post: a reel carries none', async (_label, payload) => {
+    const r = rig();
+    queueFiles(r.store, 'v-3', [['v.mp4', 'video/mp4']], payload);
+    await r.queue.drain();
+    expect(r.payloads[0].kind).toBeUndefined();
+  });
+
+  it('keeps a vertical video beside a photo a post: a reel is one video', async () => {
+    const r = rig();
+    queueFiles(r.store, 'v-4', [
+      ['v.mp4', 'video/mp4'],
+      ['p.jpg', 'image/jpeg'],
+    ]);
+    await r.queue.drain();
+    expect(r.payloads[0].kind).toBeUndefined();
+  });
+
+  it('against an estate that serves no rule, a vertical video stays a post, as it was there', async () => {
+    const r = rig();
+    r.rule = null;
+    queueFiles(r.store, 'v-5', [['v.mp4', 'video/mp4']]);
+    await r.queue.drain();
+    expect(r.payloads[0].kind).toBeUndefined();
   });
 });

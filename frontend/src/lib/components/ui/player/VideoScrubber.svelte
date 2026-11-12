@@ -3,6 +3,7 @@
   import { clampFraction, formatVideoTime } from '$lib/utils/videoPlayback';
   import { videoGlass } from '$lib/utils/videoGlass';
   import { Log } from '$lib/utils/Log';
+  import { SEEK_LINE_TOUCH_REM } from './seekLineGeometry';
 
   /**
    * THE PLAYHEAD - ONE RECIPE, TWO SIZES (owner, 2026-11-09).
@@ -109,8 +110,9 @@
     bind:this={track}
     class="group/seek relative flex w-full cursor-pointer touch-none outline-none {variant ===
     'line'
-      ? 'h-8 items-end'
+      ? 'items-end'
       : 'h-11 items-center'}"
+    style={variant === 'line' ? `height: ${SEEK_LINE_TOUCH_REM}rem` : undefined}
     role="slider"
     tabindex="0"
     aria-label={m.video_seek_label()}
@@ -136,13 +138,13 @@
         <div class="absolute inset-y-0 left-0 bg-white/35" style="width: {buffered * 100}%"></div>
       {/if}
       <div
-        class="bg-cn-yellow absolute inset-y-0 left-0"
+        class="bg-accent absolute inset-y-0 left-0"
         style="width: {played * 100}%"
         data-video-played
       ></div>
     </div>
     <div
-      class="bg-cn-yellow pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 rounded-full shadow transition-[opacity,scale] duration-150 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white motion-reduce:transition-none {variant ===
+      class="bg-accent pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 rounded-full shadow transition-[opacity,scale] duration-150 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white motion-reduce:transition-none {variant ===
       'line'
         ? 'bottom-0 translate-y-1/2'
         : 'top-1/2 -translate-y-1/2'} {variant === 'bar' || scrubbing

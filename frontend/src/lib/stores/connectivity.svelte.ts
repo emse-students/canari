@@ -369,7 +369,17 @@ class ConnectivityStore {
       failed: (error) => {
         if (!this.inFlight.has(id)) return;
         settle();
-        if (error instanceof RequestDeadlineError) {
+        if (error instanceof RequestDeadlineError && this.lastAnswerAt > startedAt) {
+          // SLOW IS NOT GONE. Something else was answered while this request waited, so the link
+          // delivers: this one is queued behind other transfers on a narrow link, or its route is
+          // slow server-side. Counting it is how a 250 kbps link was declared "Hors connexion" while
+          // answers were still arriving (production 1.6.10, 2026-11-11): two deadlines in a row, each
+          // with answers in between, reached `STALLS_BEFORE_UNREACHABLE`. The same test as the
+          // in-flight hint above; the count is left where it is (an answer already reset it).
+          console.warn(
+            `[CONNECTIVITY] ${error.message} (answers arrived meanwhile - slow, not unreachable)`
+          );
+        } else if (error instanceof RequestDeadlineError) {
           // The count leads to ONE verdict, and once that verdict holds a stall is not a step
           // towards it: counting on read "3/2", "4/2" (2026-10-31). Said as what it is.
           if (!this.serverReachable) {

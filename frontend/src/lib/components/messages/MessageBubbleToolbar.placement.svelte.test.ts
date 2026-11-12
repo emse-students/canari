@@ -110,7 +110,6 @@ function mountAt({
     props: {
       isOwn,
       isDeleted: false,
-      hasMedia: false,
       showEmojiPicker: false,
       onReply: () => {},
       onForward: () => {},

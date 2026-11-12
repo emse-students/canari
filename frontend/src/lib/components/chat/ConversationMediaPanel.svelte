@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import VideoPlayer from '../shared/VideoPlayer.svelte';
   import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
@@ -19,7 +20,6 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { formatFileSize } from '$lib/utils/fileSize';
 
   interface Props {
@@ -54,7 +54,7 @@
   let lightboxAttempt = $state(0);
 
   const dateFmt = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    new Intl.DateTimeFormat(intlLocale(), {
       day: '2-digit',
       month: 'short',
       year: '2-digit',
@@ -201,7 +201,7 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if activeTab === 'media'}
@@ -238,7 +238,7 @@
               onclick={() => openLink(link.url)}
               class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
             >
-              <span class="w-full truncate text-sm font-semibold text-amber-600 dark:text-amber-400"
+              <span class="text-accent-text w-full truncate text-sm font-semibold"
                 >{hostOf(link.url)}</span
               >
               <span class="text-text-muted w-full truncate text-xs">{link.url}</span>
@@ -260,7 +260,7 @@
             class="flex items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
           >
             <span
-              class="bg-cn-yellow/15 text-cn-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+              class="bg-accent/15 text-cn-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
             >
               <FileText size={18} />
             </span>
@@ -304,7 +304,13 @@
   >
     {#if lightboxUrl}
       {#if current.media.type === 'video'}
-        <VideoPlayer src={lightboxUrl} soundScope="local" class="h-full w-full" />
+        <VideoPlayer
+          src={lightboxUrl}
+          variant="conversation"
+          soundScope="local"
+          loudness={current.media.loudness}
+          class="h-full w-full"
+        />
       {:else}
         <img
           src={lightboxUrl}

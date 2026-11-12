@@ -32,6 +32,12 @@ describe('form answer bounds', () => {
       expect(formCodeMessage(code)).toBeTruthy();
     }
   });
+
+  it('names the multiple-choice split of a price grid in the editor, never in the server prose', () => {
+    expect(formCodeMessage(bounds.FORM_GRID_MULTIPLE_CHOICE_SPLIT)).toBe(
+      m.form_refusal_grid_multiple_choice_split()
+    );
+  });
 });
 
 describe('formSubmitRefusalMessage (D6)', () => {

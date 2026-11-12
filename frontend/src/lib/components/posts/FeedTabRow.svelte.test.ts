@@ -112,4 +112,73 @@ it('draws no pill until the active tab has been measured, then places it on that
   const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
   expect(pill.style.width).toBe('120px');
   expect(pill.style.transform).toContain('300px');
+  // The accent FILL, with the ink label on it (the pill alone is 1.66:1 on the bar).
+  expect(pill.classList.contains('bg-accent')).toBe(true);
+  expect(row.querySelector('[aria-pressed="true"]')!.classList.contains('text-on-accent')).toBe(
+    true
+  );
+});
+
+it('stacks every label above the pill explicitly, and keeps the pill off a 3D layer', () => {
+  // iPhone 12, 1.6.9-alpha.4: a `translate3d` pill was drawn OVER its label by iOS WebKit inside
+  // the masked scroller, though the labels come after it in the DOM. The order is stated, not implied.
+  vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockReturnValue(300);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(120);
+  const row = render();
+  const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
+  expect(row.classList.contains('isolate')).toBe(true);
+  expect(pill.classList.contains('z-0')).toBe(true);
+  expect(pill.style.transform).toBe('translateX(300px)');
+  const labels = row.querySelectorAll<HTMLElement>('[data-feed-tab]');
+  expect(labels.length).toBe(3);
+  labels.forEach((label) => expect(label.classList.contains('z-1')).toBe(true));
+});
+
+it('never draws an ink label on the glass: not before the pill is measured, not during the slide', () => {
+  const left = vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get');
+  const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get');
+  left.mockReturnValue(0);
+  width.mockReturnValue(0);
+  const props = $state({ feed: 'all' as string, onFeed: () => {}, authToken: 't' });
+  const target = document.createElement('div');
+  document.body.append(target);
+  mounted = mount(FeedTabRow, { target, props: props as never });
+  flushSync();
+  const label = (feed: string) => target.querySelector<HTMLElement>(`[data-feed-tab="${feed}"]`)!;
+  // Pill not measured yet: the selected label is muted, not ink.
+  expect(label('all').classList.contains('text-on-accent')).toBe(false);
+  // First measure (no transition): the pill is under its label at once.
+  left.mockReturnValue(300);
+  width.mockReturnValue(120);
+  resized.forEach((callback) => callback());
+  flushSync();
+  expect(label('all').classList.contains('text-on-accent')).toBe(true);
+  // A new selection slides the pill: the leaving label goes muted, the arriving one waits.
+  left.mockReturnValue(0);
+  width.mockReturnValue(100);
+  props.feed = 'all' === props.feed ? 'foryou' : 'all';
+  flushSync();
+  const arriving = label(props.feed);
+  expect(label('all').classList.contains('text-on-accent')).toBe(false);
+  expect(arriving.classList.contains('text-on-accent')).toBe(false);
+  // The slide ends: the label turns ink.
+  const pill = target.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
+  const end = new Event('transitionend');
+  Object.defineProperty(end, 'propertyName', { value: 'transform' });
+  pill.dispatchEvent(end);
+  flushSync();
+  expect(arriving.classList.contains('text-on-accent')).toBe(true);
+});
+
+it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down under 24rem', () => {
+  mounted = mount(FeedTabRow, {
+    target: document.body,
+    props: { feed: 'all', onFeed: () => {}, authToken: 't' },
+  });
+  flushSync();
+  const tab = document.querySelector<HTMLElement>('[data-feed-tab="all"]')!;
+  expect(tab.className).toContain('px-2.5');
+  expect(tab.className).not.toContain('px-3.5');
+  expect(tab.className).toContain('max-[24rem]:text-xs');
+  expect(tab.className).toContain('whitespace-nowrap');
 });

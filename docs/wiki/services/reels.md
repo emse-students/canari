@@ -1,7 +1,7 @@
-# CanaReels - the server half (R3: decisions C2, C3, C4, C6)
+# CanaReels - the server half (R3: decisions C2, C3, C4, C6; the rule and the year of 2026-11-09)
 
 Decided by the user on 2026-09-29 and built from 2026-10-01
-([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+([reels](../frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 This page is the CONTRACT the camera tab, the full-screen viewer and the on-device compression are
 built against, and the design behind the server side. A reel is a **post of `kind = 'reel'`**: same
 table, same feed, same reactions, comments, reports and moderation - plus a duration, an expiry,
@@ -18,7 +18,8 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 | Longest reel sent in a chat | 60 000 ms (D-size, 2026-10-09; served as `chatMaxDurationMs`, absent from an older server) | `CHAT_REEL_MAX_DURATION_MS`, same file | `GET /api/posts/reel-limits` |
 | Conversations one "Envoyer à..." press may reach | 15 ([reels-in-chat 15.2](../frontend/modules/reels-in-chat.md#152-the-outbox-one-take-n-sends); served as `chatReelMaxTargets` since RC-14, absent from an older server) | `CHAT_REEL_MAX_TARGETS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
-| Kept for | 30 days (C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
+| Widest reel | `width / height` <= 0.8, i.e. 4:5 (owner, 2026-11-09; served as `maxAspectRatio`, absent from an older server) | `REEL_MAX_ASPECT_RATIO`, same file | same route |
+| Kept for | **365 days** (owner, 2026-11-09; was 30, C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
 | Blob ceiling | 50 MB of ciphertext | media-service `MEDIA_MAX_SIZE_MB` | `GET /api/media/limits` (unchanged) |
 
@@ -31,8 +32,50 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "retentionDays": 30, "warningWindowDays": 7 }
+{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
 ```
+
+### The rule: what is a CanaReel (owner, 2026-11-09)
+
+**Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
+the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
+(`kind: 'reel'`), so it is read in the reel pager and lives the reel's lifetime. **Every other video
+(landscape, square, longer than 90 s) stays an ordinary post video.** And **a CanaReel lives ONE
+YEAR** (was C6's month); the reels already published were moved to the year by migration 158.
+
+- **"Vertical" is defined ONCE**, here: `isReelFrame` in `posts/reel.constants.ts`, `width / height
+  <= REEL_MAX_ASPECT_RATIO` (4:5 = 0.8), on the PREPARED file's frame - `prepareVideoForUpload`
+  bakes the container's rotation into the frames, so the declared `width`/`height` are the frame
+  as shown. **Why 4:5 and not "height > width"**: 4:5 is Instagram's tallest feed format, the
+  boundary between "a portrait post" and "a vertical video"; it keeps 9:16 (a phone held upright,
+  0.5625) and the iOS system camera's 3:4 medium quality (0.75, the 360x480 video of the
+  2026-10-19 report) in, and a near-square crop (1080x1100) out - a frame the full-screen reel
+  frame would show with wide bands. The number is served as `maxAspectRatio`, so the client's
+  classifier (`frontend/src/lib/reels/reelRule.ts`) reads the same one the door refuses against.
+- **The client decides, the door refuses.** The server cannot see inside the ciphertext, so it
+  cannot classify a post on its own: the client declares the kind, the duration and the frame,
+  and the server refuses a declared reel that breaks the rule (below). It does NOT refuse a
+  `kind: 'post'` carrying one vertical short video: a post declares no duration (the field is a
+  reel's), so the server has nothing to read it from, and every installed client older than the
+  rule publishes such posts.
+- **Where the client applies it**: the publish queue of the post composers decides at the create
+  step, on the prepared frame and length (`reelDeclarationFor`); the CanaReels tab refuses a
+  landscape or square gallery pick at once (`reels_capture_not_vertical`) and, should a prepared
+  take still come out wide, publishes it as a post with a WARN. **A post carrying something a reel
+  cannot** (a poll, an attached form, a linked event, a schedule, a second attachment) **stays a
+  post** whatever its video is - the door refuses each on a reel. "Garder comme post" is gone from
+  the composer camera's publish step: a filmed take is vertical and short, so it IS a reel.
+- **An estate older than the rule** serves no `maxAspectRatio`: the client then keeps that estate's
+  behaviour (the composer's video a post, the tab's take a reel) and logs it - the days between the
+  stores and the production deploy.
+- **An app older than the rule** still offers a gallery pick of ANY frame in the CanaReels tab and
+  publishes it as `kind: 'reel'`: a landscape or square pick is now refused at this door with its
+  `400` ("a reel's video must be vertical"), and that app shows its generic publish error. Deliberate
+  - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
+  capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
+  publish the video as a post from "Nouvelle publication".
+- **Existing posts are not converted**: a vertical video published as a post before the rule stays a
+  post (it already shows in the pager through `singleMedia`, below, and never expires).
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 
@@ -61,6 +104,7 @@ deleted by this feature.
 | Condition | Why |
 | --- | --- |
 | `durationMs` missing, not an integer, `< 1` or `> maxDurationMs` | C4 |
+| the video's `width`/`height` missing, or `width / height > maxAspectRatio` (4:5) | the rule of 2026-11-09: a reel is vertical |
 | `durationMs` present on a post that is not a reel | one fact, not two |
 | `media` is not exactly ONE entry of `type: "video"` with a `video/*` MIME type | a reel is one video |
 | `polls`, `forms`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` present | none has a meaning on a reel that expires; a scheduled reel would also start its month before anybody could see it |
@@ -70,7 +114,7 @@ deleted by this feature.
 `503`, never a reel stored without its blob.
 
 The response is the created post, now carrying `kind`, `durationMs`, `expiresAt`
-(`createdAt + 30 days`, set ONCE at creation).
+(`createdAt + 365 days`, set ONCE at creation; 30 days before 2026-11-09).
 
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a
@@ -91,74 +135,40 @@ Every post row - feed, search, `GET /api/posts/:id`, the notification link - now
 feed*). The full-screen viewer asks for `kind=reel` and pages with `limit`/`offset` like the feed.
 Every filter the feed has applies (blocked authors, moderation-hidden, promo gate, service account).
 
-**`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
-picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
-The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
-`images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
-attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
-drop; allowed since 2026-11-06 under `withLinks`, below). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
-`jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
-reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
-Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
-(`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer client against it simply
-shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is
-a feed concept and does not head the CanaReels list. Every `listPosts` and `searchPosts` order ends
-in `posts.id DESC`, so posts published at the same instant (scheduled ones) can neither repeat nor
-be skipped across `OFFSET` pages; the post an event card links back to is picked the same way. Pinned by `posts.service.reels.spec.ts` (every
-arm) and `full-screen-post-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+**`multiMedia=true` (with `kind=reel`) adds the full-screen posts** - the photo, video and carousel
+pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels),
+[carousels](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06),
+[links](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)). The clause is
+`FULL_SCREEN_POST_SQL` (`posts/full-screen-post-sql.ts`): **1 to 10 attachments, every one a picture
+or a video** (each by its `type`, or untyped with an `image/` or `video/` mime type, a legacy row),
+no poll, no form, no attached form, no linked calendar event; a link in the text is ALLOWED and drawn
+in the caption (owner, 2026-11-06). A file, an audio or an element with neither type nor mime keeps
+the whole post out; eleven or more attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). "Every
+element" is a `NOT EXISTS` over `jsonb_array_elements`, and a column holding JSON `null` or a scalar
+counts as empty through a `CASE` on `jsonb_typeof` - `jsonb_array_length` and the element function
+raise on it and would fail the page. It is OR-ed into the reel filter of every feed arm, behind the
+same visibility rules, and keys its own cache entry (`+carousel-links`). Without `kind=reel` it
+means nothing.
 
-**`singleMedia=true` (with `kind=reel`, 2026-11-06)** is the same list with ONE VIDEO too: the posts
-whose only content is one picture OR one video, a video not filmed with the Canari camera (owner:
-*a feed post of a single video exists and does not appear*). The clause is `SINGLE_MEDIA_POST_SQL`
-(same file): the picture rule above, OR-ed with the same rule on a `video`-typed (or untyped with a
-`video/` mime type) attachment, with the SAME exclusions (poll, form, attached form, linked event,
-link in the text). It wins over `singlePhotos` when both are sent, and **`singlePhotos` stays
-served, pictures only** (`singleMediaModeOf`): an installed client keeps asking for it and its
-`fullScreenPageOf` would draw a foreign video as a reel and log an accusation, so it must never
-receive one. The current client sends BOTH (`buildListPostsSearchParams`), so a server that does
-not know `singleMedia` still serves the pictures. The cache key carries `+photos` or `+media`.
-**A video post never expires**: only a `kind = 'reel'` row has an `expiresAt`, and the live-reel
-clause (`posts.kind <> 'reel' OR "expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
-it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the comments
-sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, id DESC`). Pinned by
-`full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
-exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
-the precedence, and "means nothing without `kind=reel`").
+**One switch since 2026-11-11.** The list grew in four steps - `singlePhotos` (one picture,
+2026-10-19), `singleMedia` (one picture or video), `multiMedia` (carousels) and `withLinks` (a link
+in the text, all 2026-11-06) - each older switch keeping its narrower meaning for the installed
+clients that could not draw the wider one. Every client the `1.6.6` floor admits sends `multiMedia`
+(with `withLinks`), so the four collapsed into one: `singlePhotos`, `singleMedia` and `withLinks` are
+no longer DTO fields, the whitelisting `ValidationPipe` strips them, and a floor client that still
+sends them gets the list it asked for ([legacy-compatibility](../legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
 
-**`multiMedia=true` (with `kind=reel`, 2026-11-06)** adds the CAROUSELS to that list: the posts of
-**2 to 10 attachments, every one a picture or a video** (each by its `type`, or untyped with an
-`image/` or `video/` mime type), with the same exclusions (owner: *a post of several photos and
-videos, swiped left and right as on Instagram*; [client half](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06)).
-The clause is `MULTI_MEDIA_POST_SQL` (same file), OR-ed with `SINGLE_MEDIA_POST_SQL` under the mode
-`carousel` (`singleMediaSql`). "Every element" is a `NOT EXISTS` over `jsonb_array_elements`, behind
-a `CASE` on `jsonb_typeof` for the same reason as the length: the function raises on a scalar. A
-file, an audio or an element with neither type nor mime keeps the whole post out; eleven or more
-attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). **Precedence: `multiMedia` > `singleMedia` >
-`singlePhotos`** (`singleMediaModeOf`), and each older switch keeps its meaning, so an installed
-client that sends `singleMedia` alone - and cannot draw a carousel - never receives one. The current
-client sends all three, so a server that does not know `multiMedia` still serves the single pictures
-and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.integration.spec.ts`
-(the bounds 10 and 11, a mix with a caption, a legacy element by mime, a file, an audio, an untyped
-element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
-`posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
-without `kind=reel`").
-
-**`withLinks=true` (with `multiMedia=true`, 2026-11-06)** lets a post with a LINK in its text in:
-the single and carousel rules above WITHOUT the `http(s)://` clause (owner: *a photo, video or
-carousel post with a link appears in CanaReels, the link clickable in the caption*;
-[client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
-Poll, form, attached form and linked event still keep a post out. The clause is
-`LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
-**It means something only with `multiMedia`** (`singleMediaModeOf`): every client built without
-this change (every release through `1.6.6-alpha.1`; the first that sends `withLinks` is
-`1.6.6-alpha.2` at the earliest, the first stable `1.6.6`) drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
-none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
-meaning beside an older one because no client would send that pair. A server that does not know
-`withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by
-`full-screen-post-sql.integration.spec.ts` (the `carousel-links` mode is exactly the `carousel` mode
-plus the three rows whose only extra is a link; poll, form, attached form and event rows stay out)
-and `posts.service.reels.spec.ts` (every arm; `withLinks` without `multiMedia`, and `multiMedia`
-without `withLinks`, keep the link out).
+**`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is a feed concept and does
+not head the CanaReels list. Every `listPosts` and `searchPosts` order ends in `posts.id DESC`, so
+posts published at the same instant (scheduled ones) can neither repeat nor be skipped across
+`OFFSET` pages; the post an event card links back to is picked the same way. **A video post never
+expires**: only a `reel` (or a live `replay`) row has an `expiresAt`, and the live-row clause
+(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`) leaves a plain post alone; the viewer
+draws it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the
+comments sheet read it like any post. Pinned by `full-screen-post-sql.integration.spec.ts` (the
+exact set on a real PostgreSQL: the bounds 10 and 11, a mix with a caption, legacy elements by mime,
+each exclusion, JSON `null` and scalars) and `posts.service.reels.spec.ts` (every arm, "means
+nothing without `kind=reel`", the retired switches turn nothing on).
 
 **Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
 saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled
@@ -210,8 +220,8 @@ admin). For a reel it also deletes the blob at once (below) rather than leaving 
 `POST /api/moderation/reports` with `contentType: "post"` and the reel's id; the threshold hides it
 exactly as it hides a post (`hiddenByModeration`), and a moderator's hide/unhide/delete are the same
 routes ([moderation-and-blocking](../moderation-and-blocking.md)). **One consequence to know**: a
-hidden reel still expires at 30 days and is purged with its row, so a pending report on a reel
-nobody reviewed in a month is left pointing at a post that no longer exists - the same state as a
+hidden reel still expires at its year and is purged with its row, so a pending report on a reel
+nobody reviewed in that time is left pointing at a post that no longer exists - the same state as a
 report on any deleted post.
 
 ## What the server can verify about a 90-second cap, and what it cannot
@@ -228,7 +238,7 @@ post row, and the service stores bytes. So:
   the blob (a reel can only cite what its author uploaded), that it is ONE video (type and MIME as
   declared), and the expiry, which is the server's own clock at creation.
 - **So the cap's real bound is storage, not time**: whatever the declared duration, a reel is at most
-  50 MB and is gone in 30 days. The 90 s is the product's shape, enforced by the app and honoured by
+  50 MB and is gone in a year (30 days before 2026-11-09). The 90 s is the product's shape, enforced by the app and honoured by
   the server's refusal of every declaration beyond it. Honest, and deliberate: re-encoding on the
   server would cost the CPU C3 forbids.
 
@@ -272,13 +282,14 @@ never get it deleted - the entry says whose it is.
 
 Hourly (`@Cron('23 * * * *')`). Everything it knows is in the database:
 
-1. **Select** reels with `kind = 'reel' AND "expiresAt" <= NOW()`, oldest first, in batches of 50.
+1. **Select** reels - and live replays past their three days ([live-replays](../live-replays.md)) -
+   with `kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, oldest first, in batches of 50.
    That predicate IS the state: a reel is due, or it is not, and a row that has been deleted is done.
    No timestamp of the last run, no marker.
 2. **Per reel, in isolation** (a `try` per item): list the blobs - the reel's own media and every
    comment's media with the comment's author as owner - call `reel-purge`, and **only if no blob
    came back `failed`**, delete the row and its `post_notifications`. The row delete is
-   `DELETE ... WHERE id = $1 AND kind = 'reel' AND "expiresAt" <= NOW()`, so **a non-reel post
+   `DELETE ... WHERE id = $1 AND kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, so **a plain post
    cannot be touched by this code path whatever id reaches it**.
 3. Comments, reactions and links are columns of the row: they go with it.
 4. **Idempotent by construction**: a crash after the blobs and before the row leaves a due row with
@@ -312,6 +323,36 @@ read - the same reasoning as the media sweep's own `overdueCount`.
   kept and logged, then deleted on the next run; a reel deleted by hand loses its blob at once.
 - **Not run**: the cron firing itself (a unit-tested one-line `@Cron`), and a real blob refusing
   deletion (simulated at the store boundary only).
+
+## Migration 158: the reels already published move to the year (2026-11-09)
+
+`158_reels_live_one_year.sql` re-dates every LIVE reel to `"createdAt" + 365 days`, the stamp the
+create path writes under the new rule. Its `WHERE` is an allowlist: `kind = 'reel'` (never a post,
+**never a live replay** - `kind = 'replay'` keeps its own three days, [live replays](../backlog.d/live-replays-kept-three-days-as-canareels.md)),
+`"expiresAt" > now()` (a reel already past its month is dead to every read and may have lost its blob
+to a `failed` purge, so it is left to the worker rather than brought back), and an expiry earlier than
+the year (it only moves FORWARD, so a re-run changes nothing). Data only, row locks on the live reels,
+not held (an `UPDATE` backfill is plain to the judge). The hourly worker needs no change: it deletes by
+the stored `expiresAt`, whichever lifetime wrote it. Pinned by
+`reels-one-year-migration.integration.spec.ts` (a live reel moves; a replay, a post, a dead reel and a
+reel already on the year do not; the second run updates 0 rows; the interval equals
+`REEL_RETENTION_DAYS`), mutation-checked by widening the `WHERE` to `replay`.
+
+**What it costs** is read on production (read-only, `BEGIN READ ONLY` / `ROLLBACK`): the live reels,
+their bytes as each row's `media[0].size` declares them (media-service keeps no SQL table of sizes),
+and the daily publish rate of the last 30 days - the storage a year holds is roughly that rate x 365
+x the mean size.
+
+**Measured by the lead on production, 2026-11-09 (read-only, numbers only):**
+
+| What | Value |
+| --- | --- |
+| Live reels today | 9, 31 MB in total (mean 3.5 MB), the oldest from 2026-10-19 |
+| Publish rate, last 30 days | 0.3 reel/day, about 1 MB/day |
+| A year of reels at that rate | about 110 reels, 373 MB |
+| Upper bound of what the vertical-video rule adds (the composer's single-video posts, last 30 days) | 15 posts (0.5/day), 184 MB in 30 days - at most about 2.2 GB a year, if every one were vertical and 90 s or less |
+
+**Conclusion: the one-year lifetime costs a few GB a year at most - not a storage concern.**
 
 ## The migration: `069_posts_reels.sql`
 

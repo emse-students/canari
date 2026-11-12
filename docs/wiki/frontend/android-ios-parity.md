@@ -235,7 +235,7 @@ Verified in both trees while writing this page, so nobody spends an evening re-d
 
 |Concern|Android|iOS|
 |---|---|---|
-|Orientation|phone portrait / tablet free, via a resource qualifier|`UISupportedInterfaceOrientations` (+ `~ipad`)|
+|Orientation|phone portrait / tablet free, via a resource qualifier; a video or camera screen asks for `USER` or `USER_LANDSCAPE` ([screen-orientation](screen-orientation.md))|iPhone plist lists portrait and both landscapes; the root view controller's mask, driven by the page, is the gate ([screen-orientation](screen-orientation.md))|
 |Quick actions|`RemoteInput` reply, mark-read, call-decline|`UNTextInputNotificationAction`, mark-read, `CXEndCallAction`|
 |Incoming-call ring|`CallStyle` + full-screen intent|CallKit `CXProvider` + PushKit|
 |Per-conversation stacking|channels and groups|`threadIdentifier`|

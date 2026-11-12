@@ -26,6 +26,11 @@ describe('PostNotificationsService - mentions in a push', () => {
         saved.push(row);
         return Promise.resolve(row);
       },
+      // The bell's category read: every reader has every category on here.
+      manager: {
+        query: (_sql: string, params: unknown[]) =>
+          Promise.resolve((params[0] as string[]).map((r) => ({ r }))),
+      },
     };
     const postRepo = {
       manager: {

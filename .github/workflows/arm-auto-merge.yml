@@ -257,9 +257,9 @@ jobs:
           #   5. `CI passed` - not read here: auto-merge hands that to GitHub, as for everybody, and
           #      `dependency-ceiling` refuses a breaking or Tauri-runtime update on this branch there.
           # TIED TO ONE COMMIT: the event's head SHA must be the head the commit list ends on (the
-          # file list is read BEFORE it, so both describe that head), and the arming is made HERE
-          # with `--match-head-commit`, so GitHub refuses it if the head moved after the reads. The
-          # shared step below arms without that binding, so this path never hands it `armable=true`.
+          # file list is read BEFORE it, so both describe that head), and the shared step below arms
+          # (or merges an already-mergeable pull request) with `--match-head-commit` on that same
+          # event head, so GitHub refuses it if the head moved after the reads.
           # A REFUSAL DISARMS, AND SO DOES AN UNREADABLE ANSWER: a `synchronize` run that cannot
           # evaluate the new head must not leave the arming made for the old one standing. The
           # disarm is best effort and loud; the run then goes red. Threat model: docs/wiki/cicd.md.
@@ -371,22 +371,11 @@ jobs:
               refuse_app "$verdict"
             fi
             trap - ERR
-            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - arming it on $HEAD_SHA only."
-            # The shared step below would arm without the head binding; this path arms itself.
-            echo "armable=false" >> "$GITHUB_OUTPUT"
-            if gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
-              echo "Auto-merge armed on $HEAD_SHA. GitHub will squash-merge #$PR when CI passed goes green."
-              exit 0
-            fi
-            # Already armed is the ordinary `synchronize` case; a head that moved is refused by GitHub
-            # and the run for the new head decides. Anything else is loud.
-            armed_now="$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" || armed_now=unknown
-            if [ "$armed_now" = 'true' ]; then
-              echo "Auto-merge was already armed on #$PR, and this run's evaluation of $HEAD_SHA holds."
-              exit 0
-            fi
-            echo "::error::#$PR: could not arm auto-merge on $HEAD_SHA (the head moved, or the App lacks Pull requests write)."
-            exit 1
+            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - handing it to the arming step on $HEAD_SHA."
+            # ONE ARMING IMPLEMENTATION: the shared step below is bound to this same event head
+            # (`--match-head-commit`), arms it, and merges it at once if it is already mergeable.
+            echo "armable=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # canari-only:end
 
@@ -445,6 +434,33 @@ jobs:
             echo "Auto-merge was already armed on #$PR; nothing to do."
             exit 0
           fi
+          # canari-only:begin
+          # GITHUB REFUSES TO ARM WHAT IS ALREADY MERGEABLE (measured on #3202, run 42700845061: the
+          # pull request was marked ready AFTER its CI finished, `enablePullRequestAutoMerge` answered
+          # "unstable status", and nobody merged it). Auto-merge is a promise to merge LATER; when the
+          # answer is already yes there is nothing to wait for, so merge NOW - on the head the guard
+          # judged and only if `CI passed` is green on it. The state is read as DATA
+          # (`mergeStateStatus`), never from the prose of the refusal: CLEAN is mergeable, UNSTABLE is
+          # mergeable with a non-required check red or pending. Every other state fails loudly below.
+          # THE RULESET DOES NOT JUDGE THIS MERGE, THESE READS DO (review of #3244): the App is a
+          # bypass actor of ruleset 22152902 (`bypass_mode: always`, it pushes the release bump), so
+          # a merge it makes directly is not refused for a missing `CI passed`. `mergeStateStatus` is
+          # GitHub's evaluation of the ruleset IGNORING the viewer's bypass (measured: a pull request
+          # with `CI passed` pending reads BLOCKED to an admin), and `CI passed` must be GitHub
+          # Actions' own check run, the NEWEST of them on the head - not any app's, not any one of
+          # several. A draft is refused here too: the event said ready, but it may be a draft again.
+          merge_state="$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus,isDraft --jq 'if .isDraft then "DRAFT" else .mergeStateStatus end')"
+          if [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; then
+            ci="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
+              --jq '[.check_runs[] | select(.name == "CI passed" and .app.slug == "github-actions" and .head_sha == $ENV.HEAD_SHA)] | sort_by(.id) | last | .conclusion // "absent"')"
+            if [ "$ci" = 'success' ]; then
+              echo "#$PR is already $merge_state and CI passed is green on $HEAD_SHA - merging it now."
+              gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"
+              exit 0
+            fi
+            echo "::error::#$PR is $merge_state but GitHub Actions' newest CI passed on $HEAD_SHA reads '$ci' - not merged."
+          fi
+          # canari-only:end
           echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
           echo "::error::canari-auto-merge App is installed with Pull requests write, and that"
           echo "::error::auto-merge is still allowed on the repository."

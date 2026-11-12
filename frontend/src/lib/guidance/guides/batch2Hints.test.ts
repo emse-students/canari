@@ -40,7 +40,7 @@ const CASES = [
     guide: feedTabsHint,
     route: '/posts',
     files: ['lib/components/posts/FeedTabRow.svelte'],
-    anchors: ['posts.tab.associations', 'posts.tab.followed', 'posts.tab.all'],
+    anchors: ['posts.tab.associations', 'posts.tab.foryou', 'posts.tab.all'],
   },
 ];
 
@@ -82,7 +82,7 @@ describe.each(CASES)('$guide.id', ({ guide, route, files, anchors }) => {
 describe('the feed tabs hint replaces the (i) button', () => {
   it('has no (i) button left, and keeps the three explanations as its three steps', () => {
     expect(src('lib/components/posts/FeedTabRow.svelte')).not.toContain('FeedTabsInfo');
-    expect(feedTabsHint.steps.map((s) => s.id)).toEqual(['associations', 'followed', 'all']);
+    expect(feedTabsHint.steps.map((s) => s.id)).toEqual(['associations', 'foryou', 'all']);
   });
 });
 

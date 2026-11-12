@@ -103,7 +103,7 @@
             >
               <input
                 type="checkbox"
-                class="accent-cn-yellow h-4 w-4 shrink-0"
+                class="accent-accent h-4 w-4 shrink-0"
                 checked={held.has(key)}
                 aria-busy={busy}
                 aria-disabled={busy}

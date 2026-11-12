@@ -1265,6 +1265,11 @@ id to the organiser and the linked account, not to a booker.
   sheet and re-reads the grid and my bookings, so the reader sees why.
 - **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
   participant, so the page indexes my own bookings by id - which also carries the private texts.
+- **"Ma reservation" is the booker's alone** (owner, 2026-11-10): `mine` also covers an INVITED
+  participant, so the grid and the planning read the role from the payload - `mine` with
+  `holderId` (sent exactly where the name is) other than the viewer is invited (`isInvitedUnit`,
+  `grid.ts`). An invited unit keeps the highlight, shows the booker's avatar and name and a small
+  "Invite" mention; a viewer id not yet known is never called invited.
 - **THE KNOWN COSTS ARE SAID ON SCREEN, NOT HIDDEN**: no notification (D13, on both pages and in
   the organiser's cancel confirmation); people added directly, no acceptance (D34); a booking is
   never edited, cancel and book again (D36); a personal space's coming bookings vanish with its

@@ -211,15 +211,28 @@ describe('the role an invitation grants', () => {
     expect(grantedRoleIds(unnamed.memberRepo)).toEqual(['r-member']);
   });
 
-  it('reads "Membre" as the base role even where Membre is not the lowest one', async () => {
-    // Deployed clients send `roleName: 'Membre'` for every ordinary invitation. A community whose
-    // lowest role is another one must still let a moderator invite: the request names the base
-    // role, and the base role is what it gets.
+  it('grants a role literally named Membre above the base role, as any other role', async () => {
+    // No client above the floor sends "Membre" for an ordinary invitation (#2277 sends no role),
+    // so the name now means the community's own Membre role, under the same right as any other.
     const roles = [
       ...ROLES,
       { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
     ] as unknown as ChannelRole[];
-    const { result, memberRepo } = invite('r-mod', 'Membre', roles);
+    const granted = invite('r-rolemgr', 'Membre', roles);
+    expect(await granted.result).toMatchObject({ success: true });
+    expect(grantedRoleIds(granted.memberRepo)).toEqual(['r-member']);
+
+    // A moderator cannot manage roles, so the role above the base is refused, not downgraded.
+    const refused = invite('r-mod', 'Membre', roles);
+    expect(await refusal(refused.result, refused.memberRepo)).toEqual(REFUSED);
+  });
+
+  it('reads "Membre" as the base role where no role carries that name', async () => {
+    const roles = [
+      ...ROLES.filter((r) => r.id !== 'r-member'),
+      { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
+    ] as unknown as ChannelRole[];
+    const { result, memberRepo } = invite('r-mod', 'member', roles);
     expect(await result).toMatchObject({ success: true });
     expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
   });

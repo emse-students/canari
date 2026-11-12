@@ -37,7 +37,7 @@
 {#each publishQueueState.views as view (view.id)}
   <Banner variant={view.phase === 'failed' ? 'warn' : 'neutral'} busy={WORKING.has(view.phase)}>
     {#if view.phase === 'failed'}
-      <CircleAlert size={14} class="text-amber-warn shrink-0" aria-hidden="true" />
+      <CircleAlert size={14} class="text-amber-warn-text shrink-0" aria-hidden="true" />
     {:else if view.phase === 'waiting'}
       <CloudOff size={14} class="shrink-0 opacity-70" aria-hidden="true" />
     {:else if view.phase === 'paused'}
@@ -58,7 +58,7 @@
           aria-hidden="true"
         >
           <span
-            class="bg-cn-yellow block h-full rounded-full transition-[width] duration-300"
+            class="bg-accent block h-full rounded-full transition-[width] duration-300"
             style:width="{Math.round(view.fraction * 100)}%"
           ></span>
         </span>
@@ -78,13 +78,16 @@
         </button>
       {:else if view.phase !== 'withdrawing'}
         <span class="flex shrink-0 gap-1">
-          <button
-            type="button"
-            onclick={() => void retryQueuedPost(view.id)}
-            class="banner-action bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover"
-          >
-            {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
-          </button>
+          <!-- A final refusal would be repeated word for word: Delete alone is offered. -->
+          {#if !view.final}
+            <button
+              type="button"
+              onclick={() => void retryQueuedPost(view.id)}
+              class="banner-action bg-accent text-on-accent hover:bg-accent-hover"
+            >
+              {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
+            </button>
+          {/if}
           <button
             type="button"
             onclick={() => void remove(view)}

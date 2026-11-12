@@ -24,9 +24,16 @@ a member of any age, and that push is filtered for its own reader like every oth
 1. **Every history answer is addressed** - the diff, the scrollback AND the push.
    `sendBundleChunks` sends with `recipientDevices = [to]` (`addressedHistoryAnswer`), `to` being the
    asking device's `userId:deviceId`. *Changed from the review, which kept the push a broadcast -
-   see above, for consistency.* An ask that carries no `requestId` (an older asker) is not answered when the server
-   routes addressed answers: the asker could not accept the answer (rule 5), and the generation it
-   costs would be skipped by every other member for nothing.
+   see above, for consistency.* **An ask that carries no `requestId` is refused where it is parsed**
+   (`historyAskId`, `systemMessageHandler.ts`, D211, 2026-11-12): every build since step A mints one
+   and the floor is past it, so such an ask is malformed. Nothing is stored and nothing is answered -
+   the asker could not accept the answer (rule 5), and the generation it would cost is skipped by
+   every other member for nothing. Every answer names its ask by TYPE (`BundleAnswer`: a `requestId`,
+   or `join` on the push), so no answer to an id-less ask can be built.
+   **The broadcast branch of the `history_bundle` receiver is NOT a shim and stays:** a current build
+   still broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)`
+   in `groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the
+   same `dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 2. **The answer is filtered for its ONE reader** (`readerHistorySelection`). The windows are the
    reader's own `withheld` ones (gaps plus the span before their arrival), no longer the union of
    every member's. That has a second effect: a new device of a continuous member now restores the

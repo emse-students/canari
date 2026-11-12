@@ -6,6 +6,13 @@ import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
 import {
+  CAMPUS_TREND_NOTIFICATION,
+  CAPPED_PUSH_TYPES,
+  FRIEND_COMMENT_NOTIFICATION,
+  FRIEND_REACTION_NOTIFICATION,
+  claimEngagementPushes,
+} from './engagement-push-cap';
+import {
   mentionContent,
   replyContent,
   reactionContent,
@@ -22,10 +29,14 @@ import {
   followedPostContent,
   associationRepostContent,
   memberRepostContent,
+  friendReactionContent,
+  friendCommentContent,
+  campusTrendContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveMentionContent,
   followRequestContent,
   followAcceptedContent,
   birthdayContent,
@@ -45,16 +56,26 @@ import {
   previewOf,
   type PushContent,
   type PushIcon,
+  type TrendLikedBy,
+  type TrendMedia,
 } from '../push/push-content';
+import {
+  notificationTypesRenderableBy,
+  type NotificationType,
+  type PushOnlyNotificationType,
+} from '../push/notification-client-floor';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   sameSideOfReviewCohortSql,
-  studentsOnlyAdmitsViewerSql,
+  postPublicAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
+import { acceptedFollowSql } from '../follows/follow-status';
+import { sharesActivitySql, TREND_LIKES_SQL } from './engagement-sql';
+import { recipientsWithCategoryOn } from '../push/notification-category';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
@@ -113,6 +134,12 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
   'repost_personal_requested',
   'repost_personal_accepted',
   'repost_personal_refused',
+  // Engagement WP-9: friends' activity names a post its recipient saw at the write; the row is shown
+  // only while they still do.
+  FRIEND_REACTION_NOTIFICATION,
+  FRIEND_COMMENT_NOTIFICATION,
+  // Engagement WP-10: a campus trend names a post its space saw.
+  CAMPUS_TREND_NOTIFICATION,
 ];
 
 /**
@@ -178,6 +205,27 @@ export function bellRowShownSql(n: string): string {
         AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
+/**
+ * What a campus trend's post shows when it has no text, as its bell row stores it (`meta.media`,
+ * written by `announceCampusTrend`); `null` for a row that says nothing - a post with neither, or a
+ * row written before the media was recorded.
+ */
+export function trendMediaOfMeta(meta: Record<string, unknown> | null | undefined): TrendMedia {
+  const media = meta?.media;
+  return media === 'photo' || media === 'video' ? media : null;
+}
+
+/**
+ * The followed account a campus trend's row names (`meta.likedBy`, written by `announceCampusTrend`
+ * per reader) - its name and how many others reacted; `null` when the row names nobody.
+ */
+export function trendLikedByOfMeta(meta: Record<string, unknown> | null | undefined): TrendLikedBy {
+  const likedBy = meta?.likedBy as { name?: unknown; others?: unknown } | undefined;
+  if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
+  const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
+  return { name: likedBy.name, others };
+}
+
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
 const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
@@ -202,7 +250,7 @@ function asUuidSql(column: string): string {
  * is) to its queue (`postId`, a varchar cast through {@link asUuidSql}), by its
  * actor, whatever its status (a decided proposal's row is still in the bell). FAIL CLOSED (review
  * of #3019): the text is shown only while such a proposal still leads to a post that exists, is not
- * hidden by moderation, and admits the recipient (`studentsOnlyAdmitsViewerSql`), and NO such
+ * hidden by moderation, and admits the recipient (`postPublicAdmitsViewerSql`), and NO such
  * proposal leads to one that refuses them. So a proposal gone with its post (deleted, hidden - which
  * drops its proposals - or its sending association deleted) takes the text with it, and one proposer
  * who sent the same queue several posts is judged on the strictest.
@@ -212,7 +260,7 @@ export function repostProposalTextWithheldSql(n: string): string {
       AND ${prop}."toAssociationId" = ${asUuidSql(`${n}."postId"`)}
       AND ${prop}."fromAssociationId" = ${n}."associationId"
       AND ${prop}."proposedBy" = ${n}."actorId"`;
-  const admitted = (post: string) => studentsOnlyAdmitsViewerSql(post, `${n}."recipientId"`);
+  const admitted = (post: string) => postPublicAdmitsViewerSql(post, `${n}."recipientId"`);
   return `(${n}.type = 'repost_proposed' AND (
     NOT EXISTS (SELECT 1 FROM proposals rpw_ok JOIN posts rpw_ok_post ON rpw_ok_post.id = rpw_ok."subjectId"
       WHERE ${matches('rpw_ok')} AND NOT rpw_ok_post."hiddenByModeration" AND ${admitted('rpw_ok_post')})
@@ -271,6 +319,18 @@ export class NotificationPushFailedError extends Error {
   }
 }
 
+/** The rows of one notice, differing per recipient only by their `meta` (`createNotificationRows`). */
+export type NotificationRowsInput = {
+  type: NotificationType;
+  postId: string;
+  actorId: string;
+  actorName: string;
+  text: string;
+  associationId?: string;
+  associationLogoUrl?: string | null;
+  rows: { recipientId: string; meta: Record<string, unknown> | null }[];
+};
+
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {
@@ -296,7 +356,8 @@ export class PostNotificationsService {
     type: string,
     actorName: string,
     text: string,
-    icon?: PushIcon
+    icon?: PushIcon,
+    meta?: Record<string, unknown> | null
   ): PushContent | null {
     switch (type) {
       case 'mention':
@@ -321,6 +382,16 @@ export class PostNotificationsService {
       // WP-F6: a person the recipient follows reposted a post. `actorName` is the REPOSTER.
       case 'member_repost':
         return memberRepostContent(actorName, text, icon);
+      // Engagement WP-9: an account the recipient follows reacted to or commented on a post the
+      // recipient sees. `actorName` is that account; `text` is the opening of the POST.
+      case FRIEND_REACTION_NOTIFICATION:
+        return friendReactionContent(actorName, text, icon);
+      case FRIEND_COMMENT_NOTIFICATION:
+        return friendCommentContent(actorName, text, icon);
+      // Engagement WP-10: a post of the recipient's space took off, told as a suggestion. Nobody
+      // acted; `text` is the opening of the post, and `meta.media` what it shows when it has none.
+      case CAMPUS_TREND_NOTIFICATION:
+        return campusTrendContent(text, trendMediaOfMeta(meta), trendLikedByOfMeta(meta));
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':
@@ -332,6 +403,10 @@ export class PostNotificationsService {
       // is the live's title, empty when it has none (owner, 2026-11-07).
       case 'live_started':
         return liveStartedContent(actorName, text, icon);
+      // Someone mentioned the recipient in a live's chat (owner, 2026-11-09). `actorName` is the writer,
+      // `text` the live's title (empty when it has none).
+      case 'live_mention':
+        return liveMentionContent(actorName, text, icon);
       // Follow requests (WP-F2). `actorName` is the ASKER for the first and the person who said
       // yes for the second; neither has text to quote.
       case 'follow_request':
@@ -569,7 +644,7 @@ export class PostNotificationsService {
    */
   async createNotification(data: {
     recipientId: string;
-    type: string;
+    type: NotificationType;
     postId: string;
     actorId: string;
     text: string;
@@ -583,11 +658,21 @@ export class PostNotificationsService {
     pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
+    // Suggestion and engagement content whose category the reader switched off writes no row
+    // (`BELL_ROW_GATE`), and so no push either - chat-delivery would drop it. Every other notice is
+    // written; its push still follows its category in chat-delivery.
+    const [stillOn] = await recipientsWithCategoryOn(this.notifRepo.manager, data.type, [
+      data.recipientId,
+    ]);
+    if (!stillOn) return;
     const { skipPush, pushData, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
 
     if (skipPush) return;
+    // THE DAILY CAP (engagement WP-8): a counted type beyond the reader's budget keeps its row only.
+    const [pushTo] = await this.withinPushBudget(data.type, [data.recipientId]);
+    if (!pushTo) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     // THE PICTURE IS THE ACTOR'S, because every type reaching this method is one person acting on
@@ -627,7 +712,7 @@ export class PostNotificationsService {
    */
   async createNotifications(data: {
     recipientIds: string[];
-    type: string;
+    type: NotificationType;
     postId: string;
     actorId: string;
     text: string;
@@ -648,25 +733,20 @@ export class PostNotificationsService {
      */
     skipPush?: boolean;
   }): Promise<number> {
-    const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
+    // A category the reader switched off writes no row and is not pushed ("Nos principes").
+    const recipients = await recipientsWithCategoryOn(
+      this.notifRepo.manager,
+      data.type,
+      [...new Set(data.recipientIds)].filter((id) => id !== data.actorId)
+    );
     if (recipients.length === 0) return 0;
 
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
-    await this.notifRepo.save(
-      recipients.map((recipientId) =>
-        this.notifRepo.create({
-          recipientId,
-          type: data.type,
-          postId: data.postId,
-          actorId: data.actorId,
-          associationId: data.associationId ?? null,
-          associationLogoUrl: data.associationLogoUrl ?? null,
-          text: data.text,
-          meta: data.meta ?? null,
-          actorName,
-        })
-      )
-    );
+    await this.saveNotificationRows({
+      ...data,
+      actorName,
+      rows: recipients.map((recipientId) => ({ recipientId, meta: data.meta ?? null })),
+    });
     if (data.skipPush) return recipients.length;
 
     try {
@@ -675,6 +755,51 @@ export class PostNotificationsService {
       throw new NotificationPushFailedError(recipients, err);
     }
     return recipients.length;
+  }
+
+  /**
+   * The ROWS of a notice whose rows differ per recipient only by their `meta`, in ONE insert, with
+   * no push - the caller pushes afterwards ({@link pushNotice}), so a push that fails can never cost
+   * a reader their row. A campus trend's rows each keep whom they name (`announceCampusTrend`);
+   * Rows addressed to the actor, and - for suggestion and engagement content only - to a reader who
+   * switched its category off in the app (`recipientsWithCategoryOn`, `BELL_ROW_GATE`), are dropped.
+   * Answers how many were written.
+   */
+  async createNotificationRows(data: NotificationRowsInput): Promise<number> {
+    const addressed = data.rows.filter((r) => r.recipientId !== data.actorId);
+    const on = new Set(
+      await recipientsWithCategoryOn(
+        this.notifRepo.manager,
+        data.type,
+        addressed.map((r) => r.recipientId)
+      )
+    );
+    return this.saveNotificationRows({
+      ...data,
+      rows: addressed.filter((r) => on.has(r.recipientId)),
+    });
+  }
+
+  /** The insert itself, for rows whose recipients are already decided - ONE statement. */
+  private async saveNotificationRows(data: NotificationRowsInput): Promise<number> {
+    const rows = data.rows.filter((r) => r.recipientId !== data.actorId);
+    if (rows.length === 0) return 0;
+    await this.notifRepo.save(
+      rows.map(({ recipientId, meta }) =>
+        this.notifRepo.create({
+          recipientId,
+          type: data.type,
+          postId: data.postId,
+          actorId: data.actorId,
+          associationId: data.associationId ?? null,
+          associationLogoUrl: data.associationLogoUrl ?? null,
+          text: data.text,
+          meta,
+          actorName: data.actorName,
+        })
+      )
+    );
+    return rows.length;
   }
 
   /**
@@ -691,18 +816,59 @@ export class PostNotificationsService {
    */
   async pushNotice(data: {
     recipientIds: string[];
-    type: string;
+    type: NotificationType | PushOnlyNotificationType;
     actorId: string;
     actorName: string;
     text: string;
     associationId?: string;
     associationLogoMediaId?: string | null;
     pushData?: Record<string, string>;
+    /** What the push's sentence reads, as `pushContent` reads a row's `meta` (a trend's media and name). */
+    meta?: Record<string, unknown>;
   }): Promise<number> {
     const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
     if (recipients.length === 0) return 0;
     await this.fanOutPush(data, recipients);
     return recipients.length;
+  }
+
+  /**
+   * THE GLOBAL DAILY PUSH CAP (engagement WP-8; owner, 2026-11-10): which of `recipients` may be
+   * PUSHED a notice of `type` today. A type {@link PUSH_BUDGET} does not count answers every one of
+   * them, untouched; a counted one takes one unit of each reader's daily budget in ONE statement
+   * (`claimEngagementPushes`) and answers the readers who got one - a reader past the cap, who
+   * switched the type's category off, or with no device able to show the type's push (its floor),
+   * keeps the in-app row and is not pushed; ONE line per call says how many. EVERY SEND OF A COUNTED
+   * TYPE GOES THROUGH HERE: the batch fan-out, the singular
+   * notice, and the reaction and comment pushes that `PostInteractionsService` composes itself.
+   *
+   * FAIL CLOSED, LOUDLY, as the bell: a failed claim pushes nobody (pushing everyone would ignore the
+   * cap) - it is logged here and rethrown, so the caller's own warning names the notice.
+   */
+  async withinPushBudget(type: string, recipients: readonly string[]): Promise<string[]> {
+    const capped = CAPPED_PUSH_TYPES.get(type);
+    if (!capped || recipients.length === 0) return [...recipients];
+    const allowed = await claimEngagementPushes(
+      this.notifRepo.manager,
+      recipients,
+      capped.category,
+      capped.floor
+    ).catch((e: unknown) => {
+      this.logger.error(
+        `[NOTIFY] engagement cap claim failed for type=${type} - ` +
+          `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
+      );
+      throw e;
+    });
+    const kept = recipients.filter((id) => allowed.has(id));
+    if (kept.length < recipients.length) {
+      this.logger.log(
+        `[NOTIFY] type=${type} withheld ${recipients.length - kept.length} of ${recipients.length} ` +
+          `(cap, category ${capped.category} off, or no device at ${capped.floor ?? 'any build'}) - ` +
+          'the bell rows stay'
+      );
+    }
+    return kept;
   }
 
   /**
@@ -719,6 +885,7 @@ export class PostNotificationsService {
       associationId?: string;
       associationLogoMediaId?: string | null;
       pushData?: Record<string, string>;
+      meta?: Record<string, unknown> | null;
     },
     recipients: string[]
   ): Promise<void> {
@@ -748,7 +915,8 @@ export class PostNotificationsService {
       data.type,
       actorName,
       await this.renderMentionsForPush(data.text),
-      icon
+      icon,
+      data.meta
     );
     if (!content) {
       this.logger.warn(
@@ -783,6 +951,9 @@ export class PostNotificationsService {
         );
       }
     }
+    // THE DAILY CAP (engagement WP-8), after the bell so a reader the bell already silenced never
+    // spends a unit. FAIL CLOSED: a failed claim throws, and the caller's warning names the notice.
+    pushRecipients = await this.withinPushBudget(data.type, pushRecipients);
     // Fire-and-forget, BOUNDED, and logged PER RECIPIENT. Bounded because `recipients` is as wide
     // as the audience and not as wide as the caller: announcing a post to the whole feed is 356
     // recipients on today's population, and `Promise.all` would open 356 sockets to the delivery
@@ -809,9 +980,15 @@ export class PostNotificationsService {
    * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
    * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
+   *
+   * ONLY THE TYPES THE READER'S BUILD CAN DRAW are served (`notification-client-floor.ts`):
+   * `clientVersion` is what the read's `X-Canari-Client-Version` names, `undefined` when it names
+   * none (a build up to `1.6.9`). A row withheld that way is not lost: the same read from a newer
+   * build serves it.
    */
-  async getNotifications(userId: string, limit = 30) {
-    const rows = await this.bellPageQuery(userId, limit).getMany();
+  async getNotifications(userId: string, limit = 30, clientVersion?: string) {
+    const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
+    await this.resolveTrendLikedBy(rows);
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
     if (proposed.length === 0) return rows;
     // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
@@ -830,6 +1007,66 @@ export class PostNotificationsService {
   }
 
   /**
+   * A CAMPUS TREND'S NAMED ACCOUNT, RESOLVED AT THE READ (review of #3316): the row keeps only the
+   * account's id and the count (`meta.likedBy = {userId, others}`), and the name is served only while
+   * the naming still holds, every condition the send path (`campusTrendNamedSql`) asked: the account
+   * exists, still LIKES the post (the same list, `TREND_LIKES_SQL`), no block stands either way with
+   * the reader, the account still shares its activity (`sharesActivitySql`: turned ON, off by
+   * default since 2026-11-10), the reader still follows it (accepted), it is
+   * not the post's author, both stand on the same side of the review cohort, and the post's reactors
+   * are not withheld from the reader. Served as `{name, others}` (what the client draws); dropped
+   * otherwise, so an erasure, a removed like, a block, an unfollow or the share switch turned off
+   * takes the name out of rows already written. One statement for the page; a page with no named
+   * trend reads nothing.
+   */
+  private async resolveTrendLikedBy(
+    rows: { id: string; type: string; meta?: Record<string, unknown> | null }[]
+  ): Promise<void> {
+    const named = rows.filter(
+      (r) =>
+        r.type === CAMPUS_TREND_NOTIFICATION &&
+        typeof (r.meta?.likedBy as { userId?: unknown } | undefined)?.userId === 'string'
+    );
+    if (named.length === 0) return;
+    const shown: {
+      id: string;
+      displayName: string | null;
+      firstName: string | null;
+      lastName: string | null;
+    }[] = await this.notifRepo.manager.query(
+      `SELECT n.id, u."displayName", u."firstName", u."lastName"
+         FROM post_notifications n
+         JOIN users u ON u.id = n.meta->'likedBy'->>'userId'
+         JOIN posts p ON p.id::text = n."postId"
+        WHERE n.id = ANY($1::uuid[])
+          AND u.id <> p."authorId"
+          AND p.reactions ->> u.id IN (${TREND_LIKES_SQL})
+          AND ${sameSideOfReviewCohortSql('n."recipientId"', 'u.id')}
+          AND NOT ${commentsWithheldFromViewerSql('p', 'n."recipientId"')}
+          AND ${sharesActivitySql('u.id')}
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE (b."blockerId" = n."recipientId" AND b."blockedId" = u.id)
+                              OR (b."blockedId" = n."recipientId" AND b."blockerId" = u.id))
+          AND EXISTS (SELECT 1 FROM user_follows f
+                       WHERE f."followerUserId" = n."recipientId" AND f."followedUserId" = u.id
+                         AND ${acceptedFollowSql('f')})`,
+      [named.map((r) => r.id)]
+    );
+    const nameOf = new Map(shown.map((r) => [r.id, formatUserDisplayNameFromRaw(r)]));
+    for (const row of named) {
+      const { likedBy, ...rest } = row.meta as { likedBy: { others?: unknown } };
+      const name = nameOf.get(row.id);
+      const others = typeof likedBy.others === 'number' ? Math.max(0, likedBy.others) : 0;
+      row.meta = name ? { ...rest, likedBy: { name, others } } : rest;
+    }
+    if (shown.length < named.length) {
+      this.logger.debug(
+        `[TREND] bell: ${named.length - shown.length} of ${named.length} naming(s) no longer hold, not shown`
+      );
+    }
+  }
+
+  /**
    * The bell's page as ONE statement, shaped so its per-row visibility re-check (`bellRowShownSql`,
    * a correlated subquery) runs on about one page of rows and not on the reader's whole history:
    * the reader's rows, newest first, with the predicate and the LIMIT in the same SELECT and no join
@@ -838,14 +1075,23 @@ export class PostNotificationsService {
    * PostgreSQL (`bell-page.integration.spec.ts`); the production volumes it was sized for are in
    * that migration and in the posts module's wiki page.
    */
-  bellPageQuery(userId: string, limit: number) {
-    return this.notifRepo
-      .createQueryBuilder('n')
-      .where('n."recipientId" = :userId', { userId })
-      .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
-      .andWhere(bellRowShownSql('n'))
-      .orderBy('n.createdAt', 'DESC')
-      .limit(limit);
+  bellPageQuery(userId: string, limit: number, clientVersion?: string) {
+    const types = notificationTypesRenderableBy(clientVersion);
+    this.logger.debug(
+      `[NOTIF] bell of ${userId.slice(0, 8)} for build ${clientVersion ?? 'undeclared'}: ` +
+        `${types.length} renderable type(s)`
+    );
+    return (
+      this.notifRepo
+        .createQueryBuilder('n')
+        .where('n."recipientId" = :userId', { userId })
+        // An ALLOWLIST of what the reader's build draws: a type with no declared floor is served to nobody.
+        .andWhere('n.type IN (:...renderableTypes)', { renderableTypes: types })
+        .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
+        .andWhere(bellRowShownSql('n'))
+        .orderBy('n.createdAt', 'DESC')
+        .limit(limit)
+    );
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

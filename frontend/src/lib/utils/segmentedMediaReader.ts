@@ -30,15 +30,22 @@ import {
   MediaPurgedError,
   MediaUnreachableError,
 } from './mediaErrors';
-import { mediaRequestGate } from './requestGate';
+import { mediaRequestGate, type GateLane, type GateRank } from './requestGate';
 
 /** Where a reader's ciphertext bytes come from. */
 export interface CiphertextRangeSource {
   /**
    * Bytes `[start, endExclusive)` of the stored blob - FEWER when the blob ends first, as an HTTP
    * range is clamped to the object's end. The reader is what turns "fewer" into a truncation.
+   * `rank` overrides the source's own lane for this read (a stream's tail, read out of order behind
+   * what plays, is `background`); a source with no network ignores it.
    */
-  read(start: number, endExclusive: number, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>>;
+  read(
+    start: number,
+    endExclusive: number,
+    signal?: AbortSignal,
+    rank?: GateRank
+  ): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 /**
@@ -56,31 +63,57 @@ export class MediaRangeUnsupportedError extends Error {
 }
 
 /**
+ * Told what one ranged read achieved: its bytes, and the seconds from the moment the request gate
+ * GRANTED its slot to the last byte of its body. The time spent queued behind other media is not
+ * the link's, so it is never in the measure (slow-link chantier, gap 6).
+ */
+export type RangeReadObserver = (bytes: number, seconds: number) => void;
+
+/**
  * Ranged reads of `/api/media/:id`, one request per call, each through `mediaRequestGate` like
  * every other media download and each with a token resolved at that moment (`getToken`), since a
  * stream outlives an access token.
  *
  * @param baseUrl The media service's base URL.
  * @param mediaId The object.
+ * @param observe Told what each answered read achieved ({@link RangeReadObserver}): how a stream
+ *   learns the rate of its link.
+ * @param clock   Milliseconds, for that measure; a test's stand-in drives it.
+ * @param lane    The gate's lane: `background` for bytes fetched ahead of the reader
+ *   (`mediaHeadStore.ts`), which never take the last free slot from what is on screen; a
+ *   {@link GateRank} when a reader that joins it may raise it to the foreground.
  */
-export function httpRangeSource(baseUrl: string, mediaId: string): CiphertextRangeSource {
+export function httpRangeSource(
+  baseUrl: string,
+  mediaId: string,
+  observe?: RangeReadObserver,
+  clock: () => number = () => performance.now(),
+  lane: GateLane | GateRank = 'foreground'
+): CiphertextRangeSource {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   return {
-    async read(start, endExclusive, signal) {
+    async read(start, endExclusive, signal, rank) {
+      /** When the gate granted the slot: the measure starts there, never at the queue. */
+      let grantedAt = 0;
       // Typed exactly as the whole download types them (`fetchMediaObject`), so a renderer reads
       // one vocabulary (`mediaFailureCause`) whichever path the media took.
-      const res = await mediaRequestGate.run(async () => {
-        const headers = {
-          Authorization: `Bearer ${await getToken()}`,
-          Range: `bytes=${start}-${endExclusive - 1}`,
-        };
-        try {
-          return await fetch(url, { headers, signal });
-        } catch (err) {
-          if (signal?.aborted) throw err;
-          throw new MediaUnreachableError(err);
-        }
-      }, signal);
+      const res = await mediaRequestGate.run(
+        async () => {
+          grantedAt = clock();
+          const headers = {
+            Authorization: `Bearer ${await getToken()}`,
+            Range: `bytes=${start}-${endExclusive - 1}`,
+          };
+          try {
+            return await fetch(url, { headers, signal });
+          } catch (err) {
+            if (signal?.aborted) throw err;
+            throw new MediaUnreachableError(err);
+          }
+        },
+        signal,
+        rank ?? lane
+      );
       if (res.status === 410) throw new MediaPurgedError();
       if (res.status === 404) throw new MediaNotFoundError();
       // 416: the range starts past the end - the blob is shorter than its header announces.
@@ -92,7 +125,9 @@ export function httpRangeSource(baseUrl: string, mediaId: string): CiphertextRan
         if (res.ok) throw new MediaRangeUnsupportedError(res.status);
         throw new MediaDownloadError(res.status);
       }
-      return new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      observe?.(bytes.byteLength, (clock() - grantedAt) / 1000);
+      return bytes;
     },
   };
 }
@@ -143,7 +178,7 @@ export class SegmentedMediaReader {
    * @throws {SegmentedMediaError} `length` when the blob ends before the segment does (truncated),
    *   `segment-auth` when its tag does not verify (altered, reordered, a false final segment).
    */
-  async readSegment(index: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+  async readSegment(index: number, signal?: AbortSignal, rank?: GateRank): Promise<ArrayBuffer> {
     if (index < 0 || index >= this.header.segmentCount) {
       throw new RangeError(`segment ${index} outside [0, ${this.header.segmentCount})`);
     }
@@ -153,7 +188,7 @@ export class SegmentedMediaReader {
       sealed = this.prefetchedFirst.slice(0, end - start);
       this.prefetchedFirst = null;
     } else {
-      sealed = await this.source.read(start, end, signal);
+      sealed = await this.source.read(start, end, signal, rank);
     }
     if (sealed.byteLength !== end - start) {
       console.error(

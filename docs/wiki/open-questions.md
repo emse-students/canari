@@ -203,6 +203,45 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
 
 Either one failing keeps the switch `off` and reopens this section.
 
+### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
+
+The OIDC callback (`auth.controller.ts`, `oidcCallback`) makes two calls to the identity provider,
+the token exchange and the userinfo read, and neither carries a bound of its own. **What is known:**
+
+- nginx's proxy timeout already bounds the request the CLIENT sees: a callback whose provider
+  never answers ends for the browser whatever the service does;
+- a bound inside the service would therefore only free the service-side socket and its pending
+  promise sooner - it changes what core-service HOLDS, not what the user waits;
+- chat-delivery-service already bounds its outbound calls with `AbortSignal.timeout` (the push
+  senders, the device-session read, the GIF provider), so a bound here would not be a new kind of
+  thing; what is missing is the NUMBER, and one chosen without a measurement is the kind of timer
+  the standing rules refuse.
+
+**The question is what a hung provider costs core-service**, and it is not answered: how many
+callbacks can be pending at once, what each holds (a socket, a promise, nothing else?), and
+whether anything - the connection pool, memory, the event loop - runs out before nginx ends them.
+
+**What answers it: one measurement.** Point a local core-service at a provider stub that accepts
+the connection and never answers, send callbacks at the rate a sign-in rush produces, and read
+what grows. If nothing runs out, the section is deleted with that reading written on
+[authentik](infrastructure/authentik.md). If something does, the bound is chosen from the number.
+
+### QUESTION - does a portaled dialog keep the focus `focusTrap` gave it? (2026-11-12)
+
+`portal` moves an overlay under `body` with `appendChild`, AFTER `focusTrap` focused the dialog's
+first control (the action order the wiki states). **What is observed:** in happy-dom the move drops
+the focus - `document.activeElement` is `body` once the node has moved. The web platform added
+`moveBefore` precisely because `appendChild` does not keep the state of what it moves, so a real
+browser may do the same; if it does, no portaled dialog holds its initial focus and Tab starts from
+the page behind it.
+
+**What answers it: one reading in a real browser.** Open any dialog that goes through `portal` and
+read `document.activeElement`. Not taken yet.
+
+**Why it is a question and not a fix.** If confirmed, the repair is in `portal` (focus again what
+held the focus inside the moved node). But that makes every dialog whose first control is a text
+field open the phone keyboard as it appears - a behaviour to decide, not to slip in.
+
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
 Since the sender coalescing, a DM or group watermark was sent when the 2 s window after reading ended (since 2026-11-07 the FIRST mark goes at once and the window only coalesces the marks after it),
@@ -592,3 +631,35 @@ acted on (the hourly commit-log hole report on the server, the shortfall report 
 client). The question is whether the USER should ever see that a frame was dropped on their device: the
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
+
+## QUESTION - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
+
+Asked by the owner on 2026-11-09 while deciding the live replays ([live-replays](live-replays.md)):
+*"un truc général pour toutes les vidéos du genre ? 90 s et vidéos verticales ?"* - whether camera
+CanaReels should move from 30 days to one year, or whether every vertical video of 90 s or less posted
+in the feed should become a CanaReel (and expire like one).
+
+**No such decision exists in the repository.** What holds today: a camera reel is at most 90 s
+([reels C4](services/reels.md)) and is kept **30 days** (`REEL_RETENTION_DAYS`, C6); a video posted
+from the gallery is a feed post and never expires, even when it is drawn full screen in CanaReels. An
+earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the owner's 2026-11-09
+question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
+is written until the owner answers. Live replays are not part of the question: they are 3 days.
+
+## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
+
+Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
+([backlog](backlog.d/institution-post-reach.md)): the public "Personnel" means "only staff (no
+cursus)". But a staff account has NO SPACE (a campus and an empty cursus), so an institution's
+audience rules - which reach readers through their spaces - never reached one, and the read-grant
+decision (6) of 2026-10-07 says "staff without a cursus see nothing more by default, the named ones
+do". As built, "Personnel" therefore reaches the staff who already had a door: the institution's own
+members, the named readers whose grant cell meets a ticked space, and a republisher's or a member
+reposter's staff readers ([as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
+
+**The question for the owner:** should a "Personnel" (or "Tous") post of an institution ALSO open to
+every staff account whose CAMPUS is one of the ticked spaces' campuses - a new door, staff by campus,
+which would let the School address its staff in the app without naming each one? It widens who
+reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
+institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
+account with no membership, grant or follow.

@@ -30,6 +30,7 @@
    * The grid is not deleted: from `md` up there is room for it and it answers a different question
    * (the shape of the month). This component replaces it only where it does not fit.
    */
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { CalendarDays } from '@lucide/svelte';
   import { isToday } from '$lib/utils/dates';
   import {
@@ -49,7 +50,6 @@
   import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
   import OrganiserFaces from '$lib/components/calendar/OrganiserFaces.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     /** The whole feed; this component takes its own window out of it. */
@@ -85,7 +85,7 @@
    * of `lun.` / `mar.`. The heading is the half anybody looks at, which is why it was the only half
    * that was right.
    */
-  const localeTag = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const localeTag = $derived(intlLocale());
 
   const monthFormatter = $derived(
     new Intl.DateTimeFormat(localeTag, { month: 'long', year: 'numeric' })
@@ -188,7 +188,7 @@
 {#if loading}
   <div class="border-cn-border bg-cn-surface rounded-2xl border p-8 text-center">
     <div
-      class="border-cn-yellow mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+      class="border-accent-icon mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else if empty}
@@ -224,7 +224,7 @@
                 <div class="text-zoom-w-11 shrink-0 text-center">
                   <div
                     class="text-zoom-size-9 mx-auto flex items-center justify-center rounded-full text-lg font-bold {today
-                      ? 'bg-cn-yellow text-cn-ink'
+                      ? 'bg-accent text-on-accent'
                       : 'text-text-main'}"
                   >
                     {group.day}
@@ -319,7 +319,7 @@
       <div bind:this={sentinel} class="flex justify-center py-4" aria-live="polite">
         <span class="sr-only">{m.calendar_schedule_loading_more()}</span>
         <div
-          class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
+          class="border-accent-icon h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
           aria-hidden="true"
         ></div>
       </div>

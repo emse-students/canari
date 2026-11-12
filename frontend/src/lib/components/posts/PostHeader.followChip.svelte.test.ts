@@ -29,6 +29,7 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 
 import PostHeader from './PostHeader.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -82,11 +83,28 @@ describe('PostHeader follow chip', () => {
     ).toBeNull();
   });
 
-  it('is icon-only on a phone, so the name keeps its row', () => {
-    const label = header({ authorId: 'u1', authorFirstName: 'Marie' }).querySelector(
-      '[data-follow-chip] span'
-    )!;
-    expect(label.classList.contains('max-sm:hidden')).toBe(true);
+  it('is a quiet text link on the meta line under the name, after the time', () => {
+    const t = header({ authorId: 'u1', authorFirstName: 'Marie' });
+    const line = t.querySelector('[data-post-time-line]')!;
+    const link = line.querySelector('[data-follow-chip="user"]')!;
+    expect(link.tagName).toBe('BUTTON');
+    expect(link.getAttribute('data-follow-chip-variant')).toBe('link');
+    expect(link.querySelector('svg')).toBeNull();
+    expect(line.textContent).toContain('·');
+    // nothing of it on the right of the header, where only the action row sits
+    expect(t.querySelectorAll('[data-follow-chip]')).toHaveLength(1);
+  });
+
+  it('marks a suggested post with a muted word on the same line, not a badge', () => {
+    const t = header({ authorId: 'u1', feedSuggested: true } as Partial<PostEntity>);
+    const mark = t.querySelector('[data-post-time-line] [data-post-suggestion]')!;
+    expect(mark.textContent).toContain(m.suggestion_post_badge());
+    expect(
+      t.querySelector('[data-post-time-line]')!.textContent!.indexOf(m.suggestion_post_badge())
+    ).toBeLessThan(
+      t.querySelector('[data-post-time-line]')!.textContent!.indexOf(m.profile_public_follow_btn())
+    );
+    expect(header({ authorId: 'u1' }).querySelector('[data-post-suggestion]')).toBeNull();
   });
 
   it('offers nothing on an anonymous post, even one whose author the reader may see', () => {

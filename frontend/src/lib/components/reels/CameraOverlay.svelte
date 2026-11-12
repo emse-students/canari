@@ -62,8 +62,6 @@
     composerStart?: ComposerReelState;
     /** A reel filmed from the new-post composer was published (`post`). */
     onpublished?: (identity: string) => void;
-    /** "Garder comme post": the publish step's state, back to the composer. */
-    onkept?: (kept: ComposerReelState) => void;
     /** A `chat` camera that may film a reel message (`chatReelWriter.ts`); photos only otherwise. */
     chatFilms?: boolean;
   }
@@ -75,7 +73,6 @@
     session,
     composerStart,
     onpublished,
-    onkept,
     chatFilms = false,
   }: Props = $props();
 
@@ -137,7 +134,6 @@
     {onclose}
     {composerStart}
     {onpublished}
-    {onkept}
     {chatFilms}
   />
 </div>

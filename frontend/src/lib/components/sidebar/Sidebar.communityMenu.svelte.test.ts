@@ -188,3 +188,17 @@ describe('community rail menu', () => {
     expect(railButton('Alpha').hasAttribute('aria-haspopup')).toBe(false);
   });
 });
+
+describe('community name header', () => {
+  it('is a plain header of the panel: one bottom rule, no box, no glass, the 16px gutter', () => {
+    mountRail();
+    const header = document.querySelector<HTMLElement>('[data-community-header]')!;
+    const cls = header.className.split(/\s+/);
+    expect(cls).toContain('bg-cn-surface');
+    expect(cls).toContain('border-b');
+    expect(cls).toContain('px-4');
+    expect(cls).not.toContain('glass-chrome');
+    expect(cls).not.toContain('border');
+    expect(cls).not.toContain('border-x-0');
+  });
+});

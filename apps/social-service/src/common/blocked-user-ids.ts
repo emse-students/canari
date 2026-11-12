@@ -36,3 +36,30 @@ export async function blockedUserIdsFor(
   );
   return rows.map((r) => r.otherId);
 }
+
+/**
+ * THE CLAUSE THAT KEEPS A BLOCKED ACCOUNT'S POSTS OUT OF ONE VIEWER'S FEED: `AND ...` over a
+ * `posts` row, with the list of {@link blockedUserIdsFor} at placeholder `$blockedParam`, or nothing
+ * when there is nobody to hide (`null`).
+ *
+ * IT COVERS ONLY A POST WHOSE AUTHOR THAT VIEWER COULD ALREADY SEE, and the exemption is the whole
+ * point rather than an oversight. An association post hides its publisher from everyone
+ * unconditionally, an anonymous one from everyone but a moderator; filtering either on `authorId`
+ * would turn a block into a DE-ANONYMISATION ORACLE - block a suspect, watch whether the post leaves
+ * the feed, unblock. Nobody is notified of a block, no administrator sees one and lifting it costs a
+ * click, so that probe would be repeatable until it named the author of every anonymous post on the
+ * platform. EVERY FEED ROW passes through it: the four feeds of `PostsService`, and the suggested
+ * posts (engagement WP-7).
+ *
+ * A LIVE REPLAY of an association is the one association post filtered: the live named its
+ * broadcaster to every viewer and hid itself from a block either way, so the replay keeps that rule
+ * and the block reveals nothing the live had not (docs/wiki/live-replays.md section 4).
+ */
+export function blockedAuthorSql(blockedParam: number | null): string {
+  if (blockedParam === null) return '';
+  return `AND (
+           (posts."associationId" IS NOT NULL AND posts.kind <> 'replay')
+           OR COALESCE(posts.anonymous, false)
+           OR posts."authorId" <> ALL($${blockedParam}::text[])
+         )`;
+}
