@@ -965,6 +965,21 @@ ways from search; the client only knows its own blocks). An EMPTY roster, a list
 falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
 
+**Typing an `@` looped the roster picker's effect on `1.6.6`-`1.6.8`, and the chat fell to its
+boundary (reported on Android `1.6.6`, 2026-11-12).** The caret reaching an `@` changes `start`,
+which re-runs the effect `MentionComposerInput` keeps on the roster prop (`refreshRoster`). There,
+`suggestLocally` wrote `suggestions` and read it back to set `open`, so the effect depended on the
+array it replaced on every run: `effect_update_depth_exceeded` at the first `@`, in a DM and in a
+salon alike, right after the blocks read and the name batch the picker's first open asks for. **It
+was fixed by #3233 (`v1.6.9`)**, which sets `open` from the local array; a reader on an older build
+only has to update. `MentionComposerInput.keystrokes.svelte.test.ts` types "salut @" and "a@b." key
+by key through the real component, with the blocks read and the batch answered asynchronously, and
+fails with that error on the `1.6.6` shape. The boundary's own line read `[object Object]` in that
+log; it now goes through `describeCaughtError` (name, message, three stack frames) at the error
+level. On the way: a server search still waiting for its delay ran after the mention had ended
+("a@b." typed quickly) and reopened the picker on plain text with nothing selectable; the end of a
+mention now drops it.
+
 ### The composer's own emoji picker, and what it shares with the reaction one
 
 `ComposerEmojiPicker.svelte` sits at the right end of `ChatComposer`'s text field, right before the

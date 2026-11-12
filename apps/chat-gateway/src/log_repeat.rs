@@ -35,6 +35,15 @@ impl RepeatCounter {
         *n += 1;
         is_power_of_ten(*n).then_some(*n)
     }
+
+    /// Forgets `subject`: its next occurrence is said as the first of a new episode. What ends an
+    /// episode is a FACT its caller knows (the refused thing was accepted again), never a delay.
+    pub fn forget(&self, subject: &str) {
+        self.counts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(subject);
+    }
 }
 
 /// True for 1, 10, 100, ...
@@ -49,6 +58,19 @@ fn is_power_of_ten(n: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::RepeatCounter;
+
+    #[test]
+    fn a_forgotten_subject_is_said_again_as_the_first() {
+        let counter = RepeatCounter::new(10);
+        assert_eq!(counter.hit("s"), Some(1));
+        assert_eq!(counter.hit("s"), None);
+        assert_eq!(counter.hit("other"), Some(1));
+
+        counter.forget("s");
+
+        assert_eq!(counter.hit("s"), Some(1));
+        assert_eq!(counter.hit("other"), None);
+    }
 
     #[test]
     fn prints_the_first_then_each_power_of_ten() {

@@ -535,6 +535,18 @@ describe('requestCommunityHistory when the community past widens (joined -> shar
     info.mockRestore();
   });
 
+  it('two triggers at once ask the member once (RM-4, 2026-10-26)', async () => {
+    heldSessions = [];
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await Promise.all([requestCommunityHistory('ws-1'), requestCommunityHistory('ws-1')]);
+
+    expect(historyAsks()).toHaveLength(1);
+    info.mockRestore();
+  });
+
   it('reaches a device that was offline when the admin flipped it - the closed past is durable', async () => {
     heldSessions = held;
     registerCommunityHistoryVisibility('ws-1', 'joined');

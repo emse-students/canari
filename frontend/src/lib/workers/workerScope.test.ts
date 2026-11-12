@@ -49,12 +49,21 @@ const OTHER_WORKER_FORM =
   /new\s+(?:Shared)?Worker\s*\(\s*new\s+URL|\?sharedworker|serviceWorker\.register/;
 
 /**
- * An AudioWorklet module is loaded by `audioWorklet.addModule(url)`, and the ONE place allowed to
- * call it is the call microphone's noise suppressor, whose URL comes from a `?worker&url` import
- * (`callNoiseSuppressionAssets.ts`) - so the worklet is in the inventory below like any worker.
+ * An AudioWorklet module is loaded by `audioWorklet.addModule(url)`, and the places allowed to call
+ * it are the call microphone's noise suppressor and the voice recorder's loudness tap, whose URLs
+ * come from `?worker&url` imports (`callNoiseSuppressionAssets.ts`, `recordingLoudnessAssets.ts`) -
+ * so each worklet is in the inventory below like any worker.
  */
 const AUDIO_WORKLET_LOADER = /audioWorklet\.addModule/;
-const AUDIO_WORKLET_LOADERS = ['src/lib/utils/callNoiseSuppression.ts'];
+const AUDIO_WORKLET_LOADERS = [
+  'src/lib/utils/audio/recordingLoudness.ts',
+  'src/lib/utils/callNoiseSuppression.ts',
+];
+/** The processor each worklet registers. */
+const WORKLET_PROCESSORS: Record<string, string> = {
+  'src/lib/workers/loudnessTap.worklet.ts': 'canari-loudness-tap',
+  'src/lib/workers/rnnoise.worklet.ts': 'canari-rnnoise',
+};
 
 /** A worker entry: its frontend-root POSIX path. */
 function workerEntries(): string[] {
@@ -222,9 +231,10 @@ afterAll(() => {
 });
 
 describe('every worker loads in a worker scope', () => {
-  it('reads the four workers and the one AudioWorklet the app spawns from the source, not from a list', () => {
+  it('reads the four workers and the two AudioWorklets the app spawns from the source, not from a list', () => {
     expect(entries).toEqual([
       'src/lib/workers/encryption.worker.ts',
+      'src/lib/workers/loudnessTap.worklet.ts',
       'src/lib/workers/mlsCrypto.worker.ts',
       'src/lib/workers/mlsEncrypt.worker.ts',
       'src/lib/workers/mlsKeyPackage.worker.ts',
@@ -254,7 +264,7 @@ describe('every worker loads in a worker scope', () => {
       const url = pathToFileURL(join(dir, `${posix.basename(path, '.ts')}.mjs`)).href;
       expect(await loadInAudioWorkletScope(url)).toEqual({
         ok: true,
-        registered: ['canari-rnnoise'],
+        registered: [WORKLET_PROCESSORS[path]],
       });
     }
   );
