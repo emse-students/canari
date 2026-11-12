@@ -958,7 +958,7 @@ members were rarely among them, so "@M" proposed nobody. `MainChatPage` now pass
 salon's members as `mentionRoster` (ids stamped with when each last spoke here,
 `buildMentionRoster`), and the composable filters them itself (`suggestFromRoster`): a bare `@`
 opens the list, a word of the name must start with the folded query, latest speakers first then
-alphabetical, six rows. No debounce and no search request. Names come from the display-name cache;
+alphabetical, six rows, no search request. Names come from the display-name cache;
 the first open batch-resolves the missing ones and reads the reader's blocks, once per picker. The
 reader and the accounts the reader blocked are never offered (the server hides blocked accounts both
 ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
@@ -979,6 +979,48 @@ log; it now goes through `describeCaughtError` (name, message, three stack frame
 level. On the way: a server search still waiting for its delay ran after the mention had ended
 ("a@b." typed quickly) and reopened the picker on plain text with nothing selectable; the end of a
 mention now drops it.
+
+**"@Prenom NOM" is searchable, and the `@` costs one pass of look-ups (owner, 2026-11-12).** Two
+reports, one code path (`useMentionAutocomplete`, `mentionRoster.ts`):
+
+- **Several words.** The query ended at the first space, so a last name could not be typed after a
+  first name. `findMentionQuery` now reads letters, digits, apostrophes, hyphens AND spaces after the
+  last `@` (never a space right after it, never across a newline, at most 64 characters). The picker
+  stays open while somebody matches the WHOLE query: every query word must start a DIFFERENT word of
+  the name, in any order, accents and case ignored (`wordsMatchQuery`), so "jean dup" and "dupont
+  jean" both find Jean Dupont. A space that leaves nobody ends the mention, and so do Escape and a
+  newline; typing on at the same `@` then asks nothing and the text is plain text, until the reader
+  edits back to something the ended query no longer starts (`ended`). Without a roster the server
+  searches, but its answer to a query of several words is held to the same rule before it may keep
+  the mention open (`matchingWholeQuery`): the endpoint ANDs SUBSTRINGS, so "@Jean je le" or
+  "@Marie et toi" - a sentence - still found Jean and Marie, the picker swallowed Enter and Tab
+  inserted a mention nobody chose (review of #3402). A one-word query keeps the server's fuzzy
+  reading. And a mention that ended while the roster's name batch was still on its way (a space
+  typed before "Camille" was a known name) is read again when the names land.
+- **Speed, measured.** Every keystroke folded every member's name (`normalize('NFD')`) and sorted
+  every match: on 5,000 members, about 24 ms for a bare `@` and 28 ms for one letter in vitest on the
+  dev machine, more than a frame. `MentionNameIndex` folds a member's name once for the life of the
+  picker and again only when that name changes, and the walk keeps the best six rows by bounded
+  insertion instead of sorting: 0.8 ms for a bare `@`, 3.7 ms for one letter, 0.9 ms for
+  "prenom1 nom". `mentionRoster.search.test.ts` pins the property (5,000 folds across eight
+  keystrokes, not 40,000), never a clock.
+- **The server search has no timer.** It waited 250 ms after each key and could apply an answer
+  that landed after a newer one. Now a key sends at once when nothing is in flight; otherwise its
+  query waits, replacing any query already waiting, and goes when the answer returns: at most one
+  request in flight, at most one more queued, so the search runs ONCE PER KEY at most and a burst
+  of keys costs two requests. Every change of the mention and the composer's destruction
+  (`dispose`) bump a `generation`, and an answer is applied only if none came after its request;
+  the rows of the earlier query are hidden while the new one is asked, so Enter and Tab never pick
+  a row that no longer matches. A roster change drops NOTHING: the live chat re-sends its roster on
+  every line (authors added, dropped, reordered), the search asks for the text typed, which a
+  roster does not change, and re-reading the roster keeps the rows the audience added and the
+  selected row, minus any account a late block list names. A directory search is only the stand-in
+  for a roster not loaded yet: once members are there, its answer and any waiting directory query
+  are dropped, so the school's top 10 never replaces them. The name index keeps only the current roster's members, keyed once per roster
+  array (sorted ids). A failed search - transport or a non-2xx status - warns once per outage, and
+  so does the live chat's audience filter. The endpoint already caps at 10 rows
+  (`take(10)`), the picker shows six; measured on dev it answers in 90-190 ms, which is now the
+  whole wait instead of 250 ms plus that.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
 
