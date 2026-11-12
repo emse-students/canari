@@ -2299,8 +2299,9 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 `cargo audit` matches advisories against a PATH package was never verified. Job `vendored-upstream`
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
-crate on its ALLOWLIST (today `tauri-plugin-websocket` alone - [backlog](backlog.md) holds the two
-other forks), the fork's `[package]` version with crates.io's `max_stable_version`. Pre-releases are
+crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry` and, since 2026-11-11,
+`tauri-plugin-system-components`; `tauri-plugin-keystore`, a fork of a pre-release with no stable
+upstream, is a [backlog](backlog.md#p3---two-vendored-forks-are-not-on-the-upstream-release-watch-2026-10-21-a-decision-owed) item), the fork's `[package]` version with crates.io's `max_stable_version`. Pre-releases are
 ignored on purpose: upstream has a `3.0.0-alpha` line, and a fork of a stable owes it nothing.
 
 | Exit | Means | Title |
