@@ -15,8 +15,9 @@ is letterboxed in the vertical pager.
    hook on tao's root view controller and the geometry request, the Info.plist, the side safe areas
    on iOS, and the page's one store (`screenOrientation.svelte.ts`). Nothing requests anything yet, so
    the app stays portrait: the only change a member can see is none.
-3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`: the
-   frame follows the screen, a take freezes it, the rotate button) and the live broadcaster (chosen in
+3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`; since
+   2026-11-11 it keeps its layout portrait and turns its glyphs instead -
+   [its own entry](camera-keeps-its-layout-and-volume-shutter.md)) and the live broadcaster (chosen in
    the preview, frozen on air, the rotate button; and the owner's double tap on the preview to switch
    the lens, 2026-11-09). The button is `ui/player/RotateButton.svelte`, the sides' padding
    `utils/sideSafeArea.ts` - both for step 4 to reuse.
@@ -47,11 +48,8 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   with the phone sideways (lock off). A cold start with the phone held sideways opens in portrait
   (iOS: no landscape launch screen, `supported-orientations hook installed ... at launch` in the log
   before the first scene).
-- **The camera** (reel tab, a chat's camera, a post's camera): lock off, it turns with the phone and
-  the frame becomes 16:9; lock on, it does not turn, and the rotate button turns it; a second press
-  returns to portrait. A photo and a take filmed in landscape are 16:9 files (read the size in the
-  review), a take does not turn when the phone does, and a landscape reel publishes and plays
-  letterboxed in the pager.
+- **The camera**: replaced by [its own entry's readings](camera-keeps-its-layout-and-volume-shutter.md)
+  (2026-11-11: the layout no longer turns).
 - **The broadcaster**: turned in the preview, `[LIVE-CAM] opened` then a landscape track size; the
   orientation stays put once on air; a viewer in portrait sees the whole picture with bars; the
   double tap on the preview switches the lens and never toggles anything else.
@@ -66,4 +64,5 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
 
 Chrome back around the camera when turned, and the rotate button unlike its siblings: cause and fix in
 [screen-orientation](../frontend/screen-orientation.md#a-turned-phone-is-still-a-phone-and-a-full-screen-place-draws-no-chrome-2026-11-11).
-Owed: a Mi 9T reading turned on `/camera` (no header, no rail, the rotate button the size of flip).
+Owed: a Mi 9T reading turned on a video screen (no header, no rail). The camera's rotate button is
+gone since 2026-11-11 (the camera keeps its layout).

@@ -4,6 +4,8 @@
 #import "KeyboardMediaBridge.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
+#import <CoreMotion/CoreMotion.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
@@ -549,6 +551,191 @@ static void CanariObserveOrientation(void) {
   CanariInstallOrientationHook(@"activation");
   NSLog(@"[CanariOrientation] listening for the page's orientation (safe-area hook: %@)",
         CanariOrigSafeAreaDidChange != NULL ? @"yes" : @"NO - the sides follow the next activation only");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE CAMERA IN FRONT - the volume buttons as its shutter, the phone's angle for its glyphs
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Owner, 2026-11-11 (docs/wiki/frontend/screen-orientation.md, "The camera keeps its layout"). The
+// page's camera posts `on` through `webkit.messageHandlers.canariCamera` while its live preview is in
+// front, `off` at its teardown and at every page load (`cameraHardware.svelte.ts`); the app leaving
+// the screen disarms it here too (`didEnterBackground`), so no stale flag survives. While armed:
+//
+// - THE VOLUME BUTTONS ARE THE SHUTTER through Apple's public API for camera apps,
+//   `AVCaptureEventInteraction` (AVKit, iOS 17.2+), added to the WebView: a press is `began`, the
+//   release `ended`, a system interruption `cancelled`, each sent to the page as
+//   `canari:camera-key`. The system does not change the volume while an enabled interaction receives
+//   the buttons. Before iOS 17.2 nothing is installed and the buttons stay the system's. Apple
+//   delivers these events only to an app that is using the camera; this app's camera is WebKit's
+//   (`getUserMedia`), so whether WebKit's capture counts is a reading owed on the iPhone 12.
+// - THE PHONE'S ANGLE comes from the accelerometer (`CMMotionManager`), which ignores the rotation
+//   lock as a camera must - `UIDevice.orientation` stops at the lock. Sent as `canari:device-angle`
+//   (`{degrees}`, clockwise from upright) when it moved by `kCanariCameraAngleStep` or more; the
+//   page turns it into a quarter turn with its own hysteresis.
+
+static BOOL g_canariCameraArmed = NO;
+static CMMotionManager *g_canariMotion = nil;
+/// The angle last sent, -1 until the first reading of this arming.
+static NSInteger g_canariCameraAngleSent = -1;
+/// The `AVCaptureEventInteraction` while armed on iOS 17.2+, nil otherwise.
+static id<UIInteraction> g_canariCaptureInteraction = nil;
+static const NSInteger kCanariCameraAngleStep = 10;
+
+static void CanariPushCameraEvent(NSString *name, NSString *detail) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariCamera] %@ with no WebView - dropped", name);
+    return;
+  }
+  NSString *js = [NSString
+      stringWithFormat:@"window.dispatchEvent(new CustomEvent('%@',{detail:%@}));", name, detail];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, error);
+              }
+            }];
+}
+
+/// The phone's clockwise angle from upright, 0-359, from the accelerometer's gravity (x to the right
+/// edge, y to the top edge; upright reads y = -1). -1 when the phone lies flat: no angle to read.
+static NSInteger CanariDeviceAngleFromGravity(double x, double y) {
+  if (sqrt(x * x + y * y) < 0.5) return -1;
+  NSInteger angle = (NSInteger)lround(atan2(x, -y) * 180.0 / M_PI);
+  return ((angle % 360) + 360) % 360;
+}
+
+/// Whether `now` moved enough from `last` (-1: nothing sent yet) to be told; the twin of Android's
+/// `angleWorthSending` (CameraHardware.kt).
+static BOOL CanariCameraAngleWorthSending(NSInteger last, NSInteger now) {
+  if (now < 0) return NO;
+  if (last < 0) return YES;
+  NSInteger d = ((now - last) % 360 + 360) % 360;
+  return MIN(d, 360 - d) >= kCanariCameraAngleStep;
+}
+
+/// Installs the volume buttons' interaction. NO only when it SHOULD be installed and could not be
+/// (no WebView yet): the caller then stays disarmed, so the page's next `on` tries again. YES once
+/// installed, and on iOS before 17.2, where there is nothing to install.
+static BOOL CanariInstallCaptureInteraction(void) {
+  if (@available(iOS 17.2, *)) {
+    WKWebView *webView = CanariFindWebView();
+    if (webView == nil) {
+      NSLog(@"[CanariCamera] ERROR asked to arm with no WebView: stays disarmed, the volume buttons stay the system's");
+      return NO;
+    }
+    AVCaptureEventInteraction *interaction =
+        [[AVCaptureEventInteraction alloc] initWithEventHandler:^(AVCaptureEvent *event) {
+          NSString *phase = nil;
+          switch (event.phase) {
+            case AVCaptureEventPhaseBegan:
+              phase = @"down";
+              break;
+            case AVCaptureEventPhaseEnded:
+              phase = @"up";
+              break;
+            case AVCaptureEventPhaseCancelled:
+              phase = @"cancel";
+              break;
+          }
+          if (phase == nil) {
+            NSLog(@"[CanariCamera] capture event of unknown phase %ld - ignored", (long)event.phase);
+            return;
+          }
+          NSLog(@"[CanariCamera] volume button %@: the camera's shutter", phase);
+          CanariPushCameraEvent(@"canari:camera-key",
+                                [NSString stringWithFormat:@"{phase:'%@'}", phase]);
+        }];
+    [webView addInteraction:interaction];
+    g_canariCaptureInteraction = interaction;
+    NSLog(@"[CanariCamera] AVCaptureEventInteraction installed on the WebView");
+    return YES;
+  } else {
+    NSLog(@"[CanariCamera] iOS before 17.2: no AVCaptureEventInteraction, the volume buttons stay the system's");
+    return YES;
+  }
+}
+
+static void CanariRemoveCaptureInteraction(void) {
+  if (g_canariCaptureInteraction == nil) return;
+  UIView *view = g_canariCaptureInteraction.view;
+  [view removeInteraction:g_canariCaptureInteraction];
+  g_canariCaptureInteraction = nil;
+  NSLog(@"[CanariCamera] AVCaptureEventInteraction removed");
+}
+
+static void CanariStartCameraAngle(void) {
+  if (g_canariMotion == nil) g_canariMotion = [CMMotionManager new];
+  if (!g_canariMotion.accelerometerAvailable) {
+    NSLog(@"[CanariCamera] no accelerometer: the glyphs stay upright");
+    return;
+  }
+  g_canariCameraAngleSent = -1;
+  // A sampling rate, not a correctness clock: what is sent is decided by the angle alone.
+  g_canariMotion.accelerometerUpdateInterval = 0.1;
+  [g_canariMotion
+      startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue]
+                           withHandler:^(CMAccelerometerData *data, NSError *error) {
+                             if (error != nil) {
+                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", error);
+                               return;
+                             }
+                             if (!g_canariCameraArmed || data == nil) return;
+                             NSInteger angle = CanariDeviceAngleFromGravity(data.acceleration.x,
+                                                                           data.acceleration.y);
+                             if (!CanariCameraAngleWorthSending(g_canariCameraAngleSent, angle)) return;
+                             g_canariCameraAngleSent = angle;
+                             CanariPushCameraEvent(@"canari:device-angle",
+                                                   [NSString stringWithFormat:@"{degrees:%ld}", (long)angle]);
+                           }];
+}
+
+/// Arms or disarms the volume shutter and the angle together; one line per change. Main thread.
+static void CanariApplyCameraArmed(BOOL on, NSString *why) {
+  if (on == g_canariCameraArmed) return;
+  if (on) {
+    // ARMED ONLY ONCE THE INTERACTION IS IN PLACE: a flag set without it would claim the buttons
+    // while the system still owns them, and refuse the page's next `on` as a repeat.
+    if (!CanariInstallCaptureInteraction()) return;
+    g_canariCameraArmed = YES;
+    NSLog(@"[CanariCamera] armed by %@", why);
+    CanariStartCameraAngle();
+  } else {
+    g_canariCameraArmed = NO;
+    NSLog(@"[CanariCamera] disarmed by %@", why);
+    CanariRemoveCaptureInteraction();
+    [g_canariMotion stopAccelerometerUpdates];
+  }
+}
+
+@interface CanariCameraHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariCameraHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  NSString *state = [message.body isKindOfClass:[NSString class]] ? message.body : @"";
+  if ([state isEqualToString:@"on"]) {
+    CanariApplyCameraArmed(YES, @"the page");
+  } else if ([state isEqualToString:@"off"]) {
+    CanariApplyCameraArmed(NO, @"the page");
+  } else {
+    NSLog(@"[CanariCamera] unknown state '%@' ignored", state);
+  }
+}
+@end
+
+static void CanariObserveCamera(void) {
+  static CanariCameraHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariCameraHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariCamera"];
+  NSLog(@"[CanariCamera] listening for the page's camera");
+  // A page that posted before this registration was heard by nobody: it says again what it holds.
+  CanariPushCameraEvent(@"canari:camera-bridge", @"null");
 }
 
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
@@ -1179,6 +1366,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
   CanariObserveOrientation();
+  CanariObserveCamera();
   CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
@@ -1340,6 +1528,9 @@ void canari_ios_bootstrap(void) {
                 g_isOnScreen = false;
                 g_resumePending = false;
                 g_resumeOpening = nil;
+                // No stale camera flag survives the background: the page re-arms it on its return
+                // if its camera is still live (`cameraHardware.svelte.ts`).
+                CanariApplyCameraArmed(NO, @"didEnterBackground");
                 CanariPublishForeground(nil);
               }];
   // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped
