@@ -9,6 +9,23 @@ use tokio::sync::mpsc;
 /// and stores senders here so it can push frames without holding the lock.
 type ConnectedUser = mpsc::Sender<String>;
 
+/// Live sockets this process holds at most, all accounts together.
+pub const MAX_CONNECTIONS: usize = 1_000;
+
+/// Live sockets one ACCOUNT holds at most on this process, all its devices together. A person has
+/// a few devices and a few tabs; thirty-two leaves room for every one of them and for the overlap
+/// of their reconnections.
+pub const MAX_CONNECTIONS_PER_ACCOUNT: usize = 32;
+
+/// Why [`AppState::admit`] did not register a socket. Each carries the count that decided.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AdmissionRefusal {
+    /// The account already holds [`AppState::max_connections_per_account`] sockets here.
+    Account { held: usize },
+    /// The process already holds [`AppState::max_connections`] sockets.
+    Process { held: usize },
+}
+
 /// Shared application state injected into every Axum handler via `State<Arc<AppState>>`.
 pub struct AppState {
     /// Handle to the Redis instance used for pub/sub, presence keys, and `pending_welcome_notify` lists.
@@ -25,6 +42,12 @@ pub struct AppState {
     /// Read by the pub/sub loop's edge filter ([`crate::addressing::deliverable_sessions`]); the
     /// cross-process fact is the sessions hash.
     pub session_caps: Arc<Mutex<HashMap<u64, crate::addressing::SessionCaps>>>,
+    /// [`MAX_CONNECTIONS`] outside tests.
+    pub max_connections: usize,
+    /// [`MAX_CONNECTIONS_PER_ACCOUNT`] outside tests.
+    pub max_connections_per_account: usize,
+    /// Says an account's refused sockets once, then at each power of ten of their count.
+    pub refused_admissions: crate::log_repeat::RepeatCounter,
     /// This process's identity in the shared sessions hash, so two gateway processes - which both
     /// number their connections from 0 - never write the same session field.
     pub instance_id: String,
@@ -57,6 +80,9 @@ impl AppState {
             connected_users: Arc::new(Mutex::new(HashMap::new())),
             next_conn_id: AtomicU64::new(0),
             session_caps: Arc::new(Mutex::new(HashMap::new())),
+            max_connections: MAX_CONNECTIONS,
+            max_connections_per_account: MAX_CONNECTIONS_PER_ACCOUNT,
+            refused_admissions: crate::log_repeat::RepeatCounter::new(4_096),
             instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,
@@ -64,6 +90,49 @@ impl AppState {
             census_key: crate::census::SAMPLES_KEY.to_string(),
             census_coarse_key: crate::census::COARSE_KEY.to_string(),
         }
+    }
+
+    /// Register the socket `conn_id` of `user_id`'s device `conn_key`, or refuse it.
+    ///
+    /// THE COUNT AND THE INSERTION ARE ONE STEP UNDER THE MAP LOCK, so two sockets arriving
+    /// together are judged one after the other and neither limit can be passed. The account is
+    /// counted before the process: a refusal names the narrower reason.
+    ///
+    /// A new socket of a device is added BESIDE its siblings, never replaces them (the
+    /// duplicate-connection rule, `handlers::handle_socket`). `declared` is recorded while the lock
+    /// is held, so the pub/sub loop never sees this session without its declaration.
+    ///
+    /// Returns how many sockets the device now holds here.
+    pub fn admit(
+        &self,
+        user_id: &str,
+        conn_key: &str,
+        conn_id: u64,
+        sender: ConnectedUser,
+        declared: crate::addressing::SessionCaps,
+    ) -> Result<usize, AdmissionRefusal> {
+        let mut map = self.connected_users.lock().unwrap();
+        let of_account = format!("{user_id}:");
+        let mut held_by_account = 0;
+        let mut held = 0;
+        for (key, senders) in map.iter() {
+            held += senders.len();
+            if key.starts_with(&of_account) {
+                held_by_account += senders.len();
+            }
+        }
+        if held_by_account >= self.max_connections_per_account {
+            return Err(AdmissionRefusal::Account {
+                held: held_by_account,
+            });
+        }
+        if held >= self.max_connections {
+            return Err(AdmissionRefusal::Process { held });
+        }
+        let senders = map.entry(conn_key.to_string()).or_default();
+        senders.insert(conn_id, sender);
+        self.note_session_caps(conn_id, declared);
+        Ok(senders.len())
     }
 
     /// Unregister one connection and answer whether the DEVICE is still online.
@@ -126,6 +195,111 @@ mod tests {
     }
 
     const KEY: &str = "user-1:device-1";
+
+    /// Ask for a socket; the receiver is returned with the answer so an admitted one stays open.
+    fn ask(
+        state: &AppState,
+        user_id: &str,
+        device: &str,
+        conn_id: u64,
+    ) -> (Result<usize, AdmissionRefusal>, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel::<String>(1);
+        let answer = state.admit(
+            user_id,
+            &format!("{user_id}:{device}"),
+            conn_id,
+            tx,
+            crate::addressing::SessionCaps::default(),
+        );
+        (answer, rx)
+    }
+
+    #[test]
+    fn a_socket_is_added_beside_its_siblings_and_counted() {
+        let state = state();
+        let (first, _a) = ask(&state, "user-1", "device-1", 1);
+        let (second, _b) = ask(&state, "user-1", "device-1", 2);
+
+        assert_eq!(first, Ok(1));
+        assert_eq!(second, Ok(2));
+        assert!(state.session_caps.lock().unwrap().contains_key(&2));
+    }
+
+    #[test]
+    fn an_account_is_refused_past_its_limit_whatever_the_device() {
+        let mut state = state();
+        state.max_connections_per_account = 3;
+        let _held: Vec<_> = (0..3)
+            .map(|i| ask(&state, "user-1", &format!("device-{i}"), i))
+            .collect();
+
+        let (refused, _rx) = ask(&state, "user-1", "device-9", 9);
+
+        assert_eq!(refused, Err(AdmissionRefusal::Account { held: 3 }));
+        assert!(
+            !state
+                .connected_users
+                .lock()
+                .unwrap()
+                .contains_key("user-1:device-9")
+        );
+        assert!(!state.session_caps.lock().unwrap().contains_key(&9));
+    }
+
+    #[test]
+    fn one_account_at_its_limit_does_not_refuse_another() {
+        let mut state = state();
+        state.max_connections_per_account = 1;
+        let (_first, _a) = ask(&state, "user-1", "device-1", 1);
+
+        // `user-10` starts with `user-1`: an account is told apart by its whole id.
+        let (other, _b) = ask(&state, "user-10", "device-1", 2);
+
+        assert_eq!(other, Ok(1));
+    }
+
+    #[test]
+    fn the_process_is_refused_past_its_limit() {
+        let mut state = state();
+        state.max_connections = 2;
+        let (_x, _a) = ask(&state, "user-1", "device-1", 1);
+        let (_y, _b) = ask(&state, "user-2", "device-1", 2);
+
+        let (refused, _rx) = ask(&state, "user-3", "device-1", 3);
+
+        assert_eq!(refused, Err(AdmissionRefusal::Process { held: 2 }));
+    }
+
+    #[test]
+    fn a_socket_that_left_gives_its_place_back() {
+        let mut state = state();
+        state.max_connections_per_account = 1;
+        let (_first, _a) = ask(&state, "user-1", "device-1", 1);
+        state.remove_session(KEY, 1);
+
+        let (again, _b) = ask(&state, "user-1", "device-1", 2);
+
+        assert_eq!(again, Ok(1));
+    }
+
+    /// Two sockets asking together are judged one after the other: with one place left, exactly
+    /// one of many concurrent askers gets it.
+    #[test]
+    fn concurrent_askers_never_pass_the_limit() {
+        let mut state = state();
+        state.max_connections_per_account = 1;
+        let state = std::sync::Arc::new(state);
+
+        let askers: Vec<_> = (0..16)
+            .map(|i| {
+                let state = state.clone();
+                std::thread::spawn(move || ask(&state, "user-1", &format!("device-{i}"), i))
+            })
+            .collect();
+        let answers: Vec<_> = askers.into_iter().map(|t| t.join().unwrap()).collect();
+
+        assert_eq!(answers.iter().filter(|(a, _)| a.is_ok()).count(), 1);
+    }
 
     #[test]
     fn a_lone_connection_leaving_takes_the_device_offline() {

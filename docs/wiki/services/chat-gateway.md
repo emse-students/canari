@@ -79,6 +79,27 @@ too, with a `warn` naming its kind. [call-service](call-service.md) carries the 
 5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
 6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
 
+## Admission: one step, two limits (2026-11-12)
+
+A socket is counted and registered in ONE step, `AppState::admit`, under the lock of the
+connection map - so two sockets arriving together are judged one after the other and neither limit
+can be passed. Two limits, per process:
+
+- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT`), all its devices and tabs together;
+- **1000 in all** (`MAX_CONNECTIONS`).
+
+The account is counted first, so a refusal names the narrower reason. A refused socket is upgraded,
+closed with **1013** ("try again later") and never registered: no presence, no sessions-hash field,
+no guard. The duplicate-connection rule is unchanged - a new socket of a device is added beside its
+siblings, never replaces them.
+
+The refusal is logged at WARN through `RepeatCounter`, keyed by account: the first one says the
+sentence, then the 10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... -
+refusal #N for this account`). A line at #100 is a client that keeps asking.
+
+Frame size and per-socket message rate have no limit of the gateway's own yet; the ceiling is to be
+measured before one is built.
+
 ## How a socket ENDED, and why the LEVEL of the line depends on it
 
 The receive loop has three terminal arms and until 2026-09-15 one of them swallowed the other two:

@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         Query, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -16,6 +16,10 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, TokenRejection, decode_access_claims};
 use crate::state::AppState;
+
+/// The WebSocket close code "try again later" (RFC 6455 registry): what a socket past a
+/// connection limit is closed with.
+const CLOSE_TRY_AGAIN_LATER: u16 = 1013;
 
 /// Heartbeat cadence: one WebSocket ping every this many seconds.
 const PING_INTERVAL_SECS: u64 = 15;
@@ -221,22 +225,6 @@ pub async fn ws_handler(
 
     match decode_access_claims(&token, state.jwt_secret.as_bytes()) {
         Ok(claims) => {
-            // Enforce a hard cap to prevent resource exhaustion under a connection flood.
-            const MAX_CONNECTIONS: usize = 1_000;
-            let total: usize = {
-                let map = state.connected_users.lock().unwrap();
-                map.values().map(|senders| senders.len()).sum()
-            };
-            if total >= MAX_CONNECTIONS {
-                tracing::warn!(
-                    "[ws] Connection limit reached ({}/{}) - rejecting upgrade for {}",
-                    total,
-                    MAX_CONNECTIONS,
-                    claims.sub
-                );
-                return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
-            }
-
             // Use the device_id provided by the client to keep the same routing key
             // across reconnections (otherwise group:members becomes stale).
             // Security relies on the JWT: only the userId from the token can access messages.
@@ -319,7 +307,6 @@ async fn handle_socket(
         client.version
     );
 
-    let (mut ws_sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::channel::<String>(256);
     let conn_key = format!("{}:{}", user_id, device_id);
 
@@ -337,21 +324,44 @@ async fn handle_socket(
     // keeps answering pings and keeps the device online, so the CLIENT owns releasing every socket
     // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count below is
     // the reading that shows one.
-    {
-        let mut map = state.connected_users.lock().unwrap();
-        map.entry(conn_key.clone())
-            .or_default()
-            .insert(conn_id, tx.clone());
-        // Recorded while the map lock is held, so the pub/sub loop never sees this session without
-        // its declaration (the edge filter, `crate::addressing::addressed_recipients`).
-        state.note_session_caps(conn_id, declared);
-        tracing::info!(
+    //
+    // ADMISSION IS ONE STEP (`AppState::admit`): counted and registered under the map lock, per
+    // account and for the process. A socket past either limit is closed with 1013 ("try again
+    // later") and never registered, so nothing below runs for it and no guard is owed.
+    let mut socket = socket;
+    match state.admit(&user_id, &conn_key, conn_id, tx.clone(), declared) {
+        Ok(active) => tracing::info!(
             "Registered connection key: {} (conn_id={}, {} active)",
             conn_key,
             conn_id,
-            map[&conn_key].len()
-        );
+            active
+        ),
+        Err(refusal) => {
+            // One line per account, then at each power of ten: a client that keeps asking is a
+            // RATE, and the count is what says so.
+            if let Some(n) = state.refused_admissions.hit(&user_id) {
+                tracing::warn!(
+                    "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} for this account",
+                    user_id,
+                    refusal,
+                    state.max_connections_per_account,
+                    state.max_connections,
+                    n
+                );
+            }
+            if let Err(e) = socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: CLOSE_TRY_AGAIN_LATER,
+                    reason: "too many connections".into(),
+                })))
+                .await
+            {
+                tracing::debug!("[ws] refusal close not delivered to {}: {}", conn_key, e);
+            }
+            return;
+        }
     }
+    let (mut ws_sender, mut receiver) = socket.split();
 
     let field = crate::addressing::session_field(&state.instance_id, conn_id);
     let _guard = ConnectionGuard {
