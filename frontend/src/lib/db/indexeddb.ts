@@ -1,7 +1,7 @@
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { deviceWindowMs, parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
@@ -1816,8 +1816,9 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
-  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds (this device's window, `deviceWindowMs()`, unless a caller names another); returns the number of deleted rows. */
+  async deleteOldMessages(maxAgeMs: number = deviceWindowMs()): Promise<number> {
+    appendLog(`[GC] deleteOldMessages maxAgeMs=${maxAgeMs}`);
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();

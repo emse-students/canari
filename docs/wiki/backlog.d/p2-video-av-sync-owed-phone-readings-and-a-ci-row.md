@@ -6,4 +6,9 @@ the end of the production post ([video-preparation](../frontend/video-preparatio
 **The Mi 9T and iPhone 12 readings GATE the stable that ships it**: the `tools/video-av-sync` rows
 through the phones' own encoders and decoders - the restore rests on one decoded chunk per packet,
 checked there by a `console.error` but never observed - and the pre-pass decode timed on a phone.
-Also owed: a committed AAC source so a copied-audio row runs in CI.
+**Re-read 2026-11-12 (batch 23): #3058 first ships in the stable `v1.6.6`** (`git tag --contains`),
+and device-verification records no `video-av-sync` row read on either phone, so that stable went
+out without the readings this entry said gate it. They stay owed, now against production.
+Also owed: a committed AAC source so a copied-audio row runs in CI - not a fixture alone: the rig
+makes its sources in Chrome, and Chrome on Linux has no AAC encoder, so the CI job also needs the
+rig to take a committed source instead of encoding one (`tools/video-av-sync/README.md`).

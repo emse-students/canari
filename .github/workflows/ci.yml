@@ -182,8 +182,9 @@ jobs:
           # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
           # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
           # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
-          # change runs them: ask what the gate reads.
-          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/'; then
+          # change runs them, and chat-delivery's device limit (`state.rs` asserts its copy of it):
+          # ask what the gate reads.
+          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/' || has '^apps/chat-delivery-service/src/retention\.constants\.ts$'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native
@@ -453,7 +454,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -627,7 +628,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -836,7 +837,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-

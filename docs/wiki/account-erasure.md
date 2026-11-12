@@ -296,9 +296,19 @@ reconciliation. **Every other Redis fact naming the account's devices goes too**
 its own `pending_welcome_notify:<userId>` list and every frame in another member's list naming it as
 requester, and its `user:online:<userId>:*` and `addressing:sessions:<userId>:*` keys. The user id
 is held to the user-id mint rule before anything is read (visible ASCII, no `:`), and is escaped in
-every `MATCH`, so a prefix never matches another account. Keys and frames are matched exact-case,
-which holds because a minted id is in practice a lowercase 64-hex subject written identically
-everywhere ([backlog](backlog.md#p3---the-erasure-sweep-matches-a-frames-requester-exact-case-review-of-2585-2026-10-27)).
+every `MATCH`, so a prefix never matches another account. A frame's requester is compared
+ASCII-lowercased, like every MLS comparison of a user id (2026-11-12); the keys are matched
+exact-case, which holds because a minted id is in practice a lowercase 64-hex subject written
+identically everywhere. **A 1:1 is decided by its roster, not by its flag** (2026-11-12): a
+conversation flagged `isGroup = false` is tombstoned whole only while its roster holds at most two
+people; one holding a third loses this account alone, like any group, with a WARN naming it -
+nothing upstream bounds such a roster to two. The roster is the DISTINCT people a seat (admitted or
+awaiting) OR a device row names, the membership the discovery reads, so a third person with a device
+and no seat counts. A roster nothing names any more is unknown, never "two or fewer": that
+conversation loses this account alone too. The roster is read again under each DM's seat lock
+inside the transaction that tombstones it (`tombstoneGroupsIf`), and only there is the DM named in
+the erasure marker; a DM that gained a member in between is cut like any group and taken out of the
+marker, so no earlier run's marker purges the keys of a conversation that stays (review of #3383).
 Two facts stay outside the sweep, each bounded: a parting VALUE naming the account as remover, and
 the gateway's TTL-bound `addressing:left:` key.
 **The same holds for every Redis key of such a DM**, its `history:` stream included: before the

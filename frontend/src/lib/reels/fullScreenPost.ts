@@ -15,7 +15,7 @@ import { resolveMediaType } from '$lib/utils/mediaLayout';
  * renderer (`PostMarkdown`); only its preview card is not drawn. A post of text alone is out:
  * there is nothing to look at.
  *
- * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true&withLinks=true`, the same rule in SQL,
+ * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true`, the same rule in SQL,
  * docs/wiki/services/reels.md); this is the CLIENT's reading of one row, so the slide knows which
  * page to draw and a row the rule does not cover is said in a log instead of drawn wrong.
  *

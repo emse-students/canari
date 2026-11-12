@@ -95,8 +95,9 @@ secret_value() {
 }
 
 # ── The computed values ───────────────────────────────────────────────────────
-# ALLOW_ORIGIN is the chat-gateway's CORS list. Every entry is a Canari client, and dropping one
-# costs that client the gateway with no server-side error to show for it. The three tauri spellings
+# ALLOW_ORIGIN is the chat-gateway's CORS list, and the origins a socket upgrade may name on
+# call-service and on the gateway. Every entry is a Canari client, and dropping one costs that
+# client the gateway and its calls. The three tauri spellings
 # are the app itself, one per platform - `http(s)://tauri.localhost` on Android/Windows,
 # `tauri://localhost` on iOS/macOS/Linux; omitting the iOS spelling from the Nest list once cost
 # that platform its login. `127.0.0.1:1420` is how tauri.conf.json's devUrl spells the dev server.

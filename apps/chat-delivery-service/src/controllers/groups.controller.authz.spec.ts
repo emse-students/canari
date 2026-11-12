@@ -6,6 +6,8 @@ import { FindOperator } from 'typeorm';
 import { GroupsController } from './groups.controller';
 import { InvitationsController } from './invitations.controller';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { Group } from '../entities/group.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -27,6 +29,7 @@ type Seat = { groupId: string; userId: string; awaitingAdmission: boolean };
 type DeviceRow = { groupId: string; userId: string; deviceId: string; status: string };
 type GroupRow = {
   id: string;
+  createdBy?: string | null;
   distributionWorkspaceId?: string | null;
   distributionChannelId?: string | null;
   deletedAt?: Date | null;
@@ -63,20 +66,55 @@ function makeTables() {
       return tables.groups.find(match<GroupRow>(where)) ?? null;
     }),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
-    manager: { transaction: jest.fn() },
+    manager: { transaction: jest.fn(), getRepository: jest.fn() },
   };
   const seatRepo = {
     findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const seat = tables.seats.find(match<Seat>(where));
       return seat ? { id: `${seat.groupId}:${seat.userId}`, ...seat } : null;
     }),
+    count: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      return tables.seats.filter(match<Seat>(where)).length;
+    }),
   };
   const deviceRepo = {
     findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       return tables.devices.find(match<DeviceRow>(where)) ?? null;
     }),
+    count: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      return tables.devices.filter(match<DeviceRow>(where)).length;
+    }),
   };
-  return { tables, groupRepo, seatRepo, deviceRepo };
+  // The three tables by entity, as `manager.getRepository` hands them out; any other table the
+  // tombstone sweeps is a stub that deletes nothing.
+  const repoOf = (entity: unknown): object => {
+    if (entity === Group) return groupRepo;
+    if (entity === GroupMember) return seatRepo;
+    if (entity === DeviceGroupMembership) return deviceRepo;
+    return { delete: jest.fn().mockResolvedValue({ affected: 0 }) };
+  };
+  groupRepo.manager.getRepository.mockImplementation(repoOf);
+  /**
+   * A transaction that RUNS its callback over the same tables. `onSeatLock` runs when the seat lock
+   * is taken - the instant a concurrent writer that held the lock would have committed.
+   */
+  const runTransactions = (onSeatLock: () => void = () => undefined) => {
+    const tx = {
+      query: jest.fn(async (sql: string) => {
+        if (sql.includes('pg_advisory_xact_lock')) onSeatLock();
+        return [];
+      }),
+      getRepository: (entity: unknown) => {
+        const repo = repoOf(entity) as Record<string, unknown>;
+        return { delete: jest.fn().mockResolvedValue({ affected: 0 }), ...repo };
+      },
+    };
+    groupRepo.manager.transaction.mockImplementation(
+      async (work: (m: typeof tx) => Promise<unknown>) => work(tx)
+    );
+    return tx;
+  };
+  return { tables, groupRepo, seatRepo, deviceRepo, runTransactions };
 }
 
 describe('the group routes enforce membership', () => {
@@ -223,6 +261,94 @@ describe('the group routes enforce membership', () => {
     expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
   });
 
+  describe('a failed creation: the creator ends a group nobody holds a seat in', () => {
+    // The client registers its seat after `POST mls/groups`; a failure between the two used to
+    // leave a live row its cleanup delete could not end (403, no seat).
+    beforeEach(() => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER }];
+      t.tables.seats = [];
+      t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+    });
+
+    it('the creator ends it, re-reading the roster under the seat lock', async () => {
+      const tx = t.runTransactions();
+      await expect(groups.deleteGroup(GROUP, MEMBER)).resolves.toEqual({ status: 'deleted' });
+      expect(tx.query).toHaveBeenCalledWith(
+        expect.stringContaining('pg_advisory_xact_lock('),
+        expect.anything()
+      );
+      expect(t.groupRepo.update).toHaveBeenCalled();
+    });
+
+    it('another account holding a seat with no device - an invitation awaiting admission - is the 403', async () => {
+      t.runTransactions();
+      t.tables.seats = [{ groupId: GROUP, userId: STRANGER, awaitingAdmission: true }];
+
+      const refusal = await groups.deleteGroup(GROUP, MEMBER).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('a seat written between the check and the tombstone refuses it under the lock, and nothing is ended', async () => {
+      // The unlocked read saw nobody; the seat writer held the lock and committed before it was
+      // granted. The tombstone must read the roster again, not trust the first read.
+      t.runTransactions(() => {
+        t.tables.seats.push({ groupId: GROUP, userId: STRANGER, awaitingAdmission: true });
+      });
+
+      const refusal = await groups.deleteGroup(GROUP, MEMBER).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'NOT_A_MEMBER' });
+      expect(t.groupRepo.update).not.toHaveBeenCalled();
+      expect(redis.del).not.toHaveBeenCalled();
+    });
+
+    it("another account's device joined between the check and the tombstone refuses it too", async () => {
+      t.runTransactions(() => {
+        t.tables.devices.push({
+          groupId: GROUP,
+          userId: STRANGER,
+          deviceId: 'd-2',
+          status: 'active',
+        });
+      });
+
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('anyone else is the 403, and nothing is written', async () => {
+      const refusal = await groups.deleteGroup(GROUP, STRANGER).catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'NOT_A_MEMBER' });
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a group someone else entered takes the member check, even for its creator', async () => {
+      t.tables.devices.push({
+        groupId: GROUP,
+        userId: STRANGER,
+        deviceId: 'd-2',
+        status: 'active',
+      });
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a tombstoned group stays the 403 an owed exit reads as done', async () => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER, deletedAt: new Date() }];
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a key-distribution group is never ended this way', async () => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER, distributionWorkspaceId: 'ws-1' }];
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+  });
+
   it('a key-distribution group is never deleted for everyone here, whoever asks', async () => {
     t.tables.groups = [{ id: GROUP, distributionWorkspaceId: 'ws-1' }];
     t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
@@ -247,8 +373,15 @@ describe('the group routes enforce membership', () => {
   it('an unauthenticated call never reaches a route: the guard answers 401', () => {
     const request = { headers: {}, url: '/mls/groups/g-1', method: 'DELETE' };
     const context = { switchToHttp: () => ({ getRequest: () => request }) } as never;
-
-    expect(() => new HeaderAuthGuard().canActivate(context)).toThrow(UnauthorizedException);
+    // A configured service: an unset secret is the guard's own 500, asked before any header.
+    const previous = process.env.INTERNAL_SHARED_SECRET;
+    process.env.INTERNAL_SHARED_SECRET = 'secret-for-the-guard-test';
+    try {
+      expect(() => new HeaderAuthGuard().canActivate(context)).toThrow(UnauthorizedException);
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+      else process.env.INTERNAL_SHARED_SECRET = previous;
+    }
   });
 });
 

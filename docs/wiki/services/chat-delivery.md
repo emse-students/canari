@@ -809,9 +809,13 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   resubmission. A typed
   `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
   client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
-  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
-  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
-  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. The
+  route's two refusals taken BEFORE the gate (the membership guard, `not_a_member`, and the link
+  ask, `awaiting_admission`) ask the commit log for these bytes first (`answerIfAlreadyAccepted`,
+  since 2026-11-11, hoisted above both the same day): a retry of an accepted commit whose target was
+  removed in between - or removed and asked back by link - is answered `accepted`, never a refusal,
+  and every new re-add of a removed user and every push answer to a link's ask is still refused
+  there (`push.controller.welcome-commit.spec.ts`).
 - **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
   key-group join's writer). In a process whose foreground manager is loaded
   (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint
@@ -1490,7 +1494,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
 | PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
 | PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member, or its creator while nobody holds a seat; never a key-distribution group) |
 
 **A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
 says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
@@ -1510,7 +1514,16 @@ and never one in a key-distribution group. The condition rides the delete itself
 after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
 locking the device row first would invert it and can deadlock; a row left behind is active and is the
 403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
-sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. One
+exception lets a delete through without a seat (2026-11-12): the group's recorded creator
+(`createdBy`) may end a live conversation that has NO seat at all and no device of another account -
+the row a creation leaves when it fails between `POST mls/groups` and the creator's `registerMember`,
+whose cleanup delete used to meet the 403 and leave the row for ever. A seat of ANY account counts,
+one awaiting admission included. The condition is read twice: once to choose the path, then again
+under the group's seat lock inside the transaction that tombstones it (`tombstoneGroupsIf` in
+`utils/group-purge.ts`), and a seat or a device written in between turns it into the 403 - an
+unlocked check followed by a tombstone would end a conversation someone had just entered (review of
+#3383). Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
