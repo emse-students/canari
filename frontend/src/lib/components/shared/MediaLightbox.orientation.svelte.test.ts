@@ -43,8 +43,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function open(slide: 'video-a' | 'video-b' | 'image', isOpen = true) {
-  const props = $state({ slide, open: isOpen });
+function open(
+  slide: 'video-a' | 'video-b' | 'image',
+  isOpen = true,
+  variant: 'lightbox' | 'conversation' = 'lightbox'
+) {
+  const props = $state({ slide, open: isOpen, variant });
   const instance = mount(Host, { target: document.body, props });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -103,5 +107,28 @@ describe('the lightbox requests rotation for a video only', () => {
     runtime.android = false;
     open('video-a');
     expect(rotateButton()).toBeNull();
+  });
+
+  describe('a chat or conversation video (variant conversation) turns too', () => {
+    it('requests auto and draws the rotate button', () => {
+      open('video-a', true, 'conversation');
+      expect(sent).toEqual(['auto']);
+      expect(rotateButton()).not.toBeNull();
+    });
+
+    it('releases on a photo and on close, and keeps one request video to video', () => {
+      const props = open('video-a', true, 'conversation');
+      props.slide = 'video-b';
+      flushSync();
+      expect(sent).toEqual(['auto']);
+      props.slide = 'image';
+      flushSync();
+      expect(sent).toEqual(['auto', 'portrait']);
+      props.slide = 'video-a';
+      flushSync();
+      props.open = false;
+      flushSync();
+      expect(sent).toEqual(['auto', 'portrait', 'auto', 'portrait']);
+    });
   });
 });

@@ -384,7 +384,7 @@
         onLevel={(v) => videoSound.setVolume(v)}
         data-live-sound
       />
-      {#if orientation.canRotate}
+      {#if orientation.canRotate && !terminal}
         <RotateButton onrotate={orientation.rotate} />
       {/if}
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->

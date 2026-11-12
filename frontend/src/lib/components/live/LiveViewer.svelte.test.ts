@@ -638,4 +638,19 @@ describe('LiveViewer', () => {
     delete (window as Window & { canariOrientation?: unknown }).canariOrientation;
     resetScreenOrientationForTest();
   });
+
+  it('draws the rotate button while playing and not on a final screen', async () => {
+    resetScreenOrientationForTest();
+    (window as Window & { canariOrientation?: unknown }).canariOrientation = { set: () => {} };
+    await render();
+    expect(document.querySelector('[data-rotate-button]')).not.toBeNull();
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    manifestErrors.push(refusal('ended', 410));
+    await render();
+    expect(stateOf()).toBe('ended');
+    expect(document.querySelector('[data-rotate-button]')).toBeNull();
+    delete (window as Window & { canariOrientation?: unknown }).canariOrientation;
+    resetScreenOrientationForTest();
+  });
 });

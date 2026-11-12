@@ -188,12 +188,12 @@
   // ---- Rotation: a VIDEO turns, a photo stays portrait (owner, 2026-11-09; screen-orientation.md) ----
   /** The hold on the orientation while a video is on show, or null. */
   let videoOrientation: OrientationRequest | null = null;
-  // `videoChrome.present` is "a video player is on screen": true when the item is a video, false once
+  // `videoChrome.hasVideo` is "a video player (any variant) is on screen": true when the item is a video, false once
   // it becomes a photo (its player leaves), and the effect's cleanup releases on that and on closing.
   // A DERIVED boolean, so a swipe from one video to the next (the old player leaves, the new one
   // reports, in one flush) keeps the SAME request instead of posting portrait and auto back to back
   // - on a phone held sideways that would snap the screen upright for a frame.
-  const videoShown = $derived(open && videoChrome.present);
+  const videoShown = $derived(open && videoChrome.hasVideo);
   $effect(() => {
     if (!videoShown) return;
     const held = requestOrientation('auto', 'lightbox-video');
@@ -805,7 +805,7 @@
     {/snippet}
 
     {#snippet headerActions()}
-      {#if videoChrome.present && orientationCanBeForced()}
+      {#if videoShown && orientationCanBeForced()}
         <!-- The header is already glass: the button draws no disc of its own. -->
         <RotateButton onrotate={rotateVideo} glass={false} />
       {/if}

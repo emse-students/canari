@@ -462,6 +462,11 @@
     viewerChrome?.report(chromeOwner, !controlsVisible);
   });
   $effect(() => () => viewerChrome?.leave(chromeOwner));
+  // Any variant counts as "a video is on show" for the viewer's rotation (not only the lightbox one).
+  $effect(() => {
+    viewerChrome?.enter();
+    return () => viewerChrome?.exit();
+  });
   // The reader reached for the header (a mouse over it, a focus on Back): the controls come up.
   $effect(() => {
     const raised = viewerChrome?.raised ?? 0;

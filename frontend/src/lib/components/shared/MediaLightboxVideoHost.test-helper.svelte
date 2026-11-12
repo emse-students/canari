@@ -6,7 +6,15 @@
   import MediaLightbox from './MediaLightbox.svelte';
   import VideoPlayer from './VideoPlayer.svelte';
 
-  let { slide, open = true }: { slide: 'video-a' | 'video-b' | 'image'; open?: boolean } = $props();
+  let {
+    slide,
+    open = true,
+    variant = 'lightbox',
+  }: {
+    slide: 'video-a' | 'video-b' | 'image';
+    open?: boolean;
+    variant?: 'lightbox' | 'conversation';
+  } = $props();
 </script>
 
 <MediaLightbox {open} onClose={() => {}}>
@@ -14,7 +22,7 @@
     {#if slide === 'image'}
       <img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
     {:else}
-      <VideoPlayer src={`blob:${slide}`} class="h-full w-full" />
+      <VideoPlayer src={`blob:${slide}`} {variant} class="h-full w-full" />
     {/if}
   {/key}
 </MediaLightbox>
