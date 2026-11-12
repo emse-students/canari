@@ -111,6 +111,7 @@
   import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
   import { loadCommunityNicknames } from '$lib/utils/chat/nicknameActions';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -1272,9 +1273,9 @@
    * runs, so a silent rejection would be a voice note the user watched themselves record and that
    * nothing ever received.
    */
-  function handleSendVoiceNote(file: File) {
+  function handleSendVoiceNote(file: File, loudness: MediaLoudness | null) {
     whenSessionUp('a voice note', () => {
-      void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
+      void messaging.sendVoiceNote(file, msgCtx(), loudness).catch((e: unknown) => {
         convs.sendError = m.chat_send_error_generic();
         log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
       });

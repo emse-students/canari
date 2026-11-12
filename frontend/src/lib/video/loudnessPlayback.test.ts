@@ -57,6 +57,7 @@ describe('loudnessGainDb - the law', () => {
 
 /** A `<video>` as the wiring sees it: its mute, pause and volume, and its events. */
 class FakeVideo extends EventTarget {
+  tagName = 'VIDEO';
   muted = true;
   paused = true;
   #volume = 1;
@@ -146,6 +147,8 @@ function setup(
     resumesTo?: AudioContextState | null;
     /** `resume()` never answers. */
     resumeHangs?: boolean;
+    /** The element is NOT registered with the playback arbiter. */
+    unarbitrated?: boolean;
   } = {}
 ) {
   const contexts: FakeContext[] = [];
@@ -161,11 +164,11 @@ function setup(
       return ctx as unknown as AudioContext;
     },
     isWebKit: () => options.webkit ?? false,
+    isArbitrated: () => !options.unarbitrated,
     onScreenChange: (fn) => {
       screen = fn;
       return () => (screen = null);
     },
-    onScreen: () => true,
   });
   const mount = (
     loudness?: { integratedLufs: number; samplePeakDbfs: number },
@@ -246,12 +249,72 @@ describe('LoudnessAudio - the wiring', () => {
     b.handle.destroy();
   });
 
-  it('suspends in the background even while a routed video plays', () => {
+  it('leaving the screen never suspends under a routed element still PLAYING (a note behind a web tab)', () => {
+    // On native the arbiter pauses it first, which lands as a `pause`; on web it plays on.
     const { contexts, mount, leaveScreen } = setup();
     const { video, handle } = mount(LOUD);
     video.unmuteAndPlay();
     leaveScreen();
+    expect(contexts[0].suspend).not.toHaveBeenCalled();
+    expect(contexts[0].state).toBe('running');
+    handle.destroy();
+  });
+
+  it('a gesture that resumed the context with NOTHING routed playing is suspended when the app leaves the screen', async () => {
+    // The reviewer's case: an unmute (or a play tap) primes for a measured neighbour, but no routed
+    // element ever plays - an unmeasured reel, a refused play(). Nothing else would suspend it.
+    const { contexts, mount, leaveScreen, audio } = setup({ initial: 'suspended' });
+    const { handle } = mount(LOUD);
+    audio.prime();
+    await Promise.resolve();
+    expect(contexts[0].state).toBe('running');
+    leaveScreen();
+    expect(contexts[0].suspend).toHaveBeenCalledOnce();
     expect(contexts[0].state).toBe('suspended');
+    handle.destroy();
+  });
+
+  it('a second tap that finds the waited resume still unanswered SAYS so', () => {
+    const { mount } = setup({ initial: 'suspended', resumeHangs: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { handle } = mount(LOUD);
+    const first = handle.prime();
+    expect(first).toBeInstanceOf(Promise);
+    expect(warn).not.toHaveBeenCalled();
+    expect(handle.prime()).toBe(first);
+    const said = warn.mock.calls.flat().map(String);
+    expect(said.some((l) => l.includes('still unanswered'))).toBe(true);
+    handle.destroy();
+    warn.mockRestore();
+  });
+
+  it('never routes an element the playback arbiter does not know, and says so', () => {
+    const { contexts, mount } = setup({ unarbitrated: true });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    video.unmuteAndPlay();
+    expect(contexts[0].sources).toHaveLength(0);
+    expect(String(error.mock.calls[0][0])).toContain('not registered with the playback arbiter');
+    // The fallback's attenuation still applies where the engine honours a volume.
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('a play tap on an ALREADY ROUTED element resumes its suspended context inside the tap', async () => {
+    const { contexts, mount } = setup();
+    const { video, handle } = mount(LOUD);
+    video.unmuteAndPlay();
+    video.pause();
+    expect(contexts[0].state).toBe('suspended');
+    const resumes = contexts[0].resume.mock.calls.length;
+    const primed = handle.prime();
+    // Called synchronously, inside the gesture - and settled once it answered.
+    expect(contexts[0].resume.mock.calls.length).toBe(resumes + 1);
+    await primed;
+    expect(contexts[0].state).toBe('running');
     handle.destroy();
   });
 
@@ -281,6 +344,49 @@ describe('LoudnessAudio - the wiring', () => {
     video.unmuteAndPlay();
     expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(6));
     handle.destroy();
+  });
+
+  it('a SUSPENDED context: the tap returns its resume to wait on, and the route is built at the gain', async () => {
+    const { contexts, mount } = setup({ initial: 'suspended' });
+    const { video, handle } = mount(LOUD);
+    // The context is made on the tap itself.
+    const primed = handle.prime();
+    expect(primed).toBeInstanceOf(Promise);
+    await primed;
+    expect(contexts[0].state).toBe('running');
+    video.unmuteAndPlay();
+    expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+  });
+
+  it('an INTERRUPTED context (a phone call on WebKit): nothing to wait on, the element plays on the volume fallback, said at warn', () => {
+    const { contexts, mount } = setup({
+      initial: 'interrupted' as AudioContextState,
+      resumeHangs: true,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    // Its resume() is still asked inside the tap - and never answers.
+    expect(handle.prime()).toBeNull();
+    expect(contexts[0].resume).toHaveBeenCalledTimes(1);
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    const said = warn.mock.calls.flat().map(String);
+    expect(said.some((l) => l.includes('FALLBACK') && l.includes('interrupted'))).toBe(true);
+    // It plays unrouted: no graph is ever built under it.
+    video.unmuteAndPlay();
+    expect(contexts[0].sources).toHaveLength(0);
+    handle.destroy();
+    warn.mockRestore();
+  });
+
+  it('a CLOSED context is not waited on either', () => {
+    const { mount } = setup({ initial: 'closed', resumesTo: null });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    expect(handle.prime()).toBeNull();
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+    warn.mockRestore();
   });
 
   it('a resume() that never answers leaves the video UNROUTED (audible) and is said', () => {
