@@ -123,8 +123,8 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 
 ## Annex A - every row of the backlog
+
 327 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
-324 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
