@@ -40,31 +40,39 @@ export const TAURI_WEBVIEW_ORIGINS = [
 ] as const;
 
 /**
- * Builds the exact-match origin allowlist: every Tauri WebView origin, plus the deployed
- * frontend(s) named in `FRONTEND_URL`.
+ * Builds the exact-match origin allowlist: every Tauri WebView origin, the deployed frontend(s)
+ * named in `FRONTEND_URL`, and the origins the estate lists in `ALLOW_ORIGIN` where it hands this
+ * service that list.
  *
- * `FRONTEND_URL` is a comma-separated list, the same idiom `chat-gateway`'s `ALLOW_ORIGIN` already
- * uses (`main.rs`, `parse_allowed_origins`) - kept in step deliberately, since both lists describe
- * the same fact: which web origins are really this app. A single URL with no comma still works,
- * so this is backward compatible with every existing deployment.
+ * THE LIST IS EXACT, AND NO ORIGIN IS ACCEPTED BY ITS SHAPE. A loopback origin (the Vite dev
+ * server, Tauri desktop dev) is one of this app's clients only on an estate that names it: the
+ * local and dev compose files pass `ALLOW_ORIGIN`, which spells the dev-server pair out;
+ * production passes none, so no loopback origin is accepted there.
+ *
+ * Both values are comma-separated lists, the idiom `chat-gateway` reads `ALLOW_ORIGIN` with
+ * (`main.rs`, `parse_allowed_origins`): both describe the same fact, which web origins are really
+ * this app. A single URL with no comma still works.
  *
  * @param frontendUrl - Value of `FRONTEND_URL`; each segment's trailing slash is stripped, blank
  * segments (including an unset variable) are dropped.
+ * @param estateOrigins - Value of `ALLOW_ORIGIN`, read the same way. A `*` segment is no origin a
+ * browser sends, so it matches nothing: a wildcard is never a list.
  */
-export function buildAllowedOrigins(frontendUrl: string | undefined): Set<string> {
+export function buildAllowedOrigins(
+  frontendUrl: string | undefined,
+  estateOrigins?: string
+): Set<string> {
   const allowed = new Set<string>(TAURI_WEBVIEW_ORIGINS);
-  for (const part of (frontendUrl ?? '').split(',')) {
+  for (const part of `${frontendUrl ?? ''},${estateOrigins ?? ''}`.split(',')) {
     const origin = part.trim().replace(/\/+$/, '');
     if (origin) allowed.add(origin);
   }
   return allowed;
 }
 
-/** Loopback origins on any port: Vite dev server, Tauri desktop dev, local tooling. */
-const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-
 /**
- * Decides whether `origin` may read a credentialed response from this service.
+ * Decides whether `origin` may read a credentialed response from this service: it must be one of
+ * `allowed`, compared as the browser serialises it.
  *
  * @param origin - The request's `Origin` header. `undefined` means there is none.
  * @param allowed - Exact-match allowlist from {@link buildAllowedOrigins}.
@@ -73,8 +81,7 @@ export function isAllowedOrigin(origin: string | undefined, allowed: Set<string>
   // No Origin at all is not a browser asking on someone's behalf: server-to-server, curl, health
   // checks. There is no cross-origin read to protect against, so there is nothing to refuse.
   if (!origin) return true;
-  if (allowed.has(origin)) return true;
-  return LOOPBACK_ORIGIN.test(origin);
+  return allowed.has(origin);
 }
 
 const logger = new Logger('Cors');
@@ -152,7 +159,7 @@ export function corsOriginDelegate(
         `CORS DENIED origin "${origin}" - no Access-Control-Allow-Origin was sent, so a browser ` +
           `client sees a bare network failure (WebKit: "Load failed") and a preflight answers 404. ` +
           `If this is a Canari client, its origin belongs in TAURI_WEBVIEW_ORIGINS in all four ` +
-          `services. Allowed here: ${[...allowed].join(', ')} plus http(s) loopback on any port.`
+          `services, or in this estate's own list. Allowed here: ${[...allowed].join(', ')}.`
       );
     }
     callback(null, false);

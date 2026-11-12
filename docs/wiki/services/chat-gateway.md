@@ -713,16 +713,23 @@ Enumerated in `infrastructure/.env.example`, written by `serve-prod.yml`, and pi
 |---|---|
 | `https://canari-emse.fr` | the deployed site (`FRONTEND_URL`) |
 | `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
-| `http://localhost:1420` | Vite dev server / Tauri desktop dev |
-| `http://127.0.0.1:1420` | the same, spelt as `tauri.conf.json`'s `devUrl` actually spells it |
 | `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
 | `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
 
 The Tauri app calls this gateway **cross-origin** (its page is served from `tauri://localhost`, the
 API from `https://canari-emse.fr`), so dropping a spelling costs that platform `/api/presence` with
-no server-side error to show for it. This list is exact-match where the Nest services accept any
-loopback port, which is why both `localhost` and `127.0.0.1` are spelt out. Keep it in step with
-`TAURI_WEBVIEW_ORIGINS` in `apps/*/src/cors-origins.ts`.
+no server-side error to show for it. Keep it in step with `TAURI_WEBVIEW_ORIGINS` in
+`apps/*/src/cors-origins.ts`.
+
+**The CORS allowlist is exact, here and in the four Nest services; no loopback origin in
+production.** The Vite dev server (`http://localhost:1420`, and `http://127.0.0.1:1420` as
+`tauri.conf.json`'s `devUrl` spells it) is a client of the dev and local estates only, so only
+their lists name it: `compute_allow_origin` in `infrastructure/deploy/render-env.sh` writes the
+pair for dev and not for production, and the local compose file spells it out. The Nest services
+accept an origin on one ground, that a list names it: `FRONTEND_URL`, the three WebView
+spellings, and this same `ALLOW_ORIGIN` on the estates whose compose file hands it to them (dev
+and local; production's does not). Pinned by `deploy-env.test.sh` (both rendered lists), the
+preflight tests in `main.rs` and `cors-origins.spec.ts`.
 
 ### Verifying it, and why the deploy's colour is not the proof
 

@@ -91,7 +91,7 @@ services:
       # server and the Tauri WebViews. A phone's chat socket is opened by the native plugin and
       # names no origin, so it needs no entry; a desktop browser loading the page from a LAN address
       # does, through CANARI_LOCAL_ALLOW_ORIGIN.
-      ALLOW_ORIGIN: "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
+      ALLOW_ORIGIN: &local-origins "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
     depends_on:
       redis:
         condition: service_healthy
@@ -108,7 +108,7 @@ services:
       PORT: "3004"
       # The origins a socket upgrade may name: the nginx entry, the Vite dev server and the Tauri
       # WebViews. A page served from anywhere else is named through CANARI_LOCAL_ALLOW_ORIGIN.
-      ALLOW_ORIGIN: "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
+      ALLOW_ORIGIN: *local-origins
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
@@ -146,6 +146,9 @@ services:
       ALLOW_INSECURE_COOKIES: "true"
       # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -255,6 +258,9 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
@@ -325,6 +331,9 @@ services:
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
@@ -399,6 +408,9 @@ services:
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
