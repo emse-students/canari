@@ -143,8 +143,10 @@ refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named
 
 ## What the 2026-08-17 gate actually retired, and what it did not
 
-`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is hard - `ensurePlatformAllowsUnlock`
-blocks the MLS unlock outright, so a client below it cannot put a group frame on the wire at all.
+`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is enforced IN THE CLIENT ONLY:
+`isBelowMinClientVersion` and `shouldBlockSessionUnlock` (`stores/appVersionCheck.svelte.ts`) block
+the login and the MLS unlock of a build that carries them. The server refuses no old client, so the
+gate says what a build that obeys it can do, never what reaches the server.
 
 It was assumed at the time that this retired most of this page. **Measured, it retired exactly one
 entry**, and the distinction is worth keeping because it is the one this page was getting wrong:

@@ -147,10 +147,15 @@ describe('a history ask is read only with its request id (D211)', () => {
     });
   });
 
-  it('an id shaped like nothing this build mints counts as none', async () => {
+  it.each([
+    ['shaped like nothing this build mints', 'x y'],
+    ['empty', ''],
+    ['not a string', 12345678],
+  ])('an id %s counts as none', async (_what, requestId) => {
     const ctx = makeCtx();
-    await handleSystemEvent('history_range', { ...RANGE, requestId: 'x y' }, ctx as any);
+    await handleSystemEvent('history_range', { ...RANGE, requestId }, ctx as any);
 
     expect(refusedLine(ctx, 'HISTORY_RANGE')).toHaveLength(1);
+    await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
   });
 });
