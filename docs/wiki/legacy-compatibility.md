@@ -1339,6 +1339,21 @@ an old client and a device that unpinned on a new one converge on unpinned even 
 second. The user can always pin again; the reverse - a resurrected pin nobody can explain - is the
 outcome the dating exists to prevent.
 
+### 2027-02-12 - the pin register stored under the conversation alone (`canari_pins_<conversation>`)
+
+**Site:** `takeLegacyRegister` and `legacyKey` in `pinStore.svelte.ts`.
+**Shim:** until 2026-11-12 the register was stored under the conversation id alone, so every account
+of an install shared it and the account deletion's sweep never named it. When the signed-in account
+reads a conversation it holds no register for, the legacy copy is moved to it
+(`ACCOUNT_KEY.conversationPins`) and the legacy key removed, with one `[PINS] legacy register ...
+moved` line. Whichever account reads the conversation first takes it: it was already that
+account's register, shared.
+**Replacement:** the per-account key, swept by the deletion with every other per-account key.
+**On removal:** replace the move by a one-shot removal of every `canari_pins_*` key left (a
+conversation nobody opened in three months), then delete both functions. Three months from the
+change, so that a device opened even rarely has moved what it holds.
+**Cost of keeping it:** one `getItem` on the first read of a conversation that has no register yet.
+
 ### 2026-11-15 - `read_receipt` naming message ids
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `read_receipt`
