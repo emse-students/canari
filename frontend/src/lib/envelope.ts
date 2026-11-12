@@ -554,7 +554,10 @@ export function mkCallStartedEnvelope(
   };
 }
 
-/** Reads a stored `startClocks`, or `null` when the row carries none (a row of an older build). */
+/**
+ * Reads a stored `startClocks`, or `null` when the row carries none - a build before `1.6.2` wrote such
+ * a row, and the duration that would read it accuses it (`callDurationMs`).
+ */
 function readStartClocks(v: unknown): { startClocks: { server?: number; local: number } } | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;
