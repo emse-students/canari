@@ -2869,10 +2869,17 @@ are builder stages and the local compose file, which reach no estate.
 
 **2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
 
-**Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
-(no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
-Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
-estate, so it is a backlog item ([backlog](backlog.md#p3---the-eight-service-images-run-as-root-trivy-ds-0002-measured-2026-10-23)), not a gate that would be red from day one.
+**Trivy's Dockerfile misconfiguration scan is not run; its two findings are asserted instead.**
+Measured the same day, it found `DS-0002` (no non-root `USER`) in all eight Dockerfiles and `DS-0029`
+(`--no-install-recommends`) in the two Rust ones. **Measured per image on 2026-11-11:** six images
+mount no volume in either deployed compose file, write nothing to disk and listen above 1024, so
+root bought them nothing - the four Bun services run as the image's `bun` user, the SSR server as
+`node`, the two Rust binaries as `nobody` (65534), and the Rust stages install with
+`--no-install-recommends` (plus `make`, which cmake only recommends). `image-user.test.mjs`
+(`make test-ci-scripts`) fails a final stage left as root, a compose `user: root`, and an `apt-get
+install` with recommends. Two images stay root BY NAME in its allowlist, each with its reason, and
+the entry fails once its image gains a `USER`: the nginx frontend (port 80) and media-service
+(root-owned volumes) - [backlog](backlog.d/p3-two-service-images-still-run-as-root.md).
 
 ### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 

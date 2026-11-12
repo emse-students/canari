@@ -2761,7 +2761,7 @@ Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stabl
 
 ### Documented - the user's decisions on the open pull requests of 2026-10-23
 
-Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---the-night-of-the-open-pull-requests).
+Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Fixed - a declined joiner no longer gets the conversation back as a removed one
 
@@ -3510,7 +3510,7 @@ WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
 
 ### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
 
-A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md).
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22).
 
 ### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
 
@@ -3594,7 +3594,7 @@ The two encryption systems side by side, with the 2026-08-17 sizing premises re-
 
 ### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
 
-Recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-22-what-outlives-the-48-hour-autonomy-w.md).
+Recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Changed - the double tap that likes now logs what reached the card
 
