@@ -30,6 +30,18 @@ import { reserveOutboundSlot } from './sessionManager';
 import { endorseNewSession } from './endorseSession';
 import { mirrorGraineSeed } from './graineMirror';
 import { fromBase64 } from '$lib/utils/hex';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import {
+  openHandedOver,
+  promotionReloadOwed,
+  sealForHandover,
+} from '$lib/mls-client/frameFromAnyTab';
+import { SalonNotLoadableError, whenSalonSendable } from './salonSendGate';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+  type DelegationRefusal,
+} from '$lib/utils/chat/tabCommitDelegation';
 
 /**
  * Sealing and opening ONE channel message under a Graine session.
@@ -218,6 +230,20 @@ export async function sealChannelMessage(
   payload: Uint8Array
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
+  // A FOLLOWER TAB SEALS NOTHING ITSELF (2026-11-11): reserving an index writes the shared Graine
+  // store, a rotation mints and DISTRIBUTES a seed with an MLS frame from its forked copy, and the
+  // frame bumps the shared send ledger. The leader seals on its own session and hands the sealed
+  // message back; this tab posts it as it would its own.
+  if (refusesCommitsHere()) {
+    // Promoted in place, its reload owed: this tab may not seal and nobody else would - refused, typed.
+    if (promotionReloadOwed(`the seal of a message for channel ${channel.slice(0, 8)}`)) {
+      throw new GraineSealUnavailableError(
+        `[GRAINE] cannot seal for channel ${channel.slice(0, 8)}: this tab reloads as the leader`,
+        'tab-reloading'
+      );
+    }
+    return sealOnLeaderTab(channel, payload);
+  }
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
   );
@@ -577,3 +603,112 @@ async function finishChannelMessage(
   }
   return bytes;
 }
+
+/**
+ * A follower's salon message the leader tab did not seal, for the typed reason it gave, and the member
+ * reads the sentence of that reason (`sealUnavailableMessage`).
+ *
+ * NOT ALWAYS "nothing happened": with `leader-gone` the leader died WHILE sealing, after which it may
+ * already have minted and distributed a new seed (the seal itself is in nothing that left: the
+ * sealed message was never handed back, so no row was posted). A retry is safe - the message keeps
+ * its `messageId`, and the server deduplicates a row posted twice under it; a seed minted for nothing
+ * is a rotation, never a loss. Every other refusal ran nothing.
+ */
+export class GraineSealHandoverRefusedError extends GraineSealUnavailableError {
+  constructor(
+    readonly channelId: string,
+    readonly refusal: DelegationRefusal
+  ) {
+    super(
+      `[GRAINE] the leader tab did not seal for channel ${channelId.slice(0, 8)} (${refusal})`,
+      refusal === 'leader-gone'
+        ? 'main-tab-gone'
+        : refusal === 'leader-unavailable'
+          ? 'main-tab-unavailable'
+          : refusal === 'not-delegable'
+            ? 'main-tab-not-delegable'
+            : 'main-tab-failed'
+    );
+    this.name = 'GraineSealHandoverRefusedError';
+  }
+}
+
+/** The follower half of {@link sealChannelMessage}: the leader seals, this tab posts. */
+async function sealOnLeaderTab(
+  channel: string,
+  payload: Uint8Array
+): Promise<SealedChannelMessage> {
+  const answer = await delegateCommitToLeader({
+    kind: 'seal-salon-message',
+    channelId: channel,
+    payload: await sealForHandover(payload),
+  });
+  if (answer.status === 'refused') {
+    console.warn(
+      `[SEND] seal of a message for channel ${channel.slice(0, 8)} handed to the leader tab ended ${answer.reason}`
+    );
+    throw new GraineSealHandoverRefusedError(channel, answer.reason);
+  }
+  if ('gate' in answer.value) {
+    // The leader's OWN salon gate refused (it waited on it exactly as a single tab does): the salon
+    // will not load there without something new happening. Nothing was sealed.
+    console.warn(
+      `[SEND] channel ${channel.slice(0, 8)} cannot be loaded in the leader tab (reason=${answer.value.gate}) - nothing sealed`
+    );
+    throw new SalonNotLoadableError(answer.value.gate);
+  }
+  if ('unopened' in answer.value) {
+    console.warn(
+      `[SEND] the leader tab could not open this tab's message for channel ${channel.slice(0, 8)}: the device key changed - nothing sealed`
+    );
+    throw new GraineSealUnavailableError(
+      `[GRAINE] the leader tab could not open the message for channel ${channel.slice(0, 8)} (device key changed)`,
+      'main-tab-key-changed'
+    );
+  }
+  if ('unavailable' in answer.value) {
+    // The leader's own refusal, said by it where it was decided; carried here as the same type.
+    throw new GraineSealUnavailableError(
+      `[GRAINE] the leader tab cannot seal for channel ${channel.slice(0, 8)} (${answer.value.unavailable})`,
+      answer.value.unavailable
+    );
+  }
+  console.debug(`[SEND] message for channel ${channel.slice(0, 8)} sealed by the leader tab`);
+  return answer.value.sealed;
+}
+
+/** The leader half: seals a follower's salon message on this tab's own Graine session. */
+export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-message'> = {
+  'seal-salon-message': async (op) => {
+    const payload = await openHandedOver(op.payload);
+    if (!payload) {
+      console.warn(
+        `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} does not open under this device key (changed since it was sealed) - not sealed`
+      );
+      return { unopened: 'device-key-changed' };
+    }
+    // THE LEADER'S OWN SEND GATE, exactly as a single tab waits on it (`deliverSalonSend`): a main
+    // tab just reloaded has not listed its salons yet, and sealing then would refuse a message a
+    // single tab would have held. The follower's record stays pending meanwhile; only the gate's
+    // `refused` is an answer.
+    const gate = await whenSalonSendable(op.channelId);
+    if (gate.kind === 'refused') {
+      console.warn(
+        `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} not sealed: this tab's salon gate refused (reason=${gate.reason})`
+      );
+      return { gate: gate.reason };
+    }
+    try {
+      const sealed = await sealChannelMessage(op.channelId, payload);
+      console.debug(
+        `[SEND] message for channel ${op.channelId.slice(0, 8)} sealed for a follower tab`
+      );
+      return { sealed };
+    } catch (e) {
+      // A seal this tab cannot make is an ANSWER (typed, already said where it was decided), never
+      // the request's `failed`.
+      if (e instanceof GraineSealUnavailableError) return { unavailable: e.reason };
+      throw e;
+    }
+  },
+};

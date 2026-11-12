@@ -89,7 +89,7 @@ export async function answerHistoryDigest(params: {
   /** The window the asker drew. Never recomputed here: two devices deriving it disagree. */
   since: number;
   /** The asker's id for its digest, echoed on the bundle so it can be accepted addressed. */
-  requestId?: string;
+  requestId: string;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
   const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, deps } = params;

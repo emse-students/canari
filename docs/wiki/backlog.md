@@ -92,6 +92,8 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+**Plan (batch 13, 2026-11-11) - four separate pieces, none a one-line fix.** (a) The past-epoch WARN (`mls-core/src/messaging.rs`): log at INFO, once, when the frame's epoch is below the epoch this member joined at - needs that join epoch kept in the group state, so native and WASM work with its Rust tests. (b) The unverified restored notices belong to the Graine v2 authorship item (P2) and the device-local rows entry; nothing to do here beyond those. (c) The two flaky tests (`ChatArea.entryWindow.svelte.test.ts`, `outbox.reelResume.test.ts`, both still present): reproduce in the full parallel run and find the shared state - small once reproduced. (d) The rig allowlist of its own probe lines: one harness PR. (c) and (d) can be done in the queue; (a) needs an agent.
+
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
 **BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
@@ -298,19 +300,13 @@ would refuse.
 
 **The read-only count is written (batch 14, 2026-11-12):** `tools/read-only-sql/membership-tier-key-duplicates.sql` lists every (association, tier key) held by more than one membership product, base tier included, and the total the index would refuse. Not run here: the lead runs it on dev, then on production with the owner. The migration is drafted only once the count is known (0: as proposed; otherwise the duplicates are settled first).
 
-## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
-
-Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
-2026-10-25 also one session row. The session read is the point; the config read is the same answer
-for every request. A per-process read deduplicated across concurrent requests (one in flight, not a
-TTL cache) would remove the config's queries (`ensureDefaults` plus the row read) from most requests. Not done in the liveness change, to keep it to one
-fact. Owed: measure the verifier's query rate on production first.
-
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 
 The settlement of an unresolved commit classifies a refusal from its body once, and treats it as
 final even when the reason is a state that can change later (a seat, a block). Owed: name which
 refusal reasons are definitive, and re-plan rather than settle on the others, with a test per reason.
+
+**Plan (batch 13, 2026-11-11).** `resubmissionVerdict` (`mls-client/commitSubmission.ts`) answers `refused` for every reason but `concurrent_commit`. The gate's reasons (`messaging.service.ts`) split into the commit's own bytes (`epoch_mismatch`, `committer_not_on_roster`, `revoked`, `unresolved_identity`) and states that can change (`admit_refused`, `awaiting_admission`, `no_key_package`, `departed`, `welcome_target_not_member`). Build: a typed set of the second kind, and on those the settle clears the stage AND re-plans the invitation (the lost-invitation re-plan) instead of settling it as done; a test per reason. MLS settlement code: an agent of its own, with an adversarial review.
 
 ## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
 
@@ -340,6 +336,8 @@ FIELDS are not: a rename or a `viewerCanWrite` change (`channel.updated`), a rol
 overwritten by the listing's older row (`upsertChannelRow`, `upsertWorkspaceFromDto`) until the next
 listing. Owed: whether it is seen at all (a demoted admin keeping controls for one listing is the
 case that matters), then the same ledger keyed per field if it is.
+
+**Plan (batch 13, 2026-11-11).** The existence ledger of #2509 dates a whole row; FIELDS need the same ledger keyed per (row, field): `channel.updated` (name, `viewerCanWrite`), `workspace.role.changed`, `workspace.updated` each record the field and the instant heard, and `upsertChannelRow` / `upsertWorkspaceFromDto` skip a field heard after the listing was asked. Medium, client only, testable with the existing listing-race tests; the role change (a demoted admin keeping controls) is the case that matters. Can be done in the queue without an agent.
 
 ## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 
@@ -376,6 +374,8 @@ and taken as a redelivery). `getDeviceMemberships` carries `admittedAtEpoch` (it
 typed on `DeviceMembershipRow` since the review of #2466 and named in the recovery's
 `unhonoured-seat` line, so a reading of the log tells an admitted seat from a stranded one. It is not
 read as owed: a seat whose adder died would then wait for ever, and the join over it is safe.
+
+**Plan (batch 13, 2026-11-11) - not a small fix, an audit plus one rig row.** (1) Read every adder path (`groupCreation.ts`, `actions.ts`, the Android background answer) for a release of the add lock before its settlement; any found is a fix of its own. (2) One rig row: an Add accepted with its answer dropped, the lock expired, the joiner in by its own external commit, then the adder's late Welcome - expected refused as a spent KeyPackage and read as a redelivery, one leaf for the key. MLS work: an agent of its own if you want it run.
 
 ## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
 
@@ -560,17 +560,6 @@ in step with the owner devices minted before. This was read from relay counts by
 row. The same "device-local" property closes both.
 
 Re-read 2026-11-11 (batch 12): still real - no "device-local" property exists on a row; the outbox, eviction and contact lines still use the `system` sender. Re-read again 2026-12-11.
-
-## A revoked device whose refresh cannot name its revocation
-
-A design limit of the refusal record of [sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25),
-not a defect: the record answers only for a session the revocation itself ended and that is still
-inside its credential's life. Three cases fall outside it and leave through the plain sign-out,
-which keeps the local stores until the next sign-in: a device that stays away longer than its
-refresh credential lives, a session bound to no device id, and a session the revocation could not
-end (the delete answered `503`). What covers all three is the device check on the next sign-in, which
-asks with a fresh session and resets the device there. Owed: one rig row reading that next-sign-in
-reset, so the cover is observed rather than read from code.
 
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 
@@ -1357,6 +1346,8 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
 | iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
+| the pre-038 link seats the group panel would list as members (found 2026-10-25; the group panel reads `user-members` and drops only `awaitingAdmission` seats) | ONE read-only production count: roster rows with no active or admitted device of that user in that group. 0 closes it; otherwise a backfill migration (additive, reviewed, backed up just before, owner's rule of 2026-11-01) |
+| a revoked device whose refresh cannot name its revocation leaves by the plain sign-out, and the next sign-in's device check resets it ([sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) | one rig row: a device revoked while away past its refresh credential's life signs in again and is reset at that sign-in |
 | a mention names its author from the phone's copy of names, and the push sentences come from Rust in the app language (WP-MENTION-NAME #2047, WP-PUSH-I18N #2037; [mobile](frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)) | one mention push on each phone (app killed) with a known and an unknown author: the name, or "someone"; on the Mi 9T, whether the COLLAPSED shade shows only the author line. Dev cannot send a push without its Firebase service account, so read on a store tester build |
 | the iOS app no longer aborts when its accessibility tree is read (#2101, `v1.3.0`; the WDA query PASSED on `1.3.1-alpha.1`, [device-readings](device-readings-2026-10.md)) | the two syslog lines on the iPhone 12: `[CanariPush] APNs token received` after `registerForRemoteNotifications`, and the becoming-active line naming `the kept-alive one` |
 | a call survives the app leaving the screen: the Android microphone foreground service (WP-C-BG-A, #2162) and the iPhone's `audio` background mode (WP-C-BG-I, #2164), both in `v1.3.1` ([calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence), rows B8 and B9) | the twelve Mi 9T readings of [WP-C-BG-A](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) and CALL-L1 row 12 on the iPhone 12 |
@@ -1404,6 +1395,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **raise `minClientVersion` (production and dev) each time both stores serve the latest update** - the one floor rule (owner, 2026-10-24); every item that waits on a floor waits on this gesture, the hardened v2 reader's writer flip (#2074) and a re-admitted member's window included | 1 setting per release | [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) |
 | **the DSI's go after it extends the shared host's root disk** - until then no new container is started there (2026-10-24) | blocked upstream | [host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24) |
 | **look at the A0 export of the Carte de la Vie Asso** once the lead has taken it (D11), and say whether the text sizes hold at print | 1 look | [the A0 row](#owed-a-verification-and-nothing-else), [carte-vie-asso](carte-vie-asso.md) |
+| **delete MiConnect's unused "Local Docker connection"** (System > Outpost integrations, as an administrator; decided by the owner 2026-10-31) - its monitor fails every two minutes since the Docker socket left the worker | 1 click | [backlog.d](backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md) |
 
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
@@ -2148,16 +2140,3 @@ with neither a fixed `amountCents`, nor a free amount, nor a priced grid. Owed: 
 and at update, typed, with the editor's sentence, and a test
 ([payments](frontend/modules/payments.md)).
 
-## P3 - legacy link seats written before migration 038 would now be listed by the group panel (found 2026-10-25)
-
-The group panel reads the user-level roster (`user-members`) and drops only seats flagged
-`awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
-`false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
-read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
-on production. If it is 0, delete this section; otherwise a backfill migration (additive, reviewed, backed up just before, per the owner's rule of 2026-11-01).
-
-- **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
-
-- **P2 - two shop/form facts from the owner's review of `1.5.1-alpha.7` (found 2026-10-29), not fixed**: (a) the base tier every association gets when it enables cotisations is created UNPRICED (`amountCents` null), so `tier-pricing.ts` cannot rank it (`hasFixedPrice`) and a holder of it is refused EVERY rise as `unranked` - a tier whose preferential price is linked to the base tier (dev's "Etudiant", 5 EUR for holders of "Cotisation") is therefore never sold at that price to the people it names. The shop now hides the unpriced tier itself (#2546, [cotisations](cotisations.md)); whether an unpriced base tier ranks lowest, or must be priced before a sibling may link to it, is the owner's call. (b) `FormItemDto.type` is any non-empty string and `basePrice` any number >= 0: a form written straight to the API with an item type `text` (the editor writes `short_text`) and a `basePrice` of `10` meaning euros (the wire unit is CENTS, the editor multiplies by 100) is stored as is, and the fill page then reads "Type de question non pris en charge : text" and "Payer 0,10 EUR" - the rendering is right, the row is wrong. Owed: an allowlist of item types and `@IsInt()` on `basePrice` at the DTO, with a spec each.
-
-- **P3 - the shop's amount keypad takes no physical keyboard (found 2026-10-29, #2546 review)**: `AmountPicker.svelte`'s "Autre montant" keypad is driven by its on-screen keys only, so a desktop user cannot type digits, a decimal separator or Backspace. Not cheap to do right: a window-level `keydown` would feed EVERY open picker on a page (the association page and a membership card can each hold one), so it needs the keypad to take focus (a focusable group with its own `onkeydown` mapping to the existing `applyAmountKey`) and a test that two open pickers do not both receive a key.

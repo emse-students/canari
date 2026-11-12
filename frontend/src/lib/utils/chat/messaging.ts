@@ -44,6 +44,7 @@ import {
   currentSalonSession,
   isCurrentSalonSession,
   readSalonSendGate,
+  SalonNotLoadableError,
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
@@ -402,6 +403,16 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // 2026-09-15, see docs/wiki/backlog.md.
     // A SEAL THIS DEVICE COULD NOT MAKE IS NAMED BY ITS TYPED REASON: nothing left the device,
     // there is no status, and the generic line below hid which of six facts was missing.
+    // THE LEADER TAB'S OWN GATE REFUSED a follower's seal (`channelSeal.ts`): the same answer as
+    // this tab's gate refusing above - nothing was sealed, the row is `error`, its Retry is safe.
+    if (error instanceof SalonNotLoadableError) {
+      endServerHold(messageId);
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded in the leader tab (reason=${error.reason})`
+      );
+      deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+      return salonGateRefusalMessage(error.reason);
+    }
     if (error instanceof GraineSealUnavailableError) {
       endServerHold(messageId);
       deps.log(
