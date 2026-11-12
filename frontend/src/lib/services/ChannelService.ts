@@ -2,6 +2,12 @@ import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import type { DistributionScope } from '$lib/mls-client/distributionScope';
 import type { DistributionSeat } from '$lib/mls-client/IMlsService';
 
+/**
+ * Longest community name the server stores (`MAX_COMMUNITY_NAME_LENGTH`,
+ * `apps/social-service/src/channels/display-name.ts`) - the creation form's `maxlength`.
+ */
+export const COMMUNITY_NAME_MAX_LENGTH = 80;
+
 export interface CreateWorkspaceDto {
   slug: string;
   name: string;
