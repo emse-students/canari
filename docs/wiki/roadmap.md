@@ -132,10 +132,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 | 2026-11-12 | D062 half-built: `/history/batch` reads every group's arrival facts once (one `IN`, one `GROUP BY`); the planned window drop by the cursor REFUSED, since a row's `receivedAt` is not in stream order; the entry stays open (P3) for the cursor scan. |
 | 2026-11-12 | D211 CLOSED: a history ask with no `requestId` is refused where it is parsed (every build since step A, `v1.5.0`, mints one; both floors read `1.6.6`), every answer names its ask by type, the dead no-id refusal in `sendBundleChunks` deleted; the shim section goes from legacy-compatibility, the broadcast-branch note moves to history-answer-addressing. |
+| 2026-11-12 | Backlog triage, batch 23 (the entries of 2026-11-06): D067 and D073 moved to the verification table as B405 and B406 (rows R2, R3a, R3b on the iPhone 12), device-verification now linking the mechanism; D054 re-read - #3058 first ships in `v1.6.6` without the phone readings the entry said gate it, and the CI row needs the rig to take a committed source; D059 briefed (the app's own undo stack for toolbar actions); D053 and D055 unchanged. |
 
 ## Annex A - every row of the backlog
 
-314 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+316 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -453,10 +454,12 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B395 | SALON-REVOKE-COMMIT and the RM rows rerun: no redelivered Welcome, every external-join attempt logged | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B400 | delete MiConnect's unused Docker service connection (one admin click) | P3 | infra-hosts | open | user one-off | `docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks` |
+| B405 | push_context.json follows an account switch through a foreground kill: row R2 on the iPhone 12 | P3 | ios-native | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B406 | the NSE's uptime boot proof: rows R3a and R3b on the iPhone 12 | P3 | ios-native | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-242 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+240 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -511,12 +514,10 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D064 | `docs/wiki/backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md` | Identity provider's unused Docker service connection fails its monitor every few minutes | P3 | infra-hosts | blocked | 2026-10-31 | user decision (one click owed: delete the object) |
 | D065 | `docs/wiki/backlog.d/p3-new-device-alerts-queue-one-at-a-time-never-forget-a-device-that-ha.md` | A new-device alert outlives the device it announces: drop it on the device list's answer (plan written) | P3 | mls-messaging | open | 2026-10-28 | none |
 | D066 | `docs/wiki/backlog.d/p3-overlays-stack-by-open-order.md` | Overlays stack by open order: one registered overlay stack instead of fixed rungs | P3 | other | designed | none | none |
-| D067 | `docs/wiki/backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md` | push_context.json follows every edit into the App Group: built, one iPhone reading (R2) owed | P3 | ios-native | built-readings-owed | 2026-11-06; 1.6.6-alpha.2 | hardware reading (iPhone 12) |
 | D068 | `docs/wiki/backlog.d/p3-social-unit-run-ends-with-a-worker-that-fails-to-exit.md` | Social unit test run ends with "A worker process has failed to exit gracefully" | P3 | tests-tooling | open | 2026-11-01 | none |
 | D069 | `docs/wiki/backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md` | SvelteKit 3: what the audit of #2613 left open (version check on resume, payment-return goto, others) | P3 | other | open | 2026-10-28; #2613; #2656 | a named PR (upstream kit fix for item 8) |
 | D070 | `docs/wiki/backlog.d/p3-sweeper-settled-tier-that-re-ranks-has-no-integration-case.md` | No integration case for a sweeper-settled tier that re-ranks to paid_not_granted | P3 | tests-tooling | open | 2026-11-01 | none |
 | D072 | `docs/wiki/backlog.d/p3-the-device-notices-trust-the-server-s-word-on-a-key-s-age.md` | Device notices trust the server's word on a key's age (review of #2791) | P3 | security-privacy | open | 2026-10-31; #2791 | none |
-| D073 | `docs/wiki/backlog.d/p3-the-nse-cannot-read-its-boot-session.md` | NSE boot proof replaced by continuous uptime: one iPhone reading owed (R3a, R3b) | P3 | ios-native | built-readings-owed | 2026-11-06; 1.6.5-alpha.2 | hardware reading (iPhone 12) |
 | D074 | `docs/wiki/backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md` | The SFU runs six webrtc majors it has never placed a call on: audio through it runs in CI (#2878), video is left | P3 | calls | open | 2026-08-27; 2026-11-01; 2026-11-11 | none (becomes P1 the day the School opens UDP to the SFU) |
 | D076 | `docs/wiki/backlog.d/p3-toolbar-refuses-to-unbold-the-last-word-of-a-bold-ending-in-an-italic.md` | Toolbar refuses to un-bold the last word of a bold that ends in an italic | P3 | reels-composer | open | none | none |
 | D078 | `docs/wiki/backlog.d/p3-unlabelled-seeds-outlive-an-account-on-a-shared-install.md` | Seeds mirrored before the writer label outlive a wiped account on a shared install | P3 | security-privacy | built-readings-owed | 2026-11-07 | hardware reading (seed mirror, check owed) |
