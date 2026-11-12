@@ -196,7 +196,7 @@ case "$(cat "$FAKE_LOG")" in
   *) fail "the request was not what crates.io needs: $(cat "$FAKE_LOG")" ;;
 esac
 
-for crate in tauri-plugin-websocket wry; do
+for crate in tauri-plugin-websocket wry tauri-plugin-system-components; do
   REAL_VER="$(awk '/^\[/{p=($0=="[package]");next} p&&/^version/{gsub(/^version *= *"|".*$/,"");print;exit}' \
     "$REAL_ROOT/frontend/src-tauri/patches/$crate/Cargo.toml")"
   WATCH="$crate" run "$REAL_ROOT" 200 "$(crate_json "$REAL_VER" "$REAL_VER")"
@@ -206,7 +206,7 @@ done
 # The script's OWN allowlist against the real tree: every fork on it is asked about. One body cannot
 # match two versions, so only WHO was asked is asserted here; the verdicts are asserted above.
 WATCH='' run "$REAL_ROOT" 200 "$(crate_json 0.0.1 0.0.1)"
-for crate in tauri-plugin-websocket wry; do
+for crate in tauri-plugin-websocket wry tauri-plugin-system-components; do
   if grep -q "/$crate\$" "$FAKE_LOG"; then
     pass "the script's own allowlist watches $crate"
   else
