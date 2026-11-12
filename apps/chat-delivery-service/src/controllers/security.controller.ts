@@ -71,6 +71,10 @@ const PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
 const PREVIEW_FAILURE_TTL_MS = 10 * 60 * 1000;
 const IMAGE_TTL_MS = 6 * 60 * 60 * 1000;
 
+/** How many redirects a page fetch follows, and an image fetch (a CDN chains two or three). */
+const PAGE_MAX_REDIRECTS = 3;
+const IMAGE_MAX_REDIRECTS = 5;
+
 /** Hard ceiling on what an image proxy will download, and on what it will retain. */
 const IMAGE_MAX_BYTES = 3_000_000;
 const IMAGE_CACHEABLE_BYTES = 256_000;
@@ -589,48 +593,13 @@ export class SecurityController {
       return galleryPayload;
     }
 
-    let currentUrl = targetUrl;
-    let response: SsrfSafeResponse | null = null;
-    let redirectsCount = 0;
-    const MAX_REDIRECTS = 3;
+    const { response, servedFrom: currentUrl } = await this.fetchThroughCheckedHops(
+      targetUrl,
+      { signal, accept: 'text/html,application/xhtml+xml', maxRedirects: PAGE_MAX_REDIRECTS },
+      reachOr
+    );
 
-    while (redirectsCount <= MAX_REDIRECTS) {
-      // Security: mitigates CodeQL alerts #2464 and #2479 — re-validate URL immediately
-      // before fetch, then reconstruct the string from validated URL parts to explicitly
-      // break the taint chain for static analysis (CodeQL js/request-forgery).
-      await assertSafeExternalUrl(currentUrl.href);
-      const fetchUrl = new URL(
-        currentUrl.pathname + currentUrl.search + currentUrl.hash,
-        currentUrl.origin
-      ).href;
-      // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
-      // connect time (defends against DNS-rebinding between the check above and
-      // this fetch). It must stay undici's own fetch - see its doc comment.
-      response = await reachOr(() =>
-        ssrfSafeFetch(fetchUrl, {
-          method: 'GET',
-          redirect: 'manual', // prevent automatic redirects
-          signal,
-          headers: {
-            'user-agent': 'CanariLinkPreview/1.0',
-            accept: 'text/html,application/xhtml+xml',
-          },
-        })
-      );
-
-      // Manually handle redirects.
-      if (response.status >= 300 && response.status <= 399) {
-        const location = response.headers.get('location');
-        if (!location) break;
-        // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
-        currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
-        redirectsCount++;
-      } else {
-        break;
-      }
-    }
-
-    if (!response || !response.ok) {
+    if (!response.ok) {
       throw new BadRequestException('Unable to fetch URL');
     }
     // Bound to a const so the narrowing survives into the closure below - `response` is a `let`
@@ -731,18 +700,12 @@ export class SecurityController {
     }
 
     try {
-      const response = await ssrfSafeFetch(cacheKey, {
-        method: 'GET',
-        // Redirects are followed rather than walked by hand, unlike the page
-        // fetch above: a CDN answers image requests with two or three of them,
-        // and the dispatcher re-validates the resolved address at every connect,
-        // so a redirect to a private host is refused at the socket regardless.
-        redirect: 'follow',
+      // Walked hop by hop like the page fetch, each hop judged before it is fetched. A CDN
+      // answers an image request with two or three redirects, hence the larger allowance.
+      const { response } = await this.fetchThroughCheckedHops(targetUrl, {
         signal: AbortSignal.timeout(5000),
-        headers: {
-          'user-agent': 'CanariLinkPreview/1.0',
-          accept: 'image/*',
-        },
+        accept: 'image/*',
+        maxRedirects: IMAGE_MAX_REDIRECTS,
       });
 
       if (!response.ok) {
@@ -783,6 +746,58 @@ export class SecurityController {
       const cause = errorCause(error) ?? error;
       this.logger.warn(`[LINK_PREVIEW_IMAGE] ${targetUrl.hostname} failed: ${String(cause)}`);
       res.status(502).end();
+    }
+  }
+
+  /**
+   * Fetches `start` and follows its redirects ONE HOP AT A TIME, each target passed through
+   * `assertSafeExternalUrl` before anything is sent to it - the one way every outbound preview
+   * fetch of this controller walks a redirect chain, page and image alike. The connect-time guard
+   * of `ssrfSafeFetch` judges what a NAME resolves to; a hop written as an address has no name
+   * to resolve, so the check that covers it is this one.
+   *
+   * @param around - wraps each network leg, so the page fetch can classify an unreachable host
+   * @returns the last response (a 3xx when the allowance ran out or a hop named no location) and
+   *   the URL it was served from
+   * @throws BadRequestException when a hop is not a public http(s) URL
+   */
+  private async fetchThroughCheckedHops(
+    start: URL,
+    options: { signal: AbortSignal; accept: string; maxRedirects: number },
+    around: <T>(leg: () => Promise<T>) => Promise<T> = (leg) => leg()
+  ): Promise<{ response: SsrfSafeResponse; servedFrom: URL }> {
+    let currentUrl = start;
+    for (let redirects = 0; ; redirects++) {
+      // Security: mitigates CodeQL alerts #2464 and #2479 - re-validate URL immediately
+      // before fetch, then reconstruct the string from validated URL parts to explicitly
+      // break the taint chain for static analysis (CodeQL js/request-forgery).
+      await assertSafeExternalUrl(currentUrl.href);
+      const fetchUrl = new URL(
+        currentUrl.pathname + currentUrl.search + currentUrl.hash,
+        currentUrl.origin
+      ).href;
+      // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
+      // connect time (defends against DNS-rebinding between the check above and
+      // this fetch). It must stay undici's own fetch - see its doc comment.
+      const response = await around(() =>
+        ssrfSafeFetch(fetchUrl, {
+          method: 'GET',
+          redirect: 'manual', // every hop comes back here to be judged
+          signal: options.signal,
+          headers: { 'user-agent': 'CanariLinkPreview/1.0', accept: options.accept },
+        })
+      );
+
+      const location =
+        response.status >= 300 && response.status <= 399 ? response.headers.get('location') : null;
+      if (!location || redirects >= options.maxRedirects) {
+        this.logger.debug(
+          `[LINK_PREVIEW] ${start.hostname} answered ${response.status} after ${redirects} redirect(s)`
+        );
+        return { response, servedFrom: currentUrl };
+      }
+      // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
+      currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
     }
   }
 
