@@ -1528,6 +1528,12 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A NEW SYSTEM FRAMEWORK IMPORTED BY AN `.mm` FILE IS ADDED TO `canari_iOS`'S FRAMEWORKS PHASE IN
+  `project.pbxproj` IN THE SAME COMMIT.** Objective-C++ gets no module auto-linking, so the
+  `#import` compiles and only the LINK fails, twenty minutes into "Compile iOS app"
+  (`Undefined symbols ... _OBJC_CLASS_$_CMMotionManager`). It happened with AVKit and CoreMotion
+  on 2026-11-12, when the volume-button shutter first imported them.
+
 - **A FILE A BACKGROUND PROCESS MUST READ IS SEALED UNDER A KEY THAT NEVER ROTATES, CREATED BY ONE
   NATIVE CREATOR - AND "NO KEY" MEANS WRITE NOTHING, NEVER WRITE IN THE CLEAR.** The seed mirror and
   the push cache are sealed under the install's own key, not the device key: a key the PIN rotates
