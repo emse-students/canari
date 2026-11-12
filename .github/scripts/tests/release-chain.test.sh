@@ -1011,9 +1011,15 @@ if grep -qE 'type=raw,value=v\$\{\{ inputs\.version \}\}' "$WF/build.yml"; then
 else
   fail 'build.yml no longer pushes the v<version> tag - production has nothing immutable to deploy'
 fi
+# Every binding of INPUT_VERSION must be the release's own version: the two counts are compared, so
+# no reader exits before its writer is done.
+# shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
+version_bindings="$(grep -cE '^ *INPUT_VERSION:' "$WF/serve-prod.yml")"
+# shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
+exact_version_bindings="$(grep -cE '^ *INPUT_VERSION: \$\{\{ inputs\.version \}\}$' "$WF/serve-prod.yml")"
 # shellcheck disable=SC2016  # `$INPUT_VERSION` and `${{ }}` are matched literally
 if grep -qE -- '--tag "v\$INPUT_VERSION"' "$WF/serve-prod.yml" \
-  && ! grep -E '^ *INPUT_VERSION:' "$WF/serve-prod.yml" | grep -qvE '^ *INPUT_VERSION: \$\{\{ inputs\.version \}\}$'; then
+  && [ "$version_bindings" -ge 1 ] && [ "$version_bindings" = "$exact_version_bindings" ]; then
   pass 'serve-prod.yml deploys --tag v<version>, the tag build.yml pushes'
 else
   fail 'serve-prod.yml does not deploy v<version> - a rerun of an old release redeploys whatever latest points at'
