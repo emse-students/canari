@@ -185,8 +185,6 @@ ordinary review.
   accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
   until the floor passes this stable.
   **Left open by the 2026-10-27 review, each owed before the item it names:**
-  - **Pagination of the three lists, a PRECONDITION OF WP-F5 - BUILT 2026-10-31 on the WP-F5 pull
-    request**: cursor paging, server and client ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
     the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
     through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
@@ -195,15 +193,6 @@ ordinary review.
     that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
     builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
     window is a person who turned `follows` off on a new build and then saves a switch on an old one.
-  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
-    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
-    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
-    leaks - the reader filters are server-side - but the person asked can only answer from a new
-    build. A decision for the user when the stable is cut, with the share of old clients measured
-    from the version header then.
-  - **A row the block severing missed came back when the block was lifted - FIXED 2026-10-31 on
-    the WP-F5 pull request (F2 of its review)**: the unblock severs the pair before lifting the
-    block and is refused while it cannot ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
     one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
@@ -1676,6 +1665,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **raise `minClientVersion` (production and dev) each time both stores serve the latest update** - the one floor rule (owner, 2026-10-24); every item that waits on a floor waits on this gesture, the hardened v2 reader's writer flip (#2074) and a re-admitted member's window included | 1 setting per release | [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) |
 | **the DSI's go after it extends the shared host's root disk** - until then no new container is started there (2026-10-24) | blocked upstream | [host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24) |
 | **look at the A0 export of the Carte de la Vie Asso** once the lead has taken it (D11), and say whether the text sizes hold at print | 1 look | [the A0 row](#owed-a-verification-and-nothing-else), [carte-vie-asso](carte-vie-asso.md) |
+| **delete MiConnect's unused "Local Docker connection"** (System > Outpost integrations, as an administrator; decided by the owner 2026-10-31) - its monitor fails every two minutes since the Docker socket left the worker | 1 click | [backlog.d](backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md) |
 
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
