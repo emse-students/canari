@@ -203,6 +203,27 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
 
 Either one failing keeps the switch `off` and reopens this section.
 
+### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
+
+The OIDC callback (`auth.controller.ts`, `oidcCallback`) makes two calls to the identity provider,
+the token exchange and the userinfo read, and neither carries a bound of its own. **What is known:**
+
+- nginx's proxy timeout already bounds the request the CLIENT sees: a callback whose provider
+  never answers ends for the browser whatever the service does;
+- a bound inside the service would therefore only free the service-side socket and its pending
+  promise sooner - it changes what core-service HOLDS, not what the user waits;
+- no backend service bounds an outbound call today, so a bound here would be the first, and a
+  number chosen without a measurement is the kind of timer the standing rules refuse.
+
+**The question is what a hung provider costs core-service**, and it is not answered: how many
+callbacks can be pending at once, what each holds (a socket, a promise, nothing else?), and
+whether anything - the connection pool, memory, the event loop - runs out before nginx ends them.
+
+**What answers it: one measurement.** Point a local core-service at a provider stub that accepts
+the connection and never answers, send callbacks at the rate a sign-in rush produces, and read
+what grows. If nothing runs out, the section is deleted with that reading written on
+[authentik](infrastructure/authentik.md). If something does, the bound is chosen from the number.
+
 ### QUESTION - does a portaled dialog keep the focus `focusTrap` gave it? (2026-11-12)
 
 `portal` moves an overlay under `body` with `appendChild`, AFTER `focusTrap` focused the dialog's
