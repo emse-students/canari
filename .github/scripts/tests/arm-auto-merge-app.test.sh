@@ -54,6 +54,17 @@ if ! grep -q 'canari-auto-merge\[bot\]' "$work/step.raw"; then
   exit 1
 fi
 
+# THE BINDING ITSELF IS ASSERTED, because the cases below hand `IS_DEPENDABOT` to the script and so
+# would pass whatever the workflow binds it to: there is one binding, and it is the author test.
+# shellcheck disable=SC2016  # `${{ }}` is GitHub Actions syntax and is matched literally
+want_binding='IS_DEPENDABOT: ${{ github.event.pull_request.user.login == '"'"'dependabot[bot]'"'"' }}'
+bindings="$(grep -E '^ *IS_DEPENDABOT:' "$wf" | sed 's/^ *//')"
+if [ "$bindings" = "$want_binding" ]; then
+  pass "IS_DEPENDABOT is bound once, to the pull request author being dependabot[bot]"
+else
+  fail "IS_DEPENDABOT is not bound exactly once to the author test" "$bindings"
+fi
+
 # The step reads `$IS_DEPENDABOT`, which its `env:` sets from a GitHub expression; the run passes
 # the value the case names. A script that still carries an expression would fail on it here.
 make_script() {
