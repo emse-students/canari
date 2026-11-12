@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
 import { drainOnSigterm } from './drain-on-sigterm';
+import { MEDIA_EXPOSED_HEADERS } from './exposed-headers';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,7 +12,7 @@ async function bootstrap() {
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
   // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
   const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
-  app.enableCors(corsOptions(allowedOrigins));
+  app.enableCors(corsOptions(allowedOrigins, MEDIA_EXPOSED_HEADERS));
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT ?? 3002);

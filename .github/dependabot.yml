@@ -168,6 +168,29 @@ updates:
         dependency-type: "production"
         update-types: ["patch"]
 
+  # The sign-in handoff's verifier, VENDORED byte-identically into each ecosystem site
+  # (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md).
+  # Its one dependency, `jose`, is pinned exactly; a bump here moves only Canari's copy of the test
+  # bench - each site updates its own `jose` in its own repository. Same lockfile rule as above:
+  # `libs/handoff/bun.lock` stays at `lockfileVersion: 1`.
+  - package-ecosystem: "bun"
+    directory: "/libs/handoff"
+    rebase-strategy: auto
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5
+    groups:
+      jose:
+        patterns:
+          - "jose"
+        update-types: ["minor", "patch"]
+
   # --- Rust -------------------------------------------------------------------------------------
   # Six crates that are ours. The MLS crates are the reason `cargo audit` matters here and not only
   # in CI: openmls and its crypto backend are where a vulnerability would be an encryption defect,

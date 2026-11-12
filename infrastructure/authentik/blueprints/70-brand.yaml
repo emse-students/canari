@@ -17,6 +17,16 @@ entries:
     attrs:
       domain: "miconnect.emse.fr"
       branding_title: "MiConnect"
+      # THE THEME IS PINNED DARK, because the CSS below draws a dark page and nothing else. Left on
+      # `automatic`, authentik follows the browser's colour scheme: in a LIGHT scheme PatternFly
+      # keeps its light ink (#151515) on every element this CSS does not name - the campus radios
+      # and the four checkboxes of the first-sign-in stage measured 1.02:1 on the page (2026-11-10).
+      # Pinning the base gives every component, present and future, the ink made for a dark page,
+      # instead of one override per selector. The whole brand follows, admin interface included.
+      attributes:
+        settings:
+          theme:
+            base: "dark"
       branding_logo: "https://rootz-emse.fr/logo.png"
       branding_favicon: "https://rootz-emse.fr/logo.png"
       branding_custom_css: |-
@@ -44,6 +54,7 @@ entries:
             --mc-text-muted: rgba(234, 246, 248, 0.68);
             --mc-accent: #00c8e6;
             --mc-accent-hover: #33d6ee;
+            --mc-danger: #ff8a80;
             /* PatternFly theming tokens (best-effort): unlike class selectors, custom
              * property VALUES inherit through Shadow DOM boundaries, so this can
              * reach the primary button even if it renders inside a stage web
@@ -250,6 +261,14 @@ entries:
             font-weight: 600;
         }
 
+        /* The required-field asterisk is PatternFly's danger red (#c9190b) in BOTH themes: 3.09:1
+         * on this page, under the 4.5:1 a text glyph needs (2026-11-10). A red made for a dark
+         * surface: 7.85:1 on the page, 7.26:1 on the card.
+         */
+        .pf-c-form__label[aria-required='true'] .pf-c-form__label-text::after {
+            color: var(--mc-danger) !important;
+        }
+
         /* Bare `input`/`textarea`/`select`, not `input[type='text'|'password'|'email']`:
          * a first-connection stage (enrollment/user-write) reported black text on
          * this dark background (2026-09-25) - a field with no `type` attribute, or a
@@ -267,8 +286,10 @@ entries:
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
+        /* The muted token, not a 0.4 alpha: "ex. 2018" in the promo field read 3.43:1 against the
+         * field's own fill, 3.31:1 on the card (2026-11-10); 7.19:1 and 6.72:1 now. */
         .pf-c-form-control::placeholder, input::placeholder, textarea::placeholder {
-            color: rgba(234, 246, 248, 0.4) !important;
+            color: var(--mc-text-muted) !important;
         }
 
         .pf-c-form-control:focus, input:focus, textarea:focus, select:focus {

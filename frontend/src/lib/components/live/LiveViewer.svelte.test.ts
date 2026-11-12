@@ -16,7 +16,7 @@ import type {
 } from '$lib/live/livePlayer';
 import type { LiveChatDeps } from '$lib/live/liveChat';
 import type { LiveLimits, LiveListItem, LiveManifest } from '$lib/live/types';
-import { videoSound } from '$lib/stores/videoSound.svelte';
+import { VIDEO_SOUND_KEY, videoSound } from '$lib/stores/videoSound.svelte';
 import { setContentModerator } from '$lib/stores/userState.svelte';
 import { m } from '$lib/paraglide/messages';
 
@@ -327,15 +327,105 @@ describe('LiveViewer', () => {
     expect(viewer().contains(flag)).toBe(true);
   });
 
-  it("the sound toggle sets the app's one sound answer", async () => {
+  it("the sound toggle is the kit's speaker and sets the app's one sound answer", async () => {
     await render();
     const button = document.querySelector<HTMLButtonElement>('[data-live-sound]')!;
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_unmute());
+    expect(button.getAttribute('aria-label')).toBe(m.video_sound_label());
+    expect(button.getAttribute('aria-pressed')).toBe('false');
     button.click();
     flushSync();
     expect(videoSound.muted).toBe(false);
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_mute());
+    expect(button.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
+  });
+
+  /**
+   * AN ENGINE'S REFUSAL IS NOT THE READER'S CHOICE (step E): a live whose audible `play()` is refused
+   * plays muted, silent for this session - and the remembered "on" stays on this device.
+   */
+  it('a refused audible start plays muted, and the stored sound stays on', async () => {
+    videoSound.setMuted(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const play = vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(function (
+      this: HTMLMediaElement
+    ) {
+      return this.muted
+        ? Promise.resolve()
+        : Promise.reject(new DOMException('no gesture yet', 'NotAllowedError'));
+    });
+    await render();
+    const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    expect(play).toHaveBeenCalled();
+    expect(video.muted).toBe(true);
+    expect(videoSound.muted).toBe(true);
+    // The element's own `volumechange`, as a viewer forwards it, writes nothing either.
+    video.dispatchEvent(new Event('volumechange'));
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  });
+
+  /** A TAP NEVER MUTES (owner, 2026-11-10): it turns a muted sound on, with its glyph. */
+  it('a tap on the picture turns the sound on, shows it, and never turns it off', async () => {
+    await render();
+    const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    const tapPicture = () => {
+      video.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
+      );
+      video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+      video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      flushSync();
+    };
+    tapPicture();
+    expect(videoSound.muted).toBe(false);
+    expect(video.muted).toBe(false);
+    expect(document.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+      'sound-on'
+    );
+    tapPicture();
+    expect(videoSound.muted, 'a second tap leaves the sound on').toBe(false);
+    expect(video.muted).toBe(false);
+  });
+
+  it("a dry buffer draws the kit's spinner over the last frame, and the next segment takes it away", async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // The broadcaster stores segment 2 only once the test says so.
+    let stored = false;
+    const plain = deps.fetchManifest!;
+    deps.fetchManifest = vi.fn(async (...args: Parameters<typeof plain>) => {
+      const answer = await plain(...args);
+      return stored
+        ? { ...answer, nextIndex: 3, segments: [{ index: 2, name: 'c', bytes: 1 }] }
+        : answer;
+    });
+    await render();
+    const el = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    const spinner = () => document.querySelector('[data-video-buffering]');
+    expect(spinner()).toBeNull();
+    // The join held [0, 6]; the picture played to its end and the engine waits: starved.
+    el.currentTime = 6;
+    el.dispatchEvent(new Event('waiting'));
+    await settle();
+    expect(spinner()).not.toBeNull();
+    expect(stateOf()).toBe('playing');
+    // A poll with nothing new: still the spinner, never a loop.
+    timers.shift()!();
+    await settle();
+    expect(spinner()).not.toBeNull();
+    expect(el.currentTime).toBe(6);
+    // The next segment arrives: appended, the picture resumes where it stopped, no spinner.
+    stored = true;
+    timers.shift()!();
+    await settle();
+    expect(spinner()).toBeNull();
+    expect(el.currentTime).toBe(6);
+    expect(log.mock.calls.map((c) => String(c[0])).some((l) => l.includes(': stalled '))).toBe(
+      true
+    );
+    // The short margin it resumed on is rebuilt by playing slower, the voice kept.
+    expect(el.playbackRate).toBe(0.9);
+    expect(el.preservesPitch).toBe(true);
   });
 
   it('Escape closes it and the seat goes back', async () => {

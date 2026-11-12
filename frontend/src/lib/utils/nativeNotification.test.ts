@@ -8,6 +8,7 @@ vi.mock('$lib/utils/appVersion', () => ({
 
 import {
   notificationGroupName,
+  notificationIsGroup,
   postNativeMessageNotification,
   type NativeMessageNotification,
 } from './nativeNotification';
@@ -36,6 +37,7 @@ const NOTIF: NativeMessageNotification = {
   serverAt: 1_700_000_000_400,
   covers: 1,
   authorProven: false,
+  isGroup: false,
 };
 
 describe('postNativeMessageNotification', () => {
@@ -73,7 +75,20 @@ describe('postNativeMessageNotification', () => {
       // One real banner answers up to this many refused pushes (the batched flush).
       covers: 1,
       authorProven: false,
+      // The push's `isGroup`: the name cannot answer it for an unnamed group (review of #3344, M1).
+      isGroup: false,
     });
+  });
+
+  it('carries "not said" as null rather than as a direct message', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    await postNativeMessageNotification({ ...NOTIF, isGroup: null });
+    expect(invoke).toHaveBeenCalledWith(
+      'notifier_message_natif',
+      expect.objectContaining({ isGroup: null })
+    );
   });
 
   it("carries the open's proof of the author, which names a salon banner's speaker", async () => {
@@ -112,6 +127,18 @@ describe('postNativeMessageNotification', () => {
     // only thing this layer owes is to say so where it accuses.
     expect(error).toHaveBeenCalledWith(expect.stringContaining('no JavaVM'));
     error.mockRestore();
+  });
+});
+
+describe('notificationIsGroup', () => {
+  it('reads the type, never the name: a group and a salon are groups, a DM is not', () => {
+    expect(notificationIsGroup('group')).toBe(true);
+    expect(notificationIsGroup('channel')).toBe(true);
+    expect(notificationIsGroup('direct')).toBe(false);
+  });
+
+  it('is null for a row with no type - unknown, as the push says it', () => {
+    expect(notificationIsGroup(undefined)).toBeNull();
   });
 });
 

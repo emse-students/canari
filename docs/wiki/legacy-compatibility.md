@@ -42,6 +42,43 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying #3196, and this entry is then deleted.
 
+### A tolerated degradation: a media caption edit read by a build older than the caption edit (owner, 2026-11-11)
+
+- **What.** A media message's edit replaces its caption only, in the unchanged `edit_message` frame
+  ([chat](frontend/modules/chat.md#a-media-messages-edit-is-a-caption-edit-2026-11-11)). An older
+  build applies a non-empty caption edit in a DM or group like this build, through
+  `applyEditToBody`'s media branch (`v0.18.18`). It keeps the OLD caption, unmarked, on any caption
+  edit in a salon (its `applyChannelEdit` refuses every non-text target). An emptied caption in a DM
+  or group gives **either result on one old build**: the live and replay paths drop `''` (truthiness
+  check, old caption kept), while a history bundle carrying the author's signed edit goes through
+  `vetRestoredEdit`, which takes any string and stores `caption: ''` (photo bare, marked).
+- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying the caption
+  edit; the web app is always current.
+- **Why tolerated.** It is a stale caption, never a lost or corrupted attachment: no build at the
+  floor writes an edit's text over a whole body. A new wire field would not have reached those builds
+  either.
+- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
+  passes the first stable carrying the caption edit, and this entry is then deleted.
+
+### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
+
+- **What.** An institution's post must carry a reach (migration 162,
+  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)):
+  the server answers a create without one `400 institution_reach_required`. A build that predates the
+  reach sends none, so it **cannot publish as an institution at all**; a personal, association or
+  list post is untouched, and so is an EDIT (absent leaves the stored reach alone).
+- **Who.** Native apps older than the first release carrying the reach (they embed their own
+  frontend), for the officers of an institution only; the web app is always current.
+- **Why accepted knowingly.** The owner's decision is "no default": a server that filled one in for
+  an old client would publish a reach nobody chose, which is the thing decided against. The refusal
+  is typed (the old build, which does not know the code, shows its generic publish failure), and an
+  update or the web publishes.
+- **Where it lands on a current build.** A post queued by an old build and published after the
+  update meets the same refusal; the durable queue holds it as FINAL (`retryCannotCure`) and offers
+  Delete alone, never an endless Retry.
+- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
+  passes the first stable carrying the reach, and this entry is then deleted.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its
@@ -60,8 +97,8 @@ build sends, so it deploys only to an estate whose floor already reads `1.6.6`.*
 | An institution's republication request accepted by a build that never showed its audience (nothing to remove) | #2965, `v1.6.3` | **CLOSED**: no floor build can meet the stuck case |
 | A creator managing two BDEs reading an old build's generic creation error (nothing to remove) | #2986, `v1.6.3` | **CLOSED** |
 | A post whose comments are withheld (`canSeeComments`), a live chat withheld (`withheld`), a moderation tombstone (`removedByModeration`) drawn by a build that knows none of them (nothing to remove) | #2998, #3014, #2999, `v1.6.5` | **CLOSED**: three dead controls no floor build draws |
-| The CanaReels modes `singlePhotos`, `singleMedia` and the link kept out without `withLinks` (`full-screen-post-sql.ts`) | #3056, #3062, #3074, `v1.6.6` | floor MET, **kept**, owed: the collapse to one mode in ONE pull request (it rewrites the list SQL, its cache key and two specs - not a deletion) |
-| The client sending `singlePhotos` and `singleMedia` beside `multiMedia` (`buildListPostsSearchParams`) | server version, not a floor | MET (both estates carry `v1.6.6`), **kept**, owed: one client pull request |
+| The CanaReels modes `singlePhotos`, `singleMedia` and the link kept out without `withLinks` (`full-screen-post-sql.ts`) | #3056, #3062, #3074, `v1.6.6` | **REMOVED** (2026-11-11, five entries): one clause, `FULL_SCREEN_POST_SQL`, read by `multiMedia` alone, links allowed; the three DTO fields are gone (the whitelisting pipe strips them, so a floor client that still sends them gets the same list); the cache key keeps `+carousel-links`, the one every floor client already used. A stale web tab of a pre-`1.6.6` bundle degrades rather than breaks: a `v1.6.5` bundle receives the link posts and drops them, and a tab older than `multiMedia` gets the reels only. The floor does not reach a web tab left open, so this is the tolerated cost; `list-posts-query.dto.spec.ts` pins the strip (never a `400`) |
+| The client sending `singlePhotos`, `singleMedia` and `withLinks` beside `multiMedia` (`buildListPostsSearchParams`) | server version, not a floor | **REMOVED** in the same pull request: the client sends `multiMedia=true` alone |
 | `kind=reel` on `feed=all` read as `feed=reels` | #2990, `v1.6.3` (server) | **kept**: the client switch to `feed=reels` is not made, so the floor that retires it is the stable that will carry it, then a week of `[LEGACY]` silence |
 | The further-device self-join held shut | needs D2/D3 (`1.6.7` at the earliest) | not met |
 
@@ -106,8 +143,10 @@ refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named
 
 ## What the 2026-08-17 gate actually retired, and what it did not
 
-`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is hard - `ensurePlatformAllowsUnlock`
-blocks the MLS unlock outright, so a client below it cannot put a group frame on the wire at all.
+`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is enforced IN THE CLIENT ONLY:
+`isBelowMinClientVersion` and `shouldBlockSessionUnlock` (`stores/appVersionCheck.svelte.ts`) block
+the login and the MLS unlock of a build that carries them. The server refuses no old client, so the
+gate says what a build that obeys it can do, never what reaches the server.
 
 It was assumed at the time that this retired most of this page. **Measured, it retired exactly one
 entry**, and the distinction is worth keeping because it is the one this page was getting wrong:
@@ -187,9 +226,8 @@ REST: those rows need a count, then a migration.
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
-| `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
+| `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([profiles-and-access](profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)) |
 | The account-seat `awaitingAdmission` on the groups list read off `deviceMembership.awaitingAdmission` when a row lacks it (`syncAdmissionFlags`, `admissionState.ts`; #2894) | production's chat-delivery serves the top-level field (one read of `GET mls/users/:userId/groups` on production showing it) | not a client version question: a deploy-order WINDOW, a store build ahead of production | none | the `??` arm and its WARN line | remove once production serves the field; until then each pass that takes it logs `[DISCOVERY] [WARN] ... read off this device's seat` |
-| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 | A `closed` admission classification dropped at load (`drop_closed_admission_policies`, `mls-core` `state.rs`; review of #2817) | every device that ran a dev build of #2815 has loaded its state once on a later build - dev and alpha builds only, nothing shipped `closed` to a store | not a version question (dev/alphas) | `PersistedState.admission` in `mls.bin` | 1 function + 1 call + 1 test | remove 2027-02-01, or when the fix-forward re-arms the rule - whichever is first, since a re-armed rule writes `closed` again and must not have it dropped ([mls-protocol](protocols/mls-protocol.md)) |
@@ -215,6 +253,23 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ---
 
 ## The diary
+
+### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
+
+**Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
+(`apps/media-service/src/media/live-segments.service.ts`).
+**What it humours:** a media-service before live replays WP-R3 wrote live segments and posters into
+the backed-up object store (Garage) under `live/`; since WP-R3 they live on the `live_segments`
+volume ([live-replays](live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), and
+`StorageService` refuses a `live/` key. The segments of a live on air at that deploy stayed in Garage,
+where no purge and no reaper looks any more. Each boot deletes every live segment key of the object
+store (`live/<uuid>/<uuid>`, an allowlist: any other `live/` object is logged at WARN and kept) and
+logs `[LIVE_STORE] object store drained of old live segments: drained=N leftAlone=M` (an ERROR line if
+the store failed; the next boot retries). A rollback to an older image writes there again, and the
+next forward deploy drains it.
+**The cost while it stands:** one empty prefix listing of Garage per boot.
+**Removal condition:** the release carrying WP-R3 deployed on both estates and, after it, one boot of
+each logging `drained=0`. Then delete the method, its hook, its two spec cases and this entry.
 
 ### Removal at the portail's deploy + one silent week - the public carte read that names no space (2026-11-08)
 
@@ -342,55 +397,6 @@ That squatting is NOT new (every client could before), and it ends with the bran
 so no supported client still sends one. Then make the DTO refuse `slug` (or drop it) and delete the
 branch and its tests; the derived path is then the only one.
 
-### No date yet - a member client older than the admission rule still adds a new person automatically
-
-**Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
-`GroupMember.awaitingAdmission` with its lift (`liftAwaitingAdmission` in `messaging.service.ts`).
-**What holds before the floor:** "a new person joins only through a member's decision" is a CLIENT
-rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
-running a build that carries it. A member on an older build still Adds from the `pending` row the
-link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
-can tell it from a member's Add. The server honours it as one: that older client's commit declares
-the joiner in its `admits` (every client at the floor does, #1151, `v0.18.28`), and the accepted
-commit lifts the joiner's `awaitingAdmission`. **The Welcome-sent-apart lift is GONE since ADM-3
-(2026-10-25)**: it existed for a commit older than `admits`, which no client at the floor sends, and
-it was the door through which a Decline the gate had honoured was undone
-([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
-**When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
-never at the deploy, never on a date. Until then an older client gets the tolerated 409
-`awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
-instead of retiring the conversation), and an older member's automatic Add is honoured through its
-commit's `admits`. That tolerance is the shim; its removal condition is that floor, and there is no
-calendar date.
-**The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
-serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
-outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
-every one of those paths, so the build does not run without it.
-**Removal:** nothing - this entry closes when the floor passes; the lift by the accepted commit is
-how every Add admits, and stays.
-**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
-every existing row to `false`, so a person who accepted a link before the deploy and had not entered
-yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
-`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
-own external commit exactly as before the rule, and the members then report it:
-`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
-population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
-read-only on production, once, right after the deploy - each seat with no trace of an admission:
-
-```sql
-SELECT m."groupId", m."userId" FROM dm_group_members m
-WHERE NOT m."awaitingAdmission"
-  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
-                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
-                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
-```
-
-**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
-and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
-the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
-line after the floor is the rule failing. The list stays in the private operations notes with the
-deploy date; only this query and the rule live here.
-
 ### No date yet - a notification TYPE the client does not know, from any new server type
 
 **Site:** `NotificationRow.svelte` and `notificationHref` in `frontend/src/lib/posts/notificationTarget.ts`.
@@ -414,7 +420,57 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 2. The server sends an EXPLICIT `deepLink` (or a dedicated host) for it in `socialDeepLink`; never rely on the `postId` -> `post/<id>` default when the id is not a post.
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
+5. **Declare its client floor** in `apps/social-service/src/push/notification-client-floor.ts` - the
+   type in `NOTIFICATION_TYPE_MIN_CLIENT` and every push key in `PUSH_KEY_MIN_CLIENT` - as the
+   version of the release that first DRAWS it (the [section below](#the-client-floor-of-every-notification-type-owner-2026-11-10)).
+   `createNotification(s)` take a `NotificationType`, so an undeclared type does not compile, and
+   `notification-client-floor.spec.ts` fails when the floor table and `KNOWN_NOTIFICATION_TYPES` (or
+   the `PushContentKey` union) disagree.
 **Removal condition:** none; this is a floor requirement, not a shim.
+
+### The client floor of every notification type (owner, 2026-11-10)
+
+**The rule: the server never sends a notification type to a client too old to render it.** The 1.6.9
+deploy sent `campus_trend` rows to 1.6.8 builds, which drew "Une notification que cette version de
+l'application ne peut pas afficher" ([engagement](engagement.md#the-deploy-of-2026-11-10-and-what-it-changed)).
+The unknown-type row above is a SIGNAL that this rule failed, never the path.
+
+- **One table, the server's**: `notification-client-floor.ts` (social-service) gives every bell type
+  (`NOTIFICATION_TYPE_MIN_CLIENT`) and every push key (`PUSH_KEY_MIN_CLIENT`) the first release that
+  draws it; `null` means every build the update gate admits draws it. The floors were read from the
+  release tags (`KNOWN_NOTIFICATION_TYPES` and the native tables at each tag).
+- **The client names itself**: `X-Canari-Client-Version` (`CLIENT_VERSION_HEADER`, one spelling in
+  `frontend/src/lib/utils/appVersion.ts`, the lives routes' header), sent on the bell read.
+- **The bell read filters on it** (`getNotifications` / `bellPageQuery`: `type IN` the types the build
+  draws). **A read with no header is a build up to 1.6.9** (`HEADERLESS_CLIENT_VERSION`): every one of
+  those sent none, so it is served what 1.6.9 draws - the types it was already served - and every type
+  added from now on takes a floor ABOVE 1.6.9, so no headerless build ever receives it. A header that
+  does not parse is served only the `null`-floor types (fail closed).
+- **Pushes carry their key's floor**: `PushService.notifyContent` writes `minAppVersion` from
+  `PUSH_KEY_MIN_CLIENT` AFTER the caller's data (a caller cannot lower it), and chat-delivery's
+  `sendPushToUser` skips every device whose registered build (`key_package.deviceAppVersion`) is below
+  it - the lives mechanism of 2026-10-31, now one table for every key. A device whose build was never
+  reported is kept and counted in the log. **Consequence**: since this change a device below a key's
+  floor stops receiving that key's push (it drew it only as the server's legacy sentence before).
+- **Not at the WRITE**: the inbox row is written for every recipient, whatever their device - a reader
+  has several devices of several builds, and the row is drawn on the next read by whichever device
+  reads it, an updated one included.
+- **The same rule for the notification CATEGORIES** (review of #3312, D1): a build draws a switch only
+  for the categories it knows, so its save of the switches is no choice about the others. chat-delivery
+  holds `CATEGORY_MIN_CLIENT` (`services/push-category.ts`, the first release drawing each switch,
+  read from the tags) and `PUT mls/notification-preferences` keeps the STORED choice of every category
+  the caller's build cannot name (`categoriesNameableBy`, the same header, none = a build up to 1.6.9,
+  through the shared `keysKnownBy` of `utils/app-version.ts`), merged in one `INSERT ... ON CONFLICT DO
+  UPDATE`. From `1.6.10` the client also keeps the switched-off ids it does not know and sends them
+  back (`preferencesApi.ts`), so either side alone suffices. A new category takes the version of the
+  release that adds its switch; the record type makes a missing floor a compile error.
+  **One gap, accepted (lead, 2026-11-10): a `1.6.8` save erases a stored "Anniversaires" choice.**
+  No header reads as `1.6.9`, which names `birthdays`, so a headerless save is taken to speak for
+  it; a `1.6.8` phone saving its switches therefore switches "Anniversaires" back on if another
+  device had switched it off. Covering it would need the server to tell a `1.6.8` from a `1.6.9`
+  without a header, which nothing allows. Birthdays shipped in `1.6.9`, so the population - a reader
+  who switched them off on a `1.6.9` device and then saves from a `1.6.8` one - is near zero, and it
+  ends with the update. Every category from `suggestions` on is covered, by the header.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
@@ -501,6 +557,55 @@ notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the des
 `/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
 contract file (`refund.notificationTypes`).
 
+### No date yet - a feed client newer than its server - `rankedFeeds` (2026-11-10)
+
+**Site:** `serverRankedFeeds()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by
+`listPosts` and applied by `wireFeed` in `buildListPostsSearchParams` (`frontend/src/lib/posts/api.ts`);
+the server half is `rankedFeeds: true` in core-service's `GET /api/version`.
+**Why.** The 1.6.9 client's Pour toi is `feed=foryou` and its CanaReels viewer `feed=reels&ranked=true`,
+paged with `asOf`. A stable ships both stores before production deploys, and an older social-service
+refuses `feed=foryou` `400` (`@IsIn`) - the tab would be empty for those days.
+**What the client does.** On an estate that says `rankedFeeds: true` it asks the ranked lists; otherwise
+- an estate that ANSWERED without it - it asks Pour toi as `feed=followed` (the chronological Suivis,
+entities included) and the CanaReels list in its older shape (`feed=all&kind=reel`, newest first),
+with neither `ranked` nor `asOf`; the rows carry no `feedAsOf`, so `nextListPage` pages by the count
+as before. A `Log.d` names the downgrade. **No answer yet is not "no"** (alpha.6, 2026-11-10): the
+capability is kept in `sessionStorage`, so it is `null` on EVERY cold start until the root layout's
+`/api/version` answers, and the feed's first page is asked before that. Read as "no", Pour toi was
+asked as `followed` on a server that serves it, and that answer - a followed association's post
+included - was drawn and stored on the device as Pour toi, until a manual refresh. Now a RANKED list
+with the capability `null` awaits `refreshAppVersionCheck()` (the layout's own request, deduped)
+and decides on its answer (`rankedFeedsKnown` in `posts/api.ts`); every other list asks at once. The
+wait is one round trip on a cold start (the device's stored copy is drawn meanwhile), and up to the
+probe's retry ladder (~26 s) only when `/api/version` does not answer; it is pinned as a decision in
+`versionProbeOnUnlockPath.test.ts` (an open session, never in front of an unlock).
+And **a list never holds another list's rows**: a Pour toi page whose rows lack `feedAsOf` (the
+`followed` shape) is neither kept in the memory tab cache (`writeFeedCache`) nor stored on the
+device (`writeStoredFeedPage`), and a stored Pour toi copy in that shape - what alpha.6 wrote - is
+not drawn and is deleted on its next read (`rowsInListShape`, `posts/rankedFeeds.ts`). **A list
+keeps the shape its first page was served in** until a refresh: `nextListPage` returns
+`rankedFeeds: false` for rows served without ranking facts, so a ranked page 2 is never asked of an
+unranked page 1 - which the server would refuse `400 RANKING_PAGE_INVALID` (a later ranked page
+without `asOf`).
+**Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
+estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - Suivis (`feed=followed`) and the client-placed suggested posts, for installed clients older than 1.6.9 (2026-11-10)
+
+**Site:** the `followed` arm of `PostsService.listPostRows` (`followedFeedSql` in
+`apps/social-service/src/posts/republished-feed-sql.ts`) and `GET /posts/me/suggested-posts`
+(`PostsController.listSuggestedPosts`), both UNCHANGED.
+**What it humours.** Up to 1.6.8 the client draws a Suivis tab (`feed=followed`: followed associations
+AND people, chronological, pins on top) and interleaves `me/suggested-posts` in its Mon espace
+(`feed=all`) one in eight. The 1.6.9 client asks neither: Pour toi is `feed=foryou`, Campus is the
+unchanged `all`, and a remembered `followed` or a `?feed=followed` link opens Pour toi
+(`parsePostFeed`). Nothing in either answer changed (`for-you-feed.integration.spec.ts` pins both).
+**Removal** (once `minClientVersion` is 1.6.9 or later on both estates): delete the `followed` value
+of `LIST_POST_FEEDS`, its arm and `followedFeedSql`, the `me/suggested-posts` route and
+`PostsService.listSuggestedPosts`; the client's `RETIRED_FOLLOWED_FEED` mapping may go one floor later
+(a preference stored before 1.6.9 then falls back to the default tab).
+**Cost while it stands:** none - one arm nobody new asks, one route.
+
 ### No date yet - a form editor newer than its server (2026-11-08)
 
 **Site:** `serverFormDrafts()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by the
@@ -581,6 +686,26 @@ out is not lost; it goes with the table's held drop, which MUST also `DROP FUNCT
 control, raised once BOTH stores serve it. Then the old endpoints go, and the held drop of
 `association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
 name how many older builds still mute that way.
+
+### No date yet - a form reminder written by a server image older than the openings (2026-11-09)
+
+**BUILT 2026-11-09 with WP-4 of [engagement](engagement.md) (L9).**
+**Site:** migration 152 (`canari_form_reminder_to_opening()`, two triggers on `form_reminders`) and
+the `FormReminder` entity still mapped in `forms/forms.module.ts`. WP-4 folded the "Me prévenir" asks
+into `opening_reminders`; the three `/api/forms/:id/remind` routes keep their shape and write the new
+table, so an OLD CLIENT needs nothing.
+**What an older SERVER image does during the deploy.** It still writes and claims `form_reminders`.
+Without a shim, an ask it took after the copy would be lost, and an opening due while both images run
+could be pushed twice (each image claiming its own table).
+**The shim.** 152's triggers turn an old image's insert or upsert into the same ask on
+`opening_reminders`, its delete into the same delete, and make its CLAIM on the new row first: a
+claim the new image already made cancels the old row's update (`RETURN NULL`), so one push. The new
+code never writes the old table. `FormReminder` stays mapped only so a `synchronize`d local database
+still has the table the trigger and the erasure name.
+**Removal condition:** WP-4 has served one stable (no older image can be rolled out any more). Then a
+HELD migration drops `form_reminders` AND `DROP FUNCTION canari_form_reminder_to_opening()`
+(dropping the table removes the triggers, not their function), the entity is unmapped and the
+erasure's `form_reminders` statement goes.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
@@ -791,19 +916,6 @@ and, on the receiving side, on that receiver's own windows. It is a FALLBACK and
 `console.error` per session.
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
-
-### Floor met 2026-10-31 - history answers and asks from clients older than step A
-
-**The condition is MET:** step A (#2270) is first in the stable `v1.5.0` (`v1.4.1` was never cut as
-a stable), and production's `minClientVersion` reads `1.5.1` (`GET /api/version`, 2026-10-31). No
-client below step A can unlock MLS, so none asks without a `requestId` or answers a newcomer by
-broadcast any more.
-**What can go, and what cannot:** the no-id refusal line (a new answerer sends nothing addressed to
-an ask with no id, `sendBundleChunks`) is now dead and goes in its own client pull request. The
-broadcast branch of the `history_bundle` receiver STAYS: it is not only a shim - a current build still
-broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)` in
-`groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the same
-`dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 
@@ -1125,7 +1237,9 @@ deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never 
 only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
 `1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
 viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
-there: reels it may see, nothing more. Since 2026-11-06 the current client asks `singleMedia=true` AND `singlePhotos=true`; `singlePhotos` alone stays served as pictures only, so these installed clients never receive a video (`services/reels.md`).
+there: reels it may see, nothing more. Since 2026-11-11 the server reads `multiMedia` alone; a
+pre-floor client asking `singlePhotos` alone now gets the reels only, and none unlocks under the
+`1.6.6` floor.
 **Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
 and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
 lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
@@ -1393,95 +1507,6 @@ mobile only - green build, green deploy, wrong behaviour.
 **Cost of keeping it:** two shapes for one concept, and a head typed optional at every use site
 though the server always sends one. No correctness cost: a missing head means an unbounded walk,
 which is what every client did before the bound existed.
-
-### No date yet - the CanaReels list asked with BOTH `singleMedia=true` and `singlePhotos=true` (2026-11-06)
-
-**Site:** `buildListPostsSearchParams` in
-[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (the `singlePhotos` line next to
-`singleMedia`).
-**What it humours:** a social-service that does not carry the `singleMedia` switch yet (a production
-or dev estate deployed before this change) drops the unknown parameter and would answer the reels
-alone; the extra `singlePhotos=true` keeps the pictures coming.
-**Removal condition:** both estates' social-service carry the change that introduced `singleMedia`
-(a stable shipped and deployed on production, the pre-release on dev). Then the client sends
-`singleMedia` only and the line goes. **MET (2026-11-08):** #3056 is first in `v1.6.6`, production
-serves `1.6.7` and dev `1.6.8-alpha.1`; owed: the client pull request (not a floor question).
-**Cost of keeping it:** one redundant query parameter. The server reads `singleMedia` first, so
-nothing is read twice.
-
----
-
-### No date yet - `singlePhotos=true` answered as pictures only, after `singleMedia` exists (2026-11-06)
-
-**Site:** `singleMediaModeOf` and `SINGLE_PHOTO_POST_SQL` in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts),
-read by `PostsService` (`kindFilterSql`).
-**What it humours:** every installed client up to the last release that does not send `singleMedia`
-asks `GET /api/posts?kind=reel&singlePhotos=true`. Its `fullScreenPageOf` knows no video outside a
-reel and would draw one as a reel page and log an accusation, so the server must not hand it a feed
-video: the old switch keeps meaning "pictures only".
-**Removal condition:** `minClientVersion` has passed the first stable that sends `singleMedia`
-(`singlePhotos` then reaches only a client that no longer unlocks). Then `singlePhotos`, its DTO
-field, `SINGLE_PHOTO_POST_SQL` and the `'photos'` mode and cache-key suffix are deleted and
-`singleMedia` becomes the only switch. **Floor met (`1.6.6`, the first stable carrying #3056), owed:
-the collapse** - done with the two entries below in ONE pull request, since the three modes fold
-into one; the DTO fields may go with it (the whitelisting ValidationPipe strips an unknown key, it
-does not refuse it, and every floor client still sends them).
-**Cost of keeping it:** a second SQL clause and a cache-key variant; two tests pin the precedence.
-
----
-
-### No date yet - the CanaReels list asked with `multiMedia=true` AND both older switches (2026-11-06)
-
-**Site:** `buildListPostsSearchParams` in
-[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (`multiMedia` sets
-`singleMedia` and `singlePhotos` too).
-**What it humours:** a social-service without the `multiMedia` switch (an estate deployed before
-this change) drops the unknown parameter; the two older switches keep the single pictures and
-videos coming, and the client simply draws no carousel it was not sent.
-**Removal condition:** both estates' social-service carry the change that introduced `multiMedia`
-(a stable deployed on production, the pre-release on dev). Then the client sends `multiMedia` alone
-and both lines go (this entry and the `singleMedia` + `singlePhotos` one above). **MET
-(2026-11-08)**, as above (#3062, `v1.6.6`); owed: the same client pull request.
-**Cost of keeping it:** two redundant query parameters. The server reads `multiMedia` first.
-
----
-
-### No date yet - `singleMedia=true` answered without carousels, after `multiMedia` exists (2026-11-06)
-
-**Site:** `singleMediaModeOf` and the `media` mode in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
-**What it humours:** every installed client up to the last release that does not send `multiMedia`
-asks `kind=reel&singleMedia=true`. Its `fullScreenPageOf` reads a post of several media as no page at
-all, draws it as a reel of its first media and logs an accusation, so the server must not hand it a
-carousel: `singleMedia` keeps meaning "one picture or one video".
-**Removal condition:** `minClientVersion` has passed the first stable that sends `multiMedia`. Then
-`singleMedia`, its DTO field, the `media` mode and its `+media` cache-key suffix go (with
-`singlePhotos`, per the entry above), and `multiMedia` becomes the only switch. **Floor met
-(`1.6.6`, the first stable carrying #3062), owed: the collapse above.**
-**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins that
-`singleMedia` alone never answers a carousel.
-
----
-
-### No date yet - the CanaReels list keeps a post with a link OUT unless `withLinks=true` (2026-11-06)
-
-**Site:** `singleMediaModeOf`, the `carousel` mode and the `http(s)://` clause of `nothingElseSql` in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
-**What it humours:** every client built without the change that introduced `withLinks` - every
-release through `1.6.6-alpha.1`, and any later one cut before that change merged - reads a photo,
-video or carousel post with a link in its text as no page at all (`fullScreenPageOf`), draws it
-wrong and logs an accusation. None of them sends `withLinks`, so the server keeps the link out for
-them, in every mode. The first client that sends it is `1.6.6-alpha.2` at the earliest, the first
-stable `1.6.6` at the earliest.
-**Removal condition:** `minClientVersion` has passed the first stable that sends `withLinks`
-(read from the tags: #3074 is first in `v1.6.6`, so floor `1.6.6` MEETS it; owed: the collapse
-above). Then
-the link clause, the `kept-out` rule, the `carousel` mode and its `+carousel` cache-key suffix go,
-and `multiMedia` alone means `carousel-links` (with the `singleMedia` and `singlePhotos` entries
-above, `withLinks` and `multiMedia` collapse into one switch).
-**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins
-that neither `multiMedia` nor `withLinks` alone lets a link in.
 
 ---
 

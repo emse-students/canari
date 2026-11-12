@@ -34,7 +34,13 @@
   import { ownProfilePhoto } from '$lib/guidance/ownProfilePhoto.svelte';
   import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
-  import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
+  import {
+    placeBubble,
+    ringRadius,
+    usableBand,
+    type BubblePosition,
+  } from '$lib/guidance/guidePlacement';
+  import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
 
   /**
@@ -227,6 +233,26 @@
     );
   }
 
+  /**
+   * The boxes of the bars fixed at the viewport's edges, as drawn NOW: every element marked
+   * `data-guide-chrome` (the phone header, the web bottom bar, the desktop top bar) and, in the iOS
+   * app where the bar is native, the regions its tabs register. A hidden bar has no box and is
+   * skipped by `usableBand`.
+   */
+  function chromeBars(): GuideRect[] {
+    const bars: GuideRect[] = [];
+    for (const node of document.querySelectorAll<HTMLElement>('[data-guide-chrome]')) {
+      const r = node.getBoundingClientRect();
+      bars.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+    }
+    for (const place of MOBILE_NAV_PLACES) {
+      const region = resolveGuideAnchor(`nav.${place.id}`);
+      const r = region && !region.element ? region.rect() : null;
+      if (r) bars.push(r);
+    }
+    return bars;
+  }
+
   /** Re-reads the target's box and places the bubble. Called on every event that can move either. */
   function measure(): void {
     const current = guideEngine.view;
@@ -255,7 +281,8 @@
       { width: window.innerWidth, height: window.innerHeight },
       current.placement,
       0.75 * rem(),
-      rem()
+      rem(),
+      usableBand(window.innerHeight, chromeBars())
     );
   }
 
@@ -441,7 +468,7 @@
           <div class="mb-2 flex items-center gap-2">
             {#if Icon}
               <span
-                class="bg-cn-yellow/15 text-guide-ink flex size-8 shrink-0 items-center justify-center rounded-lg"
+                class="bg-accent/15 text-guide-ink flex size-8 shrink-0 items-center justify-center rounded-lg"
                 aria-hidden="true"
               >
                 <Icon size={18} />
@@ -503,7 +530,7 @@
         {:else}
           <button
             type="button"
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+            class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             onclick={() => guideEngine.next()}
             data-guide-next
           >

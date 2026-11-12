@@ -44,6 +44,7 @@ import {
   currentSalonSession,
   isCurrentSalonSession,
   readSalonSendGate,
+  SalonNotLoadableError,
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
@@ -59,7 +60,12 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
-import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
+import {
+  CHANNEL_MESSAGE_DELETED,
+  writePolicyOfRefusal,
+  type ChannelWritePolicy,
+} from '$lib/services/ChannelService';
+import { writePolicyLine } from './channelWritePolicy';
 import { flushDmReadMarks } from './salonReadMarkQueue';
 import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
 import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
@@ -98,6 +104,15 @@ export interface SendMessageDeps {
   /** Moves a salon echo along (in flight, failed, settled) - see `salonEcho.ts`. */
   patchSalonEcho: (conversationKey: string, messageId: string, change: SalonEchoChange) => void;
   log: (msg: string) => void;
+  /**
+   * The server refused a salon post by the salon's write policy: the composer this device offered
+   * was stale. Takes it away (`handleChannelWriteRefused`). Optional - a caller without a channel
+   * store still gets the precise sentence.
+   */
+  onChannelWriteRefused?: (
+    conversationKey: string,
+    policy: Exclude<ChannelWritePolicy, 'everyone'>
+  ) => void;
 }
 
 /**
@@ -388,6 +403,16 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // 2026-09-15, see docs/wiki/backlog.md.
     // A SEAL THIS DEVICE COULD NOT MAKE IS NAMED BY ITS TYPED REASON: nothing left the device,
     // there is no status, and the generic line below hid which of six facts was missing.
+    // THE LEADER TAB'S OWN GATE REFUSED a follower's seal (`channelSeal.ts`): the same answer as
+    // this tab's gate refusing above - nothing was sealed, the row is `error`, its Retry is safe.
+    if (error instanceof SalonNotLoadableError) {
+      endServerHold(messageId);
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded in the leader tab (reason=${error.reason})`
+      );
+      deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+      return salonGateRefusalMessage(error.reason);
+    }
     if (error instanceof GraineSealUnavailableError) {
       endServerHold(messageId);
       deps.log(
@@ -495,6 +520,16 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
     );
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+    // REFUSED BY THE SALON'S WRITE POLICY - a TYPE, so the line says who may write here rather than
+    // a generic "no permission", and the composer that offered the post goes: it was stale.
+    const refusedBy = writePolicyOfRefusal(refusalCode(error));
+    if (refusedBy) {
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}… refused by the write policy ${refusedBy}: the composer was stale, taken away`
+      );
+      deps.onChannelWriteRefused?.(send.conversationKey, refusedBy);
+      return writePolicyLine(refusedBy);
+    }
     return (
       describeApiRefusal(status, m.channel_action_message_send()) ?? m.chat_send_error_generic()
     );
@@ -799,6 +834,27 @@ async function resumeOrphans(
 }
 
 /**
+ * The reference a reply (or a file sent as one) carries: the quoted message's id and sender plus
+ * its preview, cut the way every quote is. ONE implementation for the text send and the media
+ * send, so a photo answering a message quotes it exactly as a text would.
+ */
+export function quoteReference(replyingTo: ChatMessage): NonNullable<ChatMessage['replyTo']> {
+  const replyEnv = parseEnvelope(replyingTo.content);
+  const replyPreview =
+    replyEnv.kind === 'text' && gifPreviewUrl(replyEnv.text)
+      ? // A GIF quote keeps its WHOLE address: cut at 100 characters it is a broken picture.
+        replyEnv.text.trim()
+      : replyEnv.kind === 'text' || replyEnv.kind === 'system'
+        ? cutReplyPreview(replyEnv.text)
+        : replyEnv.kind === 'media'
+          ? replyEnv.caption === undefined
+            ? m.chat_preview_media()
+            : cutReplyPreview(replyEnv.caption)
+          : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
+  return { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
+}
+
+/**
  * Sends a text message in a conversation, optionally as a reply to a previous message.
  *
  * For direct/group MLS conversations the message is captured into the persistent outbox and
@@ -835,22 +891,7 @@ export async function sendChatMessage(
   const sentAt = Date.now();
 
   // Reply preview (from the quoted message envelope), shared by the proto and the local echo.
-  let replyToData: ChatMessage['replyTo'] = undefined;
-  if (replyingTo) {
-    const replyEnv = parseEnvelope(replyingTo.content);
-    const replyPreview =
-      replyEnv.kind === 'text' && gifPreviewUrl(replyEnv.text)
-        ? // A GIF quote keeps its WHOLE address: cut at 100 characters it is a broken picture.
-          replyEnv.text.trim()
-        : replyEnv.kind === 'text' || replyEnv.kind === 'system'
-          ? cutReplyPreview(replyEnv.text)
-          : replyEnv.kind === 'media'
-            ? replyEnv.caption === undefined
-              ? m.chat_preview_media()
-              : cutReplyPreview(replyEnv.caption)
-            : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
-    replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
-  }
+  const replyToData = replyingTo ? quoteReference(replyingTo) : undefined;
 
   // Channels: the text is SHOWN at once, as a local echo the server's answer settles, and it is
   // queued durably in the unsent ledger, so neither a refusal nor a kill can make it vanish.

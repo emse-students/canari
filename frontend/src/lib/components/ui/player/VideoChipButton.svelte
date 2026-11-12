@@ -30,7 +30,11 @@
     class?: string;
     /** Out of the tab order when the player's keyboard map already covers it. */
     tabindex?: number;
+    /** A tooltip under a pointer (the reel rail's buttons all carry one). */
+    title?: string;
     children: Snippet;
+    /** `data-*` markers of the call site (`data-reel-rail-sound`), set on the button. */
+    [data: `data-${string}`]: unknown;
   }
 
   let {
@@ -41,7 +45,9 @@
     disabled = false,
     class: klass = '',
     tabindex,
+    title,
     children,
+    ...markers
   }: Props = $props();
 </script>
 
@@ -52,6 +58,8 @@
   aria-pressed={pressed}
   {disabled}
   {tabindex}
+  {title}
+  {...markers}
   data-video-controls
   onpointerdown={(e) => e.stopPropagation()}
   onclick={(e) => {
@@ -62,7 +70,7 @@
   <span
     class="pointer-events-none inline-flex items-center justify-center rounded-full transition-transform duration-150 group-active/chip:scale-90 motion-reduce:transition-none {glass
       ? 'glass-video h-7 w-7'
-      : 'h-6 w-6'}"
+      : ''}"
     data-glass={glass ? videoGlass() : undefined}
   >
     {@render children()}

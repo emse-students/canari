@@ -10,6 +10,7 @@
  */
 
 import type { MediaRef } from '$lib/media';
+import { isMediaLoudness } from '$lib/video/loudnessMeter';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
@@ -34,10 +35,70 @@ export interface MediaEnvelope {
   replyTo?: MessageReference;
 }
 
+/**
+ * The events a membership or group notice row names people for. The row carries WHO (ids) and the
+ * reader draws the names, so a name that arrives after the row was written still reaches it.
+ */
+export type NoticeEvent =
+  | 'memberAdded'
+  | 'memberRemoved'
+  | 'memberLeft'
+  | 'uninvitedEntry'
+  | 'unvouchedDeviceEntry'
+  | 'groupRenamed'
+  | 'groupPhotoChanged'
+  | 'groupPhotoRemoved';
+
+/** The structured fact behind a notice row: an event, the people it names and its one argument. */
+export interface NoticeSpec {
+  event: NoticeEvent;
+  /** The acting user (the adder, the remover, the renamer, the leaver). */
+  actor: string;
+  /** The users acted upon: the added members, or the removed one. */
+  targets?: string[];
+  /** The new group name, for `groupRenamed`. */
+  name?: string;
+}
+
+const NOTICE_EVENTS: readonly string[] = [
+  'memberAdded',
+  'memberRemoved',
+  'memberLeft',
+  'uninvitedEntry',
+  'unvouchedDeviceEntry',
+  'groupRenamed',
+  'groupPhotoChanged',
+  'groupPhotoRemoved',
+];
+
+/** Reads a stored notice back, or `undefined` for anything that is not one. */
+function readNotice(raw: unknown): NoticeSpec | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const n = raw as Record<string, unknown>;
+  if (typeof n.event !== 'string' || !NOTICE_EVENTS.includes(n.event)) return undefined;
+  if (typeof n.actor !== 'string' || !n.actor) return undefined;
+  const targets = Array.isArray(n.targets)
+    ? n.targets.filter((t): t is string => typeof t === 'string' && t !== '')
+    : undefined;
+  // An addition or a removal names who it acted upon; without them the stored `text` is all there is.
+  if ((n.event === 'memberAdded' || n.event === 'memberRemoved') && !targets?.length) {
+    return undefined;
+  }
+  return {
+    event: n.event as NoticeEvent,
+    actor: n.actor,
+    ...(targets ? { targets } : {}),
+    ...(typeof n.name === 'string' ? { name: n.name } : {}),
+  };
+}
+
 /** System / group-event notification (never user-authored). */
 export interface SystemEnvelope {
   kind: 'system';
+  /** The sentence as drawn when the row was written: the fallback when `notice` is absent. */
   text: string;
+  /** Present on a membership or group notice: the reader draws `text` from it, names resolved live. */
+  notice?: NoticeSpec;
   /** Present when the system event is a channel invitation; renders the invite card in the UI. */
   channelInvite?: {
     channelId: string;
@@ -216,9 +277,11 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 ...(isCallEndReason(ce.outcome) ? { outcome: ce.outcome } : {}),
               }
             : undefined;
+        const notice = readNotice(obj.notice);
         return {
           kind: 'system',
           text: obj.text,
+          ...(notice ? { notice } : {}),
           ...(channelInvite ? { channelInvite } : {}),
           ...(callEvent ? { callEvent } : {}),
         };
@@ -267,6 +330,8 @@ export function parseEnvelope(content: string): MessageEnvelope {
               ...(typeof media.expiresAtMs === 'number' && media.expiresAtMs > 0
                 ? { expiresAtMs: media.expiresAtMs }
                 : {}),
+              // A video's or voice note's measured sound: kept only when it is one a player may apply.
+              ...(isMediaLoudness(media.loudness) ? { loudness: media.loudness } : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
             replyTo: safeReplyTo(obj.replyTo),
@@ -366,8 +431,11 @@ export function envelopeBodyText(content: string): string {
  * disk showed the message bare, and one reload lost it on the editing device too. Reported
  * 2026-09-21 as one message quoted on its author's PC and bare on the peer's.
  *
- * The media case is not reachable from this app's UI, which refuses to edit a media message - it is
- * here because the alternative for a frame from some other client is throwing the attachment away.
+ * A MEDIA MESSAGE'S EDIT IS A CAPTION EDIT (owner, 2026-11-11): the wire carries only the text, so
+ * the attachment reference, its key and its reply quote stay exactly as the row holds them. This
+ * branch has been in every client since `v0.18.18` (#903), so a client at the `1.6.6` floor already
+ * replaces the caption and keeps the photo - the reason the edit needs no new wire shape. An empty
+ * caption is stored as NO caption, the shape a photo sent without one has, so the bubble draws it bare.
  */
 export function applyEditToBody(content: string, newText: string): string {
   const env = parseEnvelope(content);
@@ -375,15 +443,33 @@ export function applyEditToBody(content: string, newText: string): string {
     case 'text':
       return serializeEnvelope({ ...env, text: newText });
     case 'media':
-      return serializeEnvelope({ ...env, caption: newText });
+      return serializeEnvelope({ ...env, caption: newText === '' ? undefined : newText });
     default:
       return serializeEnvelope(mkTextEnvelope(newText));
   }
 }
 
+/**
+ * Whether an edit's replacement text may be applied to this stored body: any text to a media
+ * message's caption, the EMPTY one included (a caption may be removed and the photo stays), and a
+ * non-empty one to everything else - a text message emptied would be a message with nothing in it.
+ *
+ * Every applier asks this before `applyEditToBody`, so the rule is the same on the live path, a
+ * replay, a parked edit and the sender's own write. A client older than this rule drops an empty
+ * edit at its own `newContent` truthiness check and keeps the old caption (legacy-compatibility).
+ */
+export function editFitsBody(content: string, newText: string): boolean {
+  return newText !== '' || parseEnvelope(content).kind === 'media';
+}
+
 /** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };
+}
+
+/** A notice row: the sentence as a fallback, and the ids the reader resolves live. */
+export function mkNoticeEnvelope(text: string, notice: NoticeSpec): SystemEnvelope {
+  return { kind: 'system', text, notice };
 }
 
 /** Build a poll envelope from a decoded PollMsg (the live tally is stored separately). */

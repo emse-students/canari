@@ -164,7 +164,7 @@
 {#snippet card(live: LiveListItem, large: boolean)}
   <button
     type="button"
-    class="bg-cn-scrim relative block w-full touch-manipulation overflow-hidden rounded-2xl text-left text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {large
+    class="bg-cn-scrim focus-visible:ring-accent-icon relative block w-full touch-manipulation overflow-hidden rounded-2xl text-left text-white outline-none focus-visible:ring-2 {large
       ? 'aspect-[4/5]'
       : 'aspect-[3/4]'}"
     aria-label={label(live)}

@@ -12,6 +12,7 @@
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
+  import { noticeDisplayText, noticeUserIds } from '$lib/utils/chat/noticeText';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -63,6 +64,7 @@
   import {
     getUserDisplayNameSync,
     getUserFirstNameSync,
+    peekUserDisplayName,
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import {
@@ -169,7 +171,7 @@
      * messages -> pas dans la bulle, dans le composer de message classique"*), so the bubble only
      * announces it. Omit to hide the edit action.
      */
-    onBeginEdit?: (messageId: string, text: string) => void;
+    onBeginEdit?: (messageId: string, text: string, captionOnly?: boolean) => void;
     /** ID of the authenticated user, used to highlight own reactions and gate edit/delete. */
     currentUserId?: string;
     /** Bearer token forwarded to MediaService for downloading and decrypting attachments. */
@@ -316,12 +318,34 @@
   let channelInvite = $derived(
     envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
   );
+  /**
+   * A NOTICE ROW NAMES ITS PEOPLE BY ID AND DRAWS THE NAMES HERE, NEVER FROM A FROZEN SENTENCE.
+   * A name unknown when the row was written (a newcomer's profile not yet readable) is fetched by the
+   * one display-name resolver (single-flight, cached) and lands in `noticeNames`, which redraws the
+   * row. Until EVERY name is known the stored sentence shows (`noticeDisplayText`): the writer drew it
+   * with the names it held, so a cold cache never degrades it. The resolver keeps a 404 or a nameless
+   * profile as the unknown label for the session, so a row written during that state redraws at the
+   * next launch, not before (review of #3232).
+   */
+  let noticeNames = $state<Record<string, string>>({});
+  let notice = $derived(envelope.kind === 'system' ? (envelope.notice ?? null) : null);
+  $effect(() => {
+    if (!notice) return;
+    for (const id of noticeUserIds(notice)) {
+      if (peekUserDisplayName(id) !== null) continue;
+      void resolveUserDisplayName(id).then((name) => {
+        if (name && noticeNames[id] !== name) noticeNames = { ...noticeNames, [id]: name };
+      });
+    }
+  });
   let textContent = $derived(
-    envelope.kind === 'text' || envelope.kind === 'system'
-      ? envelope.text
-      : envelope.kind === 'media'
-        ? (envelope.caption ?? '')
-        : ''
+    notice && envelope.kind === 'system'
+      ? noticeDisplayText(notice, envelope.text, (id) => noticeNames[id] ?? peekUserDisplayName(id))
+      : envelope.kind === 'text' || envelope.kind === 'system'
+        ? envelope.text
+        : envelope.kind === 'media'
+          ? (envelope.caption ?? '')
+          : ''
   );
   let effectiveReplyTo = $derived(
     replyTo ??
@@ -492,14 +516,21 @@
 
   /** Hands the message to the composer for editing, and closes whatever panel was open on it. */
   function startEdit() {
-    onBeginEdit?.(messageId, textContent);
+    onBeginEdit?.(messageId, textContent, !!mediaRef);
     emojiPickerOrigin = null;
     showInfo = false;
     showMobileActions = false;
   }
 
-  /** Only the author's own text message can be edited, and only where the parent can take it. */
-  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !pollEnvelope && !!onBeginEdit);
+  /**
+   * The author's own text message can be edited, and a media message's CAPTION (owner, 2026-11-11:
+   * the media stays, the bubble shows "modifié" like an edited text) - only where the parent can take
+   * it. A CanaReel sent here is a media message like a photo and its caption is text like a photo's;
+   * a voice note has no caption to edit, and a poll cannot be edited.
+   */
+  const canEdit = $derived(
+    !isDeleted && isOwn && !pollEnvelope && !mediaRef?.voiceNote && !!onBeginEdit
+  );
 
   /**
    * ONE TAP OPENS THE INFO PANEL, TWO TAPS LIKE - NEVER BOTH (user, 2026-10-12). The first tap used
@@ -591,6 +622,30 @@
     return { x: pe.clientX, y: pe.clientY };
   }
 
+  /**
+   * A PRESS THAT STARTS ON A VIDEO IS ITS PLAYER'S (owner, 2026-11-09): held there, it pauses the
+   * video and ONLY that - the action sheet stays reachable from the rest of the bubble. The player
+   * says so by being a `[data-video-player]`; the bubble reads that fact at the press rather than
+   * opening the sheet and racing the pause.
+   */
+  function pressOwnedByVideo(e: Event): boolean {
+    const target = e.target as Element | null;
+    return (
+      target !== null &&
+      typeof target.closest === 'function' &&
+      target.closest('[data-video-player]') !== null
+    );
+  }
+
+  /** The actions sheet, opened from a video's chip - the long press it replaces over a video. */
+  function openActionsFromVideo() {
+    Log.d('MESSAGE', `actions of ${messageId} opened from its video's chip`);
+    bubbleTaps.cancel();
+    showMobileActions = true;
+    emojiPickerOrigin = null;
+    showInfo = false;
+  }
+
   function beginLongPress(e: PointerEvent | TouchEvent) {
     const { x, y } = pointerCoords(e);
     pointerStartX = x;
@@ -600,8 +655,8 @@
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
 
-    // Long press: arm on any non-mouse touch event on mobile
-    if (pointerType !== 'mouse' && isMobile) {
+    // Long press: arm on any non-mouse touch event on mobile - never over a video, whose hold pauses.
+    if (pointerType !== 'mouse' && isMobile && !pressOwnedByVideo(e)) {
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = setTimeout(() => {
         if (replyGesture?.phase === 'horizontal') return;
@@ -921,11 +976,11 @@
   {#if channelInvite}
     <!-- Channel invite card with Join button -->
     <div
-      class="inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 shadow-sm dark:bg-amber-500/10 {shouldAnimate
+      class="border-accent/20 bg-accent/5 inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border px-4 py-3 shadow-sm {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
-      <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+      <div class="text-accent-text flex items-center gap-2">
         <!-- The community's own logo, falling back to its initials (GroupAvatar) rather than a
              generic building icon. -->
         <div class="h-5 w-5 shrink-0 overflow-hidden rounded-md">
@@ -956,7 +1011,7 @@
         <button
           onclick={() => onJoinChannel?.(channelInvite.channelId)}
           type="button"
-          class="text-cn-ink inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold shadow-sm shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95"
+          class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm transition-all active:scale-95"
         >
           <Building2 size={12} strokeWidth={3} />
           {m.msg_channel_invite_join_button()}
@@ -1006,7 +1061,7 @@
       -->
         <div
           class="text-cn-ink pointer-events-none absolute top-1/2 z-0 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition-[background-color,box-shadow] duration-100
- {replyArmed ? 'bg-amber-400 ring-2 ring-amber-200' : 'bg-amber-400/70'}
+ {replyArmed ? 'bg-accent ring-accent/40 ring-2' : 'bg-accent/70'}
  {isOwn ? 'right-1' : 'left-1'}"
           style:opacity={0.35 + 0.65 * replyHintOpacity}
           style:transform={`translateY(-50%) scale(${replyArmed ? 1.15 : 0.6 + 0.4 * replyHintOpacity})`}
@@ -1069,6 +1124,15 @@
             ontouchcancel={endSwipeReply}
             oncontextmenu={(e) => {
               e.preventDefault();
+              // A phone raises `contextmenu` for a touch hold too: over a video it is the player's
+              // pause, never the sheet.
+              if (pressOwnedByVideo(e)) {
+                Log.d(
+                  'MESSAGE',
+                  `long press over a video in ${messageId} - the player's, no sheet`
+                );
+                return;
+              }
               // The sheet supersedes a tap still waiting out the double-tap window.
               bubbleTaps.cancel();
               if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
@@ -1096,7 +1160,7 @@
               : isOwn
                 ? 'text-bubble-out-text bg-bubble-out'
                 : 'text-text-main bg-bubble-in'} {isHighlighted
-              ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
+              ? 'ring-accent/80 animate-pulse ring-2 ring-offset-2 ring-offset-transparent'
               : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
           >
             {#if pollEnvelope && pollSpec && pollMeta}
@@ -1132,6 +1196,7 @@
                   {reelPurgedAt}
                   onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
                   onNear={() => (isNearViewport = true)}
+                  onActions={isMobile && !isDeleted ? openActionsFromVideo : undefined}
                   {upload}
                   uploadFailed={uploadFailed || retiredForGroup}
                   {uploadFailedLabel}
@@ -1174,7 +1239,6 @@
             <MessageBubbleToolbar
               {isOwn}
               {isDeleted}
-              hasMedia={!!mediaRef}
               {showEmojiPicker}
               onReply={onReply ? () => onReply!(messageId) : undefined}
               onForward={forwardAction ? () => forwardAction!(messageId) : undefined}
@@ -1255,7 +1319,6 @@
       anchor={bubbleAnchor}
       {isOwn}
       {isDeleted}
-      hasMedia={!!mediaRef}
       userReactions={userOwnReactions}
       onReactEmoji={(emoji) => {
         onReact?.(messageId, emoji);

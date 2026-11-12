@@ -126,7 +126,7 @@ describe('reel class and claim', () => {
       [REEL]: entry({ ownerId: ALICE, retentionClass: 'reel' }),
       [COMMENT_MEDIA]: entry({ ownerId: ALICE, retentionClass: 'archive' }),
     });
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
     expect(stats.reelCount).toBe(1);
     expect(stats.reelBytes).toBe(10);
     expect(stats.archiveCount).toBe(1);

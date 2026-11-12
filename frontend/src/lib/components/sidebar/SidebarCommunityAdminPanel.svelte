@@ -295,7 +295,7 @@
 
   function roleBadgeClass(role: CanonicalRole): string {
     if (role === 'admin') return 'bg-red-err/10 text-red-err';
-    if (role === 'moderator') return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+    if (role === 'moderator') return 'bg-accent/10 text-accent-text';
     return 'bg-green-ok/10 text-green-ok';
   }
 
@@ -353,19 +353,20 @@
       applyListedRoles(wsData.roles ?? []);
       const roles = workspaceRoles;
 
+      // A ROLE WHOSE PERMISSIONS COULD NOT BE READ IS NOT A ROLE THAT GRANTS NOTHING. A failed read
+      // used to be drawn as an empty row, silently - the grid then showed a role stripped of every
+      // permission it held, which is indistinguishable from the real thing (a Moderateur role
+      // emptied by hand, production 2026-11-10). It now fails the whole load, out loud, below.
       const perms: Record<string, string[]> = {};
       for (const role of roles) {
-        try {
-          const data = await channelService.getRolePermissions(role.id);
-          perms[role.id] = data.permissions ?? [];
-        } catch {
-          perms[role.id] = [];
-        }
+        const data = await channelService.getRolePermissions(role.id);
+        perms[role.id] = data.permissions ?? [];
       }
       globalChannels.setRolePermissions(perms);
     } catch (e) {
-      Log.d('communityAdmin.loadRolesAndPermissions failed', e);
-      rolesError = m.chat_community_load_members_error();
+      Log.i('communityAdmin.loadRolesAndPermissions failed - the grid is not drawn', e);
+      console.warn('[COMMUNITY] roles and permissions not loaded - the grid is not drawn', e);
+      rolesError = m.chat_community_roles_load_error();
     } finally {
       rolesLoading = false;
     }
@@ -782,7 +783,7 @@
               </div>
               {#if canManage}
                 <label
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover absolute right-0 bottom-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow transition-colors"
+                  class="bg-accent text-on-accent hover:bg-accent-hover absolute right-0 bottom-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow transition-colors"
                   title={m.chat_community_change_image_title()}
                 >
                   {#if imageUploading}
@@ -809,7 +810,7 @@
               >
               <input
                 id="server-name"
-                class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/50 w-full rounded-xl border px-4 py-2.5 outline-none read-only:cursor-not-allowed read-only:opacity-60 focus:ring-2"
+                class="bg-cn-surface text-text-main border-cn-border focus:ring-accent/50 w-full rounded-xl border px-4 py-2.5 outline-none read-only:cursor-not-allowed read-only:opacity-60 focus:ring-2"
                 value={selectedWorkspace ? selectedWorkspace.name : ''}
                 readonly={!canManage}
               />
@@ -921,7 +922,7 @@
                     value={inviteRole}
                     options={roleOptions}
                     label={m.chat_assign_role_label()}
-                    triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/40 flex items-center justify-between gap-1 rounded-lg border px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+                    triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-accent/40 flex items-center justify-between gap-1 rounded-lg border px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
                     onValueChange={(v) => (inviteRole = asCanonicalRole(v) ?? inviteRole)}
                   />
                   <Button
@@ -969,7 +970,7 @@
                             options={roleOptions}
                             label={m.chat_assign_role_label()}
                             disabled={memberRoleSaving[member.userId]}
-                            triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/50 flex w-32 items-center justify-between gap-1 rounded-lg border px-2 py-1.5 text-left text-xs font-semibold outline-none focus-visible:ring-1 disabled:opacity-50"
+                            triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-accent/50 flex w-32 items-center justify-between gap-1 rounded-lg border px-2 py-1.5 text-left text-xs font-semibold outline-none focus-visible:ring-1 disabled:opacity-50"
                             onValueChange={(v) => {
                               const role = asCanonicalRole(v);
                               if (role) void handleMemberRoleUpdate(member.userId, role);
@@ -977,7 +978,7 @@
                           />
                           {#if memberRoleSaving[member.userId]}
                             <span class="absolute top-1/2 right-1.5 -translate-y-1/2">
-                              <Loader size={12} class="text-cn-yellow animate-spin" />
+                              <Loader size={12} class="text-accent-icon animate-spin" />
                             </span>
                           {/if}
                         </div>

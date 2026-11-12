@@ -7,10 +7,20 @@
     admitAttachments,
     attachmentCapNotice,
   } from '$lib/posts/attachmentCap';
-  import { FileText, Film, Music, CalendarCheck, CircleAlert, CloudUpload } from '@lucide/svelte';
+  import {
+    FileText,
+    Film,
+    Music,
+    CalendarCheck,
+    CircleAlert,
+    Clock,
+    CloudUpload,
+  } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onDestroy, onMount } from 'svelte';
-  import type { CreatePostPayload, PostFeed } from '$lib/posts/api';
+  import { getReelLimits, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
+  import { readVideoMetadata } from '$lib/reels/videoDuration';
+  import { reelDeclarationFor, reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
   import { landingFeedFor } from '$lib/posts/landingFeed';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
@@ -59,7 +69,14 @@
   import PostIdentityPicker from './PostIdentityPicker.svelte';
   import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
-  import type { ComposerReelState } from '$lib/posts/composerReelState';
+  import InstitutionReachPicker from './InstitutionReachPicker.svelte';
+  import {
+    emptyReachDraft,
+    institutionReachOffered,
+    isReachComplete,
+    plainReach,
+    type InstitutionReachDraft,
+  } from '$lib/posts/institutionReach';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -177,6 +194,72 @@
   /** Who is publishing - `''`, anonymous or an association (`PostIdentityPicker`). */
   let selectedAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
+
+  /**
+   * WHAT THIS POST WILL BE, SAID BEFORE "Publier" (owner, 2026-11-09: every vertical video of 90 s
+   * or less is a CanaReel, `reels/reelRule.ts`). The publish queue decides on the PREPARED file;
+   * a member who imported a video into "Nouvelle publication" would otherwise learn only after
+   * publishing that it is a CanaReel, deleted after its lifetime - the composer camera's publish step
+   * says so for the same reason. Read here on the picked file's DISPLAYED frame and length (the
+   * preparation keeps both, rotation applied), through the SAME classifier the queue applies, with
+   * the same exclusions (a poll, a form, an event, a schedule keep it a post). `null`: no notice.
+   */
+  let reelNotice = $state<string | null>(null);
+  $effect(() => {
+    const only =
+      selectedFiles.length === 1 && selectedFiles[0].type.startsWith('video/')
+        ? selectedFiles[0]
+        : null;
+    const payload = {
+      ...(includePoll ? { polls: [{ question: '', options: [] }] } : {}),
+      ...(includeForm ? { attachedFormId: 'chosen' } : {}),
+      ...(selectedLinkedCalendarEventId.trim()
+        ? { linkedCalendarEventId: selectedLinkedCalendarEventId }
+        : {}),
+      ...(scheduledAt ? { scheduledAt } : {}),
+    };
+    reelNotice = null;
+    if (!only) return;
+    let current = true;
+    void Promise.all([readVideoMetadata(only), getReelLimits()])
+      .then(([video, limits]) => {
+        const rule = reelRuleOf(limits);
+        const reel =
+          rule &&
+          reelDeclarationFor(
+            payload,
+            [
+              {
+                type: only.type,
+                width: video.width ?? undefined,
+                height: video.height ?? undefined,
+                durationMs: video.durationMs ?? undefined,
+              },
+            ],
+            rule
+          );
+        if (!current) return;
+        Log.d(
+          'POST_COMPOSER',
+          `the picked video ${video.width ?? '?'}x${video.height ?? '?'}, ${video.durationMs ?? '?'} ms: ${reel ? 'a CanaReel' : 'a post'}`
+        );
+        reelNotice = reel
+          ? m.reels_publish_from_composer_notice({
+              seconds: Math.round(rule.maxDurationMs / 1000),
+              lifetime: reelLifetimeLabel(limits.retentionDays),
+            })
+          : null;
+      })
+      .catch((e: unknown) => {
+        // The notice only: the queue reads the rule again at the create step, and waits it out.
+        console.warn(
+          `[post-composer] the reel rule could not be read for the notice: ${String(e)}`
+        );
+      });
+    return () => {
+      current = false;
+    };
+  });
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
 
@@ -213,6 +296,17 @@
   const studentsOnlyAssociation = $derived(
     chosenAssociation && studentsOnlyOffered(chosenAssociation.type) ? chosenAssociation : null
   );
+
+  /**
+   * The reach of an institution's post (owner, 2026-11-10): offered while the identity chosen is an
+   * institution, with NOTHING pre-selected - "Publier" stays disabled until a space and a public are
+   * chosen (`reachMissing`), and the reach is sent only where it is offered.
+   */
+  let reach = $state<InstitutionReachDraft>(emptyReachDraft());
+  const reachAssociation = $derived(
+    chosenAssociation && institutionReachOffered(chosenAssociation.type) ? chosenAssociation : null
+  );
+  const reachMissing = $derived(reachAssociation !== null && !isReachComplete(reach));
 
   /**
    * Hands over to the broadcaster's screen. The composer is about to unmount, and the debounced
@@ -271,6 +365,7 @@
       selectedAssociationId,
       selectedLinkedCalendarEventId,
       ...(studentsOnly ? { studentsOnly: true } : {}),
+      ...(reach.spaces.length > 0 || reach.public !== null ? { reach: plainReach(reach) } : {}),
     };
   }
 
@@ -292,6 +387,7 @@
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
     studentsOnly = draft.studentsOnly === true;
+    reach = draft.reach ?? emptyReachDraft();
   }
 
   function persistComposerDraft() {
@@ -349,24 +445,6 @@
       linkedCalendarEventId: selectedLinkedCalendarEventId,
     })
   );
-
-  /**
-   * "Garder comme post" from the reel publish step: the video comes back through `onFiles`, and
-   * what the member changed in that step comes with it. The caption REPLACES this text only when
-   * it differs from it (it started as this text, so an untouched caption changes nothing); the
-   * identity and the "Entre étudiants" switch chosen there are the post's.
-   */
-  function onReelKept(kept: ComposerReelState) {
-    if (kept.caption !== markdown) {
-      Log.d(
-        'POST_COMPOSER',
-        'kept as a post: the caption edited in the reel step replaces the text'
-      );
-      markdown = kept.caption;
-    }
-    selectedAssociationId = kept.identity;
-    studentsOnly = kept.studentsOnly;
-  }
 
   function onReelPublished(identity: string) {
     Log.d('POST_COMPOSER', 'a reel filmed from this composer was published: its text is spent');
@@ -570,6 +648,18 @@
       if (studentsOnlyAssociation) {
         Log.d('STUDENTS_ONLY', `publishing with the switch ${payload.studentsOnly ? 'ON' : 'off'}`);
       }
+      if (reachAssociation) {
+        // The button is disabled until the choice is complete: this is a net, never a path.
+        if (!isReachComplete(reach)) {
+          stage = 'content';
+          throw new LocalizedError(m.post_reach_required());
+        }
+        payload.reach = plainReach(reach);
+        Log.d(
+          'INSTITUTION_REACH',
+          `publishing to ${reach.spaces.length} space(s), public ${reach.public}`
+        );
+      }
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -619,6 +709,7 @@
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
       studentsOnly = false;
+      reach = emptyReachDraft();
       // The hold effect would forget the media only on its next flush, and `onPostCreated` unmounts
       // this composer before that: the next open brought the PUBLISHED media back. Said here, now.
       holdPostComposerMedia([]);
@@ -657,7 +748,7 @@
   {#if dropActive}
     <div
       transition:fade={{ duration: 150 }}
-      class="border-cn-accent bg-cn-surface/80 pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-lg border-2 border-dashed"
+      class="border-accent-icon bg-cn-surface/80 pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-lg border-2 border-dashed"
     >
       <span class="text-cn-ink flex items-center gap-2 text-sm font-bold">
         <CloudUpload size={18} strokeWidth={2.5} />
@@ -679,7 +770,7 @@
           for="post-linked-calendar-event"
           class="text-text-muted text-2xs mb-1 flex items-center gap-1.5 font-semibold"
         >
-          <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+          <CalendarCheck size={14} strokeWidth={2.5} class="text-accent-text" />
           {m.post_create_link_event_label()}
         </label>
         <Picker
@@ -703,12 +794,22 @@
       </div>
     {/if}
 
+    {#if reachAssociation}
+      <div class="mt-3" transition:fade={{ duration: 200 }}>
+        <InstitutionReachPicker
+          bind:reach
+          associationId={reachAssociation.id}
+          associationName={reachAssociation.name}
+        />
+      </div>
+    {/if}
+
     {#if draftRestored}
       <div
-        class="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-500/10 px-3 py-2"
+        class="bg-accent/10 mt-3 flex items-center justify-between gap-3 rounded-lg px-3 py-2"
         transition:slide={{ duration: 200 }}
       >
-        <span class="text-2xs font-semibold text-amber-700 dark:text-amber-400">
+        <span class="text-2xs text-accent-text font-semibold">
           {m.post_create_draft_restored_label()}
           <span class="font-medium opacity-70"
             >{draftRestoredMedia
@@ -730,7 +831,7 @@
             draftRestored = false;
             draftRestoredMedia = false;
           }}
-          class="text-2xs shrink-0 font-bold text-amber-700 outline-none hover:underline focus-visible:underline dark:text-amber-400"
+          class="text-2xs text-accent-text shrink-0 font-bold outline-none hover:underline focus-visible:underline"
         >
           {m.post_create_clear_draft_label()}
         </button>
@@ -792,6 +893,16 @@
           </div>
         {/each}
       </div>
+      {#if reelNotice}
+        <p
+          role="note"
+          class="bg-amber-warn/10 text-amber-warn mt-1 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold"
+          data-post-composer-reel-notice
+        >
+          <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
+          <span>{reelNotice}</span>
+        </p>
+      {/if}
       {#if captionIndex !== null && captionIndex < selectedFiles.length}
         {#key captionIndex}
           <MediaCaptionField
@@ -870,9 +981,13 @@
         : undefined}
       reel={reelAllowed
         ? {
-            start: { caption: markdown, identity: selectedAssociationId, studentsOnly },
+            start: {
+              caption: markdown,
+              identity: selectedAssociationId,
+              studentsOnly,
+              reach: plainReach(reach),
+            },
             onpublished: onReelPublished,
-            onkept: onReelKept,
           }
         : undefined}
     >
@@ -880,7 +995,7 @@
         <Button
           type="button"
           class="shrink-0"
-          disabled={publishing || !hasContent(markdown, selectedFiles.length)}
+          disabled={publishing || !hasContent(markdown, selectedFiles.length) || reachMissing}
           loading={publishing}
           onclick={publishPost}
         >

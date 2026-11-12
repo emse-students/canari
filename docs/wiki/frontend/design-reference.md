@@ -19,6 +19,18 @@ not a measurement of the reference - [controls](controls.md).
 
 ---
 
+## 0. The product principle, above every choice (owner, 2026-11-10)
+
+*"La philosophie de Canari c'est de permettre aux gens de retrouver toutes leurs informations rapidement. L'engagement (et avoir une activité agréable) n'arrive qu'après, et ne doit jamais gêner le premier point."*
+
+**This rule takes precedence over engagement, and over any reference copied below.** A layout,
+ranking or insertion that makes a reader's own information slower to find loses, whatever Messenger,
+Facebook or Instagram do. Its first applications: Campus and Associations are pure chronological
+lists with nothing inserted, and Pour toi leads with the fresh posts of the people a reader follows
+([posts](modules/posts.md#the-owners-decisions-of-2026-11-10), [engagement](../engagement.md#the-product-principle-owner-2026-11-10)).
+
+---
+
 ## 1. The finding in one line
 
 **Canari uses 36 distinct font sizes. Messenger and Facebook use five, and it is the same five on
@@ -1765,6 +1777,28 @@ end per-page widths and paddings. The gain is 32px of text width; the cost is re
 what that component exists to prevent. Not a close call, and not to be re-opened without a reason
 better than "Facebook does it".
 
+**MEDIA IN THE CARD IS FULL-BLEED, AND THE 2026-10-01 INSET IS REVISED (design audit S3, 2026-11-09).** Dev held no post with a photo or a video, so three fictional ones were posted from a test account (a 4:3 photo, a 3:4 photo, a 16:9 clip) and read on `dev.canari-emse.fr` at 390 x 844 (dark, headless Chrome, secondary to the app) against the Facebook feed read the same day on the Mi 9T (a photo edge to edge, the action bar directly under it). "Before" is the dev build; "after" is the same page with the change's geometry applied live to the DOM (the box's corner, the wrapper's padding and margin, the text's bottom padding), so the numbers are the arithmetic of the classes and the Mi 9T reading stays owed:
+
+| part | before (dev) | after | Facebook |
+| --- | --- | --- | --- |
+| media box width (card is 358) | 332, inset 13 | **356, the card's padding box** | 390, no inset (the page has no gutter there) |
+| media corners | 8 | **0** (the card's radius only if first or last block) | 0 |
+| text to media | 16 (`pb-3` + `mt-1`) | **8** (`pb-2`, no `mt`) | about 0-8 |
+| media to the action bar | 4 | **0** | 0 |
+| 4:3 / 3:4 / 16:9 box | 332 x 249 / 332 x 443 / 332 x 187 | **356 x 267 / 356 x 475 / 356 x 200** | 390 x 292 / 390 x 520 / - |
+
+**WHY THE DECISION OF 2026-10-01 IS REVISITED.** It inset and rounded the media because a full-bleed picture was cut across the card's 18 px corners. Two things changed: the owner chose Instagram and Facebook as the feed's references (media edge to edge, square corners), and the card's corner is now 12 px and the media is never the first or last block of a post card (a header above, the action bar below), so nothing is cut: the block clips to the card's radius (`first:rounded-t-2xl last:rounded-b-2xl`) only for a card that one day starts or ends with media. The inset was the cost of a corner the card no longer has. The `--media-max-height: 60svh` ceiling (506 at 844) is unchanged and still binds only a 9:16 clip, letterboxed not cropped; a multi-image grid and a document row keep their own shapes (the grid loses its rounding, a document row keeps the text's 16 px inset). `PostContent.mediaBleed.test.ts` pins the geometry.
+
+**THE DARK POST CARD HAS NO HAIRLINE, AND IS A STEP LIGHTER THAN THE PAGE (design audit S4, 2026-11-09).** The owner asked on 2026-10-01 that the dark card stand off more on the Mi 9T (10 % hairline to 15 %); the audit finds an outline is noise where the reference separates by tone. Revisited: `dark:border-white/15` is now `dark:border-transparent` (the box keeps its size), and the card's fill is a NEW token, `--cn-surface-card` (`bg-cn-card`): `--cn-surface` in light (unchanged), `#1c1c1c` in dark instead of `#121212`, the Facebook dark step (page `#18191a`, card `#242526`) transposed onto true black. Only the post card (and its video letterbox) takes it; every other panel keeps `--cn-surface`. Measured on the dev feed, 390 x 844, dark, computed fill of the card against the page (`#000000`):
+
+| | before | after |
+| --- | --- | --- |
+| card fill | `#121212` (18) | `#1c1c1c` (28) |
+| step over the page | 18 / 255, WCAG contrast 1.12 | **28 / 255, contrast 1.23** |
+| outline | 2 px white at 15 % (read 53 against 18 at the edge) | none |
+
+The dev build predates the token, so "after" is the fill applied to the live card; the PIN overlay of the shared test session covered the viewport in later screenshots, so the step is read from computed colours and the edge column read of the first pass, not from a second pixel capture. Read it on the Mi 9T before the stable: if 28 is still faint on that panel the token is the one number to raise, the hairline does not come back. `postCardDarkEdge.test.ts` keeps both from changing unnoticed. The other bordered cards (association, calendar, settings lists) still carry `--cn-border`; they move with the sweep section 9 asks for.
+
 **HOW THE FACEBOOK SIDE WAS TAKEN, for anyone repeating it.** `uiautomator` cannot dump a locked
 screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` becomes
 `C:/Program Files/Git/sdcard/x`), so the dump needs `MSYS_NO_PATHCONV=1`, and `adb pull` needs a
@@ -2522,8 +2556,9 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+The two window-scale banners (`MaintenanceAdminBanner`, `MlsFatalErrorBanner`; `EnvironmentBanner` was the first until 2026-11-11, when the test-environment mark became a badge on the logo in `CanariBrand`;
+`OfflineBanner` was the fourth until 2026-11-11, when the connection became a ring on the header avatar -
+[offline-and-weak-network](offline-and-weak-network.md#the-connection-ring-owner-2026-11-11); `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
 its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
 all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-2` (0.5rem on all four sides; it was `m-3`
@@ -3304,7 +3339,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.d/p2-the-tab-swipe-on-a-slow-start-both-causes-fixed-owed-a-real-finger.md)).
+touch must be the one the gesture claims ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.
@@ -3387,6 +3422,35 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 
 `CanariBrand` (the only place the lockup is drawn: `Navbar`, and `MobileHeader` without the tagline) sat 1.5-2 px low because each line box carries space above the cap height and below the baseline. Each line is now `leading-none` with `em` margins from the font's real metrics (Fredoka 700: cap top 0.166em, baseline 0.131em from the box edges; Nunito 500: 0.110em and 0.171em), and the block is `min-h-10` + `justify-between`, so the cap top of "Canari" and the baseline of the tagline sit on the icon's edges (measured: within 0.5 px, was +2.0 / +1.6 px). `em` and not `text-box: trim-both cap alphabetic`, which Firefox has not shipped. Re-measure these constants if the brand or body font changes.
 
+## One accent, four tokens, and a guard that counts the amber scale (owner, 2026-11-09)
+
+**Measured before the change** ([audit M2](../../../CHANGELOG.md)): 637 `amber-*` utilities beside 571 `cn-yellow` ones in `.svelte` files, doing the SAME jobs. The active bottom-tab glyph was Tailwind 4.3's amber-600 (`#e17100`, orange), the feed pill amber-500/20, the pinned badge amber-500, the follow chip brand yellow. Under protanopia and deuteranopia every one of them collapses into one olive-yellow family, so the two yellows read as inconsistency, never as two colours. Of ten benchmarked apps, seven use ONE accent hue for interaction, Instagram none, and none uses two shades of one family for one job. NN/g, Apple HIG and Material converge on one accent, with extra hues reserved for meaning.
+
+**The decision: option B for the chrome, rule C for links and counters.** One accent for bars, tabs, buttons and selected states; text and glyphs that must read as yellow on a light surface use a darker shade of the SAME hue, because yellow cannot be text (the fill is 1.66:1 on white, and no lightness of the hue both passes and still looks yellow).
+
+| Token (Tailwind name) | Light | Dark | Job | Measured |
+|---|---|---|---|---|
+| `--accent` (`accent`) | `#f6c232` | `#ffd45d` | The FILL: primary button, active-tab indicator, selected chip, own-bubble. Always carries `on-accent`. | n/a |
+| `--on-accent` (`on-accent`) | `#151b2c` | `#151b2c` | Ink on the fill | 10.35 light, 12.10 dark |
+| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C) | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
+| `--accent-icon` (`accent-icon`) | `#af8601` | `#ffd45d` | A glyph, a border, a focus ring, the native tab glyph | 3.37 on white, 3.00 on `#f0f2f5`; 13.2 on `#121212` dark |
+| `--accent-hover` (`accent-hover`) | `#e4af1b` | `#ffe082` | Hover of the fill | n/a |
+
+`--cn-yellow` survives ONLY as a CSS alias of `--accent` (so `var(--cn-yellow)` in a stylesheet still resolves and there is ONE value); the `cn-yellow` utility is gone from components. `accent-text` was first proposed at `#8b6a00` (5.05 / 4.50) and darkened to `#836300` because `#8b6a00` fails 4.5:1 on its own 20 % tint over the page grey (4.13).
+
+**Rules for the next component**
+- A fill is `bg-accent` with `text-on-accent` (or `text-cn-ink`, the same ink). Never white on yellow.
+- Text that is yellow is `text-accent-text`; a glyph `text-accent-icon`; a border or ring `border-accent-icon` / `ring-accent-icon` (3:1 on a light surface), or `/N` of `accent` for a decorative tint.
+- On an ALWAYS-DARK surface (`cn-scrim`, `cn-ink`, a video overlay) the fill colour itself is the text colour: `text-accent`. `accent-text` is dark gold in light theme and would sink there.
+- Amber is a WARNING, never an accent: use `amber-warn` (flips with the theme) and ALWAYS an icon beside it, because under deuteranopia a dark warm text colour is indistinguishable from the accent text (dE 1.8 to 2.1) - WCAG 1.4.1, the cue cannot be hue alone. The dark `amber-warn` (`#fbbf24`) and the dark accent text are the same colour to a normal eye (OKLab distance 1.4 in the old pair); this is why the icon is mandatory. Warning TEXT is `text-amber-warn-text` (light `#92400e`, 4.5:1 on every surface and on its own 10/15/20 % tint; `amber-warn` itself reads 4.08:1 there and stays the glyph and border colour), and a solid `bg-accent` always carries `text-on-accent`, both asserted by `accentTokens.test.ts`.
+- The raw scale (`amber-50` ... `amber-950`) and `*-cn-yellow` utilities are counted by `frontend/src/lib/styles/accentTokens.test.ts`, which also recomputes every ratio above from `app.css`. A justified exception goes in its `ALLOWED_RAW_AMBER` by file and count, with a reason; there are none.
+- `banner-notice` (`#f59e0b`) is the one fixed strong warning strip and stays: it is a warning colour with ink text, not an accent.
+- Dead tokens found by the sweep: `cn-accent` (text, border, bg) never existed in the theme, so those classes painted nothing; they now map to the accent tokens.
+
+**The active place is an ink glyph on a yellow pill** (board variant B). The accent alone is 1.66:1 on the bar and `accent-icon` as a bare glyph only 3.37:1 on white, 3.06 on the page grey, so the cue is the pill plus the ink glyph (10.35:1). Web bottom nav: the icon box is a 56 x 32 px `rounded-full` span, `bg-accent text-on-accent` when active (the hit area stays the whole column, the pill is paint; `motion-safe:` transition). Feed tabs: the sliding pill is the solid `bg-accent` and the selected label `text-on-accent`. **An OPAQUE indicator under a label states the order: the scroller `isolate`, the indicator `z-0`, every label `z-1`, and the indicator moves by a 2D `translateX`, never `translate3d`** (iPhone 12, `1.6.9-alpha.4`: the yellow pill was drawn OVER its own label, and only there, because the iPhone's larger text overflows the row, turning on the `scrollFades` mask; iOS WebKit then painted the permanently composited `translate3d` pill over the later, uncomposited labels. The same overpaint existed under the old 20 % tint and only tinted the labels, which is why the accent change surfaced it. Not reproduced in desktop WebKit, which does not composite overflow scrolling the iOS way; guarded by `FeedTabRow.svelte.test.ts`, the iPhone reading owed). **Native tab bar (iOS Liquid Glass / Android system bar): the selected pill is drawn by the system and is not ours to colour, so only the selected glyph bitmap is ours, `accent-icon` (`TAB_ICON_CLASSES.selected`); the ink-on-yellow pill exists on the web bars only.**
+
+**Emoji on yellow.** Noto's face is `#fde030` to `#f4a223` with no outline, 1.0 to 1.3:1 against the fill, so a face dissolves on `bg-accent`. Chrome therefore never puts an emoji on the SOLID fill: a selected reaction is the 20 % tint (`bg-accent/20`), and an emoji-only message is already drawn naked, without its bubble. A text message with an emoji inside the own (yellow) bubble is unchanged and still has the problem; it is the bubble colour, a content decision outside this sweep.
+
 ## Notification rows, comment preview thumbnail, profile ring (design audit M4, M8, M9, M10, 2026-11-09)
 
 - `DeviceNoticeRow`: title on its own line (semibold), body muted, then one row of pill buttons in one style (view, "not me", dismiss muted). Grouping of identical device notices is NOT built.
@@ -3398,3 +3462,7 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 ## Small labels are sentence case, with no letter-spacing (2026-11-09, audit item M3)
 
 Section labels, badges, table headers and profile chips were set in capitals with `tracking-wide` to `tracking-widest` (132 `uppercase` and about 130 wide trackings across 76 components). Facebook and Messenger give such labels size, weight and colour and nothing else, so the sweep removed `uppercase` and `tracking-wide|wider|widest` from every one; `src/lib/styles/uppercaseTracking.test.ts` fails on a new use. Kept, by file and count in the test: the code-block language tag and the FR / EN locale switch (abbreviations read as codes). `first-letter:uppercase` (capitalising a French weekday) is not counted, `tracking-tight` on page titles belongs to the heading scale, and the PIN fields keep their arbitrary digit spacing. Locale strings were already written in sentence case, since CSS did the shouting.
+
+## The profile header holds its name (2026-11-09)
+
+Owner, on a ~1100 px desktop: the display name wrapped onto two lines and the action row was drawn over the second one. `ProfileHeader` (`lib/components/profile/ProfileHeader.svelte`) is now the header of `/profile/[id]` and `/profile` both: two siblings of a wrapping flex container, the identity (avatar, name, chips; `min-w-0`, basis 26 rem) and the action row (`shrink-0`). When both do not fit on one line the actions drop below at every width, and nothing in the header is positioned absolutely - the own profile's corner settings icon, which reserved `sm:pr-12` on the name, is now a "Parametres" button of the row. The row is 44 px targets: "Suivre"/"Abonne" (primary only while the reader does not follow, then "Message" is the one yellow button), the bell as an icon of its level (`AccountBell iconOnly`, the same Picker menu), and a "..." (`ProfileOverflowMenu`) holding report and block (block stays red). Chips are `whitespace-nowrap` and the row of chips wraps. Below `sm` the identity stays the centred column of 2026-09-14. Guards: `ProfileHeader.svelte.test.ts` (structure), `ProfileOverflowMenu.svelte.test.ts`, the icon-only case of `AccountBell.svelte.test.ts`.

@@ -345,6 +345,7 @@ chat-delivery-service, Garage and Redis have health checks. Other services depen
 | `garage_data` | Garage object storage (media blobs) |
 | `media_meta` | media-service metadata sidecar |
 | `media_upload_sessions` | media-service staging of resumable upload sessions; transient, NOT backed up |
+| `live_segments` | media-service's store of live segments (`LIVE_SEGMENTS_DIR=/app/live_segments`), which become a live's replay; NEVER backed up, by owner decision D2 ([live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), asserted by `backup-sources.test.sh` |
 
 ## The deploy account is root on the host, by way of the `docker` group
 

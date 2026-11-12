@@ -35,7 +35,7 @@
 
 <div class="space-y-3 pt-2">
   <div class="flex items-center gap-2">
-    <Bell size={16} class="text-amber-500" strokeWidth={2.5} />
+    <Bell size={16} class="text-accent-text" strokeWidth={2.5} />
     <h3 id={headingId} class="text-text-main text-sm font-bold">
       {m.chat_channel_notifications_label()}
     </h3>
@@ -71,9 +71,9 @@
           aria-checked={level === option.value}
           onclick={() => onSelect(option.value)}
           disabled={saving}
-          class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {level ===
+          class="focus-visible:ring-accent-icon flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 disabled:opacity-50 {level ===
           option.value
-            ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+            ? 'border-accent-icon bg-accent/10 text-accent-text'
             : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
         >
           <Icon size={18} strokeWidth={2.5} />

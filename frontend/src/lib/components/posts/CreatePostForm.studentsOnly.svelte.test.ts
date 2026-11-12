@@ -36,6 +36,8 @@ vi.mock('$lib/posts/postIdentity', async (orig) => ({
 }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
+  // An institution draws its reach picker instead (`CreatePostForm.institutionReach`).
+  getInstitutionReachOptions: () => Promise.resolve({ spaces: [] }),
   getReelLimits: () =>
     Promise.resolve({
       maxDurationMs: 90_000,
@@ -140,21 +142,7 @@ describe('CreatePostForm - "Entre étudiants"', () => {
       caption: 'la soirée',
       identity: 'list-1',
       studentsOnly: true,
+      reach: { spaces: [], public: null },
     });
-  });
-
-  it('comes BACK from the reel step with "Garder comme post", as the step left it', async () => {
-    const target = await openAs('list-1');
-    target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
-    flushSync();
-    cameraOverlayStub.keepWith = { caption: 'la soirée', identity: 'list-1', studentsOnly: true };
-    try {
-      document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
-      flushSync();
-      await tick();
-    } finally {
-      cameraOverlayStub.keepWith = null;
-    }
-    expect(switchOf(target)!.checked).toBe(true);
   });
 });

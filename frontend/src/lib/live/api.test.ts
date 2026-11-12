@@ -46,6 +46,7 @@ import {
   liveSegmentUrl,
   livePosterUrl,
   manifestQuery,
+  fetchLiveMentionAudience,
   postLiveMessage,
   postLiveReactions,
   putLiveSegment,
@@ -518,6 +519,15 @@ describe('the chat routes (WP-L6)', () => {
       body: JSON.stringify({ clientId: CLIENT, sealed: 'c2VhbGVk' }),
     });
 
+    // Mentions are candidates in the clear beside the sealed text; none, and the key is absent.
+    const CARA = 'c'.repeat(64);
+    apiFetch.mockResolvedValueOnce(json(201, { id: 'm2', seq: 2 }));
+    await postLiveMessage(LIVE, CLIENT, 'c2VhbGVk', [CARA]);
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ clientId: CLIENT, sealed: 'c2VhbGVk', mentions: [CARA] }),
+    });
+
     apiFetch.mockResolvedValueOnce(json(201, { burstId: CLIENT, seq: 3 }));
     await postLiveReactions(LIVE, CLIENT, { like: 2 });
     expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/reactions`, {
@@ -548,5 +558,21 @@ describe('the chat routes (WP-L6)', () => {
       .flatMap((f) => vi.mocked(f).mock.calls.flat())
       .join(' ');
     expect(logged).not.toContain('U0VDUkVUU0VBTEVE');
+  });
+});
+
+describe('fetchLiveMentionAudience (owner, 2026-11-09)', () => {
+  it('asks the live for which of the ids a mention may reach, and asks nothing for none', async () => {
+    const A = 'a'.repeat(64);
+    const B = 'b'.repeat(64);
+    apiFetch.mockResolvedValueOnce(json(200, { ids: [B] }));
+    expect(await fetchLiveMentionAudience(LIVE, [A, B])).toEqual([B]);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `https://social.test/api/lives/${LIVE}/mention-audience`,
+      { method: 'POST', body: JSON.stringify({ ids: [A, B] }) }
+    );
+    apiFetch.mockClear();
+    expect(await fetchLiveMentionAudience(LIVE, [])).toEqual([]);
+    expect(apiFetch).not.toHaveBeenCalled();
   });
 });

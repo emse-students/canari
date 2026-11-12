@@ -77,6 +77,17 @@ export function bucketSummary(
 }
 
 /**
+ * Whether this criterion may hold only ONE group: it divides on a MULTIPLE-choice question. A
+ * person can tick options of two groups, and the first group in the grid's order would win, so the
+ * price would depend on that order; the server refuses such a grid at save
+ * (`assertMultipleChoiceGridOneGroup`), and the editor stops offering a second group instead.
+ */
+export function takesOneGroup(dimension: Dimension, items: readonly FormItem[]): boolean {
+  if (dimension.kind !== 'answer' || !dimension.questionId) return false;
+  return items.find((i) => i.id === dimension.questionId)?.type === 'multiple_choice';
+}
+
+/**
  * The values the "+" of a group offers: those NO group of the criterion holds yet, because the
  * server refuses two groups that overlap. A promo is a year from 1816, so only the most recent
  * unplaced ones are offered; an older year is typed.

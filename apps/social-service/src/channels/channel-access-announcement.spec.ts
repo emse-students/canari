@@ -319,7 +319,56 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
       channelName: 'c25',
       workspaceId: WORKSPACE,
       visibility: 'private',
+      // A row drawn from this event knows its policy and its verdict, like a listed one.
+      writePolicy: 'everyone',
+      viewerCanWrite: true,
     });
+  });
+
+  it('answers the creator with the policy and their own verdict', async () => {
+    const { service } = makeService();
+
+    const created = await service.createChannel({
+      workspaceId: WORKSPACE,
+      actorUserId: OWNER,
+      name: 'c26',
+      visibility: 'public',
+    } as Parameters<typeof service.createChannel>[0]);
+
+    expect(created).toMatchObject({ writePolicy: 'everyone', viewerCanWrite: true });
+  });
+
+  /**
+   * A RESTRICTED SALON HEARD OF LIVE: one payload cannot carry a per-viewer verdict, so the
+   * announcement is split by the answer - the administrator is told yes, the plain member no.
+   */
+  it('splits a restricted salon announcement by who may write', async () => {
+    const { service, redis } = makeService();
+    const channel = {
+      id: 'ch-adm',
+      workspaceId: WORKSPACE,
+      name: 'annonces',
+      isPrivate: false,
+      writePolicy: 'admins',
+    };
+
+    await (
+      service as unknown as {
+        announceSalonJoined: (c: unknown, d: unknown, a: string[]) => Promise<void>;
+      }
+    ).announceSalonJoined(channel, { channelId: 'ch-adm' }, [OWNER, MEMBER]);
+
+    const sent = joins(redis);
+    expect(sent).toEqual([
+      {
+        data: { channelId: 'ch-adm', writePolicy: 'admins', viewerCanWrite: true },
+        audience: [OWNER],
+      },
+      {
+        data: { channelId: 'ch-adm', writePolicy: 'admins', viewerCanWrite: false },
+        audience: [MEMBER],
+      },
+    ]);
   });
 
   /**

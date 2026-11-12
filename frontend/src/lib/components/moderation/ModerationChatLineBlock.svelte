@@ -37,7 +37,7 @@
     <p
       class="flex items-center gap-1.5 font-semibold {verified
         ? 'text-green-600'
-        : 'text-amber-600'}"
+        : 'text-accent-text'}"
       data-moderation-chat-line-integrity={line.integrity.content}
     >
       {#if verified}

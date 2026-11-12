@@ -41,7 +41,7 @@ is mounted into or copied onto the host.
 
 | Who | Mode | What it proves |
 | --- | --- | --- |
-| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 
@@ -84,6 +84,19 @@ CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, 
 user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
+
+**`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
+mint asks whether a person may enter a site: a role with global `view_user`, `view_policybinding`
+(global on purpose - a grant on today's bindings would not see tomorrow's), `view_flow` and
+`view_flowstagebinding` (the providers' login and authorization flows, whose bindings the mint
+counts too; global for the same reason) and `view_system_settings`, plus `view_application` on `migallery`, `sky` and `cercle` only, granted by
+the `permissions:` of those entries in `60-applications.yaml` (which is why the file sorts before
+it); the group, the account `miconnect-canari-handoff-reader` and its token, key `!Env
+MICONNECT_READER_TOKEN` (production only; dev holds none). CI uses the token
+(`test-handoff-reader.py`): the reads work, a binding added later on an application, a flow or a
+stage is seen, another application is `404`, and every write - a user, an application, a flow, a
+stage binding, a binding, the settings - is `403`
+([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
 
 **What is NOT in the blueprints, deliberately:**
 
@@ -177,7 +190,10 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 - **`!Find`, `!Env` and `!File` resolve to null and carry on** when they match nothing. A mistyped
   name would silently clear a nullable reference, which is why the brand CSS is written inline rather
   than read through `!File`. The applier refuses any `!Find` or `!Env` that resolves to nothing,
-  before it commits.
+  before it commits - and every `!Env` BEFORE anything applies, as `UNRESOLVED <file> attrs.<field>:
+  !Env <NAME> is unset in the worker's environment`. Applied first, an unset one reached a
+  non-nullable field as null and failed with a serializer error naming the field, never the variable
+  (`'key': ['This field may not be null.']`, 2026-11-11).
 - **A policy bound to a stage binding targets its `pbm_uuid`**, while `!Find` returns `.pk`, the
   child's own key. The target is therefore found on `authentik_policies.policybindingmodel`, through
   `flowstagebinding__...` lookups.
@@ -486,6 +502,22 @@ rule was gated on `input[type='text'|'password'|'email']`, so a field with no `t
 `type` this list didn't name never got it even though it did inherit the dark background from
 `.pf-c-form-control`. Fixed by matching `input`/`textarea`/`select` by tag rather than by `type`,
 the same "stop scoping, cover the whole flow" fix already applied to the submit button above.
+
+**The same report came back on 2026-11-10, and its cause was the THEME, not a selector.** The brand
+had no `attributes.settings.theme.base`, so authentik ran `automatic`: a browser in a LIGHT colour
+scheme got PatternFly's light tokens, and every component this CSS does not name kept the light ink
+`#151515` on the dark page. Measured on a throwaway instance built from the real blueprints (the
+enrolment prompt stages bound to a preview flow, nothing created on production): the campus radios,
+the four status checkboxes and the five formation radios at **1.02:1** on the phone page and 1.10:1
+on the card; the locale icon 1.02:1; in BOTH schemes the required asterisk (`#c9190b`) at 3.09:1 and
+the promo placeholder at 3.43:1 (3.31:1 on the card). A dark scheme read every label at 17:1, which
+is why the 2026-09-25 fix looked complete from a dark-mode phone. The fix is `theme.base: dark` on
+the brand (this CSS draws a dark page and nothing else, so authentik is told so, and every present
+and future component gets its dark ink), plus `--mc-danger` for the asterisk and the muted token for
+placeholders. After: 0 elements under threshold on both prompt stages, light and dark, phone and
+desktop; labels 17.17:1, asterisk 7.26:1, placeholder 6.72:1 at worst (the card). **The rule: check a flow page in BOTH colour schemes** (`emulate` over CDP), since
+a dark design over an `automatic` theme breaks only in the scheme its author was not using. The pin
+also darkens the admin interface, which is the same brand.
 
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
 phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turned `ak-locale-select`,

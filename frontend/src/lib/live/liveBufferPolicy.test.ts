@@ -3,22 +3,30 @@
  * the deliveries bounds, the anchor one poll past it, and when a delivery re-anchors. Pinned: L-F1
  * (2026-10-26: a seek's own wait is not a stall, pairs raise the target) and LIVE-STALL-1
  * (`1.5.1-alpha.7`, 2026-10-29): W4's twenty recorded deliveries replayed, one stall under the rule
- * this replaced and none under this one. No clock: every reading is a number this file hands in.
+ * this replaced and none under this one. And the margin (owner, 2026-11-09): never under three
+ * segments, a seek that only ever goes forward, and the pace that rebuilds a short margin instead of
+ * the backward seek that replayed it. No clock: every reading is a number this file hands in.
  */
 import { describe, it, expect } from 'vitest';
 import {
   classifyLiveWait,
   formatLiveRanges,
   LiveBufferPolicy,
+  livePaceRate,
+  liveSeekPoint,
   mediaAheadS,
   type LiveDeliveryShape,
+  type LivePace,
   type LiveTimeRanges,
 } from './liveBufferPolicy';
 import {
   LIVE_MANIFEST_POLL_MS,
   LIVE_PLAYER_DRIFT_SLACK_MS,
+  LIVE_PLAYER_FAST_RATE,
   LIVE_PLAYER_JOIN_SEGMENTS,
+  LIVE_PLAYER_MARGIN_SEGMENTS,
   LIVE_PLAYER_MIN_TARGET_BUFFER_MS,
+  LIVE_PLAYER_SLOW_RATE,
   LIVE_SEGMENT_MS,
 } from './constants';
 
@@ -92,37 +100,70 @@ describe('mediaAheadS and formatLiveRanges', () => {
   });
 });
 
+describe('liveSeekPoint - forward or nowhere (owner, 2026-11-09)', () => {
+  it('a join or a backlog jumped: the anchor, the target behind the newest media, clamped to its range', () => {
+    expect(liveSeekPoint(0, ranges([10, 20]), 6_000)).toBe(14);
+    expect(liveSeekPoint(0, ranges([10, 14]), 6_000)).toBe(10);
+  });
+
+  it('NEVER BEHIND THE PLAYHEAD: a short margin stays where it plays, media already shown is never shown again', () => {
+    // The loop the owner saw: 2 s ahead at 6, a segment arrives - the anchor (8 - 6 = 2) lies 4 s back.
+    expect(liveSeekPoint(6, ranges([0, 8]), 6_000)).toBeNull();
+    expect(liveSeekPoint(7.9, ranges([0, 8]), 6_000)).toBeNull();
+  });
+
+  it('a playhead with nothing under it goes to the first media past it; a hole is crossed', () => {
+    expect(liveSeekPoint(4, ranges([0, 4], [4.04, 6]), 6_000)).toBe(4.04);
+    expect(liveSeekPoint(4, ranges([0, 4], [34, 36]), 6_000)).toBe(34);
+    // Nothing buffered past it, or nothing buffered at all: no seek, the stall waits.
+    expect(liveSeekPoint(4, ranges([0, 4]), 6_000)).toBeNull();
+    expect(liveSeekPoint(4, null, 6_000)).toBeNull();
+    expect(liveSeekPoint(4, ranges(), 6_000)).toBeNull();
+  });
+});
+
 describe('LiveBufferPolicy', () => {
-  it('starts at the floor: a wait of one segment plus one poll, anchored one poll past it, and joins on enough segments to hold that', () => {
+  it('starts at the margin: three segments, over the floor wait plus a poll, and joins on enough segments to hold it', () => {
     expect(LIVE_PLAYER_MIN_TARGET_BUFFER_MS).toBe(LIVE_SEGMENT_MS + LIVE_MANIFEST_POLL_MS);
+    expect(LIVE_PLAYER_MARGIN_SEGMENTS).toBe(3);
     const p = new LiveBufferPolicy();
     expect(p.longestWaitMs).toBe(3_000);
-    expect(p.targetMs).toBe(4_000);
-    expect(p.maxBehindMs).toBe(4_000 + LIVE_PLAYER_DRIFT_SLACK_MS);
+    expect(p.segmentMs).toBe(LIVE_SEGMENT_MS);
+    expect(p.targetMs).toBe(6_000);
+    expect(p.maxBehindMs).toBe(6_000 + LIVE_PLAYER_DRIFT_SLACK_MS);
     expect(LIVE_PLAYER_JOIN_SEGMENTS * LIVE_SEGMENT_MS).toBeGreaterThanOrEqual(p.targetMs);
+  });
+
+  it('the margin follows the segment length the deliveries measure', () => {
+    const p = new LiveBufferPolicy();
+    p.delivered(0);
+    p.delivered(3_000, { segments: 1, mediaMs: 3_000 }); // 3 s segments
+    expect(p.segmentMs).toBe(3_000);
+    expect(p.targetMs).toBe(9_000);
   });
 
   it('the first delivery anchors and measures nothing, its size included (the join is a backlog)', () => {
     const p = new LiveBufferPolicy();
-    expect(p.delivered(5_000, of(2))).toEqual({ gapMs: null, targetMs: 4_000, grew: false });
+    expect(p.delivered(5_000, of(2))).toEqual({ gapMs: null, targetMs: 6_000, grew: false });
     expect(p.longestWaitMs).toBe(3_000);
   });
 
-  it('a regular 2 s producer stays at the floor', () => {
+  it('a regular 2 s producer stays at the margin', () => {
     const p = new LiveBufferPolicy();
     // A segment every 2 s, learnt up to a poll late: gaps of 1 to 3 s.
     for (const t of [0, 2_000, 5_000, 6_000, 8_000, 11_000]) p.delivered(t, of(1));
     expect(p.longestWaitMs).toBe(3_000);
-    expect(p.targetMs).toBe(4_000);
+    expect(p.targetMs).toBe(6_000);
   });
 
   it('a PAIR bounds the wait at the delivery that shows it - two segments plus a poll - before any gap proves it', () => {
     const p = new LiveBufferPolicy();
     p.delivered(0, of(1));
     // LIVE-STALL-1's first pair: a gap of 3663 ms, 4.02 s of media. The rule this replaced read 3663.
+    // The anchor: the larger of that wait plus a poll (6020) and three of its 2010 ms segments.
     expect(p.delivered(3_663, { segments: 2, mediaMs: 4_020 })).toEqual({
       gapMs: 3_663,
-      targetMs: 2 * 2_010 + LIVE_MANIFEST_POLL_MS + LIVE_MANIFEST_POLL_MS,
+      targetMs: Math.max(2 * 2_010 + 2 * LIVE_MANIFEST_POLL_MS, 3 * 2_010),
       grew: true,
     });
     expect(p.longestWaitMs).toBe(5_020);
@@ -140,26 +181,59 @@ describe('LiveBufferPolicy', () => {
     expect(p.longestWaitMs).toBe(3_000);
   });
 
-  it('re-anchors a buffer SHORTER than the longest wait, and one past the target and its slack', () => {
+  it('re-anchors only FORWARD, past the target and its slack: a short buffer is never re-anchored (that seek replayed)', () => {
     const p = new LiveBufferPolicy();
     p.delivered(0);
     p.delivered(4_000, of(2)); // wait 5000, target 6000, slack to 10000
-    expect(p.reanchor(3_990)).toBe('short'); // W4's 3.99 s that the next 4223 ms gap drained
-    expect(p.reanchor(5_000)).toBeNull();
+    expect(p.reanchor(0)).toBeNull();
+    expect(p.reanchor(3_990)).toBeNull(); // W4's 3.99 s: the pace's now, never a backward seek
     expect(p.reanchor(10_000)).toBeNull();
     expect(p.reanchor(10_001)).toBe('drift');
   });
 
   it("a producer's ordinary group is played; a backlog longer than the slack behind is jumped", () => {
     const p = new LiveBufferPolicy();
-    // At the floor (target 4 s, at most 8 s behind): 4 segments are 8 s, the fifth is a backlog.
+    // At the margin (target 6 s, at most 10 s behind): 5 segments are 10 s, the sixth is a backlog.
     expect(p.isBacklog(3)).toBe(false); // LIVE-WEB-2's end: three at once, two of them dropped
-    expect(p.isBacklog(4)).toBe(false);
-    expect(p.isBacklog(5)).toBe(true);
-    // The longest segment measured sizes it.
+    expect(p.isBacklog(5)).toBe(false);
+    expect(p.isBacklog(6)).toBe(true);
+    // The longest segment measured sizes it: 4 s segments, a 12 s margin, at most 16 s behind.
     p.delivered(0);
     p.delivered(2_000, { segments: 1, mediaMs: 4_000 });
-    expect(p.isBacklog(3)).toBe(true); // 12 s > the 10 s behind a 4 s segment allows
+    expect(p.isBacklog(4)).toBe(false);
+    expect(p.isBacklog(5)).toBe(true);
+  });
+
+  it('the pace at a delivery: slower under the target less a poll, faster over it plus a poll, 1x between', () => {
+    const p = new LiveBufferPolicy(); // target 6000, poll 1000
+    expect(p.pace(4_999, 'steady', true)).toBe('slow');
+    expect(p.pace(5_000, 'steady', true)).toBe('steady');
+    expect(p.pace(7_000, 'steady', true)).toBe('steady');
+    expect(p.pace(7_001, 'steady', true)).toBe('fast');
+  });
+
+  it('the pace comes back to 1x only once the margin crosses the target itself - jitter never flips it', () => {
+    const p = new LiveBufferPolicy();
+    expect(p.pace(5_500, 'slow', true)).toBe('slow');
+    expect(p.pace(6_000, 'slow', true)).toBe('steady');
+    expect(p.pace(6_500, 'fast', true)).toBe('fast');
+    expect(p.pace(6_000, 'fast', true)).toBe('steady');
+  });
+
+  it('between deliveries the pace only slows, and only under what the longest wait explains (a producer late)', () => {
+    const p = new LiveBufferPolicy(); // target 6000, longest wait 3000: the sawtooth's floor is 3000
+    expect(p.pace(3_000, 'steady', false)).toBe('steady');
+    expect(p.pace(2_999, 'steady', false)).toBe('slow');
+    expect(p.pace(2_999, 'fast', false)).toBe('slow');
+    // Nothing ends a pace between deliveries: the media ahead only falls there.
+    expect(p.pace(9_000, 'slow', false)).toBe('slow');
+    expect(p.pace(1_000, 'fast', true)).toBe('steady');
+  });
+
+  it('the rates: a tenth slower, five percent faster, 1x', () => {
+    expect(LIVE_PLAYER_SLOW_RATE).toBe(0.9);
+    expect(LIVE_PLAYER_FAST_RATE).toBe(1.05);
+    expect((['slow', 'steady', 'fast'] as LivePace[]).map(livePaceRate)).toEqual([0.9, 1, 1.05]);
   });
 
   it('forgets a long gap and a group once the window has moved past them', () => {
@@ -178,7 +252,7 @@ describe('LiveBufferPolicy', () => {
     const p = new LiveBufferPolicy();
     p.delivered(0);
     p.interrupt('retry');
-    expect(p.delivered(20_000, of(3))).toEqual({ gapMs: null, targetMs: 4_000, grew: false });
+    expect(p.delivered(20_000, of(3))).toEqual({ gapMs: null, targetMs: 6_000, grew: false });
     expect(p.delivered(22_000).gapMs).toBe(2_000);
   });
 
@@ -276,29 +350,41 @@ describe('LIVE-STALL-1, replayed', () => {
     expect(result.stalls).toEqual([10, 13]);
   });
 
-  it('this policy - the longest wait bounded from the delivery shape, a short buffer re-anchored at once - never stalls', () => {
+  it('this policy - the margin, the pace, and never a seek backward - never stalls and never replays', () => {
+    // W4 played with the PACE instead of the backward re-anchor (owner, 2026-11-09): from the same
+    // 3.85 s, the video spends each gap at its rate, the pace read at every poll inside the gap and
+    // at the delivery; no seek at all, so no media is shown twice.
     const p = new LiveBufferPolicy();
     let clock = 0;
     p.delivered(clock);
-    let next = 1;
-    const anchors: number[] = [];
-    const result = replay((ahead, stalled) => {
-      const at = next++;
-      const [gap, segments, media] = W4[at];
+    let ahead = 3_850;
+    let pace: LivePace = p.pace(ahead, 'steady', true);
+    const stalls: number[] = [];
+    const aheadBefore: number[] = [];
+    const paces: LivePace[] = [pace];
+    W4.slice(1).forEach(([gap, segments, media], i) => {
+      for (let spent = 0; spent < gap; spent += LIVE_MANIFEST_POLL_MS) {
+        const dt = Math.min(LIVE_MANIFEST_POLL_MS, gap - spent);
+        ahead -= dt * livePaceRate(pace);
+        if (ahead < 0 && !stalls.includes(i + 1)) stalls.push(i + 1);
+        ahead = Math.max(0, ahead);
+        if (dt === LIVE_MANIFEST_POLL_MS) pace = p.pace(ahead, pace, false);
+      }
+      aheadBefore.push(ahead);
       clock += gap;
       p.delivered(clock, { segments, mediaMs: media });
-      if (!stalled && p.reanchor(ahead) === null) return null;
-      anchors.push(at);
-      return p.targetMs;
+      ahead += media;
+      pace = p.pace(ahead, pace, true);
+      paces.push(pace);
     });
-    expect(result.stalls).toEqual([]);
-    // ONE re-anchor, at the first pair (4.21 s ahead, a 5020 ms wait): a backward seek of 1.8 s,
-    // then none - the anchor's poll of margin absorbs the phase jitter of every later delivery.
-    expect(anchors).toEqual([1]);
-    // Two segments of the longest measured (2020 ms, delivery 3) plus a poll - above every gap.
-    expect(p.longestWaitMs).toBe(5_040);
-    // After it, the video never came within a second of running dry (least: 1.36 s, before the
-    // 4383 ms gap) - a margin the 70 ms a seek cost the rig's video cannot take away.
-    expect(Math.min(...result.aheadBeforeMs.slice(1))).toBeGreaterThan(1_000);
+    expect(stalls).toEqual([]);
+    // The least the video ever held before a delivery: over half a second (0.55 s, before the 4383 ms
+    // gap). The rule this replaced held 1.36 s there - by replaying 1.8 s of shown media at the
+    // first pair; this one shows nothing twice.
+    expect(Math.min(...aheadBefore)).toBeGreaterThan(500);
+    // It started under the margin, slowed, and reached 1x again once the margin was rebuilt.
+    expect(paces[0]).toBe('slow');
+    expect(paces).toContain('steady');
+    expect(paces).not.toContain('fast');
   });
 });

@@ -2,7 +2,10 @@
 
 **A pull request never edits `CHANGELOG.md`. It adds ONE file here**, named after what it does
 (`changelog.d/minesweeper-generation-speed.md`, any unique name ending in `.md`), holding exactly
-the entry it would have written under `## [Unreleased]`:
+the entry it would have written under `## [Unreleased]`. **One exception (coordinator,
+2026-11-11):** when a guard (`wiki-links.test.mjs`) fails on a link in `CHANGELOG.md` because the
+page or heading it names was deleted, the link TARGET may be repointed to a page that still holds
+the substance - the link only, never the prose.
 
 ```md
 ### Fixed - what changed, in one line

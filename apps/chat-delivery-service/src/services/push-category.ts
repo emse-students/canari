@@ -1,3 +1,5 @@
+import { keysKnownBy } from '../utils/app-version';
+
 /**
  * THE CATEGORIES A USER MAY SWITCH OFF, AND WHICH PUSH BELONGS TO WHICH - the one place either is written.
  *
@@ -7,7 +9,8 @@
  * reads this file to pin the two together, because no compiler spans a service boundary.
  *
  * The ids are a CLOSED set and the persisted value is the set of DISABLED ones, so a new category
- * ships ON for every account with no migration - "everything on" is the default by construction.
+ * ships ON for every account with no migration - "everything on" is the default by construction -
+ * EXCEPT the {@link OPT_IN_CATEGORIES}, which are off until the account turns them on (migration 047).
  */
 export const NOTIFICATION_CATEGORIES = [
   /** 1-to-1 and group MLS conversations. */
@@ -39,9 +42,100 @@ export const NOTIFICATION_CATEGORIES = [
    * off on its own. Off, the bell still lists it - only the push is not sent.
    */
   'birthdays',
+  /**
+   * EVERY SUGGESTION, ONE SWITCH, OFF UNTIL TURNED ON (owner, 2026-11-10, "Nos principes"; docs/wiki/
+   * engagement.md, "Aligned with the charter"): the campus-trend push and bell row, the follow
+   * suggestions and the suggested posts of Pour toi - social-service reads the same switch before it
+   * writes or serves any of them. Independent of `posts`, because it is news about accounts the
+   * reader does not follow. A build older than the switch draws none for it; it is also too old to be
+   * sent a trend at all (social-service's client floor).
+   */
+  'suggestions',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/**
+ * THE CATEGORIES WHOSE PUSH IS OFF UNTIL THE ACCOUNT TURNS IT ON (owner, 2026-11-10, "Nos
+ * principes", and "Deux niveaux", 2026-11-11). Two switches per such category:
+ * - `"disabledCategories"` lists it when the account switched the category OFF altogether - for
+ *   `suggestions`, "Suggestions dans l'app" (on by default: the carousel, "Suivez aussi...", the
+ *   suggested posts of Pour toi, the trend rows of the bell);
+ * - `"enabledCategories"` (migration 047) lists it when the account turned its PUSH on.
+ * It is pushed only when both say so; an account with no row is never pushed one. social-service's
+ * `push/notification-category.ts` names the same list, and its spec reads this file to pin them.
+ */
+export const OPT_IN_CATEGORIES: readonly NotificationCategory[] = ['suggestions'];
+
+/** True for a category that is off until the account turns it on ({@link OPT_IN_CATEGORIES}). */
+export function isOptInCategory(category: NotificationCategory): boolean {
+  return OPT_IN_CATEGORIES.includes(category);
+}
+
+/** The account's two stored switch sets, unknown ids dropped; `enabled` holds opt-in ids only. */
+export interface StoredSwitches {
+  /** The categories switched off altogether (for an opt-in one: in the app too). */
+  disabled: NotificationCategory[];
+  /** The opt-in categories whose PUSH was turned on. */
+  enabled: NotificationCategory[];
+}
+
+/** Reads a row's two columns (`null` for an account that never saved: nothing off, no push on). */
+export function storedSwitches(
+  row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
+): StoredSwitches {
+  const list = (value: unknown): NotificationCategory[] =>
+    (Array.isArray(value) ? (value as unknown[]) : []).filter(isNotificationCategory);
+  const disabled = new Set(list(row?.disabledCategories));
+  const enabled = new Set(list(row?.enabledCategories).filter(isOptInCategory));
+  return {
+    disabled: NOTIFICATION_CATEGORIES.filter((c) => disabled.has(c)),
+    enabled: NOTIFICATION_CATEGORIES.filter((c) => enabled.has(c)),
+  };
+}
+
+/**
+ * THE CATEGORIES NOT PUSHED TO AN ACCOUNT, from its stored row: every category it switched off,
+ * plus every opt-in category whose push it has not turned on. The ONE push-side reading of the two
+ * columns in this service.
+ */
+export function effectiveDisabledCategories(
+  row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
+): NotificationCategory[] {
+  const { disabled, enabled } = storedSwitches(row);
+  const off = new Set(disabled);
+  for (const category of OPT_IN_CATEGORIES) if (!enabled.includes(category)) off.add(category);
+  return NOTIFICATION_CATEGORIES.filter((c) => off.has(c));
+}
+
+/**
+ * THE FIRST BUILD WHOSE SETTINGS SCREEN NAMES EACH CATEGORY (`null` = every admitted build), read
+ * from the release tags (`frontend/src/lib/notifications/categories.ts` at each tag). A build below a
+ * category's floor cannot draw its switch, so its save cannot be a choice about it: the PUT keeps
+ * what is stored for every category the caller cannot name (`categoriesNameableBy`). A NEW CATEGORY
+ * TAKES THE VERSION OF THE RELEASE THAT ADDS ITS SWITCH - the record type makes a missing one a
+ * compile error. Twin rule of social-service's `notification-client-floor.ts` (docs/wiki/
+ * legacy-compatibility.md, "The client floor of every notification type").
+ */
+export const CATEGORY_MIN_CLIENT: Readonly<Record<NotificationCategory, string | null>> = {
+  messages: null,
+  channels: null,
+  posts: null,
+  comments: null,
+  mentions: null,
+  reactions: null,
+  events: null,
+  forms: null,
+  follows: '1.5.1',
+  bookings: '1.5.1',
+  birthdays: '1.6.9',
+  suggestions: '1.6.10',
+};
+
+/** The categories a caller running `clientVersion` can name (undefined = a build up to 1.6.9). */
+export function categoriesNameableBy(clientVersion: string | undefined): NotificationCategory[] {
+  return keysKnownBy(CATEGORY_MIN_CLIENT, clientVersion);
+}
 
 /** True when `value` is one of the closed set - the only thing a write may name. */
 export function isNotificationCategory(value: unknown): value is NotificationCategory {
@@ -72,6 +166,17 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // reader (WP-L7; widened 2026-11-07, docs/wiki/engagement.md): a publication like that account's
   // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
+  // Engagement (docs/wiki/engagement.md, L30): an account the reader follows reacted to or commented
+  // on a post (WP-9) - news about somebody else's post, so the switch that silences posts silences it.
+  social_friend_reaction: 'posts',
+  social_friend_comment: 'posts',
+  // A post of the reader's space took off (WP-10): a SUGGESTION, its own switch since 2026-11-10
+  // (owner). social-service's `CAPPED_PUSH_TYPES` reads the same category before it counts the daily
+  // cap; its contract spec pins the three keys.
+  social_campus_trend: 'suggestions',
+  social_campus_trend_photo: 'suggestions',
+  social_campus_trend_video: 'suggestions',
+  social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',
@@ -112,6 +217,11 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_booking_reminder: 'bookings',
   social_booking_changed: 'bookings',
   social_booking_removed: 'bookings',
+  // The openings told to an association's followers (engagement WP-4): a booking space that opens
+  // is a bookings matter, an event published on the agenda an events one - the EXISTING ids, which
+  // the settings screen already draws (a new id would be a switch older clients cannot draw).
+  social_booking_open: 'bookings',
+  social_event_open: 'events',
 };
 
 /**

@@ -22,6 +22,8 @@ import {
   DEFAULT_MEMBER_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
+  CHANNEL_WRITE_REQUIRES_ADMIN,
+  CHANNEL_WRITE_REQUIRES_MODERATION,
 } from './permissions';
 import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import { roleUpdateBuilder } from './member-role-update.fake-spec';
@@ -1333,8 +1335,47 @@ describe('ChannelService security hardening', () => {
         // salon an admin can SEE but has not joined comes back with `false`, which is what makes
         // the join reachable without giving them any of its content.
         viewerHasAccess: true,
+        // The SIDEBAR's listing: until 2026-11-10 it carried neither, so every load drew a composer
+        // in every restricted salon.
+        writePolicy: 'everyone',
+        viewerCanWrite: true,
       },
     ]);
+  });
+
+  it('tells the sidebar who may write in each salon, from the viewer roles', async () => {
+    const { service, channelRepo, memberRepo, roleRepo } = makeService();
+    // A "Moderateur" whose role grants nothing - the production case.
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r-mod'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r-mod', permissions: [] }]);
+    channelRepo.find.mockResolvedValue([
+      { id: 'a', workspaceId: 'ws1', name: 'a', isPrivate: false, allowedUsers: [] },
+      {
+        id: 'b',
+        workspaceId: 'ws1',
+        name: 'b',
+        isPrivate: false,
+        allowedUsers: [],
+        writePolicy: 'admins_moderators',
+      },
+    ]);
+
+    const rows = (await service.listChannelsForUser('ws1', 'u1')) as Array<{
+      id: string;
+      writePolicy: string;
+      viewerCanWrite: boolean;
+    }>;
+    expect(rows.map((r) => [r.id, r.writePolicy, r.viewerCanWrite])).toEqual([
+      ['a', 'everyone', true],
+      ['b', 'admins_moderators', false],
+    ]);
+
+    // Granting the role `channel.moderate` is all it takes - the name never counted.
+    roleRepo.find.mockResolvedValue([{ id: 'r-mod', permissions: ['channel.moderate'] }]);
+    const after = (await service.listChannelsForUser('ws1', 'u1')) as Array<{
+      viewerCanWrite: boolean;
+    }>;
+    expect(after.map((r) => r.viewerCanWrite)).toEqual([true, true]);
   });
 
   // A message names the Graine session that opens it and which key of that session; the server
@@ -2184,31 +2225,119 @@ describe('ChannelService security hardening', () => {
     });
   });
 
-  it('rejects sendMessage from a plain member when writePolicy is admins', async () => {
-    const { service, channelRepo, memberRepo, roleRepo } = makeService();
-    channelRepo.findOne.mockResolvedValue({
-      id: 'ch1',
-      workspaceId: 'ws1',
-      isPrivate: false,
-      writePolicy: 'admins',
-      keyVersion: 3,
-    });
-    memberRepo.findOne.mockResolvedValue({
-      workspaceId: 'ws1',
-      userId: 'u1',
-      roleIds: ['r-member'],
-    });
-    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
+  /**
+   * EVERY REFUSAL OF A SALON POST NAMES ITS CAUSE - in a WARN on the server and, for the write
+   * policy, in a typed code the client turns into "only admins (and moderators) can write here".
+   * Production 2026-11-10: a moderator whose role had been emptied was refused, the client said "no
+   * permission", and the server had logged nothing.
+   */
+  describe('sendMessage refusals', () => {
+    const MSG = {
+      senderId: 'u1aaaaaaaa-sender',
+      ciphertext: 'abc',
+      nonce: 'def',
+      senderSessionId: 'sess-1',
+      messageIndex: 0,
+    };
 
-    await expect(
-      service.sendMessage('ch1', {
-        senderId: 'u1',
-        ciphertext: 'abc',
-        nonce: 'def',
-        senderSessionId: 'sess-1',
-        messageIndex: 0,
-      })
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    function refusing(
+      policy: string,
+      member: Record<string, unknown> | null,
+      roles: Array<{ id: string; permissions: string[] }>,
+      channel: Record<string, unknown> = {}
+    ) {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1aaaaaaaa-channel',
+        workspaceId: 'ws1',
+        isPrivate: false,
+        allowedUsers: [],
+        writePolicy: policy,
+        ...channel,
+      });
+      repos.memberRepo.findOne.mockResolvedValue(member);
+      repos.roleRepo.find.mockResolvedValue(roles);
+      const warn = jest.spyOn((repos.service as any).logger, 'warn').mockImplementation(() => {});
+      return { ...repos, warn };
+    }
+
+    async function codeOf(p: Promise<unknown>): Promise<{ status: number; code?: string }> {
+      return p.then(
+        () => ({ status: 200 }),
+        (e: ForbiddenException) => ({
+          status: e.getStatus(),
+          code: (e.getResponse() as { code?: string }).code,
+        })
+      );
+    }
+
+    it('refuses a plain member of an admins-only salon with CHANNEL_WRITE_REQUIRES_ADMIN', async () => {
+      const { service, warn } = refusing(
+        'admins',
+        { workspaceId: 'ws1', userId: MSG.senderId, roleIds: ['r-member-1234'] },
+        [{ id: 'r-member-1234', permissions: ['member.invite'] }]
+      );
+
+      await expect(codeOf(service.sendMessage('ch1', MSG))).resolves.toEqual({
+        status: 403,
+        code: CHANNEL_WRITE_REQUIRES_ADMIN,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('write policy admins'));
+    });
+
+    it('refuses a "Moderateur" whose role grants nothing, naming the policy, the role and the missing grant', async () => {
+      // The production case: the role is CALLED Moderateur and its permissions are empty.
+      const { service, warn } = refusing(
+        'admins_moderators',
+        { workspaceId: 'ws1', userId: MSG.senderId, roleIds: ['r-moderator-5678'] },
+        [{ id: 'r-moderator-5678', permissions: [] }],
+        { isPrivate: true, allowedUsers: [MSG.senderId] }
+      );
+
+      await expect(codeOf(service.sendMessage('ch1', MSG))).resolves.toEqual({
+        status: 403,
+        code: CHANNEL_WRITE_REQUIRES_MODERATION,
+      });
+      const line = String(warn.mock.calls[0]?.[0]);
+      expect(line).toContain('write policy admins_moderators');
+      expect(line).toContain('roles=[r-modera]');
+      expect(line).toContain('grantsModeration=false');
+      // Ids are truncated the way every other line here truncates them.
+      expect(line).toContain('sender=u1aaaaaa:');
+      expect(line).not.toContain(MSG.senderId);
+    });
+
+    it('lets a role holding channel.moderate through the write gate', async () => {
+      const { service, warn } = refusing(
+        'admins_moderators',
+        { workspaceId: 'ws1', userId: MSG.senderId, roleIds: ['r-moderator-5678'] },
+        [{ id: 'r-moderator-5678', permissions: ['channel.moderate'] }]
+      );
+      // No session named: the refusal that comes AFTER the write gate proves the gate let it by.
+      const response = await service.sendMessage('ch1', { ...MSG, senderSessionId: '' }).then(
+        () => null,
+        (e: BadRequestException) => e.getResponse() as { code?: string }
+      );
+      expect(response?.code).toBe('CHANNEL_SESSION_REQUIRED');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('logs a sender who is not a member of the community', async () => {
+      const { service, warn } = refusing('everyone', null, []);
+      await expect(codeOf(service.sendMessage('ch1', MSG))).resolves.toMatchObject({ status: 403 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a member of the community'));
+    });
+
+    it('logs a sender outside a private salon', async () => {
+      const { service, warn } = refusing(
+        'everyone',
+        { workspaceId: 'ws1', userId: MSG.senderId, roleIds: [] },
+        [],
+        { isPrivate: true, allowedUsers: ['someone-else'] }
+      );
+      await expect(codeOf(service.sendMessage('ch1', MSG))).resolves.toMatchObject({ status: 403 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no access to this private salon'));
+    });
   });
 
   it('getNotificationLevel defaults to all and returns the stored value', async () => {

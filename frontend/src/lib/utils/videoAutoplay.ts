@@ -8,10 +8,10 @@
  * `DOMException` name and one fact the player reads when the rejection lands, never by its message:
  *
  * - `NotAllowedError`: the engine refuses this autoplay - muted (a browser policy, a power saving
- *   mode) or with the sound the reader turned on. The play button is the answer, and the reader's tap
- *   plays it as it is. A refusal NEVER mutes: the sound is the reader's explicit choice, and an engine
- *   refusal does not override it (lead decision, 2026-11-04, under the owner's rule "a reel starts
- *   muted, sound only if the user turns it on").
+ *   mode) or with the sound the reader turned on. The player then plays it MUTED, for this session only
+ *   (`videoSound.muteForRefusedStart`, the stored choice kept), with a WARN, and a tap turns the sound
+ *   on (owner, 2026-11-10, replacing the 2026-11-04 rule that left a refused reel paused). A refusal
+ *   of a MUTED autoplay (a browser policy, a power saving mode) is the play button.
  * - `AbortError` with a NEW SOURCE (`sourceChanged`): the element's `src` differs from the one the
  *   ask was made on, so the load that replaced it interrupted the ask. That load's own first event
  *   asks again. This is read from `src` and not from the next `loadstart`, because the load algorithm
@@ -54,34 +54,4 @@ export function decideAutoplayRejection(
       : { kind: 'blocked', cause: 'interrupted' };
   }
   return { kind: 'blocked', cause: 'errored' };
-}
-
-/**
- * Logs one rejected `play()` of an element that has no player of its own (the feed's
- * `playWhileVisible`, a conversation's `InlineVideo` button) at the level its verdict deserves, and
- * returns the verdict. An `AbortError` is the engine saying a pause or a new source overtook the
- * ask - somebody's decision, not a defect - so it is never a warning (1.6.8 logs, 2026-11-09: 37
- * warnings of one race); a refusal or a failure still is, with its name.
- *
- * @param scope The log prefix, e.g. `playWhileVisible`.
- * @param err The rejection of `play()`.
- * @param video The element asked.
- * @param askedSrc The element's `src` when the ask was made.
- */
-export function logRefusedPlay(
-  scope: string,
-  err: unknown,
-  video: Pick<HTMLVideoElement, 'src' | 'muted'>,
-  askedSrc: string
-): AutoplayVerdict {
-  const name = playRejectionName(err);
-  const verdict = decideAutoplayRejection(name, { sourceChanged: video.src !== askedSrc });
-  if (verdict.kind === 'ask-at-next-load') {
-    console.debug(`[video] ${scope}: play() interrupted by a new source (${name})`);
-  } else if (verdict.cause === 'interrupted') {
-    console.info(`[video] ${scope}: play() interrupted by a pause (${name}, same source)`);
-  } else {
-    console.warn(`[video] ${scope}: play() ${verdict.cause}`, { name, muted: video.muted });
-  }
-  return verdict;
 }

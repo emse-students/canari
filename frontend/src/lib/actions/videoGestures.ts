@@ -43,10 +43,13 @@ const CONTROLS = '[data-video-controls]';
 export interface VideoGestureParams {
   /** A single tap on the picture. */
   onTap: () => void;
-  /** A press became a hold: pause. */
-  onHoldStart: () => void;
+  /**
+   * A press became a hold: pause. Absent, a press is never a hold (a live, which its player resumes
+   * at its next delivery and which nothing pauses - Instagram Live neither).
+   */
+  onHoldStart?: () => void;
   /** The hold ended (release, a second finger, a drag): resume what the hold paused. */
-  onHoldEnd: () => void;
+  onHoldEnd?: () => void;
   /** Two taps in the window, where `waitForDouble` is set. The like itself is the surface's. */
   onDoubleTap?: () => void;
   /**
@@ -101,7 +104,7 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
       if (press && node.hasPointerCapture?.(press.id)) node.releasePointerCapture(press.id);
       swallowClick = true;
       Log.d('videoGestures', `hold ended: ${reason}`);
-      params.onHoldEnd();
+      params.onHoldEnd?.();
     }
     press = null;
   }
@@ -117,6 +120,7 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
     }
     if (e.button !== 0 || isControl(e.target)) return;
     press = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    if (!params.onHoldStart) return;
     holdTimer = setTimeout(() => {
       holdTimer = null;
       holding = true;
@@ -130,7 +134,7 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
         }
       }
       Log.d('videoGestures', 'hold started');
-      params.onHoldStart();
+      params.onHoldStart?.();
     }, HOLD_TO_PAUSE_MS);
   }
 
@@ -153,10 +157,15 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
     if (e.detail === 0) return;
     if (swallowClick) {
       swallowClick = false;
+      e.stopPropagation();
       Log.d('videoGestures', 'the click of a hold - not a tap');
       return;
     }
     if (isControl(e.target)) return;
+    // THE PICTURE'S TAP IS THE PLAYER'S and goes no further: a message bubble around it would open
+    // its info panel, a card its page. A surface's double tap still sees it - `doubleTapLike`
+    // listens in the CAPTURE phase, before this.
+    e.stopPropagation();
     const waits = params.waitForDouble ?? node.closest(`[${DOUBLE_TAP_LIKES}]`) !== null;
     if (waits) {
       taps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });

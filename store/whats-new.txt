@@ -1,3 +1,3 @@
-version: 1.6.8
+version: 1.6.10
 
-Nouveau : une cloche pour suivre de près une association ou une personne, des événements « Campus » dans l'agenda, des formulaires en brouillon enregistrés au fil de la frappe, une carte des associations par campus. Corrigé : la déconnexion, l'écran qui s'éteignait pendant un appel vidéo, la page d'un lieu à réserver qui débordait, et plusieurs rognages. Les salons déjà ouverts se rouvrent plus vite.
+Toucher une vidéo du fil l'ouvre en plein écran dans les CanaReels, sans repartir de zéro, et on peut de nouveau avancer dans les vidéos. Moins de notifications : les suggestions sont plus rares et se coupent dans les réglages. Les institutions choisissent qui voit chaque publication. L'agenda se filtre par campus ou formation, et le démineur a sa page Jeux. Corrigé : une réponse perdue en joignant une photo, des lenteurs sur une connexion faible.

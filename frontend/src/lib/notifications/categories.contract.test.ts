@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   NOTIFICATION_CATEGORIES,
+  OPT_IN_CATEGORIES,
   categoryOfConversation,
   isNotificationCategory,
 } from './categories';
@@ -28,6 +29,17 @@ function serverIds(): string[] {
 describe('notification categories', () => {
   it('lists exactly the ids the server filters on', () => {
     expect([...NOTIFICATION_CATEGORIES].sort()).toEqual(serverIds().sort());
+  });
+
+  it('names the opt-in categories the server names - their push off until turned on', () => {
+    const src = readFileSync(SERVER, 'utf8');
+    const block = /OPT_IN_CATEGORIES: readonly NotificationCategory\[\] = \[([^\]]*)\]/.exec(
+      src
+    )?.[1];
+    expect(block).toBeDefined();
+    const ids = [...(block ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect([...OPT_IN_CATEGORIES].sort()).toEqual(ids.sort());
+    expect(OPT_IN_CATEGORIES).toContain('suggestions');
   });
 
   it('knows only its own ids', () => {

@@ -181,6 +181,7 @@ import {
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
   READER_PROFILE_SQL,
+  AGENDA_REACHED_SPACES_SQL,
   READER_SPACES_SQL,
   campusWideReaderCampus,
   type SpacePair,
@@ -243,7 +244,9 @@ import {
 } from './event-reopen';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
+import { announceOpeningToFollowers } from '../openings/opening-reminders';
 import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
+import type { NotificationType } from '../push/notification-client-floor';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -3500,6 +3503,18 @@ export class AssociationsService {
   }
 
   /**
+   * The spaces the reader's agenda reaches (`AGENDA_REACHED_SPACES_SQL`), as pairs: what the
+   * agenda's space filter offers. A view aid; it grants nothing.
+   */
+  async listAgendaReachedSpaces(userId: string): Promise<SpacePair[]> {
+    const rows = (await this.assoRepo.manager.query(AGENDA_REACHED_SPACES_SQL, [
+      userId,
+    ])) as SpacePair[];
+    this.logger.debug(`[AGENDA] ${userId.slice(0, 8)} reaches ${rows.length} space(s)`);
+    return rows;
+  }
+
+  /**
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
    * optionally restricted to one association. Public (same visibility as per-association `/events`).
    * `fromIso`/`toIso` default to `defaultCalendarFeedRange()` when omitted or blank.
@@ -3837,7 +3852,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
@@ -3864,7 +3883,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
@@ -4325,7 +4348,7 @@ ${rejectionReason}`
   async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
     await this.findById(associationId);
     // Under the event's lock, so a validation never overwrites an edit or an acceptance it did not see.
-    const outcome = await this.withEventLock(eventId, async (repo) => {
+    const outcome = await this.withEventLock(eventId, async (repo, manager) => {
       const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
       if (!ev) throw new NotFoundException('Event not found');
       if (ev.status === AssociationCalendarEventStatus.Validated) {
@@ -4334,7 +4357,9 @@ ${rejectionReason}`
       ev.status = AssociationCalendarEventStatus.Validated;
       ev.validatedAt = new Date();
       ev.validatedBy = userId;
-      return { ev: await repo.save(ev), changed: true };
+      const saved = await repo.save(ev);
+      await announceEventOpening(manager, saved);
+      return { ev: saved, changed: true };
     });
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
@@ -6692,4 +6717,35 @@ ${rejectionReason}`
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     return !!asso;
   }
+}
+
+/**
+ * An agenda event "opens" when it is VALIDATED (engagement WP-4, decision 5d): its association's
+ * followers who see it are told, once - a re-validation after an edit finds their rows and writes
+ * nothing. Not for an event with a registration form (the FORM's opening is the shotgun, and its
+ * publication tells the followers), not for a break (the school's band, nobody's event), and not
+ * for a NEUTRAL event, which must not be announced under its BDE's name (owner, 2026-11-08; lead
+ * decision L27: not announced at all). The member who filed it is not told of it.
+ */
+async function announceEventOpening(
+  manager: EntityManager,
+  ev: Pick<
+    AssociationCalendarEvent,
+    'id' | 'associationId' | 'kind' | 'presentation' | 'linkedFormId' | 'createdBy'
+  >
+): Promise<void> {
+  if (
+    ev.kind !== AssociationCalendarEventKind.Event ||
+    ev.presentation === AssociationCalendarEventPresentation.Neutral ||
+    ev.linkedFormId
+  ) {
+    return;
+  }
+  await announceOpeningToFollowers(manager, {
+    kind: 'event',
+    targetId: ev.id,
+    associationId: ev.associationId,
+    opensAt: null,
+    actorId: ev.createdBy,
+  });
 }

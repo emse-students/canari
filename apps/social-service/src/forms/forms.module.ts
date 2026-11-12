@@ -8,6 +8,7 @@ import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { FormFile } from './entities/form-file.entity';
 import { FormItemImage } from './entities/form-item-image.entity';
@@ -31,7 +32,11 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
     TypeOrmModule.forFeature([
       Form,
       Submission,
+      // The old store, read by nothing since migration 152 copied it into `opening_reminders`, and
+      // still mapped until its held drop: the erasure deletes from it, and a database built by
+      // `synchronize` (local) must have it.
       FormReminder,
+      OpeningReminder,
       FormRespondent,
       FormFile,
       FormItemImage,

@@ -23,6 +23,10 @@ import { MemberRepostNotice } from './entities/member-repost-notice.entity';
 import { UserRepostSetting } from './entities/user-repost-setting.entity';
 import { MemberRepostsService } from './member-reposts.service';
 import { MemberRepostsController } from './member-reposts.controller';
+import {
+  ActivitySettingsController,
+  ActivitySettingsService,
+} from './activity-settings.controller';
 import { SpacePinsController } from './space-pins.controller';
 import { SpacePinsService } from './space-pins.service';
 import { ProposalsModule } from '../proposals/proposals.module';
@@ -54,6 +58,8 @@ import { ModerationModule } from '../moderation/moderation.module';
     PostsController,
     RepublicationsController,
     MemberRepostsController,
+    // Engagement WP-9: "share my activity".
+    ActivitySettingsController,
     SpacePinsController,
   ],
   providers: [
@@ -74,6 +80,7 @@ import { ModerationModule } from '../moderation/moderation.module';
     PersonalRepublicationsService,
     // WP-F6: a person reposts to their own accepted followers.
     MemberRepostsService,
+    ActivitySettingsService,
     PushService,
   ],
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview

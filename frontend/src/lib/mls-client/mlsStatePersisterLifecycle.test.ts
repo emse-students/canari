@@ -5,6 +5,7 @@ import {
 } from './mlsStatePersisterLifecycle';
 import type { MlsStatePersister } from './mlsStatePersister';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 function makePersister(): MlsStatePersister {
   return {
@@ -71,6 +72,24 @@ describe('mlsStatePersisterLifecycle', () => {
     handler();
 
     expect(persister.flushEncrypted).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a refused flush, which a follower tab's every backgrounding is", async () => {
+    // A follower tab never writes the MLS state, so its flush rejects typed; fire-and-forget, the
+    // rejection must stop at the hook instead of reaching the window as an unhandled one.
+    const persister = makePersister();
+    const refused = Promise.reject(new MlsStateWriteRefusedError('follower-tab'));
+    const caught = vi.spyOn(refused, 'catch');
+    vi.mocked(persister.flushEncrypted).mockReturnValue(refused);
+    installMlsStatePersisterLifecycle(persister);
+    const pageHide = vi
+      .mocked(window.addEventListener)
+      .mock.calls.find(([type]) => type === 'pagehide')?.[1] as () => void;
+
+    pageHide();
+
+    expect(caught).toHaveBeenCalledTimes(1);
+    await expect(caught.mock.results[0].value).resolves.toBeUndefined();
   });
 
   it('uninstall removes lifecycle listeners', () => {

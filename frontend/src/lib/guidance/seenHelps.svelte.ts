@@ -23,12 +23,36 @@ import { HELP_ID_UNKNOWN, isHelpId, type HelpId } from './helpIds';
  * repeat can change - it is logged as the release mismatch it is and dropped. Every other status - a
  * 429, a 408, a 401, a 5xx - says nothing permanent about the id, so the write stays owed.
  *
- * AN UNSEEN HELP STARTS ONLY ONCE THE SERVER HAS ANSWERED ({@link SeenHelps.ready}): starting on the
- * local copy alone would replay, on a new device, a tour the account finished elsewhere. A device
- * that cannot reach the server shows no new help - nothing is lost, the next opening asks again.
+ * AN UNSEEN HELP STARTS ONLY ON A COPY THE SERVER HAS ANSWERED ({@link SeenHelps.ready}): starting
+ * on a copy the server never filled would replay, on a new device, a tour the account finished
+ * elsewhere. A device that never reached the server shows no new help - nothing is lost, the next
+ * opening asks again.
+ *
+ * BUT A COPY THE SERVER ONCE FILLED IS READY AT ONCE (slow-link chantier, gap 1, 2026-11-11). The
+ * read needs a token, and at a cold start the token is the session refresh: 4 s on the owner's link
+ * (server 17 ms), during which the birthday card and the profile-photo prompt waited although this
+ * device already held the server's set. `confirmed` is durable state - written only when a server
+ * answer was merged into the copy - so the copy of a device that has met the server is drawn at
+ * once and revalidated behind; a new device still waits for the answer. The case taken knowingly:
+ * a help finished on ANOTHER device since this copy's last answer may start here before the
+ * revalidation lands.
  */
 
-type Persisted = { seen: string[]; owed: string[] };
+type Persisted = {
+  seen: string[];
+  owed: string[];
+  /** A server answer was merged into this copy - it may be drawn before the next one. */
+  confirmed?: boolean;
+  /** The server's profile-photo-prompt offer, as of the answer `confirmed` names. */
+  photoPromptEligible?: boolean;
+};
+
+type LocalCopy = {
+  seen: HelpId[];
+  owed: HelpId[];
+  confirmed: boolean;
+  photoPromptEligible: boolean;
+};
 
 const PATH = '/api/users/me/help-seen';
 
@@ -48,20 +72,27 @@ async function isUnknownIdRefusal(res: Response): Promise<boolean> {
   }
 }
 
-function readLocal(userId: string): { seen: HelpId[]; owed: HelpId[] } {
+const NO_COPY: LocalCopy = { seen: [], owed: [], confirmed: false, photoPromptEligible: false };
+
+function readLocal(userId: string): LocalCopy {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY.seenHelps(userId));
-    if (!raw) return { seen: [], owed: [] };
+    if (!raw) return NO_COPY;
     const parsed = JSON.parse(raw) as Partial<Persisted> | null;
     const seen = Array.isArray(parsed?.seen) ? parsed.seen.filter(isHelpId) : [];
     const owed = Array.isArray(parsed?.owed) ? parsed.owed.filter(isHelpId) : [];
-    return { seen, owed };
+    return {
+      seen,
+      owed,
+      confirmed: parsed?.confirmed === true,
+      photoPromptEligible: parsed?.photoPromptEligible === true,
+    };
   } catch (e) {
     console.warn(
       '[seenHelps] the local copy could not be read - starting from the server alone',
       e
     );
-    return { seen: [], owed: [] };
+    return NO_COPY;
   }
 }
 
@@ -73,15 +104,33 @@ export class SeenHelps {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders what is owed
   #owed = new Set<HelpId>();
   #ready = $state(false);
+  /** Whether a server answer has been merged into the copy (durable: persisted with it). */
+  #confirmed = false;
+  /** Whether the server answered in THIS process for the current account - a load is then a no-op. */
+  #answered = false;
+  /** Whether the server offers this account the profile-photo prompt (the space gate, see below). */
+  #profilePhotoPromptEligible = $state(false);
   /** Moves on with every account change, so an answer for the previous account is dropped. */
   #generation = 0;
   #stopReconnect: (() => void) | null = null;
   /** The read in flight for the current account: a second `load` joins it instead of asking again. */
   #loading: Promise<void> | null = null;
 
-  /** Whether the server's set has been merged for the current account. */
+  /**
+   * Whether the copy may decide which helps start: the server's set has been merged into it, in this
+   * process or (persisted) in an earlier one on this device.
+   */
   get ready(): boolean {
     return this.#ready;
+  }
+
+  /**
+   * Whether the server offers the current account the profile-photo prompt - only the
+   * spaces named by the server's `PROFILE_PHOTO_PROMPT_SPACES` (owner, 2026-11-10, kept for good
+   * 2026-11-11). Decided on the server and read with the seen set, so changing it needs no release; `false` until it answers.
+   */
+  get profilePhotoPromptEligible(): boolean {
+    return this.#profilePhotoPromptEligible;
   }
 
   /** Whether the current account has seen `id` (server or local copy). Reactive. */
@@ -109,7 +158,7 @@ export class SeenHelps {
    * once the server has answered.
    */
   load(userId: string): Promise<void> {
-    if (this.#account === userId && this.#ready) return Promise.resolve();
+    if (this.#account === userId && this.#answered) return Promise.resolve();
     if (this.#account === userId && this.#loading) return this.#loading;
     const loading = this.#load(userId).finally(() => {
       if (this.#loading === loading) this.#loading = null;
@@ -125,7 +174,16 @@ export class SeenHelps {
       const local = readLocal(userId);
       for (const id of local.seen) this.#seen.add(id);
       for (const id of local.owed) this.#owed.add(id);
-      Log.d('seenHelps', `local copy: ${local.seen.length} seen, ${local.owed.length} owed`);
+      Log.d(
+        'seenHelps',
+        `local copy: ${local.seen.length} seen, ${local.owed.length} owed, ${local.confirmed ? 'confirmed by an earlier answer - drawn now' : 'never confirmed - waits for the server'}`
+      );
+      if (local.confirmed) {
+        // Drawn before the read, which waits for the token: the server's earlier answer is in it.
+        this.#confirmed = true;
+        this.#profilePhotoPromptEligible = local.photoPromptEligible;
+        this.#ready = true;
+      }
     }
     const generation = this.#generation;
     try {
@@ -137,7 +195,11 @@ export class SeenHelps {
         console.error(`[seenHelps] the seen-help route refused: HTTP ${res.status}`);
         return;
       }
-      const body = (await res.json()) as { seen?: unknown; ageSeconds?: unknown } | null;
+      const body = (await res.json()) as {
+        seen?: unknown;
+        ageSeconds?: unknown;
+        profilePhotoPromptEligible?: unknown;
+      } | null;
       if (generation !== this.#generation) return;
       const server = Array.isArray(body?.seen) ? body.seen.filter(isHelpId) : [];
       const ages = (body?.ageSeconds ?? {}) as Record<string, unknown>;
@@ -150,6 +212,9 @@ export class SeenHelps {
         // The server holds it already: whatever this device owed for it is settled.
         this.#owed.delete(id);
       }
+      this.#profilePhotoPromptEligible = body?.profilePhotoPromptEligible === true;
+      this.#confirmed = true;
+      this.#answered = true;
       this.#persist();
       this.#ready = true;
       Log.d('seenHelps', `server answered: ${server.length} seen, ${this.#owed.size} owed`);
@@ -235,14 +300,20 @@ export class SeenHelps {
       const account = this.#account;
       if (!account) return;
       Log.i('seenHelps', 'reconnect: reading the seen set and delivering what is owed');
-      void (this.#ready ? this.deliverOwed() : this.load(account));
+      void (this.#answered ? this.deliverOwed() : this.load(account));
     });
   }
 
   #persist(): void {
     const account = this.#account;
     if (!account) return;
-    const value: Persisted = { seen: [...this.#seen], owed: [...this.#owed] };
+    const value: Persisted = {
+      seen: [...this.#seen],
+      owed: [...this.#owed],
+      ...(this.#confirmed
+        ? { confirmed: true, photoPromptEligible: this.#profilePhotoPromptEligible }
+        : {}),
+    };
     try {
       localStorage.setItem(ACCOUNT_KEY.seenHelps(account), JSON.stringify(value));
     } catch (e) {
@@ -258,6 +329,9 @@ export class SeenHelps {
     this.#ageSeconds.clear();
     this.#owed.clear();
     this.#ready = false;
+    this.#confirmed = false;
+    this.#answered = false;
+    this.#profilePhotoPromptEligible = false;
     this.#loading = null;
     this.#stopReconnect?.();
     this.#stopReconnect = null;

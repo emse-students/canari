@@ -58,11 +58,19 @@ describe('AssociationTile follow chip', () => {
     expect(tile('a2', { archived: true }).querySelector('[data-follow-chip]')).toBeNull();
   });
 
-  it('puts the chip in its own row under the card, never over its text', () => {
+  it('puts the chip INSIDE the card, in its footer row, above the stretched link', () => {
     const t = tile('a1');
-    const card = t.querySelector('a')!;
-    expect(card.contains(t.querySelector('[data-follow-chip]'))).toBe(false);
-    expect(card.parentElement!.classList.contains('flex-col')).toBe(true);
+    const chip = t.querySelector('[data-follow-chip]')!;
+    const link = t.querySelector('a')!;
+    expect(link.contains(chip)).toBe(false);
+    const card = t.querySelector('.card-tile')!;
+    expect(card.contains(chip)).toBe(true);
+    expect(link.classList.contains('after:absolute')).toBe(true);
+    const wrapper = chip.closest('.relative.z-10')!;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.parentElement!.classList.contains('mt-auto')).toBe(true);
+    // No row under the card: the tile's outer box holds the card alone, so a row's cards stay one height.
+    expect(card.parentElement!.children).toHaveLength(1);
   });
 
   it('offers nothing for an association already followed', () => {

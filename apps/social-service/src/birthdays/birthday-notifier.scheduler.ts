@@ -16,6 +16,7 @@ import {
   noticeOpenSql,
 } from './birthday-date';
 import { birthdayDateVisibleToSql } from './birthday-sql';
+import { inAppCategoryOffSql } from '../push/notification-category';
 import { BIRTHDAY_NOTIFICATION } from './birthday-notification';
 
 const TAG = '[BIRTHDAY_NOTICE]';
@@ -204,11 +205,13 @@ export class BirthdayNotifier {
       // The member's accepted followers whom the date's visibility admits - `nobody` reaches no one,
       // `school` and `followers` reach every accepted follower with no block and on the same side
       // of the review cohort. Read in the claim's transaction: what is told is what was claimed.
+      // A follower who switched Anniversaires off gets no bell row ("Nos principes", 2026-11-10).
       const rows = (await m.query(
         `SELECT f."followerUserId" AS id FROM user_follows f
            JOIN profile_birthdays b ON b."userId" = f."followedUserId"
           WHERE f."followedUserId" = $1 AND ${acceptedFollowSql('f')}
             AND ${birthdayDateVisibleToSql('b', 'f."followerUserId"')}
+            AND NOT ${inAppCategoryOffSql('f."followerUserId"', `'birthdays'`)}
           ORDER BY f."followerUserId"`,
         [userId]
       )) as Array<{ id: string }>;

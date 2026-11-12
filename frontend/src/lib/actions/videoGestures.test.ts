@@ -76,10 +76,14 @@ function tap(x = 100, timeStamp?: number) {
 describe('where no double tap means anything', () => {
   beforeEach(() => wire());
 
-  it('a tap acts at once', () => {
+  it('a tap acts at once, and goes no further than the player', () => {
+    const above = vi.fn();
+    document.body.addEventListener('click', above);
     tap();
+    document.body.removeEventListener('click', above);
     expect(onTap).toHaveBeenCalledTimes(1);
     expect(onHoldStart).not.toHaveBeenCalled();
+    expect(above, 'a bubble or a card around never sees it').not.toHaveBeenCalled();
   });
 
   it('a press held past the hold length pauses, the release resumes, and its click is no tap', () => {
@@ -164,6 +168,17 @@ describe('where no double tap means anything', () => {
 
     node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(onTap).not.toHaveBeenCalled();
+  });
+
+  it('with no hold given (a live), a long press is never a pause', () => {
+    destroy();
+    const action = videoGestures(node, { onTap });
+    destroy = action.destroy;
+    pointer('pointerdown');
+    vi.advanceTimersByTime(HOLD_TO_PAUSE_MS * 3);
+    pointer('pointerup');
+    expect(onHoldStart).not.toHaveBeenCalled();
+    expect(onHoldEnd).not.toHaveBeenCalled();
   });
 
   it("keeps the phone's long-press menu off the picture", () => {

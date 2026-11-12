@@ -112,3 +112,18 @@ describe('putFileStream', () => {
     while (!source?.closed) await new Promise((r) => setImmediate(r));
   });
 });
+
+describe('the live segment prefix (live replays WP-R3, D2)', () => {
+  it('is refused by put() and putFileStream(): live segments never enter the backed-up store', async () => {
+    const file = path.join(dir, 'f.bin');
+    await fs.writeFile(file, Buffer.alloc(10));
+    const svc = new StorageService();
+    const key = 'live/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222';
+    await expect(svc.put(key, Buffer.alloc(10), 10)).rejects.toThrow(/live segment store/);
+    await expect(svc.putFileStream(key, file, 10)).rejects.toThrow(/live segment store/);
+    expect(clients[0].putObject).not.toHaveBeenCalled();
+    expect(clients[1].putObject).not.toHaveBeenCalled();
+    await svc.put('lively-but-not-a-live-key', Buffer.alloc(10), 10);
+    expect(clients[0].putObject).toHaveBeenCalledTimes(1);
+  });
+});

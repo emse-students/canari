@@ -286,20 +286,8 @@ pub fn spawn_redis_subscriber(
                                 // If no live senders remain the device is confirmed offline:
                                 // immediately DEL the presence key so the delivery service
                                 // stops routing via pub/sub and goes straight to queue.
-                                let all_gone = {
-                                    let mut map = connected_users.lock().unwrap();
-                                    if let Some(senders) = map.get_mut(&key) {
-                                        senders.retain(|_, s| !s.is_closed());
-                                        if senders.is_empty() {
-                                            map.remove(&key);
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        true
-                                    }
-                                };
+                                let all_gone =
+                                    crate::state::prune_closed_senders(&connected_users, &key);
                                 if all_gone {
                                     let rc = redis_client.clone();
                                     let k2 = key.clone();
@@ -398,11 +386,11 @@ pub fn spawn_redis_subscriber(
                                 }
                             }
 
-                            if !to_remove.is_empty() {
-                                let mut map = connected_users.lock().unwrap();
-                                for key in to_remove {
-                                    map.remove(&key);
-                                }
+                            // ONLY A CLOSED SENDER LEAVES THE MAP. A full channel is a live socket that is
+                            // slow to read: it still holds its place (`AppState::admit` counts the
+                            // map), so removing its key would let its account pass the limit.
+                            for key in to_remove {
+                                crate::state::prune_closed_senders(&connected_users, &key);
                             }
 
                             tracing::info!(

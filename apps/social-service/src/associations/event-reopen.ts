@@ -1,3 +1,5 @@
+import type { NotificationType } from '../push/notification-client-floor';
+
 /**
  * WHY A VALIDATED EVENT WENT BACK TO THE QUEUE - a typed cause, carried from the write that did it
  * (F7 of `docs/wiki/spaces-and-audiences-reform.md`), never a sentence parsed afterwards.
@@ -16,7 +18,7 @@ export type EventReopenReason = 'date_moved' | 'coorganiser_joined';
  * The bell and push type each cause is announced under. The type IS the sentence's key on every
  * surface (the bell row, the three native tables), so each cause owns one.
  */
-export const EVENT_REOPEN_NOTIFICATION_TYPE: Record<EventReopenReason, string> = {
+export const EVENT_REOPEN_NOTIFICATION_TYPE: Record<EventReopenReason, NotificationType> = {
   date_moved: 'event_pending',
   coorganiser_joined: 'event_pending_coorganiser',
 };

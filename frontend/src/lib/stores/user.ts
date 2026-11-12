@@ -7,6 +7,7 @@ import { refusalOrigin, type ResponseOrigin } from '$lib/utils/apiJson';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
+import { endPeerNames } from '$lib/utils/users/peerNameDirectory';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { currentUserId as signedInUserId } from '$lib/stores/userState.svelte';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
@@ -92,6 +93,8 @@ export function saveUserLocally(user: { id: string; displayName?: string; admin?
     clearWorkspaceSnapshots();
     // Nor is any stored feed page written before the switch (`$lib/posts/feedStoreEpoch`).
     forgetStoredFeeds('change of account');
+    // Nor the names the previous account's device had resolved (`peerNameDirectory.ts`).
+    endPeerNames('change of account');
   }
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
@@ -115,6 +118,8 @@ export function clearUserLocally(): void {
   // The stored feed pages end with it, by the same rule and in the same call: their epoch goes now,
   // their sealed bytes at the next read or write of the account's store (`feedStoreEpoch.ts`).
   forgetStoredFeeds('sign-out');
+  // And the remembered peer names with it, in memory now and by the same epoch on disk.
+  endPeerNames('sign-out');
   // The nickname registers too: names other members set, text about people that a sign-out must
   // not leave on a shared install (review of #3177).
   const leaving = signedInUserId();

@@ -35,7 +35,7 @@ here and nothing else.**
 | 6. Drag and drop into the post composer, Chrome (#3171) | **PASS** | Real `Input.dispatchDragEvent` with a file path (enter, over, drop) at three places of the open sheet: on the media strip area and the text area (a PNG each: `1/10`, `2/10`) and on the toolbar row (a text file: `3/10`, drawn as a file tile); the sheet was closed unpublished. An image dragged from another web page (URL, no file) was NOT tried |
 | 7. Engagement WP-2, Suivre (#3176) | **PASS** | Mi 9T: the chip on an association post header followed at ONCE and disappeared (and from every other header of that association); the chip on a personal post header (icon-only on the phone) became `Demande envoyee - retirer la demande de suivi ...` on all six headers of that person at once; the person accepted from the web bell (`Demandes d'abonnement en attente: 1`, `Accepter`) and `follow-status` answered `accepted`. Web: the chip on six association cards (beta) and on three directory rows (never on itself). No chip on an association post of a club the account is a member of |
 | 8. Community role names (#3175) | **PASS** | Delta (administrator) of the bench community: the `Roles` tab holds a `Noms des roles` editor; renaming the member role made the member badges of the open member list of another account read the new name at once without a reload; a blank save restored the default (checked after a reload). A non-admin (gamma): no `Roles` tab and no editor |
-| 9. Nicknames, the 8 readings | **1 PASS, 2 FAIL, 3 PASS, 4-8 NOT TAKEN** | See [the entry](backlog.d/p3-modifier-les-pseudos-built-readings-owed.md); **FAIL 2** filed: [a member added after a nickname never shows it](backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md) |
+| 9. Nicknames, the 8 readings | **1 PASS, 2 FAIL, 3 PASS, 4-8 NOT TAKEN** | See [the entry](backlog.md#owed-a-verification-and-nothing-else); **FAIL 2** filed: [a member added after a nickname never shows it](backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md) |
 | 10. Birthdays | **5 PARTIAL, 6 PASS, 1-4 and 7 NOT TAKEN (need the day)** | See [the entry](backlog.d/birthdays-on-profiles.md). The date was set on the iPhone account for TOMORROW and the Mi 9T account follows it, so the morning notice and the ring can be read on 2026-11-10 |
 | 11. Community open on the Mi 9T (#3174) | **MEASURED** | See [community-open-budget](frontend/community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08): cold and warm, five runs each, 1x |
 
@@ -193,7 +193,7 @@ slots W4 (beta) and W5 (delta) were started and signed in for this; W1, W2 and W
 | Wry wake (WMP, #2974) | Mi 9T | **NOT-READ** | No abort, no ANR, process alive, but the trigger was not reached: with `always_finish_activities 1` this MIUI build kept the activity alive, so no `[WRY_MAIN_PIPE] no WebView for activity` line appeared. The setting was reset to 0 |
 | Cold avatars (AV) | Mi 9T | **NOT-READ** | The bench accounts show initials, not photos: no signed avatar request to time and the server `[AVATAR]` count is not reachable from the bench. Cold start to the communities tab took about 3 s |
 
-**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md). Not read: the newcomer afterwards.
+**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22). Not read: the newcomer afterwards.
 
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
@@ -1658,7 +1658,7 @@ lines.
 `sign-in refused` is expected ONLY as step 4e's offline `sign-in refused, as expected` (INFO).
 
 **Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
-stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
+stable.** The result goes into the [per-account backlog entry](backlog.md#owed-a-verification-and-nothing-else).
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T
 
@@ -1857,12 +1857,35 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
    choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
    lands on the "Tout" feed.
 
+## RV. Every vertical video of 90 s or less is a CanaReel, kept a year - owed on BOTH phones
+
+**Proves** [the rule of 2026-11-09](frontend/modules/reels.md#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09)
+on real hardware: the gates replace the decoder, so whether `videoWidth`/`videoHeight` honour a
+phone video's rotation tag (an Android portrait clip is often stored 1920x1080 + 90 degrees) and
+whether the prepared frame comes out vertical is read here only. **Supersedes CR steps 3, 5 and 9's
+"Garder comme post"** (the button is gone). **Precondition:** a pre-release carrying it on an estate
+serving `maxAspectRatio`, a bench account, the console for `[PUBLISH-QUEUE]`, `[reel-capture]`,
+`[reel-publish]` and `[reel-rule]`.
+
+1. **"+" -> new post -> "Photo/vidéo" -> a PORTRAIT gallery video under 90 s** (one filmed upright
+   with the system camera), a caption, "Publier": the log says `one video 720x1280, N ms: a
+   CanaReel`; the feed shows a reel card that opens the reel pager; `my-reels` lists it with an
+   `expiresAt` a year out.
+2. **The same with a LANDSCAPE video, then a 2-minute portrait video**: `a post` in the log, an
+   ordinary post video.
+3. **A portrait video PLUS a photo, or with a poll**: a post.
+4. **The CanaReels tab -> gallery -> a landscape video**: the toast "Un CanaReel est une vidéo
+   verticale...", no review. A portrait one reaches the review and publishes as a reel.
+5. **The composer's camera, HOLD**: the step shows "Une vidéo verticale de 90 secondes au plus est
+   un CanaReel : supprimé au bout de 1 an" and NO "Garder comme post"; the tab's step reads "Visible
+   1 an...".
+
 ## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
 
 **Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
 on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
 and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
-carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+carrying `multiMedia`, a bench account, at least two reels and one post of exactly one photo;
 the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
 `[reel-comments]` lines.
 
@@ -2213,7 +2236,7 @@ stays owed until a pre-release build is distributed to the tester group.
 | #1605 "Ouvrir dans l'application", Android half | Mi 9T | **`PASS`** | `https://canari.emse.fr/login` in Chrome (not signed in) shows the link; the tap starts `act=VIEW cat=BROWSABLE dat=https://canari.emse.fr/... pkg=fr.emse.canari` from Chrome and Canari comes to the front |
 | #1548 the reply context is per conversation | iPhone | **`PASS`** | "Repondre" armed on a DM message ("Repondre a Canari Test Delta"); the `Bench126` salon opened with no reply bar; back in the DM the bar and its quote were still there; cancelled afterwards |
 | The send path on the iPhone (#1536 row) | iPhone | **`PASS`** | `ios1013send` in the DM: "Message envoye", the double check, and the Mi 9T's list shows it. **The reaction-failure toast was not read**: nothing here makes a reaction fail |
-| #1604, no PIN prompt after a later sign-in | iPhone | **answered in part: NOT the "Rester connecte" vault** | The install sat on the login page; a sign-in as gamma landed on the feed and `/chat` with NO PIN, history decrypting and a send working. A cold relaunch ~9 minutes later DID ask for the PIN - which a vault would not have - and its sheet has no "Rester connecte" row (`showStaySignedIn = !biometricConfigured`). So the unlock was skipped on a key the live process still held. **Then the right PIN on that cold launch answered "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"** - the [account-switch P3](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable) met again, here with no switch inside this session (which account the install held before it is unknown). Remedy taken: uninstall, reinstall `100200305` from TestFlight, sign in (the PIN asked this time), unlock |
+| #1604, no PIN prompt after a later sign-in | iPhone | **answered in part: NOT the "Rester connecte" vault** | The install sat on the login page; a sign-in as gamma landed on the feed and `/chat` with NO PIN, history decrypting and a send working. A cold relaunch ~9 minutes later DID ask for the PIN - which a vault would not have - and its sheet has no "Rester connecte" row (`showStaySignedIn = !biometricConfigured`). So the unlock was skipped on a key the live process still held. **Then the right PIN on that cold launch answered "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"** - the [account-switch P3](backlog.md#owed-a-verification-and-nothing-else) met again, here with no switch inside this session (which account the install held before it is unknown). Remedy taken: uninstall, reinstall `100200305` from TestFlight, sign in (the PIN asked this time), unlock |
 | Dynamic Type at the largest standard size (lot 5) | iPhone | **no effect, warm or cold** | Reglages > Accessibilite > Affichage et taille du texte > Police plus grande, slider 50 % -> 100 %: a DM drew at exactly the size it had before, and so did the PIN sheet after a cold relaunch. The WebView ignores the setting, so Dynamic Type users get the default size. Whether that is accepted or wants `-apple-system-body` is a decision, not a reading. Restored to 50 % |
 
 **What a bench phone cannot settle, and why.** Every push row (check H step 4, NOTIF-10, D2/D3 with
@@ -3171,3 +3194,52 @@ a reload rather than a frame.
 
 - **Comment sort row.** At 150-200 % text the row "Afficher les N commentaires" + Récents / Anciens / Aimés did not wrap (page scroller 553 px on a 436 px screen). `PostComments.svelte` now wraps the row and the sort group (`flex-wrap`, `min-w-0`, `gap-x-2 gap-y-1`); `textZoomBoxes.test.ts` asserts it. Owed one look at 200 % on the Mi 9T.
 - **`[TAURI] Couldn't find callback id N` every ~15 s after a WebView reload** (`r1017-a129a5/cons-2.ndjson`: 27 lines, ONE id, intervals 14.85-15.05 s). The warning means Rust still answers a callback registered by the previous page. The only recurring Rust-to-JS channel in the app is the `plugin-websocket` listener in `TauriMlsService.connect()` (`addListener`); a reload does not run `pauseSocket()` (only the backgrounding path does, `sessionConnection.ts`), so a socket opened by the old page could keep delivering frames to the dead id. **NOT established from source**: no 15 s server frame was found in `backend/`, and the plugin's per-connection channel was not observed. Muting the line or adding a `pagehide` disconnect without that proof would be a guess. Next step: with the warning live, `adb logcat` for the websocket plugin plus the gateway's connection count for the account (two sockets after a reload would confirm it), then release the socket at `pagehide`.
+
+## One background Welcome on the Mi 9T: the procedure (2026-10-22)
+
+The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
+push-secret-authenticated committer, so a native path changed and no gate here runs native code.
+
+**Verified from source instead of hardware (2026-10-22).** The rig could not build the trigger: a new
+device asks for a background Welcome only when its own external join fails for a reason other than
+not being a member. So the request was compared with the route by reading both.
+`sendWelcomeAndCommit` in `CanariFirebaseMessagingService.kt` sends `Authorization: PushSecret`, puts
+`userId` and `deviceId` in the body, and sends neither `senderId` nor `x-user-id`. The route
+authenticates that exact pair and hands it to `validateCommit` as the committer, `senderId` included.
+The pair passes the registry check because the push-token row and the key-package row both take
+`userId` from `x-user-id`. iOS never posts this route. `push.controller.welcome-commit.spec.ts`
+already sends exactly this body. The reading is a row of [the verification table](backlog.md#owed-a-verification-and-nothing-else).
+
+The reading has one setup and three checks:
+
+- **Setup.** The Mi 9T is killed, not force-stopped (swiped away), and is a member of a group
+  conversation. A new device of another member must send a `welcome_request` for it, which makes the
+  phone answer in the background. **That request is sent only when the newcomer's own external join
+  for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
+  base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
+  login on a healthy estate does not send it: see the attempt below. The PROCESS must be cold: a
+  process in which the app was loaded since it last died answers `prepare refused
+  reason=warm-process` and sends nothing, by design.
+- **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)):
+  - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
+
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT HELD` line appears.
+- **The same reading with the app OPENED inside the round trip** (open the app between the
+  `Welcome staged` line and the answer): the phone logs `stage left in mls.bin (left-to-foreground)`
+  or `already settled by the foreground`; the foreground's next load logs `background stage of
+  group=... found in the loaded state` (or `already merged`), then the WebView logs `[COMMIT] settling
+  1 staged commit(s) by resubmission` and `... accepted - merged`; the newcomer reads the next message.
+  No `ACCEPTED AND NOT HELD`, no `is ABSENT from the state this foreground keeps`, no `ERASES`.
+- **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
+  the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
+  the phone then reads the group's next message once opened, and the newcomer's next ask logs
+  `already refused as stale from this mls.bin -> not answered`.
+- **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
+  - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
+  - `commit accepted -> activeEpoch=N+1`;
+  - `DONE`.
+
+  No `REJECT` appears, and in particular no commit-caller refusal.
+- **The newcomer.** It opens the group and reads the next message.

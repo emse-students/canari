@@ -7,7 +7,11 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import {
+  memberLeftContent,
+  receivedNoticeTime,
+  visibleNoticeContent,
+} from '$lib/utils/chat/visibleNotices';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
@@ -26,12 +30,12 @@ import {
 } from '$lib/utils/chat/readState';
 import {
   chat_system_message_deleted,
-  chat_system_member_left,
   chat_system_conversation_deleted,
 } from '$lib/paraglide/messages';
 import {
   serializeEnvelope,
   applyEditToBody,
+  editFitsBody,
   envelopeBodyText,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
@@ -274,25 +278,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       if (convo && convo.name !== data.newName) {
         setConversation(contactName, { ...convo, name: data.newName });
       }
-      systemContent = await renderVisibleNotice('groupRenamed', data, senderNorm);
+      systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
-      systemContent = await renderVisibleNotice('memberRemoved', data, senderNorm);
+      systemContent = await visibleNoticeContent('memberRemoved', data, senderNorm);
     } else if (parsed.system.event === 'groupImageChanged') {
       // The notice only, which the replay never drew while the live path always did - so a device
       // that met this frame only in the archive held one row fewer than every other member. The
       // photo itself is the group metadata's, read fresh from the server, never from an old frame.
-      systemContent = await renderVisibleNotice('groupImageChanged', data, senderNorm);
+      systemContent = await visibleNoticeContent('groupImageChanged', data, senderNorm);
     } else if (parsed.system.event === 'memberLeft' && data.userId) {
       // The same cross-check the live handler makes, for the same reason and with the same verdict:
       // the id is a self-asserted payload field, the stream row's sender is the identity MLS
       // authenticated, and only the party that left may say so. Rendering nothing is what an
       // unusable payload already gets here.
       if (canonicalUserId(String(data.userId)) === senderNorm) {
-        const getName = await resolveDisplayNames([data.userId]);
-        systemContent = chat_system_member_left({ user: getName(data.userId) });
+        systemContent = await memberLeftContent(String(data.userId));
       }
     } else if (parsed.system.event === 'memberAdded') {
-      systemContent = await renderVisibleNotice('memberAdded', data, senderNorm);
+      systemContent = await visibleNoticeContent('memberAdded', data, senderNorm);
     } else if (parsed.system.event === 'channel_invitation' && data.channelId) {
       // Mirrors the live handler: both sides render the same card, the inviter's copy without a
       // Join button (`invitedName` is the discriminator). Replayed rather than ignored because an
@@ -387,7 +390,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         by: senderNorm,
         ...(ctx.authorship ? { proof: ctx.authorship } : {}),
       });
-    } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
+    } else if (
+      parsed.system.event === 'edit_message' &&
+      data.messageId &&
+      typeof data.newContent === 'string'
+    ) {
       // Dated by the sender, exactly as the live path and the pin path are, so a replay cannot undo
       // an edit this device already holds that is newer - and two devices replaying the same log in
       // different orders reach the same body. `editSupersedes` carries the whole rule; a frame from
@@ -421,6 +428,13 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in
       // THIS page counts as much as one already on the row.
       if (known?.isDeleted || deletedMessages.has(data.messageId)) return;
+      // An empty text edits only a media message's caption (`editFitsBody`).
+      if (!editFitsBody(known.content, data.newContent)) {
+        console.warn(
+          `[HISTORY_REPLAY] Dropped an edit of ${data.messageId.slice(0, 8)} - an empty text edits only a caption`
+        );
+        return;
+      }
       // Both the in-memory row and anything an earlier entry of THIS page already accumulated have
       // to be outranked: the page is walked in log order, which is not edit order.
       const heldInPage = editedMessages.get(data.messageId);

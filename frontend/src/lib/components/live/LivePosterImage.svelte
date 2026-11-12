@@ -21,9 +21,14 @@
     alt: string;
     /** The loader; the real one unless a test hands its own. */
     load?: typeof loadLivePoster;
+    /**
+     * Whether the live's mark stands in until the image opens (the live's card); a host that draws
+     * its own mark over the picture (a replay's card, its play button) passes false.
+     */
+    placeholder?: boolean;
   }
 
-  let { live, alt, load = loadLivePoster }: Props = $props();
+  let { live, alt, load = loadLivePoster, placeholder = true }: Props = $props();
 
   let url = $state<string | null>(null);
 
@@ -52,7 +57,7 @@
 <div class="bg-cn-scrim relative size-full overflow-hidden" data-live-poster={posterName ?? ''}>
   {#if url}
     <img src={url} {alt} class="size-full object-cover" data-live-poster-image />
-  {:else}
+  {:else if placeholder}
     <div class="flex size-full items-center justify-center text-white/60" aria-hidden="true">
       <Radio size={32} />
     </div>
