@@ -28,6 +28,7 @@ import {
 } from '$lib/utils/chat/epochGapRegistry';
 import { replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
+import { settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
@@ -1545,9 +1546,10 @@ async function handleKnownGroup({
 async function rekeyStoredDirectRows(
   { oldId, newId, onScreen }: PendingRekey,
   storage: IStorage,
-  key: string,
-  log: (msg: string) => void
+  deps: MessageHandlerDeps
 ): Promise<void> {
+  const key = deps.deviceKey();
+  const log = deps.log;
   const from = oldId.slice(0, 8);
   const to = newId.slice(0, 8);
   try {
@@ -1566,7 +1568,14 @@ async function rekeyStoredDirectRows(
         isEdited: m.isEdited,
         serverTimestamp: m.serverTimestamp,
       }));
-    const written = fresh.length > 0 ? await storage.saveMessagesIfAbsent(fresh, key) : new Set();
+    const written: Set<string> =
+      fresh.length > 0 ? await storage.saveMessagesIfAbsent(fresh, key) : new Set();
+    // WHAT WAITED FOR THESE ROWS UNDER THE JOINED GROUP IS SETTLED NOW (review of #3406). The
+    // group's buffered frames replay before the move, so a deletion, edit or reaction of an old
+    // message found no row under the joined group and was kept as a pending mutation there; the
+    // user's own act during the move is kept the same way (`persistLocalMutation`). The rows just
+    // written under the joined group are what those entries waited for.
+    await settlePendingFor(deps, newId, [...moved, ...written]);
     log(
       `[WELCOME] ${from}… re-keyed onto ${to}…: ${moved.length} stored row(s) moved, ${written.size} row(s) only memory held written` +
         (left > 0 ? `, ${left} row(s) did not open and stay under ${from}…` : '')
@@ -1592,9 +1601,7 @@ async function runPendingRekey(
 ): Promise<void> {
   const storage = deps.storage;
   if (!rekey || !storage) return;
-  await runExclusiveForGroup(rekey.newId, () =>
-    rekeyStoredDirectRows(rekey, storage, deps.deviceKey(), deps.log)
-  );
+  await runExclusiveForGroup(rekey.newId, () => rekeyStoredDirectRows(rekey, storage, deps));
 }
 
 /**

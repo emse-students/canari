@@ -1783,6 +1783,14 @@ the old conversation, through the boot merge's own move, and logs the count eith
   a row of the old conversation cannot also stand under the new one - and a message only memory
   holds is written after, with `saveMessagesIfAbsent`, so a stored edit or tombstone wins. The log
   gives the rows moved, the rows written from memory, and the rows that did not open.
+- **What waited for the moved rows is settled by the move** (`settlePendingFor(joined, moved)`).
+  The joined group's buffered frames replay BEFORE the move, so a deletion, edit or reaction of an
+  old message found no row under the joined group and was kept there as a pending mutation that
+  nothing settled - after a reload the deleted message was back. The same holds for the user's OWN
+  act in the window between showing the joined group and the end of the move: `persistLocalMutation`
+  writes by compare-and-set and, finding no row, keeps the act as a pending mutation (sender = the
+  user) instead of writing it nowhere, so the move's look settles it too. Chosen over showing the
+  joined group only after the move, which would have reopened the window at the swap.
 - **The old conversation's row is kept**, as before: which of a peer's two 1:1 groups survives is
   the boot merge's decision. That decision is itself not convergent between the two peers - a
   separate P1 ([backlog](../backlog.d/p1-the-boot-merge-of-a-crossed-dm-pair-does-not-converge.md)).

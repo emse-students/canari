@@ -12,7 +12,9 @@ vi.mock('$lib/proto/codec', () => ({
   mkSystem: vi.fn(() => new Uint8Array([2])),
 }));
 
-vi.mock('$lib/envelope', () => ({
+vi.mock('$lib/envelope', async (importOriginal) => ({
+  // The real body rules (an edit applied to a stored body), with the two builders this suite reads.
+  ...(await importOriginal<typeof import('$lib/envelope')>()),
   serializeEnvelope: (x: unknown) => `env:${JSON.stringify(x)}`,
   mkTextEnvelope: (t: string) => ({ plain: t }),
 }));
@@ -515,6 +517,42 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
       expect(placement(store)).toEqual({ ok1: dmGroup, sealed1: olderDmGroup });
       expect(logged(deps, '1 row(s) did not open and stay under 33333333…')).toBe(true);
+    });
+
+    it('a delete, an edit and a reaction kept under the joined group for an old row settle once it moves', async () => {
+      // The joined group's buffered frames replay BEFORE the move: each found no row under the joined
+      // group and was kept there as a pending mutation.
+      const store = messageRowStore([
+        storedRow('d1', olderDmGroup),
+        // A full body, not a push preview: an edit waits for a preview's body (`settleableNow`).
+        storedRow('e1', olderDmGroup, {
+          content: JSON.stringify({ kind: 'text', text: 'before' }),
+        }),
+        storedRow('r1', olderDmGroup),
+      ]);
+      const base = { conversationId: dmGroup, at: 1, slot: '' };
+      for (const entry of [
+        { ...base, messageId: 'd1', sender: 'peer-user', kind: 'delete', rank: 0 },
+        {
+          ...base,
+          messageId: 'e1',
+          sender: 'peer-user',
+          kind: 'edit',
+          rank: 5000,
+          text: 'edited text',
+        },
+        { ...base, messageId: 'r1', sender: 'user-a', kind: 'reaction', slot: 'x', rank: 6000 },
+      ] as const) {
+        await store.putPendingMutation(entry as never);
+      }
+      await deliverInto(store, [[olderDmGroup, heldDuplicate()]]);
+
+      expect(placement(store)).toEqual({ d1: dmGroup, e1: dmGroup, r1: dmGroup });
+      expect(store.byId.get('d1')?.isDeleted).toBe(true);
+      expect(store.byId.get('e1')?.isEdited).toBe(true);
+      expect(store.byId.get('e1')?.content).toContain('edited text');
+      expect(store.byId.get('r1')?.reactions?.map((r) => r.emoji)).toEqual(['x']);
+      expect(store.pending.size).toBe(0);
     });
 
     it('the move runs after the MLS lock is released, never inside it', async () => {
