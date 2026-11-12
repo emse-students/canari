@@ -165,6 +165,12 @@ export type NativeCallEvent = { callId: string } & (
   | { kind: 'foreground' }
   /** The output the service APPLIED: the loudspeaker or not, null when the platform routes. */
   | { kind: 'output'; speaker: boolean | null }
+  /**
+   * The call's audio focus (D056, decided 2026-11-12): `held` true when another app's sound took it
+   * (a cellular call ringing in) and the microphone must be silenced, false when it came back.
+   * `reason` is the platform's name for the change (`LOSS_TRANSIENT`, `GAIN`).
+   */
+  | { kind: 'focus'; held: boolean; reason: string }
 );
 
 /**
@@ -200,6 +206,10 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
       return { callId, kind: 'failed', code: d.code, reason };
     case 'stopped':
       return { callId, kind: 'stopped', reason };
+    case 'focus':
+      if (d.code === 'lost') return { callId, kind: 'focus', held: true, reason };
+      if (d.code === 'gained') return { callId, kind: 'focus', held: false, reason };
+      return null;
     default:
       return null;
   }
@@ -293,6 +303,11 @@ export interface AndroidCallHandlers {
    * the page asked - is what the speaker toggle shows.
    */
   onOutput?: (speaker: boolean | null) => void;
+  /**
+   * The call lost (true) or got back (false) the audio focus: the page holds the microphone through
+   * the loss and gives the member's own mute state back after it. Never a hang-up (D056).
+   */
+  onFocus?: (held: boolean) => void;
 }
 
 /** Opens the session for one call. `callId` names this call on the bridge; drawn per session. */
@@ -301,7 +316,13 @@ export function openAndroidCallSession(
   handlers: AndroidCallHandlers,
   callId: string = crypto.randomUUID()
 ): AndroidCallSession {
-  const { onHangUp, onMute = () => {}, onRoute = () => {}, onOutput = () => {} } = handlers;
+  const {
+    onHangUp,
+    onMute = () => {},
+    onRoute = () => {},
+    onOutput = () => {},
+    onFocus = () => {},
+  } = handlers;
   const bridge = host.canariCall;
   if (!bridge) {
     appendLog(
@@ -424,6 +445,14 @@ export function openAndroidCallSession(
         }
         appendLog('[Call] microphone toggled from the ongoing-call notification');
         onMute();
+        return;
+      case 'focus':
+        appendLog(
+          event.held
+            ? `[Call] WARN audio focus lost (${event.reason}) - the microphone is held until it comes back`
+            : `[Call] audio focus back (${event.reason}) - the member's own microphone state returns`
+        );
+        onFocus(event.held);
         return;
     }
   };

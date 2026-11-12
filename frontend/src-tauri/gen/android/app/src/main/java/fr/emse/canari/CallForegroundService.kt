@@ -25,6 +25,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import androidx.core.graphics.drawable.IconCompat
+import fr.emse.canari.call.CallFocusHold
 import fr.emse.canari.call.CallOutput
 import fr.emse.canari.call.CallServiceCommand
 import fr.emse.canari.call.CallServiceEffect
@@ -32,6 +33,8 @@ import fr.emse.canari.call.OngoingCallSpec
 import fr.emse.canari.call.StartRefusal
 import fr.emse.canari.call.classifyStartRefusal
 import fr.emse.canari.call.decide
+import fr.emse.canari.call.FocusChange
+import fr.emse.canari.call.FocusStep
 import fr.emse.canari.call.holdsProximityScreenOff
 import fr.emse.canari.call.pickCallOutput
 
@@ -594,8 +597,8 @@ class CallForegroundService : Service() {
  */
 private class CallAudio(
     private val manager: AudioManager,
-    /** The call this audio belongs to, for the log lines only. */
-    callId: String,
+    /** The call this audio belongs to: the page matches a `focus` event against it. */
+    private val callId: String,
     /** Told every output actually applied (the proximity lock follows it); null = the platform routes. */
     private val onOutput: (CallOutput?) -> Unit,
 ) {
@@ -605,23 +608,36 @@ private class CallAudio(
 
     private val call = callId.take(8)
 
+    /** Whether the microphone is held for a focus loss ([CallFocusHold], decided 2026-11-12). */
+    private val hold = CallFocusHold()
+
     /**
-     * Focus changes are LOGGED, and change nothing: another call ringing in (`LOSS_TRANSIENT`) or a
-     * player that took the focus for good (`LOSS`) is what a reading of "the voice cut out" must be
-     * able to see. Holding or muting the call on a loss is a product decision, in the backlog.
+     * A FOCUS LOSS HOLDS THE CALL'S MICROPHONE, NEVER HANGS UP (D056, decided by the lead on
+     * 2026-11-12 under the owner's delegation): another call ringing in (`LOSS_TRANSIENT`) or a player
+     * that took the focus for good (`LOSS`) is told to the page as `focus`/`lost`, which silences the
+     * microphone and says so to the member and the peer; the GAIN after it is `focus`/`gained`, which
+     * gives the member's own mute state back. Ducking changes nothing. Every change is logged.
      */
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        val what = when (change) {
-            AudioManager.AUDIOFOCUS_GAIN -> "GAIN"
-            AudioManager.AUDIOFOCUS_LOSS -> "LOSS"
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "LOSS_TRANSIENT"
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "LOSS_TRANSIENT_CAN_DUCK"
-            else -> "change $change"
+        val (what, kind) = when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> "GAIN" to FocusChange.GAIN
+            AudioManager.AUDIOFOCUS_LOSS -> "LOSS" to FocusChange.LOSS
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "LOSS_TRANSIENT" to FocusChange.LOSS_TRANSIENT
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
+                "LOSS_TRANSIENT_CAN_DUCK" to FocusChange.LOSS_TRANSIENT_CAN_DUCK
+            else -> "change $change" to FocusChange.OTHER
         }
-        if (change == AudioManager.AUDIOFOCUS_GAIN) {
-            Log.i(TAG, "audio focus GAIN for call=$call - the call has it back")
-        } else {
-            Log.w(TAG, "audio focus $what for call=$call - another app's sound takes over; the call goes on as it is")
+        when (hold.on(kind)) {
+            FocusStep.HOLD -> {
+                Log.w(TAG, "audio focus $what for call=$call - another app's sound takes over; the microphone is held")
+                CallBridge.emit("focus", callId, reason = what, code = "lost")
+            }
+            FocusStep.RELEASE -> {
+                Log.i(TAG, "audio focus GAIN for call=$call - the call has it back; the member's mute state returns")
+                CallBridge.emit("focus", callId, reason = what, code = "gained")
+            }
+            FocusStep.NONE ->
+                Log.i(TAG, "audio focus $what for call=$call - no change for the call (held=${hold.held})")
         }
     }
 
@@ -629,7 +645,7 @@ private class CallAudio(
      * THE CALL TAKES THE AUDIO FOCUS, AS A PHONE CALL DOES: music or a video playing when the call
      * starts pauses (or ducks) for its length, and resumes when [close] abandons it. Transient, so the
      * player knows it is getting it back; `USAGE_VOICE_COMMUNICATION`, so the system treats it as a
-     * call. A loss is logged by [focusListener], never acted on.
+     * call. A loss holds the microphone through [focusListener], never ends the call.
      */
     private val focus: AudioFocusRequest =
         AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)

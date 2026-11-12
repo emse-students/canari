@@ -4194,6 +4194,109 @@ describe('a microphone the system took', () => {
     }
   });
 
+  describe('the audio focus another app took (D056, decided 2026-11-12)', () => {
+    it('a loss silences the microphone and tells both ends; its return gives the sound back', async () => {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const service = new CallService(fakeMls);
+      const ws = await pairedCaller(service);
+
+      service.onAudioFocus(true);
+      expect(mic.enabled).toBe(false);
+      expect(get(service.localMicSuspended)).toBe(true);
+      expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+      // Never the member's own mute, and never a hang-up.
+      expect(get(service.isMuted)).toBe(false);
+      expect(get(service.callState)).not.toBe('idle');
+
+      service.onAudioFocus(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(1);
+
+      service.onAudioFocus(false);
+      expect(mic.enabled).toBe(true);
+      expect(get(service.localMicSuspended)).toBe(false);
+      expect(ws.framesOfType('MicSuspended').at(-1)).toEqual({
+        type: 'MicSuspended',
+        suspended: false,
+      });
+      expect(showToast).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives back the member's OWN mute: muted before stays muted, a tap during the loss stays silent until it ends", async () => {
+      const service = new CallService(fakeMls);
+      await pairedCaller(service);
+
+      service.toggleMute();
+      service.onAudioFocus(true);
+      service.onAudioFocus(false);
+      expect(get(service.isMuted)).toBe(true);
+      expect(mic.enabled).toBe(false);
+
+      service.onAudioFocus(true);
+      service.toggleMute();
+      expect(get(service.isMuted)).toBe(false);
+      expect(mic.enabled).toBe(false);
+      service.onAudioFocus(false);
+      expect(mic.enabled).toBe(true);
+    });
+
+    it('the focus and the system hold do not clear each other: the last to let go frees the microphone', async () => {
+      const service = new CallService(fakeMls);
+      const ws = await pairedCaller(service);
+
+      service.onAudioFocus(true);
+      mic.systemTakes();
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(1);
+      mic.systemGivesBack();
+      expect(get(service.localMicSuspended)).toBe(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(1);
+
+      service.onAudioFocus(false);
+      expect(get(service.localMicSuspended)).toBe(false);
+      expect(ws.framesOfType('MicSuspended').at(-1)).toEqual({
+        type: 'MicSuspended',
+        suspended: false,
+      });
+    });
+
+    it('a focus lost before the pairing is announced when the pair forms', async () => {
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      service.onAudioFocus(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+    });
+
+    it("a second loss while held keeps the first one's start: the member is told the whole length", async () => {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const service = new CallService(fakeMls);
+      await pairedCaller(service);
+      const now = vi.spyOn(performance, 'now');
+      try {
+        now.mockReturnValue(1_000);
+        service.onAudioFocus(true);
+        now.mockReturnValue(6_000);
+        service.onAudioFocus(true);
+        now.mockReturnValue(11_000);
+        service.onAudioFocus(false);
+      } finally {
+        now.mockRestore();
+      }
+      expect(String(vi.mocked(showToast).mock.calls[0][0])).toContain('10');
+    });
+
+    it('a gain with no loss before it changes nothing', async () => {
+      const service = new CallService(fakeMls);
+      const ws = await pairedCaller(service);
+      service.onAudioFocus(false);
+      expect(mic.enabled).toBe(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+    });
+  });
+
   it('a track handed over already muted counts from the start', async () => {
     mic.muted = true;
     const service = new CallService(fakeMls);

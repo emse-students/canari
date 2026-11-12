@@ -350,6 +350,7 @@
     ? openAndroidCallSession(window, {
         onHangUp: () => callService.endCall(),
         onMute: () => callService.toggleMute(),
+        onFocus: (held) => callService.onAudioFocus(held),
         onRoute: (available) => (androidRouteAvailable = available),
         onOutput: (speaker) => (routedSpeaker = speaker),
       })

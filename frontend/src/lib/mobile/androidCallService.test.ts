@@ -196,6 +196,29 @@ describe('the notification mute', () => {
   });
 });
 
+describe('the audio focus (D056, decided 2026-11-12)', () => {
+  it('hands a loss and its return to the call, never a hang-up', () => {
+    const { h, calls } = host();
+    const onFocus = vi.fn();
+    const onHangUp = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS_TRANSIENT' });
+    h.emit({ kind: 'focus', code: 'gained', reason: 'GAIN' });
+    expect(onFocus.mock.calls).toEqual([[true], [false]]);
+    expect(onHangUp).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.method)).toEqual(['start']);
+  });
+
+  it("drops another call's focus event", () => {
+    const { h } = host();
+    const onFocus = vi.fn();
+    openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    h.emit({ callId: 'call-0', kind: 'focus', code: 'lost', reason: 'LOSS' });
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+});
+
 describe('openAndroidCallSession - the bridge', () => {
   it('says at ERROR level, once, that a build without the bridge cannot keep the call off screen', () => {
     const { h } = host(false);
@@ -444,6 +467,20 @@ describe('parseNativeCallEvent', () => {
       speaker: null,
     });
     expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: 'yes' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'focus', code: 'lost', reason: 'LOSS' })).toEqual({
+      ...c,
+      kind: 'focus',
+      held: true,
+      reason: 'LOSS',
+    });
+    expect(parseNativeCallEvent({ ...c, kind: 'focus', code: 'gained', reason: 'GAIN' })).toEqual({
+      ...c,
+      kind: 'focus',
+      held: false,
+      reason: 'GAIN',
+    });
+    expect(parseNativeCallEvent({ ...c, kind: 'focus' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'focus', code: 'other' })).toBeNull();
   });
 });
 

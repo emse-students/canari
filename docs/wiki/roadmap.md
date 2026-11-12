@@ -118,10 +118,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-11 | Backlog triage, batch 4 (2026-10-15 to 2026-10-17, the two GDPR entries left to the owner): B112 (shipped and proven, 0 warnings on `v1.2.9-alpha.7`), B201, B209, B210, B211, B214, B218 and B220 removed - moved to the verification table (B368-B373), the dropped-tail proofs to history-reconciliation; D028 removed as stale (production calls are open, its blocker list lives in calls.md, its block question moved to the group-calls entry); one fragment added (D263); B095 re-read. |
 | 2026-11-12 | Backlog triage, batch 15 (the rest of 2026-10-27 and 2026-10-28): "they can still read it" CLOSED (built since, `reportRefusedRemoval` reads the tree after the refusal, tested); the iOS waiting share and the issuer-less tier tags moved to the verification table (B392, B393; the latter with a read-only SQL count); agent briefs written for WP-CHECKPOINT-CAS, the two-device key-group join, the native error codes step 2 and the failing-rotation loop; a count-then-contract plan for the id validators. |
 | 2026-11-12 | Backlog triage, batch 16 (the entries of 2026-10-28 and 2026-10-29): CLOSED with evidence - the reel camera re-opening (D050, #2647 shipped in `v1.5.1`, read PASS), its three loose ends (D075, built by #2655 and the `leaving` guards), the tests timing out under load (D071, superseded by the test-suite reform section 8: per-file timeouts refused, the causes fixed), the two call log lines (D077, both fixed in `CallService.ts`), the `[TRUST]` ERROR on a key-group join (B032, now `info` on the open door); moved to the verification table - LIVE-STALL-1 (B031 -> B394, decided and built) and the refused external join with the redelivered Welcome (B033 + D036 -> B395); the new-device alert cut to its one live item with a plan (D065); a brief for the SSR boot gate (D069). |
+| 2026-11-12 | D056 BUILT (a call that loses the audio focus, decided by the lead under the owner's delegation): a loss holds the microphone and tells both ends, the focus back gives the member's own mute state back, never a hang-up; its fragment and row deleted, one Mi 9T reading owed (B398). |
 
 ## Annex A - every row of the backlog
 
-324 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+325 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -449,10 +450,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B393 | legacy tier tags without a consistent issuer: one read-only count | none | other | built-readings-owed | production count | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B394 | LIVE-STALL-1 rerun on the current pre-release: no stall, no hold over the budget | P2 | calls | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B395 | SALON-REVOKE-COMMIT and the RM rows rerun: no redelivered Welcome, every external-join attempt logged | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-253 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+252 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -505,7 +507,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D053 | `docs/wiki/backlog.d/p2-uploads-of-several-photos-are-slow-on-a-bad-network-and-stop-in-the-background.md` | Posting several photos/videos on a weak link: step 1 built (durable queue, resumable parts); background step owed | P2 | reels-composer | built-readings-owed | 2026-11-06 | hardware reading; native background step |
 | D054 | `docs/wiki/backlog.d/p2-video-av-sync-owed-phone-readings-and-a-ci-row.md` | Video sound ran ahead of picture: fixed; phone readings and a CI row owed (gate the stable) | P2 | reels-composer | built-readings-owed | 2026-11-06 | hardware reading (both phones' own codecs) |
 | D055 | `docs/wiki/backlog.d/p2-what-the-key-package-claim-fix-left.md` | What the key-package claim fix left: sweep claims before reading tree; empty-pool WARN fires per serve | P2 | mls-messaging | open | 2026-11-06; #3060 | a date (one prod read a week after the stable carrying the list peek) |
-| D056 | `docs/wiki/backlog.d/p3-a-call-that-loses-the-audio-focus-goes-on-as-if-nothing-happened-de.md` | A call that loses audio focus goes on as if nothing happened (decision owed) | P3 | calls | open | 2026-10-30; #2723 | user decision |
 | D057 | `docs/wiki/backlog.d/p3-an-ask-whose-seat-holds-no-device-row-never-expires.md` | An ask whose seat holds no device row never expires (review of #2894) | P3 | mls-messaging | open | #2894 | none (one production count owed) |
 | D058 | `docs/wiki/backlog.d/p3-conversation-scroll-kept-when-returning-from-a-profile.md` | A conversation does not keep its scroll position when returning from a profile | P3 | other | open | 2026-11-01 | none |
 | D059 | `docs/wiki/backlog.d/p3-ctrl-z-does-not-undo-a-toolbar-action.md` | Ctrl+Z does not undo a markdown toolbar action in the composer | P3 | reels-composer | open | 2026-11-06; #3057 | none |

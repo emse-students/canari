@@ -3289,8 +3289,19 @@ playing. What changed:
   screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
   or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
   no native hook on the WebContent kill was added.
-- **Audio focus changes are logged** (`audio focus LOSS_TRANSIENT for call=...`), never acted on;
-  holding or muting on a loss is a product decision ([backlog](../../backlog.md)).
+- **A focus loss HOLDS the microphone, never hangs up** (D056, decided by the lead on 2026-11-12
+  under the owner's delegation; reversible). Before, a loss was only logged, and a cellular call
+  ringing in left the member's voice running to the peer under it. Now `LOSS_TRANSIENT` (a phone
+  call) and `LOSS` (an app taking the focus for good) emit `focus`/`lost` once
+  (`call/CallFocusHold.kt`, a pure class held by `CallFocusHoldTest`); the page
+  (`CallService.onAudioFocus`) disables every capture track whatever the member's own mute, shows
+  "Votre téléphone a coupé votre micro" and tells the peer `MicSuspended` - the same state, strings
+  and frame the OS's own microphone hold uses, with the two sources counted apart so neither clears
+  the other. The `GAIN` after it emits `focus`/`gained`: the tracks follow the member's OWN mute
+  again (muted before stays muted; a mute tap during the loss is what comes back), the toast says
+  how long they could not be heard. `LOSS_TRANSIENT_CAN_DUCK` changes nothing. Rejected: hanging
+  up on `LOSS` (only the member ends a call) and muting both ways (the member may want to hear the
+  peer say "I'll wait"). Every change is still logged (`audio focus ... - the microphone is held`).
 - The mute action draws a microphone, struck while muted.
 
 **The native incoming ring (item 4 of the study) was NOT in this change**: it shipped with Canari's
@@ -3310,7 +3321,9 @@ speaker and in another app - Android `proximity screen-off held`, iPhone `call p
 (D) the caller's photo on the ongoing notification (`caller photo drawn on the call notification`),
 and the name alone for an account with none; (E) music playing before the call pauses for it and
 resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call
-screen shows muted, the action reads "Réactiver le micro", a second press undoes it.
+screen shows muted, the action reads "Réactiver le micro", a second press undoes it; (G) Android
+only, a cellular call rung into a Canari call: the peer sees the microphone cut, the member the
+banner, and both come back when the phone call ends (`focus`/`lost` then `gained` in the app log).
 
 **Four log lines the same call's log misread, fixed with it.** (1) `audio_level_in` read `0.000` on
 4 ticks of 5 while 32-41 kbps of voice arrived: it was the INSTANTANEOUS `audioLevel`, one sample
