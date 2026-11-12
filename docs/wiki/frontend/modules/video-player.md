@@ -401,7 +401,7 @@ GainNode -> destination`, on ONE `AudioContext` for the app.
 | A context runs only after a gesture | the reader's unmute PRIMES it synchronously inside the gesture (`videoSound.setMuted(false)` -> `primeLoudnessAudio`, and the player's own speaker): the context is made and `resume()` called there, where WebKit honours it; the graph is built the first time the element is AUDIBLE (unmuted AND playing) |
 | Muted autoplay must not need the context | a muted element never asks for it (a test says so) |
 | A context that will not run | the element is left UNROUTED, so it is never silenced; the fallback below. A `resume()` that never answers is said once (`has not answered ... unrouted, without its gain`) |
-| The app holds no audio output when nothing plays (the Pixel 6a AAudio defect, `utils/toneOutput.ts`) | the context is SUSPENDED when no routed element plays (`pause`, `ended`, unmount) and when the app leaves the screen, resumed on a routed `play`, and CLOSED when no routed element is mounted - never under a mounted one, since an element takes one source node in its life |
+| The app holds no audio output when nothing plays (the Pixel 6a AAudio defect, `utils/toneOutput.ts`) | the context is SUSPENDED when no routed element plays (`pause`, `ended`, unmount), resumed on a routed `play`, and CLOSED when no routed element is mounted - never under a mounted one, since an element takes one source node in its life. **The app leaving the screen suspends ONLY IF IDLE** (review of #3394): on web and desktop the arbiter (`actions/playbackArbiter.ts`) keeps a note or a video the reader started playing behind another tab, and the old unconditional suspend silenced it; on a native phone the arbiter pauses every registered media first, so the idle check finds nothing playing. The hook stays because a gesture can resume the context with NO routed element playing (an unmute over an unmeasured reel beside a measured one, an `isArbitrated` refusal, a refused `play()`), and nothing else would then suspend it - the Pixel 6a stream would stay started. So ONLY an element registered with the arbiter is routed (`isArbitrated`; an unregistered one is refused at `error` and takes the fallback), and every `VideoPlayer` variant and `VoiceMessagePlayer` registers (tests) |
 | Once routed, an element sounds only through the graph | a new measurement only changes the gain (none = unity); a routed `play` whose context is not `running` after `resume()`, or a source left on a closed context, is logged at `error`: `routed and SILENT` |
 | `element.volume` and `muted` | applied by the engine BEFORE the source node, so the reader's mute silences the graph and the shared level of PR #3372 multiplies with the gain; nothing on this route writes them |
 | A blob source | same-origin, routed |
@@ -443,6 +443,99 @@ after a swipe), and its `interrupted` state after a background.
   `dumpsys audio` shows no started AAudio stream for the app while it is in the background;
 - the silent switch ON, a routed reel unmuted: it plays, as before;
 - an old video: `no measurement: played as is`, and no change by ear.
+
+### Voice notes take the same loudness (owner, 2026-11-12)
+
+A voice note in a DM, a group or a salon is measured and played through the SAME two halves - no
+second meter, no second law, no second route.
+
+- **Measured WHILE it is recorded** (review of #3394: an offline decode after the finger lifted
+  delayed the send by a whole decode, unbounded in the note's length). `VoiceRecorder` starts
+  `tapRecordingLoudness` (`src/lib/utils/audio/recordingLoudness.ts`) on the microphone's stream:
+  `MediaStreamSource -> AudioWorkletNode (workers/loudnessTap.worklet.ts) ->
+  MediaStreamAudioDestinationNode`, on a context of its own, closed with the recording. The worklet
+  only COPIES samples, in batches of 2048 frames (~43 ms) posted with their buffers transferred; the
+  page feeds them to the one `LoudnessMeter`. The tap is made only once `recorder.start()` has
+  succeeded, at the microphone track's own sample rate when it says one (Firefox refuses a source at
+  another rate than its context's); a failed start gives back the stream it opened, and every ending
+  (send, bin, locked discard, too short, unmount) closes the tap. The recorder's `onstop` reads the
+  result synchronously
+  and hands it with the blob (`onRecordingComplete(blob, loudness)` -> `ChatComposer` -> `ChatArea`
+  -> `MainChatPage` -> `sendVoiceNote(file, ctx, loudness)`): **the send waits for nothing and the
+  recording is never decoded again.** The sink is never the speaker (the call microphone's pattern);
+  a realtime context still holds a platform stream while it exists, for exactly the recording, in the
+  foreground.
+- **What the tap does not see**: the samples before the worklet module has loaded (the first tens of
+  ms of the first recording of a session) and a batch in flight at the stop (at most ~43 ms). The
+  integrated loudness is a gated mean over 400 ms blocks, so neither moves it measurably; the stop's
+  line says `N s of M s` measured.
+- **Never a refusal**: no AudioWorklet, a module that does not load, a refused graph, or silence -
+  the note is sent UNMEASURED with a `warn` naming the cause.
+- From `sendVoiceNote` it is a video's path: `voiceNoteEntry` (`utils/chat/voiceNote.ts`) puts the
+  loudness next to `voiceNote: true`, and DM, group and salon all leave through `buildMediaMessage`,
+  into `MediaMsg.loudness` (field 18) and the stored envelope's JSON.
+- **At playback**, `VoiceMessagePlayer` attaches its `<audio>` element to `loudnessAudio` exactly as
+  `VideoPlayer` attaches its `<video>` (one handle per element, the measurement applied keyed on its
+  two numbers). Its play tap PRIMES the context - every tap, a routed element's suspended context
+  included - and, when a `resume()` was asked, calls `play()` only once it answered: the graph is
+  then built at the note's gain on that `play`, and the first syllable is never heard at the
+  uncorrected level. **Only a `suspended` context's resume is waited on - decided from its STATE,
+  never a timer**: a context `interrupted` (WebKit, during a phone call) or closed may hold its
+  `resume()` unanswered for as long as the cause lasts, so the tap plays at once, unrouted, with the
+  element-volume fallback for the gain (`[LOUDNESS] FALLBACK: the AudioContext is interrupted`, at
+  `warn`). A second tap finding the waited resume still unanswered says so at `warn` - a wait is
+  never silent. A resume that answers after the app left the screen does not start the note
+  (`isAppOnScreen`). Nothing asked (an old note, a context already running): `play()` runs in the
+  tap's own turn. `MessageMediaRenderer` hands it `mediaRef.loudness`.
+- **Safari on the web, not verified**: after a waited resume, `play()` runs once the resume has
+  answered - the device's start time after the tap, not within it. Whether WebKit still counts it
+  as the gesture is not known here (no WebKit in the test rig). The alternative - `play()` muted inside the tap, unmuted when the resume answers - is NOT taken
+  blind, because WebKit's autoplay policy pauses a muted-autoplayed element that is unmuted outside a
+  gesture: it would trade one unverified risk for another. A reading decides (below); the native
+  shells play media without a gesture requirement.
+- **No WebKit bypass.** A voice note is a decrypted BLOB URL, never a `MediaSource` stream, so it is
+  attached with `streamed: false` and IS routed on WebKit - the only way a gain reaches an iPhone,
+  whose `element.volume` is read-only. The element-volume factor stays the fallback for an engine
+  without Web Audio, as for videos.
+- **Old notes**, and the composer's own preview, carry no loudness: `no measurement: played as is`,
+  no context is made.
+- Tests: `recordingLoudness.test.ts` (the worklet driven with 128-frame quanta gives the measurement
+  of the whole recording; the tap's stop returns it and closes its context; no worklet, or a module
+  that fails, sends unmeasured), `useMessaging.voiceNoteLoudness.svelte.test.ts` (`sendVoiceNote`:
+  the loudness reaches `buildMediaMessage`'s proto and envelope; an unmeasured note is still sent),
+  `voiceNote.test.ts`, `VoiceMessagePlayer.loudness.svelte.test.ts` (the real route and the real
+  arbiter over a fake `AudioContext`: the law's gains, `play()` only after the resume, a tab hidden on
+  web leaves the note sounding, a native screen-leave pauses it and that pause suspends, an old note
+  unrouted), `workerScope.test.ts` (the worklet loads in an AudioWorklet scope).
+
+**Readings owed** (a pre-release; both phones):
+
+- a whispered and a shouted note: `voice note measured while recorded: ... LUFS` on the sender, with
+  `N s of M s` close to the recording's length, `routed through Web Audio at ... dB` on the reader,
+  and the two sounding alike;
+- **send latency**, iPhone 12 and Mi 9T, for a 1-minute and a 5-minute note: the finger's lift to the
+  outbox entry (`[MEDIA]` / outbox lines) - no wait on a decode;
+- the first syllable at its corrected level, never loud for a moment;
+- the silent switch ON on the iPhone 12, a voice note played: it sounds (the `playback` category);
+- 1.5x and 2x, and a seek, while routed: the gain holds, no glitch;
+- a Bluetooth headset, on both phones: a routed note plays through it, and a recording through its
+  microphone is measured;
+- on the iPhone 12, a routed note has sound on the first tap and after a background; the recorder's
+  tap context starts after `getUserMedia` (no gesture of its own);
+- on the Mi 9T, no started AAudio stream once the note ends or the app leaves the screen
+  (`dumpsys audio`);
+- on web, a note started then the tab switched: it keeps playing;
+- **iOS, a second context under play-and-record**: while the tap's context runs beside the
+  recording, the recording's level and pitch are unchanged (compare a note recorded on this build
+  with one from the previous build, same speaker, same distance);
+- **iOS, the tap closing**: a note played right after a recording ends sounds normally - the tap's
+  `close()` does not disturb the playback route or the audio session;
+- **Safari on macOS / iOS web**, a measured note's first tap from a suspended context: it plays (no
+  `play() refused` NotAllowedError line); if refused, the muted-inside-the-tap variant above is built
+  and its unmute read on the same engine;
+- a phone call arriving on the iPhone 12, then a note tapped: it plays at once, with `FALLBACK: the
+  AudioContext is interrupted`;
+- an old note unchanged.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 

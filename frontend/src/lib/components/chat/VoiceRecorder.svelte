@@ -34,10 +34,19 @@
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
+  import {
+    tapRecordingLoudness,
+    type RecordingLoudnessTap,
+  } from '$lib/utils/audio/recordingLoudness';
+  import { recordingLoudnessDeps } from '$lib/utils/audio/recordingLoudnessAssets';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
-    /** Callback fired with the recorded audio blob when the gesture ends in a send. */
-    onRecordingComplete: (audioBlob: Blob) => void;
+    /**
+     * Callback fired with the recorded audio blob when the gesture ends in a send, and its sound as
+     * measured WHILE it was recorded (`recordingLoudness.ts`; null: not measured, or silence).
+     */
+    onRecordingComplete: (audioBlob: Blob, loudness: MediaLoudness | null) => void;
     /** Optional callback invoked when the recording is thrown away rather than sent. */
     onCancel?: () => void;
     /**
@@ -99,6 +108,11 @@
   interface Session {
     recorder: MediaRecorder;
     stream: MediaStream;
+    /**
+     * The loudness measured as the samples are recorded - made once the recorder has STARTED, and
+     * stopped with the recording. Null until then.
+     */
+    loudness: RecordingLoudnessTap | null;
     chunks: Blob[];
     startedAt: number;
     /** Decided by the gesture, read once by `onstop`. */
@@ -159,20 +173,32 @@
    */
   async function beginRecording() {
     console.debug('[VoiceRecorder] arming');
+    // Held outside the `try`, so a failure at ANY step after the device opened gives back what was
+    // opened (a recorder or a `start()` that throws used to leave the microphone held).
+    let stream: MediaStream | null = null;
+    let tap: RecordingLoudnessTap | null = null;
     try {
-      const stream = await captureUserMedia(navigator.mediaDevices, { audio: true }, 'voice-note');
+      stream = await captureUserMedia(navigator.mediaDevices, { audio: true }, 'voice-note');
+      const opened = stream;
 
       if (phase !== 'arming') {
         console.debug('[VoiceRecorder] released before the microphone opened - closing it again');
-        stream.getTracks().forEach((track) => track.stop());
+        opened.getTracks().forEach((track) => track.stop());
         return;
       }
 
       const mimeType = pickRecorderMimeType();
       const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
-      const started: Session = { recorder, stream, chunks: [], startedAt: 0, keep: false };
+        ? new MediaRecorder(opened, { mimeType })
+        : new MediaRecorder(opened);
+      const started: Session = {
+        recorder,
+        stream: opened,
+        loudness: null,
+        chunks: [],
+        startedAt: 0,
+        keep: false,
+      };
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) started.chunks.push(event.data);
@@ -183,7 +209,9 @@
         console.debug(`[VoiceRecorder] stopped - ${keep ? 'sending' : 'discarding'}`);
         if (keep) {
           const finalType = recorder.mimeType || started.chunks[0]?.type || 'audio/webm';
-          onRecordingComplete(new Blob(started.chunks, { type: finalType }));
+          // Read at the recorder's own stop, so the tail it flushed is measured too.
+          const loudness = started.loudness?.stop() ?? null;
+          onRecordingComplete(new Blob(started.chunks, { type: finalType }), loudness);
         }
         // The device goes back only once the last chunk has arrived; releasing it any earlier
         // truncates the tail of the very message this is about to send.
@@ -193,6 +221,9 @@
       // A microphone open next to a playing voice note records it: playback goes quiet first.
       pausePlayback(undefined, false, 'voice recorder started');
       recorder.start();
+      // THE TAP ONLY ONCE THE RECORDER RUNS: a `start()` that throws has then made no AudioContext.
+      tap = tapRecordingLoudness(opened, recordingLoudnessDeps);
+      started.loudness = tap;
       started.startedAt = Date.now();
       session = started;
       elapsedMs = 0;
@@ -204,6 +235,14 @@
       }, 200);
     } catch (error) {
       console.error('[VoiceRecorder] microphone refused:', error);
+      // Everything this attempt opened goes back: the tap's context, then the device.
+      tap?.stop();
+      if (stream) {
+        console.debug(
+          '[VoiceRecorder] the attempt failed after the microphone opened - closing it'
+        );
+        stream.getTracks().forEach((track) => track.stop());
+      }
       showToast(m.chat_mic_permission_error());
       stopClock();
       dx = 0;
@@ -238,6 +277,7 @@
 
   /** The one place a microphone is handed back, whichever way the recording ended. */
   function releaseDevice(ended: Session) {
+    ended.loudness?.stop();
     ended.stream.getTracks().forEach((track) => track.stop());
     ended.chunks = [];
   }
