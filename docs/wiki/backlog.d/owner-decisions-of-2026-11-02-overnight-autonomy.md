@@ -2,9 +2,12 @@
 
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 
-- **`1.6.2`**: the stable ships its pre-release without the owner's own reading.
-- **`1.6.3`** carries migration 044 (#2904, the commit-time floor, approved by the owner's hand
-  merge): pre-release, then stable, cut by the lead agent if dev stays healthy after the migration.
+**Carried out and pruned (batch 20, 2026-11-12):** `1.6.2` and `1.6.3` are stables (`gh release
+list`; #2904's migration 044 and #2919 first ship in `v1.6.3`); `minClientVersion` reads `1.6.6` on
+both estates (public `GET /api/version`); the backlog order was replaced by
+[the owner's decisions of 2026-11-11](owner-decisions-of-2026-11-11.md); the video calls' bench
+readings are queue item 21's.
+
 - **CanaReels in chats** ([reels-in-chat](../frontend/modules/reels-in-chat.md)): finish what blocks
   the writer switch (RC-6, the client-version floor), read it on both bench phones, and turn the
   switch on **for dev only** if the readings pass. Production stays off until the owner says so.
@@ -21,8 +24,6 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   behind a server switch that is OFF by default
   ([entry](push-payloads-carry-nothing-for-google-and-apple.md)); one local MLS store per account
   instead of one per install ([entry](../backlog.md#owed-a-verification-and-nothing-else)).
-- **Backlog order once the night's work is done**: opening a community comes first
-  ([community-open-budget](../frontend/community-open-budget.md)).
 - **For the day of 2026-11-02**, answered in the morning:
   - read-only SELECTs on the production and dev databases are always allowed to the lead agent
     (a read-only transaction, aggregates only, no name or id ever enters the repository);
@@ -36,10 +37,6 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   - member reposts: a post of a members-only association or of a list can no longer be reposted;
     existing reposts of such posts stay in the database, inert (no deletion); the consent default for
     personal posts is kept as it is;
-  - `minClientVersion` rises to 1.6.0 on both estates once both stores serve 1.6.x;
-  - the stable `1.6.3` is cut by the lead agent if dev is healthy and the phone readings pass;
   - the chat-reel writer goes ON in production with the next stable if both phones' readings pass and
     dev stays healthy;
-  - 1:1 video calls are already enabled in production (owner's own test); the bench measurements are
-    still taken;
   - the iOS "notifications without content" P1 is today's priority on the bench phones.
