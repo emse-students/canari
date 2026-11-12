@@ -169,14 +169,18 @@
                 class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
               />
               {#if spaces.length > 1}
-                <Picker
-                  value={newProjectSpaceId}
-                  options={spaceOptions}
-                  onValueChange={(v) => (newProjectSpaceId = v)}
-                  label={m.carte_space_pick()}
-                  placeholder={m.carte_space_pick()}
-                  variant="field"
-                />
+                <!-- A field-variant Picker is `w-full`: unwrapped in this row it took the whole width
+                     and squeezed the name input (`flex-1 min-w-0`) to an empty square. -->
+                <div class="sm:w-64 sm:shrink-0" data-carte-space-field>
+                  <Picker
+                    value={newProjectSpaceId}
+                    options={spaceOptions}
+                    onValueChange={(v) => (newProjectSpaceId = v)}
+                    label={m.carte_space_pick()}
+                    placeholder={m.carte_space_pick()}
+                    variant="field"
+                  />
+                </div>
               {/if}
               <Button
                 type="submit"

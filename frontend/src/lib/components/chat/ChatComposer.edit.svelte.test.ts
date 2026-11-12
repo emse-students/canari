@@ -32,6 +32,7 @@ afterEach(() => {
 interface Harness {
   messageText: string;
   editingText: string | null;
+  editingAllowsEmpty?: boolean;
   onMessageChange: (v: string) => void;
   onSend: () => void;
   onConfirmEdit: () => void;
@@ -122,6 +123,17 @@ describe('ChatComposer - editing a message', () => {
     flushSync();
     expect(sendButton().disabled).toBe(true);
     props.messageText = 'bonsoir';
+    flushSync();
+    expect(sendButton().disabled).toBe(false);
+  });
+
+  it('can save an EMPTY caption - a media message keeps its photo and loses its caption', () => {
+    const { props } = mountComposer({
+      messageText: 'old caption',
+      editingText: 'old caption',
+      editingAllowsEmpty: true,
+    });
+    props.messageText = '';
     flushSync();
     expect(sendButton().disabled).toBe(false);
   });

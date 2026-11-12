@@ -670,6 +670,17 @@ per-reader state), `components/suggestions/` (`SuggestionCard`, `SuggestionCarou
   good (`POST me/suggestions/dismiss`) - optimistic, back with a toast on a refusal - and the row
   disappears once no card is left OPEN (every one followed, requested or dismissed). No reason line
   (L11).
+- **The row slides first and changes after** (owner, iPhone, 2026-11-11: horizontal swiping "very weird
+  and not smooth"). The row is FROZEN from the first `touchstart` (or `scroll`) until the touch has ended
+  AND, where the engine fires it, `scrollend` has - a card that leaves (the server said yes to a follow)
+  or the next person who slides in lands at that idle moment, with the usual flip. The proof is an event,
+  never a clock; `touchend`/`touchcancel` carry it because a pointer event is cancelled when a scroll
+  takes the touch. A tap on the X or on Suivre has ended before its click, so it still acts at once.
+  Also: the row is free scroll and one axis (no scroll-snap, which re-settled a 160px card grid after
+  every momentum and re-snapped when a card left; `overflow-y-hidden`; `overscroll-x-contain`), and the
+  card objects are built once per read so a recompute of the list no longer hands every card a new prop.
+  The tab swipe was ruled out: it ignores a touch that starts in a horizontally scrollable region
+  (`shouldIgnoreSwipeTarget`). Owed: one reading on the iPhone 12 and the Mi 9T.
 - **"Suivez aussi..."** after a follow or a request made on a person's profile, and after a follow on
   an association's page: its own read, `limit=5&exclude=<that account>`, people only (L15), nothing
   when empty or failed.

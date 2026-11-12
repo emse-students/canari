@@ -33,12 +33,42 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     expect(stringsEn).toContain('<string name="notif_sender_self">You</string>');
   });
 
-  it('gives a direct message the group shape, with no title', () => {
-    // From API 28 the platform decides one-to-one from isGroupConversation ALONE, and a one-to-one
-    // thread hides the other person's name above their lines - the asymmetry the user reported.
-    // Titled with the person, the Mi 9T printed the name twice; untitled, once.
-    expect(kotlin).toContain('val conversationTitle = if (isGroup) groupName else null');
-    expect(kotlin).toContain('if (isGroup || namesEachSender) style.isGroupConversation = true');
+  it('takes the title and the group flag from ConversationShape, after the shortcut is known', () => {
+    // On API 30+ SystemUI titles a shortcut-backed post with the shortcut's label, so a DM in the
+    // group shape read its sender twice (owner, 2026-11-11). The decision itself is pinned by the
+    // JVM test `ConversationShapeTest`; this pins that the builder applies it, and only once the
+    // shortcut has been published.
+    const shortcutAt = kotlin.indexOf('val conversationShortcutId = ');
+    const shapeAt = kotlin.indexOf('val shape = ConversationShape.of(');
+    expect(shortcutAt).toBeGreaterThan(-1);
+    expect(shapeAt).toBeGreaterThan(shortcutAt);
+    expect(kotlin).toContain('hasShortcut = conversationShortcutId != null');
+    expect(kotlin).toContain('style.isGroupConversation = shape.groupConversation');
+    expect(kotlin).not.toContain(
+      'if (isGroup || namesEachSender) style.isGroupConversation = true'
+    );
+  });
+
+  it("decides group or DM from the source's isGroup, the name only when it did not say", () => {
+    // A third of production groups carry no name (push-payload.ts); the name rule read them as a DM
+    // with their first speaker (review of #3344, M1). The push passes the payload's field, the
+    // socket trigger the WebView's conversation type, a salon `true`; an unnamed group is titled
+    // "Conversation de groupe", never with its first speaker.
+    expect(kotlin).toContain(
+      'val isGroup = ConversationShape.isGroup(groupName, senderName, declaredGroup)'
+    );
+    expect(kotlin.match(/declaredGroup = isGroup,/g)).toHaveLength(2);
+    expect(kotlin).toContain('declaredGroup = true,');
+    expect(kotlin).toContain('isGroup: Boolean?,');
+    expect(kotlin).toContain('res.getString(R.string.notif_unnamed_group)');
+    expect(stringsFr).toContain(
+      '<string name="notif_unnamed_group">Conversation de groupe</string>'
+    );
+    expect(stringsEn).toContain('<string name="notif_unnamed_group">Group conversation</string>');
+  });
+
+  it('keeps the conversation shortcut on the re-post of a failed reply', () => {
+    expect(kotlin).toContain('existing.shortcutId?.let { setShortcutId(it) }');
   });
 
   it('is asked for by the two MESSAGE triggers and the salon push, and by nothing else', () => {
@@ -47,6 +77,52 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     // (a sentence about the actor) keeps the old shape, or the actor would be printed twice.
     expect(kotlin.match(/namesEachSender = true/g)).toHaveLength(3);
     expect(kotlin).toContain('namesEachSender: Boolean = false');
+  });
+});
+
+describe('an unreadable direct message does not repeat its sender (owner, 2026-11-11)', () => {
+  const APPLE = resolve(here, '../../../src-tauri/gen/apple');
+  const read = (path: string) => readFileSync(join(APPLE, path), 'utf8');
+
+  it('Android picks the line through FallbackLine, given the group name', () => {
+    // The decision itself is pinned by the JVM test `FallbackLineTest`.
+    expect(kotlin).toContain(
+      'buildFallbackText(appLocaleContext(this), senderName, groupName, isGroup)'
+    );
+    expect(kotlin).toContain(
+      'FallbackLine.Kind.NEW_MESSAGE -> res.getString(R.string.notif_new_message)'
+    );
+    expect(stringsFr).toContain('<string name="notif_new_message">Nouveau message</string>');
+    expect(stringsEn).toContain('<string name="notif_new_message">New message</string>');
+  });
+
+  it('iOS reads the same rule in the extension and in the app', () => {
+    const nse = read('canari_NSE/NotificationService.swift');
+    const app = read('Sources/canari/canari_push.mm');
+    expect(
+      nse.match(/senderName: senderName, groupName: groupName, declared: isGroup, locale:/g)
+    ).toHaveLength(2);
+    expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(2);
+    expect(nse).toContain('declared ?? (!groupName.isEmpty && groupName != senderName)');
+    expect(nse).toContain('return localized("notif.message.new", locale: locale)');
+    expect(app).toContain('CanariBuildFallbackText(senderName, groupName, isGroup)');
+    expect(app).toContain('senderName, NO, YES, nil, isGroup);');
+    expect(app).toContain('if (declared != nil) return declared.boolValue;');
+    expect(app).toContain('return CanariLocalized(@"notif.message.new");');
+    for (const bundle of ['canari_NSE', 'canari_iOS']) {
+      expect(read(`${bundle}/fr.lproj/Localizable.strings`)).toContain(
+        '"notif.message.new" = "Nouveau message";'
+      );
+      expect(read(`${bundle}/en.lproj/Localizable.strings`)).toContain(
+        '"notif.message.new" = "New message";'
+      );
+      expect(read(`${bundle}/fr.lproj/Localizable.strings`)).toContain(
+        '"notif.group.unnamed" = "Conversation de groupe";'
+      );
+      expect(read(`${bundle}/en.lproj/Localizable.strings`)).toContain(
+        '"notif.group.unnamed" = "Group conversation";'
+      );
+    }
   });
 });
 

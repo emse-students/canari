@@ -6,6 +6,7 @@ import {
   onPlaybackIdle,
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
+import { applyVideoLevel, readVideoLevel } from '$lib/utils/videoVolume';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
@@ -249,13 +250,18 @@ export type VideoSoundScope = 'app' | 'local' | 'silent';
 export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
   Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : `its ${scope}`} sound`);
   openViewers += 1;
-  const onVolumeChange = () => videoSound.setMuted(video.muted);
+  const onVolumeChange = () => {
+    videoSound.setMuted(video.muted);
+    // A native control that dragged the volume BECOMES the app's level too (never 0: that is mute).
+    if (!video.muted) videoSound.setLevel(readVideoLevel(video));
+  };
   const registration = arbitratePlayback(video);
   /** Puts the element on `next`'s answer; callable again when the scope changes under a live element. */
   const apply = (next: VideoSoundScope) => {
     video.removeEventListener('volumechange', onVolumeChange);
     if (next === 'app') {
       video.muted = videoSound.muted;
+      applyVideoLevel(video, videoSound.level);
       video.addEventListener('volumechange', onVolumeChange);
     } else {
       video.muted = next === 'silent';
@@ -273,6 +279,8 @@ export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope
     destroy() {
       openViewers -= 1;
       video.removeEventListener('volumechange', onVolumeChange);
+      // A native drag ticked the level in memory; the viewer closing is that gesture's end.
+      videoSound.commitLevel();
       // Back to the feed: unregistering says the viewer is quiet, and `resumeVisible` picks up the
       // video last come into view there. What the reader had playing inline stays paused.
       registration.destroy();

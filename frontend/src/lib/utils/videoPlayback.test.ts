@@ -4,6 +4,7 @@ import {
   bufferedFraction,
   clampFraction,
   formatVideoTime,
+  scrubLength,
   videoKeyAction,
 } from './videoPlayback';
 
@@ -63,5 +64,21 @@ describe('videoKeyAction', () => {
   it('leaves every other key to the page', () => {
     expect(videoKeyAction('Escape')).toBeNull();
     expect(videoKeyAction('Tab')).toBeNull();
+  });
+});
+
+describe('scrubLength', () => {
+  it('is the duration when the engine knows one', () => {
+    expect(scrubLength(61.4, ranges([0, 8]))).toBe(61.4);
+  });
+
+  it('is the end of what can be sought when the length is unknown (a stream not yet measured)', () => {
+    expect(scrubLength(Number.POSITIVE_INFINITY, ranges([0, 8]))).toBe(8);
+    expect(scrubLength(Number.NaN, ranges([0, 3], [5, 9]))).toBe(9);
+  });
+
+  it('is 0 when nothing is known: no line to map, nothing to seek', () => {
+    expect(scrubLength(Number.POSITIVE_INFINITY, ranges())).toBe(0);
+    expect(scrubLength(0, ranges([0, Number.POSITIVE_INFINITY]))).toBe(0);
   });
 });

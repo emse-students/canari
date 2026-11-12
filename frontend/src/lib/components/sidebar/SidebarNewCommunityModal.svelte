@@ -2,6 +2,7 @@
   import Modal from '../shared/Modal.svelte';
   import { tick } from 'svelte';
   import { m } from '$lib/paraglide/messages';
+  import { COMMUNITY_NAME_MAX_LENGTH } from '$lib/services/ChannelService';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -36,6 +37,7 @@
         id="new-community-name"
         type="text"
         value={communityName}
+        maxlength={COMMUNITY_NAME_MAX_LENGTH}
         oninput={(e) => onNameChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_modal_community_name_placeholder()}
         class="bg-cn-surface focus:ring-accent/45 w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 dark:border-white/10"

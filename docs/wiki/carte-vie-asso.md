@@ -90,6 +90,51 @@ column (every control in it writes the layout, so it is ABSENT rather than disab
 control, the Save button - there is nothing to save - and, on the project list, the create form,
 which otherwise leads straight into an editor that cannot be used.
 
+## The editor fills the window (owner, 2026-11-11)
+
+The owner's verdict on the old editor: *"des boutons partout, de gros toggles, et en meme temps ca
+ne prend qu'une petite partie de l'ecran"*. It was reworked in depth (`routes/admin/carte/[id]`):
+
+- **Full window.** The page is portalled to the body at `--z-page-overlay` (the old "full page"
+  mode, now the only mode; a portal because `.page-scroll-wrap` is a containing block, so a
+  `fixed inset-0` left in place would cover the scrolled wrapper). The scroll area measures itself
+  and the poster is scaled to FIT it (`fitScale`, capped at 2x); zoom is a multiplier on top and its
+  control floats over the canvas corner.
+- **One top bar:** back, title (rename), space chip, the Carte / Annuaire switch, the save state (a
+  status, not a button label), the "En ligne depuis" chip, the publication button, Enregistrer, a
+  "..." menu, and the fold button of the side panel. Retirer du portail and Exporter en PDF live in
+  the menu.
+- **Carte / Annuaire.** The directory is drawn INSIDE the poster (it is part of what is exported and
+  published), so the tab does not mount a second canvas: it re-fits and scrolls the SAME poster to
+  the directory column (`directoryRect()`), which keeps `posterEl`, the export and the stored
+  format untouched. With the directory switched off, that tab says so and offers to show it.
+- **Associations and zones are one list.** A zone is a header the rows hang under; a row is a small
+  checkbox (on the map or not), the name and a short zone picker. Dragging a row onto a zone files
+  it there, dragging a zone's grip onto another zone reorders them. The decisions are pure
+  functions in `carte/editorDnd.ts` (`planDrop` - the one decision a drop makes, built on
+  `planAssociationDrop` and `planZoneReorder` - `moveZoneId`, `groupAssociationsByZone`) and a
+  no-op drop writes nothing. **Keyboard path:** the zone picker on every row, and Up/Down on a zone's
+  grip (`carte/ZoneGrip.svelte`): one step per press, any number of presses in a row (the grip is
+  never disabled during the write, a press while one is running is ignored, focus is handed back
+  after the move), the new position announced in a polite live region. `draggable` sits on a
+  wrapper, not the button (Firefox). Zone writes are QUEUED, so a rename's blur during another write
+  is run after it rather than lost.
+- **Leaving never loses an edit.** An in-app navigation with unsaved or saving work is cancelled,
+  the save is flushed and awaited, and the navigation resumes only if it succeeded (a failed save
+  keeps the author on the page with its error). Closing the tab shows the browser's prompt, only
+  while something is unsaved. While the editor is mounted the app shell is `inert`
+  (`actions/inertAppShell.ts`), so Tab and screen readers do not reach the page behind it.
+- **Updating the publication needs no server change.** `publish` is already a replacement (one
+  transaction clears the space's live map and sets this one), so "Mettre à jour la publication" is
+  the same call as Publier: save first, publish the saved state, record its fingerprint
+  (`carte/publishAfterSave.ts`: the document is read BEFORE the save and published only if the
+  save wrote that state, so an edit made while the save is in flight is never published unsaved; a
+  failed save publishes nothing; a double click publishes once). The bar offers nothing about a LIVE
+  map until its saved fingerprint is computed, so the button does not flash on open. The bar
+  shows it when the live map is OLDER than the saved one **or cannot be compared** (a map published
+  before the fingerprint has none: unknown is never "current", see above); when it is current, the
+  "..." menu still offers it. The rule is `carte/publishAction.ts`.
+
 ## Images on mobile: `apiAssetUrl`, always
 
 Both `<img>` sources on the poster - the president/bureau avatars (`/api/users/:id/avatar`) and the
@@ -537,7 +582,7 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   than travelling as-is. Same for colors: hex or null.
 - **A publish saves first.** Publishing editor state the server has not persisted would put a map
   online that no reopen could reproduce.
-- Publishing is a **button in the editor header**, gated like the rest of the editor
+- Publishing is a **button in the editor's top bar**, gated like the rest of the editor
   (`GlobalAdminOrBdeSuperAdminGuard`) and by the map's space (Access, above). The public read is
   `GET /api/public/carte?space=<formation>:<campus>` (for example `ICM:saint-etienne`: the space's
   natural key, the same on every estate, so a consumer names it without knowing an id),

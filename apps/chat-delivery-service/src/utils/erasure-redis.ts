@@ -94,6 +94,19 @@ export async function markErasedDms(
 }
 
 /**
+ * Takes `dmIds` OUT of the account's erasure marker: a conversation the erasure no longer ends - its
+ * roster grew under the seat lock - must never have its keys purged by a marker an earlier run wrote.
+ */
+export async function unmarkErasedDms(
+  redis: Redis,
+  userId: string,
+  dmIds: readonly string[]
+): Promise<void> {
+  if (dmIds.length === 0) return;
+  await redis.srem(erasedDmsKey(userId), ...dmIds);
+}
+
+/**
  * Deletes every Redis key of the DMs the account's erasure marker names, then the marker itself -
  * in that order, so a run that dies or throws in between leaves the marker for the retry.
  *
@@ -182,7 +195,12 @@ export async function eraseUserRedisTraces(redis: Redis, userId: string): Promis
         );
         continue;
       }
-      if (requester !== userId) continue;
+      // ASCII-lowercased like every MLS comparison of a user id (review of #2585, 2026-10-27): the
+      // mint rule admits a mixed-case id, and a frame written in another case still names this
+      // account to every reader that compares ids.
+      if (typeof requester !== 'string' || requester.toLowerCase() !== userId.toLowerCase()) {
+        continue;
+      }
       traces.notifyFrames += await redis.lrem(key, 0, frame);
     }
   }
