@@ -200,14 +200,15 @@
       {/if}
       <button
         type="button"
-        class="ui-icon-button shrink-0 rounded-full {call.isMuted
+        class="ui-icon-button shrink-0 rounded-full {call.micShownMuted
           ? 'bg-white text-emerald-700'
           : 'text-white hover:bg-white/15'}"
-        aria-label={call.isMuted ? m.call_unmute_label() : m.call_mute_label()}
-        aria-pressed={call.isMuted}
-        onclick={() => service?.toggleMute()}
+        aria-label={call.micShownMuted ? m.call_unmute_label() : m.call_mute_label()}
+        aria-pressed={call.micShownMuted}
+        data-testid="call-banner-mute"
+        onclick={() => service?.muteButtonTap()}
       >
-        {#if call.isMuted}<MicOff size={20} />{:else}<Mic size={20} />{/if}
+        {#if call.micShownMuted}<MicOff size={20} />{:else}<Mic size={20} />{/if}
       </button>
       <button
         type="button"

@@ -318,6 +318,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
+	@bun .github/scripts/tests/image-user.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
 	@bash .github/scripts/tests/upstream-reachability-report.test.sh

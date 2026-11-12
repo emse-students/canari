@@ -623,6 +623,27 @@ function probeSender(
 }
 
 /**
+ * The `requestId` of a history ask (`history_digest`, `history_pull`, `history_range`), or `null`
+ * when it carries none usable - and then the ask is MALFORMED, never an older client: every build
+ * since step A (#2270, first in the stable `v1.5.0`) mints one, and the floor is past it (D211). An
+ * addressed answer to an ask with no id would be refused by its asker, so nothing is answered.
+ */
+function historyAskId(
+  data: any,
+  senderNorm: string,
+  convoKey: string,
+  log: (msg: string) => void,
+  tag: string
+): string | null {
+  const requestId = parseHistoryRequestId(data?.requestId);
+  if (requestId !== undefined) return requestId;
+  log(
+    `[${tag}] No request id from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since step A mints one, so the ask is malformed - ignored`
+  );
+  return null;
+}
+
+/**
  * Dispatches a decoded MLS system event to the appropriate handler.
  *
  * Called from setupMessageHandler after JSON-parsing `msg.system.data`.
@@ -764,7 +785,8 @@ export async function handleSystemEvent(
       log(`[HISTORY_DIGEST] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    const requestId = parseHistoryRequestId(data?.requestId);
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
+    if (requestId === null) return true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
@@ -859,12 +881,14 @@ export async function handleSystemEvent(
       log(`[HISTORY_RANGE] Unusable range from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_RANGE');
+    if (requestId === null) return true;
     noteProbeReceived(convoKey, from, {
       kind: 'range',
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
       since,
-      requestId: parseHistoryRequestId(data?.requestId),
+      requestId,
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -947,6 +971,8 @@ export async function handleSystemEvent(
       log(`[HISTORY_PULL] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_PULL');
+    if (requestId === null) return true;
 
     // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
     // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
@@ -980,7 +1006,7 @@ export async function handleSystemEvent(
       await sendHistoryBundleForIds(convoKey, wanted, deps, {
         to: puller,
         since,
-        requestId: parseHistoryRequestId(data?.requestId),
+        requestId,
       }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;

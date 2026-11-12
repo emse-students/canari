@@ -236,6 +236,13 @@ export function useMentionAutocomplete(opts: {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => void search(query), 250);
     } else {
+      // The mention ended: a search still waiting for its delay would otherwise run for a query
+      // that no longer exists and reopen the picker on plain text (start -1, nothing to select).
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+        Log.d('[mention] the mention ended before its search ran - search dropped');
+      }
       open = false;
       suggestions = [];
       query = '';

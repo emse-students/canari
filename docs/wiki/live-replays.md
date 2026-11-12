@@ -261,16 +261,16 @@ On top of the post rule, every read applies what the live applied:
 
 ## 5. What a CanaReel is: the audit
 
-The CanaReels list is `GET /api/posts?kind=reel&multiMedia=true&withLinks=true`
+The CanaReels list is `GET /api/posts?kind=reel&multiMedia=true`
 (`reels/allReels.ts`), drawn by `fullScreenPageOf` (`reels/fullScreenPost.ts`):
 
 | Item | How it gets in | Kept | Where the rule lives |
 | --- | --- | --- | --- |
 | **Reel** - filmed with the Canari camera, 90 s at most (C4) | `kind = 'reel'` | **30 days** from publication when this page was written; one year by the owner's decision of 2026-11-09, built apart | `REEL_RETENTION_DAYS`, each row's `expiresAt`, `ReelRetentionScheduler` |
-| **One picture** | `SINGLE_PHOTO_POST_SQL` | as long as the post | media class `archive`, never swept |
-| **One video not filmed with the Canari camera** | `SINGLE_MEDIA_POST_SQL` | as long as the post | same |
-| **A carousel**, 2 to 10 items | `MULTI_MEDIA_POST_SQL` | as long as the post | same |
-| Any of the three with a link | `LINKED_MEDIA_POST_SQL` (`withLinks`) | as long as the post | same |
+| **One picture** | `FULL_SCREEN_POST_SQL` | as long as the post | media class `archive`, never swept |
+| **One video not filmed with the Canari camera** | `FULL_SCREEN_POST_SQL` | as long as the post | same |
+| **A carousel**, 2 to 10 items | `FULL_SCREEN_POST_SQL` | as long as the post | same |
+| Any of the three with a link | `FULL_SCREEN_POST_SQL` (one clause since 2026-11-11) | as long as the post | same |
 | A repost of any of these | the same row | the original's rule | the original row |
 | **Replay** (this design) | `kind = 'replay'`, with `withReplays=true` | **3 days from the live's end** | `posts."expiresAt"`, the same worker |
 

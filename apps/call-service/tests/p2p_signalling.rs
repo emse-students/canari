@@ -107,7 +107,21 @@ async fn start_with_grace(grace_secs: Option<u64>) -> Service {
 /// [`start_with_grace`], plus `CALL_KEEPALIVE_MS` when `keepalive_ms` is given: a short period
 /// makes a silent peer's detection an event that follows within a few ticks.
 async fn start_with(grace_secs: Option<u64>, keepalive_ms: Option<u64>) -> Service {
+    start_listing(grace_secs, keepalive_ms, None).await
+}
+
+/// [`start_with`], plus `ALLOW_ORIGIN` when `origins` is given. Without it the service has no list:
+/// the sockets of these tests name no origin, as a native client's do, and open all the same.
+async fn start_listing(
+    grace_secs: Option<u64>,
+    keepalive_ms: Option<u64>,
+    origins: Option<&str>,
+) -> Service {
     let mut command = Command::new(env!("CARGO_BIN_EXE_call-service"));
+    match origins {
+        Some(list) => command.env("ALLOW_ORIGIN", list),
+        None => command.env_remove("ALLOW_ORIGIN"),
+    };
     match grace_secs {
         Some(secs) => command.env("CALL_P2P_SEAT_GRACE_SEC", secs.to_string()),
         None => command.env_remove("CALL_P2P_SEAT_GRACE_SEC"),
@@ -209,6 +223,70 @@ async fn connect(svc: &Service, user: &str) -> Ws {
         session_token(user)
     );
     connect_async(url).await.expect("ws connect").0
+}
+
+/// The status a handshake naming `origin` is answered with: `Ok` when the socket opened.
+async fn handshake_from(svc: &Service, origin: Option<&str>) -> Result<u16, u16> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Error as WsError;
+
+    let mut request = format!(
+        "ws://127.0.0.1:{}/ws?token={}",
+        svc.port,
+        session_token("origin-user")
+    )
+    .into_client_request()
+    .unwrap();
+    if let Some(origin) = origin {
+        request
+            .headers_mut()
+            .insert("origin", origin.parse().unwrap());
+    }
+    match connect_async(request).await {
+        Ok((_socket, answer)) => Ok(answer.status().as_u16()),
+        Err(WsError::Http(answer)) => Err(answer.status().as_u16()),
+        Err(other) => panic!("neither an open socket nor an HTTP answer: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_socket_opens_from_a_listed_origin_and_from_no_origin() {
+    let svc = start_listing(None, None, Some("https://app.example,tauri://localhost")).await;
+
+    assert_eq!(
+        handshake_from(&svc, Some("https://app.example")).await,
+        Ok(101)
+    );
+    assert_eq!(
+        handshake_from(&svc, Some("tauri://localhost")).await,
+        Ok(101)
+    );
+    assert_eq!(handshake_from(&svc, None).await, Ok(101));
+}
+
+#[tokio::test]
+async fn an_upgrade_from_an_origin_that_is_not_listed_is_a_403_with_a_valid_token() {
+    let svc = start_listing(None, None, Some("https://app.example,tauri://localhost")).await;
+
+    assert_eq!(
+        handshake_from(&svc, Some("https://sibling.app.example")).await,
+        Err(403)
+    );
+    assert_eq!(handshake_from(&svc, Some("null")).await, Err(403));
+}
+
+#[tokio::test]
+async fn a_wildcard_or_no_list_admits_no_page() {
+    for origins in [Some("*"), None] {
+        let svc = start_listing(None, None, origins).await;
+
+        assert_eq!(
+            handshake_from(&svc, Some("https://app.example")).await,
+            Err(403),
+            "{origins:?}"
+        );
+        assert_eq!(handshake_from(&svc, None).await, Ok(101), "{origins:?}");
+    }
 }
 
 async fn send(ws: &mut Ws, frame: Value) {

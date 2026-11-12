@@ -33,10 +33,15 @@
  * - **THE APP HOLDS NO AUDIO OUTPUT WHEN NOTHING ROUTED PLAYS** (the Pixel 6a AAudio defect,
  *   `utils/toneOutput.ts`: a context left running kept a platform stream `started` in the background,
  *   and a push thawing the frozen process replayed its buffer as looping noise). The context is
- *   SUSPENDED when no routed element plays (`pause`, `ended`, unmount, the app leaving the screen),
- *   resumed on a routed `play`, and CLOSED when no routed element is mounted any more. Never closed
- *   under a mounted routed element: an element takes ONE source node in its life, so a closed
- *   context would strand it silent for good.
+ *   SUSPENDED when no routed element plays (`pause`, `ended`, unmount), resumed on a routed `play`,
+ *   and CLOSED when no routed element is mounted any more. Never closed under a mounted routed
+ *   element: an element takes ONE source node in its life, so a closed context would strand it
+ *   silent for good. THE APP LEAVING THE SCREEN SUSPENDS ONLY IF IDLE (review of #3394): on web and
+ *   desktop the arbiter keeps a note the reader started playing behind another tab, and an
+ *   unconditional suspend silenced it; on a native phone the arbiter pauses every registered media
+ *   first, so the idle check finds nothing playing. It is still needed: a gesture can resume the
+ *   context with no routed element playing (an unmute over an unmeasured reel, a refused `play()`).
+ *   Only an element registered with the arbiter is routed ({@link LoudnessEnvironment.isArbitrated}).
  * - **Once routed, an element sounds only through the graph** (Web Audio's rule). A context that is
  *   not `running` after the `resume()` of a routed `play` is an element routed and SILENT, and the
  *   line says so at `error`.
@@ -57,7 +62,8 @@
  */
 
 import { Log } from '$lib/utils/Log';
-import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
+import { isArbitrated } from '$lib/actions/playbackArbiter';
+import { onAppScreenChange } from '$lib/utils/appForeground';
 import { isMediaLoudness, type MediaLoudness } from './loudnessMeter';
 
 /** The loudness every measured video is brought toward. */
@@ -94,18 +100,34 @@ export interface LoudnessEnvironment {
   createContext(): AudioContext | null;
   /** Whether the engine is WebKit, whose MSE elements may play silent through Web Audio. */
   isWebKit(): boolean;
-  /** Subscribes to the app leaving or regaining the screen; returns the unsubscribe. */
+  /**
+   * Whether `element` is registered with the playback arbiter (`playbackArbiter.ts`). THE OUTPUT'S
+   * LIFETIME RESTS ON IT: the arbiter pauses every registered media when a native app leaves the
+   * screen, and that `pause` is what suspends the context here - so an unregistered element is
+   * never routed.
+   */
+  isArbitrated(element: HTMLMediaElement): boolean;
+  /**
+   * Subscribes to the app leaving or regaining the screen; returns the unsubscribe. On leaving, the
+   * context is suspended IF IDLE - a context a gesture resumed with no routed element playing (an
+   * unmute over an unmeasured reel, a refused `play()`) would otherwise stay running for ever.
+   */
   onScreenChange(onChange: (onScreen: boolean) => void): () => void;
-  /** Whether the app is on screen now: off it, the output stays suspended. */
-  onScreen(): boolean;
 }
 
 /** A video's loudness wiring, for as long as its element is mounted. */
 export interface LoudnessHandle {
   /** The element's measurement (null: none) - applied now, or when it is first audible. */
   setLoudness(loudness: MediaLoudness | null | undefined): void;
-  /** The reader's unmute gesture: makes and resumes the context INSIDE the gesture (WebKit). */
-  prime(): void;
+  /**
+   * The reader's gesture (an unmute, a play tap): makes and resumes the context INSIDE it (WebKit),
+   * and returns that `resume()`'s settlement - a caller that awaits it before `play()` starts the
+   * element at its corrected level, never loud for the first syllable. `null`: nothing to wait for
+   * (no gain, no context, one already running, or one in a state no gesture brings back -
+   * `interrupted`, `closed` - where the element takes the volume fallback), and `play()` stays in
+   * the gesture's own turn.
+   */
+  prime(): Promise<void> | null;
   /** The element is going away: nodes released, the context suspended or closed if unused. */
   destroy(): void;
 }
@@ -148,6 +170,8 @@ export class LoudnessAudio {
   /** Handles that want a route (a gain to apply), for the unmute gesture's prime. */
   readonly #wanting = new Set<RouteHandle>();
   #unsubscribeScreen: (() => void) | null = null;
+  /** A `suspended` context's resume a gesture is waiting on, until it answers. */
+  #waitedResume: Promise<void> | null = null;
 
   constructor(readonly env: LoudnessEnvironment) {}
 
@@ -161,14 +185,42 @@ export class LoudnessAudio {
     if (this.#wanting.size > 0) this.resumeInGesture();
   }
 
-  /** Makes the context if needed and calls `resume()` synchronously - inside the caller's gesture. */
-  resumeInGesture(): void {
+  /**
+   * Makes the context if needed and calls `resume()` synchronously - inside the caller's gesture.
+   *
+   * WHAT IS WORTH WAITING FOR IS DECIDED FROM THE STATE, never from a clock (review of #3394): only a
+   * `suspended` context's `resume()` is one the engine answers on its own, so only its settlement is
+   * returned - a caller then starts its element once the route can be built AT its gain. Any other
+   * state that is not `running` (WebKit's `interrupted` during a phone call, a context the engine
+   * closed) may hold its `resume()` unanswered for as long as the cause lasts: the call is still made,
+   * and `null` is returned with the state, so no caller waits on it. `null` and `running`: nothing was
+   * asked, and the caller keeps its gesture's synchronous turn for `play()`.
+   */
+  resumeInGesture(): { resumed: Promise<void> | null; state: AudioContextState | null } {
     const ctx = this.context();
-    if (!ctx || ctx.state === 'running') return;
-    Log.d('LOUDNESS', `the reader's unmute resumes the shared AudioContext (${ctx.state})`);
-    ctx.resume().catch((e: unknown) => {
-      console.warn('[LOUDNESS] the unmute gesture could not resume the AudioContext', e);
-    });
+    if (!ctx || ctx.state === 'running') return { resumed: null, state: ctx?.state ?? null };
+    const state = ctx.state;
+    // NEVER A SILENT WAIT: a second gesture finding the first one's resume still unanswered is the
+    // only evidence a `suspended` context will not come back, and it is said.
+    if (state === 'suspended' && this.#waitedResume) {
+      console.warn(
+        "[LOUDNESS] a second gesture finds the AudioContext's resume() still unanswered " +
+          '(suspended): the element still waits on it'
+      );
+      return { resumed: this.#waitedResume, state };
+    }
+    Log.d('LOUDNESS', `the reader's gesture resumes the shared AudioContext (${state})`);
+    const resumed = ctx
+      .resume()
+      .catch((e: unknown) => {
+        console.warn('[LOUDNESS] the gesture could not resume the AudioContext', e);
+      })
+      .finally(() => {
+        if (this.#waitedResume === resumed) this.#waitedResume = null;
+      });
+    if (state !== 'suspended') return { resumed: null, state };
+    this.#waitedResume = resumed;
+    return { resumed, state };
   }
 
   /** The current context, made on first need; null where the engine has no Web Audio. */
@@ -185,9 +237,10 @@ export class LoudnessAudio {
       return null;
     }
     Log.d('LOUDNESS', `the shared AudioContext is made, ${this.#context.state}`);
+    // IDLE ONLY (review of #3394): a routed element still playing - a note behind a web tab - keeps
+    // its output; on native the arbiter has paused every media first, so this finds nothing playing.
     this.#unsubscribeScreen ??= this.env.onScreenChange((onScreen) => {
-      if (!onScreen) this.suspendIfIdle('the app left the screen', true);
-      else for (const video of this.#playing) this.playing(video);
+      if (!onScreen) this.suspendIfIdle('the app left the screen');
     });
     return this.#context;
   }
@@ -211,7 +264,6 @@ export class LoudnessAudio {
     this.#playing.add(video);
     const ctx = this.#context;
     if (!ctx || ctx.state === 'running') return;
-    if (!this.env.onScreen()) return;
     Log.d('LOUDNESS', `a routed video plays, the context ${ctx.state}: resumed`);
     ctx.resume().then(
       () => {
@@ -230,7 +282,7 @@ export class LoudnessAudio {
   /** A routed element stopped playing: the output is suspended once none plays. */
   stopped(video: HTMLMediaElement, why: string): void {
     if (!this.#playing.delete(video)) return;
-    this.suspendIfIdle(why, false);
+    this.suspendIfIdle(why);
   }
 
   /** A routed handle released: suspended if idle, CLOSED once no routed element is mounted. */
@@ -241,7 +293,7 @@ export class LoudnessAudio {
     const ctx = this.#context;
     if (!ctx) return;
     if (this.#routed.size > 0) {
-      this.suspendIfIdle('a routed video unmounted', false);
+      this.suspendIfIdle('a routed video unmounted');
       return;
     }
     Log.d('LOUDNESS', 'no routed video is mounted: the shared AudioContext is closed');
@@ -251,11 +303,16 @@ export class LoudnessAudio {
     ctx.close().catch((e: unknown) => console.warn('[LOUDNESS] the AudioContext did not close', e));
   }
 
-  /** Suspends the running context when nothing routed plays (or the app left the screen). */
-  suspendIfIdle(why: string, leavingScreen: boolean): void {
+  /**
+   * Suspends the running context when nothing routed plays - on a routed element's `pause`, `ended`
+   * or unmount, and when the app leaves the screen. It never suspends under a routed element that
+   * plays: on web and desktop a note the reader started keeps playing behind another tab (the
+   * arbiter's rule); on a native phone the arbiter pauses every registered media first.
+   */
+  suspendIfIdle(why: string): void {
     const ctx = this.#context;
     if (!ctx || ctx.state !== 'running') return;
-    if (!leavingScreen && this.#playing.size > 0) return;
+    if (this.#playing.size > 0) return;
     Log.d('LOUDNESS', `the shared AudioContext is suspended: ${why}`);
     ctx.suspend().catch((e: unknown) => console.warn('[LOUDNESS] suspend() failed', e));
   }
@@ -328,9 +385,25 @@ class RouteHandle implements LoudnessHandle {
     this.#ensureRoute();
   }
 
-  prime(): void {
-    if (this.#disposed || this.#gainNode || this.#gainDb === 0 || this.webkitStream) return;
-    this.audio.resumeInGesture();
+  prime(): Promise<void> | null {
+    // NOT GUARDED ON AN EXISTING GRAPH: a routed element whose context was suspended since (its
+    // pause, another element's end) needs its `resume()` inside THIS tap as much as the first time.
+    if (this.#disposed || this.#gainDb === 0 || this.webkitStream) return null;
+    const { resumed, state } = this.audio.resumeInGesture();
+    if (resumed || state === null || state === 'running') return resumed;
+    // A CONTEXT NO GESTURE BRINGS BACK (`interrupted`, `closed`): the tap must still play. An element
+    // not yet routed plays at once, unrouted, with the element-volume fallback for its gain - logged
+    // at `warn` by `#fallBack`, a fallback being a signal. One already routed sounds only through the
+    // graph (Web Audio's rule), so it is said: silent until the context runs again.
+    if (this.#gainNode) {
+      console.warn(
+        `[LOUDNESS] a routed element is asked to play while its AudioContext is ${state}: ` +
+          'silent until the context runs again'
+      );
+    } else {
+      this.#fallBack(`the AudioContext is ${state}`);
+    }
+    return null;
   }
 
   destroy(): void {
@@ -402,6 +475,14 @@ class RouteHandle implements LoudnessHandle {
 
   #connect(ctx: AudioContext): void {
     if (this.#gainNode) return;
+    if (!this.audio.env.isArbitrated(this.video)) {
+      console.error(
+        `[LOUDNESS] a ${this.video.tagName.toLowerCase()} not registered with the playback arbiter` +
+          ' is never routed: nothing would pause it, so nothing would release the output'
+      );
+      this.#fallBack('the element is not registered with the playback arbiter');
+      return;
+    }
     if (!this.audio.isCurrent(ctx)) {
       this.#fallBack('the AudioContext was closed meanwhile');
       return;
@@ -491,8 +572,8 @@ const appEnvironment: LoudnessEnvironment = {
     return Ctor ? new Ctor() : null;
   },
   isWebKit: engineIsWebKit,
+  isArbitrated: isArbitrated,
   onScreenChange: onAppScreenChange,
-  onScreen: isAppOnScreen,
 };
 
 /** THE APP'S ONE loudness output. */
