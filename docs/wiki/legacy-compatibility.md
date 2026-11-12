@@ -131,7 +131,6 @@ on it. The first eleven rows were already met by `1.6.0`; the last four need `1.
 | Presence GET (server half) | #2661, `v1.5.1` | the `legacy GET /api/presence served` line absent from production for a week |
 | Paid-form tier codes of #2667 (wording only) | #2667, `v1.5.1` | - |
 | Device-notice marker named by the key in hex | #2871, `v1.6.1` | every build has run since and migrated its markers (data at rest: the floor alone does not retire it) |
-| Call record with no start clocks | #2890, `v1.6.2` | - |
 
 **NOT unblocked by `1.6.2`** (judged at `1.6.6`, above): the entries whose carrying pull request first ships in `v1.6.3` (the
 institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
@@ -1033,20 +1032,6 @@ serving it, AND every installed build has run since and migrated its legacy mark
 registration pre-claim does NOT settle it: it skips devices idle for 30 days (absent from the device
 list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
 migration on a hit retires one. Data at rest, so the floor alone does not retire this.
-
-### No date yet - a call record with no start clocks, written by a build before the derived-notices fix (2026-11-01)
-
-**Site:** the last branch of `callDurationMs` in `frontend/src/lib/utils/chat/callSystemMessages.ts`.
-**Shim:** a call's duration is measured on ONE clock - the server's two acceptances, or, for an end
-that is this device's own act, its own two instants - read from the `startClocks` the start row
-carries ([chat](frontend/modules/chat.md)). A start row an older build wrote carries none, so its end
-is measured as the hangup's instant minus the inviter's `startedAt`: two devices' clocks. Logged at
-`console.error` every time it runs, and so is the other reason it runs (a received end with no server
-time, which every delivery route carries - a fault, not a shim).
-**Removal condition:** no call row without `startClocks` is still open on any device - a call row is
-finalised when its call ends, so this lasts only for a call in flight across the upgrade. Removable
-once `minClientVersion` is at or above the build that ships this, on both estates; the branch then
-stays only as the accusing log of a received end with no server time.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
