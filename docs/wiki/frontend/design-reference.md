@@ -936,7 +936,7 @@ test estate - and it is fixed anyway, because the ladder makes it unspellable.
 ### The rungs
 
 Declared in `app.css` in **ascending order**, so that reading the block is reading the stack. Markup
-says `z-(--z-modal)`; twenty-six call sites were converted.
+says `z-(--z-banner)`; twenty-six call sites were converted. **OVERLAYS ARE NO LONGER ON THE LADDER (2026-11-13): see "The overlay stack" below - the sheet, popover, side-panel, modal, guide, viewer and critical rungs were retired, and the toast moved from the 60 shown in the history below to 310.**
 
 | rung | value | what it is |
 | --- | --- | --- |
@@ -945,23 +945,48 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | `--z-page-overlay` | 40 | the chat's own banner stack (the day pill is its last row), the composer footer |
 | `--z-nav-drawer-scrim` | 42 | |
 | `--z-nav-drawer` | 44 | |
-| `--z-toast` | 60 | |
 | `--z-banner` | 120 | the window-scale banner column in the root layout |
-| `--z-sheet` | 160 | a surface a GESTURE opened: message actions, GIF and poll pickers |
-| `--z-popover-scrim` | 190 | |
-| `--z-popover` | 200 | anchored to a control: notification panel, emoji picker |
-| `--z-side-panel-scrim` | 255 | |
-| `--z-side-panel` | 260 | |
-| `--z-modal` | 280 | |
-| `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
-| `--z-viewer` | 300 | a full-screen media viewer |
-| `--z-critical` | 320 | a confirmation |
-| `--z-call` | 330 | the full-screen call, ABOVE a confirmation; and the banner column while a minimised call's bar is up ([calls](modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)); a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
+| `--z-toast` | 310 | the answer to what the reader just did, over every overlay; non-interactive |
+| `--z-call` | 330 | the full-screen call, ABOVE every overlay and any confirmation; and the banner column while a minimised call's bar is up ([calls](modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)); a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
 | `--z-tooltip` | 400 | follows the pointer, never interactive |
 | `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
 
-**A sheet sits above the banner deliberately.** A banner is ambient; a sheet is what the reader just
+**An overlay sits above the banner deliberately** (the stack starts at 200, the banner is 120). A banner is ambient; a sheet is what the reader just
 asked for.
+
+### The overlay stack - what is on top is what opened last (2026-11-13)
+
+Every overlay (dialog, sheet, popover, drawer, viewer, guide, confirmation) used to sit on a fixed
+rung, and "what a dialog opens must clear it" was enforced by naming one more rung and one more
+context reader per nesting (`utils/viewerLayer.ts` and the `--z-viewer-dialog` pair). That is gone.
+**An overlay REGISTERS when it opens and takes its z-index from its place in the open order; it
+RELEASES on close or destroy.** No component names a rung, so no nesting needs a new one.
+
+- `utils/overlayStack.ts` - the pure stack: `register(label)`, `release(id)`, `placeOf(id)`. A
+  z-index is `OVERLAY_Z_BASE` (200) plus two per overlay below it (each owns `z` and `zAbove = z+1`,
+  for a drawer's panel over its own scrim); the range ends at `OVERLAY_Z_LIMIT` (310, the toast).
+  Closing one below the top closes ranks; a later open lands on top. Past the capacity (55) the
+  overlay shares the last slot and `Log.w` accuses a leak. Logs at register and release.
+- `utils/overlayLayer.svelte.ts` - `useOverlayLayer(() => open, 'Name')` during initialisation:
+  registers in `$effect.pre` (so the first frame already has its z-index), releases when `open`
+  goes false and on destroy. Markup: `style:z-index={layer.z}`; the SidePanel sets `--overlay-z` to
+  `layer.zAbove` and `.side-panel` reads it.
+- Consumers (all of them): `ModalOverlay` (its `layer` prop is gone - sheet, modal and critical are
+  one overlay), `Modal`, `CommentsDrawer` (page-level only), `FloatingSurface`, `UserAutocomplete`,
+  `SidePanel`, `ComposerGifPanel` (full screen), `EventFormModal`, `PayerEmailPrompt`,
+  `GuideOverlay`, `FullScreenViewer`, `ReelViewer`, `CameraOverlay`, `LiveViewer`, `LiveOverlay`,
+  `MessageMobileActions`, `MessageEmojiPicker`, `ComposerEmojiPicker`, `PostActionsMenu`,
+  `GlassMenuButton`, `CommunityRailMenu`, `EcosystemLauncher`, `FormExportMenu`, `ReelActionRail`.
+- What stays on the ladder: navigation (rail, drawer, their scrims), the page layers, the banner
+  column, the toast, the call, tooltips, the skip link.
+- Behaviour changes to know: a confirmation raised BEFORE another overlay opens is now under it
+  (it used to be pinned above); the call (330) still covers every overlay; the toast (310) covers
+  every overlay including a confirmation.
+- Gates: `layerLadder.test.ts` fails on a `z-(--z-x)` naming a rung that is not on the ladder (a
+  retired one) and on a keyboard-aware overlay without `style:z-index`; `callBarLayer.test.ts`
+  holds the stack's limit under `--z-call`; `shared/overlayLayer.svelte.test.ts` mounts the real
+  components (a dialog over a viewer, a picker in a modal or a drawer, a popover in a nested modal,
+  release on destroy).
 
 **AND A RUNG IS NOT A RESERVATION.** `--z-banner` says what the column paints OVER; it says nothing
 about what the column DISPLACES, and until 2026-09-14 the answer was nothing at all: the column was

@@ -6,21 +6,20 @@
   behaviours a modal owes, and the gaps were invisible because every one of them LOOKS like a modal
   when you open it on a desktop:
 
-  | Site | portalled | Escape | outside-click | safe area | layer |
+  | Site | portalled | Escape | outside-click | safe area | order |
   | --- | --- | --- | --- | --- | --- |
-  | `AssociationDocumentManager` (x3) | yes | no | yes | no | `--z-modal` |
-  | `ConfirmDialog` | yes | window AND dialog | yes | yes | `--z-critical` |
-  | `PollComposerModal` | no | no | yes | no | `--z-sheet` |
-  | `GifPickerModal` | no | no | yes | no | `--z-sheet` |
+  | `AssociationDocumentManager` (x3) | yes | no | yes | no | stack |
+  | `ConfirmDialog` | yes | window AND dialog | yes | yes | stack |
+  | `PollComposerModal` | no | no | yes | no | stack |
+  | `GifPickerModal` | no | no | yes | no | stack |
   | `routes/admin/agenda` | no | no | NO | no | raw `z-50` |
 
-  **THE RAW `z-50` IS THE ONE THAT PROVES THE POINT.** This app has a twenty-rung ladder in
-  `app.css` and `50` is not on it: it lands between `--z-page-overlay` (40) and `--z-toast` (310), so
-  the agenda's reject modal opened UNDERNEATH a toast and far below every other modal on the page.
-  Nobody wrote that; it is what a number picked in isolation does. A component cannot pick a number
-  in isolation, which is why `layer` here takes a NAME and the class strings are literals in this
-  file - Tailwind cannot build `z-(--z-...)` from a runtime value, and a lookup of literals is the
-  one spelling that is both dynamic to the caller and static to the scanner.
+  **THE RAW `z-50` IS THE ONE THAT PROVES THE POINT.** A number picked in isolation landed the
+  agenda's reject modal UNDERNEATH a toast and far below every other modal on the page. A component
+  cannot pick a number in isolation, and since 2026-11-13 it names no rung either: the modal is
+  REGISTERED on the overlay stack when it opens and takes its z-index from the open order, the last
+  opened on top (`utils/overlayStack.ts`). A sheet, a modal and a confirmation are the same overlay;
+  a dialog opened from a viewer, a picker from a sheet are in front because they opened later.
 
   **NOT PORTALLING IS NOT A STYLE CHOICE, IT IS THE GIF PICKER DEFECT.** `position: fixed` resolves
   against the viewport only while NO ancestor establishes a containing block; a `transform`,
@@ -48,10 +47,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
-  import { insideViewerLayer } from '$lib/utils/viewerLayer';
-
-  /** Which rung of `app.css`'s ladder this modal sits on. Names, never numbers. */
-  type Layer = 'sheet' | 'modal' | 'critical';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Whether the modal is mounted at all. */
@@ -65,11 +61,6 @@
     dismissible?: boolean;
     /** The dialog's accessible name. Required: an unnamed dialog is announced as "dialog". */
     label: string;
-    /**
-     * `sheet` for a picker raised from the composer, `modal` for ordinary content, `critical` for
-     * something that must cover a modal already open (a confirmation about it).
-     */
-    layer?: Layer;
     /** `alertdialog` when the dialog interrupts to confirm or warn; `dialog` otherwise. */
     role?: 'dialog' | 'alertdialog';
     /** Whether the scrim is tinted. The click target exists either way - see the docblock. */
@@ -84,35 +75,14 @@
     onClose,
     dismissible = true,
     label,
-    layer = 'modal',
     role = 'dialog',
     scrim = true,
     panelClass = '',
     children,
   }: Props = $props();
 
-  /**
-   * The ladder, as literals.
-   *
-   * Tailwind scans source text, so a class it never sees spelled out is a class it never generates
-   * - `z-(--z-${layer})` would compile to nothing and the modal would sit at `auto`. Spelling the
-   * three out here is what lets the CALLER be dynamic.
-   */
-  const LAYER_CLASS: Record<Layer, string> = {
-    sheet: 'z-(--z-sheet)',
-    modal: 'z-(--z-modal)',
-    critical: 'z-(--z-critical)',
-  };
-
-  /**
-   * Opened from inside a full-screen viewer, a sheet or a modal would sit UNDER it
-   * (`utils/viewerLayer.ts`); it takes the viewer's dialog rung instead. A critical layer already
-   * clears the viewer.
-   */
-  const inViewer = insideViewerLayer();
-  const layerClass = $derived(
-    inViewer && layer !== 'critical' ? 'z-(--z-viewer-dialog)' : LAYER_CLASS[layer]
-  );
+  /** Registered while open: the z-index is the open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'ModalOverlay');
 
   /**
    * THE SYSTEM BACK IS A DISMISSAL TOO, so an open overlay holds a history entry. None of the seven
@@ -151,7 +121,8 @@
     <div
       role="presentation"
       use:coversScreen
-      class="fixed inset-0 {layerClass} flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim
+      style:z-index={layer.z}
+      class="fixed inset-0 flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim
         ? 'bg-black/40'
         : ''}"
       onclick={(e) => e.target === e.currentTarget && onClose()}

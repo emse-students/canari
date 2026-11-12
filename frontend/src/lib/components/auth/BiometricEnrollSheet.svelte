@@ -26,7 +26,6 @@
   {open}
   onClose={onDismiss}
   label={m.auth_biometric_enroll_title()}
-  layer="sheet"
   panelClass="border-cn-border bg-cn-surface w-full rounded-t-3xl border-t px-6 pt-5 pb-6 shadow-2xl sm:max-w-md sm:rounded-3xl sm:border"
 >
   <!-- Drag handle -->

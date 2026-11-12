@@ -13,7 +13,7 @@
    * the post sees "unavailable" and no word of it. See `docs/wiki/frontend/sharing.md`.
    *
    * Mounted by the post menu (`PostActionsMenu`) and by the reel viewer (`ReelViewer`): from inside
-   * the viewer, `Modal` takes the viewer's dialog rung on its own (`utils/viewerLayer.ts`).
+   * the viewer, `Modal` opens later and so is drawn above it (`utils/overlayStack.ts`).
    */
   import { Hash, Link, Repeat2, Search, Share2 } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';

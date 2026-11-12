@@ -8,7 +8,7 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { insideViewerLayer, markViewerLayer } from '$lib/utils/viewerLayer';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -84,11 +84,6 @@
      * overflow and gets no line; the title bar's `border-b` is the same edge at the top.
      */
     footerEdge?: boolean;
-    /**
-     * `critical` for a dialog raised OVER a full-screen viewer (`--z-viewer` sits above `--z-modal`,
-     * so a plain modal would open hidden behind the live it is about).
-     */
-    layer?: 'modal' | 'critical';
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -106,17 +101,13 @@
     phoneFullScreen = false,
     showTitleBar = true,
     footerEdge = false,
-    layer = 'modal',
     onClose,
     children,
     footer,
   }: Props = $props();
 
-  /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
-  const inViewer = insideViewerLayer();
-  // Read BEFORE marking: this modal sits on its own rung, and only what it opens clears it (the
-  // GIF picker of a comment box in a post's comments dialog sat UNDER it, on `--z-sheet`).
-  markViewerLayer();
+  /** Registered while open: the last opened is on top, so what this modal opens clears it (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'Modal');
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -266,11 +257,8 @@
       role="presentation"
       use:coversScreen
       data-keyboard-aware-overlay
-      class="fixed {layer === 'critical'
-        ? 'z-(--z-critical)'
-        : inViewer
-          ? 'z-(--z-viewer-dialog)'
-          : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+      style:z-index={layer.z}
+      class="fixed flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"
       onclick={handleBackdropClick}

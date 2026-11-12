@@ -23,6 +23,7 @@
   import { DOUBLE_TAP_REACTION } from '$lib/posts/postReaction';
   import { REACTIONS, reactionTypeToEmoji, reactionTypeToLabel } from '$lib/posts/reactions';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /**
@@ -79,6 +80,9 @@
     sound = false,
     drawerOpen = $bindable(false),
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => drawerOpen, 'ReelActionRail');
 
   const social = $derived(!!onHeart && !!onSend);
 
@@ -194,7 +198,8 @@
     <div class="relative flex flex-col items-center">
       {#if drawerOpen}
         <div
-          class="pointer-events-none absolute inset-x-0 bottom-full z-(--z-popover) mb-2 flex justify-center"
+          style:z-index={layer.z}
+          class="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex justify-center"
         >
           <div
             bind:this={drawerEl}

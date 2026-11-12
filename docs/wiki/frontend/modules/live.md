@@ -496,7 +496,7 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 ### What stacks over the viewer (2026-11-07)
 
-The viewer sits on `--z-viewer` (300), above `--z-modal` (280). **One rule, `utils/viewerLayer.ts`:** whatever opens over a full-screen viewer takes `--z-viewer-dialog` (305), and a component says so by `markViewerLayer()` in its own initialisation, which `Modal` and `ModalOverlay` read. The live's own dialogs (report, chat-line report, block confirmation) are on `critical` (320) and clear it already. **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
+**Since 2026-11-13 the viewer and what opens over it are on the overlay stack (`utils/overlayStack.ts`): whatever opens later is on top, with no rung and no mark. (The text below is the 2026-11-07 history, when `utils/viewerLayer.ts` and `--z-viewer-dialog` did this.)** **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
 
 ### The server's kill switch hides the live surfaces (2026-10-21)
 
@@ -988,7 +988,7 @@ for a broadcaster with no reported live (there is no per-account staff read; the
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
 `Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
 (`getSavedUserId() === live.broadcasterId`). It opens the posts' `ReportReasonDialog` (one reason list)
-with `createReport('live', live.id, reason)`; the dialog is raised on the `critical` layer through the
+with `createReport('live', live.id, reason)`; the dialog was raised on the `critical` layer through the (since retired: the overlay stack puts what opens later on top)
 new `layer` prop of `Modal`/`ReportReasonDialog`, because `--z-viewer` sits ABOVE `--z-modal` and a plain
 modal would open behind the live it is about. Outcomes by TYPE, never by message: `409 ALREADY_REPORTED`
 ("already reported", closes), `404 LIVE_NOT_FOUND` (`ModerationApiError.isLiveNotFound`: "the live is

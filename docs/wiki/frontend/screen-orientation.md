@@ -228,7 +228,7 @@ shell reserved `md:pl-24` for the rail. A phone turned is 800+ px wide, so it cr
 two came back. **Fix, at the one place that decides it:** `routes/+layout.svelte` renders `AppSidebar`,
 `Navbar`, `MobileHeader`, the tab bars and the gutter only when `!isFullScreen` - chrome follows the
 PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays (reel viewer, video
-and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
+and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` on the overlay stack (`utils/overlayStack.ts`),
 above every shell layer, so they were never affected.
 
 **The phone question (decided, and left alone):** `PHONE_VIEWPORT_QUERY` is NOT changed. A first cut
