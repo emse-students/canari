@@ -78,7 +78,9 @@ message, a picture or a post opens the system sheet.
    member takes to unlock and choose. What the native side refused is said in a toast
    (`share_items_lost`).
 5. **"Envoyer a..."** is the forward picker (`ForwardMessageModal`, `variant="share"`): DMs, groups
-   and salons. It opens only when the session is up, so the PIN always comes first, with no clock.
+   and salons, **most recent first** like every other share surface, alphabetical once a search is
+   typed (decided by the lead on 2026-11-12, under the owner's delegation: it used to be alphabetical
+   always, so the conversation just left was buried only here; reversible). It opens only when the session is up, so the PIN always comes first, with no clock.
    The pick is published as a deep-link landing (`notifNav.navigate`, and NOTHING else), so the
    conversation opens exactly as a tapped notification would, salons under `/communities` included:
    the landing effect in `ChatBackgroundService` routes and selects. `landShareOn` used to `goto`

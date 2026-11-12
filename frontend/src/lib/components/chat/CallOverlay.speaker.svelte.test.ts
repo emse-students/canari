@@ -88,6 +88,7 @@ function fakeService(state: CallState, hasVideo: boolean) {
     reconnecting: writable(false),
     e2eProven: writable(false),
     localMicSuspended: writable(false),
+    audioFocusHeld: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
     noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
@@ -98,6 +99,9 @@ function fakeService(state: CallState, hasVideo: boolean) {
     acceptCall: vi.fn(async () => {}),
     endCall: vi.fn(),
     toggleMute: vi.fn(),
+    muteButtonTap: vi.fn(),
+    onAudioFocus: vi.fn(),
+    setAudioFocusAsker: vi.fn(),
     toggleVideo: vi.fn(),
     switchCamera: vi.fn(async () => {}),
   };
@@ -128,6 +132,7 @@ beforeEach(() => {
     isDndRegrantOwed: () => false,
     dndRegrantAnswered: () => {},
     openCallChannelSettings: () => {},
+    askFocus: () => {},
   };
 });
 

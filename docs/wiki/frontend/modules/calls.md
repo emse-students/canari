@@ -3054,7 +3054,8 @@ minimising destroyed the element playing the voice and built another. `CallOverl
 the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
-backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.d/p1-blocks-production-calls-mode-a-call-does-not-survive-the-app-leavin.md)):
+work packages WP-C-BG-A and WP-C-BG-I below, built in `v1.3.1`, their readings owed in
+[the verification table](../../backlog.md#owed-a-verification-and-nothing-else)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|
@@ -3289,19 +3290,54 @@ playing. What changed:
   screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
   or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
   no native hook on the WebContent kill was added.
-- **Audio focus changes are logged** (`audio focus LOSS_TRANSIENT for call=...`), never acted on;
-  holding or muting on a loss is a product decision ([backlog](../../backlog.md)).
+- **A focus loss HOLDS the microphone, never hangs up** (D056, decided by the lead on 2026-11-12
+  under the owner's delegation; reversible). Before, a loss was only logged, and a cellular call
+  ringing in left the member's voice running to the peer under it. Now `LOSS_TRANSIENT` (a phone
+  call) and `LOSS` (an app taking the focus for good) emit `focus`/`lost` once
+  (`call/CallFocusHold.kt`, a pure class held by `CallFocusHoldTest`); the page
+  (`CallService.onAudioFocus`) disables every capture track whatever the member's own mute, shows
+  "Votre téléphone a coupé votre micro" and tells the peer `MicSuspended` - the same state, strings
+  and frame the OS's own microphone hold uses, with the two sources counted apart so neither clears
+  the other. The `GAIN` after a transient loss emits `focus`/`gained`: the tracks follow the
+  member's OWN mute again (muted before stays muted; a mute tap during the loss is what comes
+  back), the toast says how long they could not be heard. `LOSS_TRANSIENT_CAN_DUCK` changes nothing.
+  Rejected: hanging up on `LOSS` (only the member ends a call) and muting both ways (the member may
+  want to hear the peer say "I'll wait"). Every change is logged natively; the page writes ONE WARN
+  per loss (`CallService`), the bridge line is plain.
+- **A permanent `LOSS` is never followed by a GAIN** (Android's contract; review of #3395): a video
+  started in another app would hold the microphone for the rest of the call. The way back is
+  ASKING: a mute control's tap while held (`CallService.muteButtonTap` -> the session's `askFocus` ->
+  `CallBridge.askFocus` -> `CallServiceCommand.AskFocus` -> `CallAudio.askFocus`), and the app
+  coming back on screen (the service's screen listener). A grant is `focus`/`gained`; a refusal (a
+  phone call still holds the focus) is `focus`/`refused`, the hold stays and the member reads
+  "Une autre application garde le son". A call not held asks nothing.
+- **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
+  ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
+  audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
+  while held and not muted by the member, ONE tap asks the focus again and leaves the member's own
+  mute alone (flipping it would leave them muted once the focus came back, re-review of #3395);
+  otherwise it is the member's toggle, which also asks while held.
+- **A hold never outlives its service or its call.** A session whose service Android stops
+  (`stopped`) while the call goes on, or whose surface closes while the service still runs, hands
+  the call `released`, which ends the hold like a gain. A hold that ends WITH the call - a hang-up
+  from the notification, or the page stopping the service once the call is over - hands nothing:
+  the call's own end clears its hold, and a `released` then would enable the tracks, send
+  `MicSuspended: false` and toast during the ended summary. A `focus` event reaching a session whose
+  service is not started is dropped, `onAudioFocus` ignores any state with no live call (no capture,
+  or the ended summary), and a new capture starts unheld.
 - The mute action draws a microphone, struck while muted.
 
 **The native incoming ring (item 4 of the study) was NOT in this change**: it shipped with Canari's
 own ring ([the incoming ring](#the-incoming-ring-canaris-own-owner-2026-11-01)), and the caller's
 ringback before it ([the caller's ringback](#the-callers-ringback-2026-10-31)).
 
-**What a gate holds, and what nothing does.** NO CI gate compiles `CallForegroundService.kt`,
-`CallBridge.kt` or `CanariFirebaseMessagingService.kt`: `android-tests` compiles only the pure
-packages (`call/`, `push/`, `gesture/`, `share/`), which is where `OngoingCallTest` holds
-`pickCallOutput`, `holdsProximityScreenOff` and the spec. The whole app's Kotlin was compiled by
-hand on 2026-10-30 (`:app:compileArm64DebugKotlin`, BUILD SUCCESSFUL); the Objective-C of
+**What a gate holds, and what nothing does.** `CallForegroundService.kt`, `CallBridge.kt` and
+`CanariFirebaseMessagingService.kt` are COMPILED by CI's `compile-android-app` job
+(`:app:compileArm64DebugKotlin`, since 2026-10-30, [cicd](../../cicd.md)) and tested by nothing:
+`android-tests` runs only the pure packages (`call/`, `push/`, `gesture/`, `share/`), which is
+where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec, and
+`CallFocusHoldTest` the focus hold. The compile was also run by hand for the focus hold
+(2026-11-12, BUILD SUCCESSFUL); the Objective-C of
 `canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;
 a video call on the loudspeaker; (B) a wired, then a Bluetooth headset connected BEFORE the call:
@@ -3310,7 +3346,9 @@ speaker and in another app - Android `proximity screen-off held`, iPhone `call p
 (D) the caller's photo on the ongoing notification (`caller photo drawn on the call notification`),
 and the name alone for an account with none; (E) music playing before the call pauses for it and
 resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call
-screen shows muted, the action reads "Réactiver le micro", a second press undoes it.
+screen shows muted, the action reads "Réactiver le micro", a second press undoes it; (G) Android
+only, a cellular call rung into a Canari call: the peer sees the microphone cut, the member the
+banner, and both come back when the phone call ends (`focus`/`lost` then `gained` in the app log).
 
 **Four log lines the same call's log misread, fixed with it.** (1) `audio_level_in` read `0.000` on
 4 ticks of 5 while 32-41 kbps of voice arrived: it was the INSTANTANEOUS `audioLevel`, one sample

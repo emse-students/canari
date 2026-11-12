@@ -6,6 +6,7 @@
  * - Reply/cancel-reply state
  * - File selection + validation
  */
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -156,6 +157,7 @@ import {
 } from '$lib/utils/chat/pendingMutations';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
+  keepPendingMutation,
   logDiscarded,
   pendingFor,
   settledChatMessage,
@@ -164,6 +166,7 @@ import {
   type PendingMutationDeps,
 } from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
@@ -175,6 +178,8 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -2656,7 +2661,15 @@ export function useMessaging() {
    * send: draining the pending queue here would post a half-written caption and any photo staged
    * beside it, neither of which the user asked to send by lifting their finger off a microphone.
    */
-  async function sendVoiceNote(file: File, ctx: MessagingContext) {
+  async function sendVoiceNote(
+    file: File,
+    ctx: MessagingContext,
+    loudness: MediaLoudness | null = null
+  ) {
+    // THE SOUND WAS MEASURED WHILE IT WAS RECORDED (owner, 2026-11-12; `recordingLoudness.ts`):
+    // the send waits for nothing more. Carried in `MediaRef.loudness` to every reader's player, DM,
+    // group and salon alike - all three leave through `buildMediaMessage`. Null (not measured, or
+    // silence) sends the note unmeasured, as every note before this was.
     const ready = await prepareMediaFiles([file], ctx);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
@@ -2664,7 +2677,7 @@ export function useMessaging() {
     // audio file are the same bytes with the same mime type, and the only thing left to read is a
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
-    await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+    await handleSendChat(ctx, '', { files: ready.map((f) => voiceNoteEntry(f, loudness)) });
   }
 
   /**
@@ -2823,27 +2836,44 @@ export function useMessaging() {
    *
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
+   *
+   * A MESSAGE SHOWN WITH NO ROW UNDER `conversationId` KEEPS THE ACT (`act`) as a pending mutation,
+   * as a peer's act is kept: the row may be on its way - a re-keyed 1:1 whose stored history is still
+   * moving onto the joined group (review of #3406), a message shown before its writer stored it - and
+   * that writer's own look settles the entry (`settlePendingFor`). Written nowhere, the act was on
+   * screen only, and a reload brought the old body back.
    */
   async function persistLocalMutation(
     conversationId: string,
     msg: ChatMessage,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    act: Pick<PendingMutation, 'kind' | 'slot' | 'rank' | 'text' | 'removed'>
   ): Promise<void> {
     if (!ctx.storage) return;
     try {
       // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
       // one, and a full-row write erased it every time the user reacted.
-      await ctx.storage.updateMessage(
+      const patch = {
+        content: msg.content,
+        reactions: messageReactions.get(msg.id),
+        isDeleted: msg.isDeleted,
+        isEdited: msg.isEdited,
+        ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
+      };
+      const written = await ctx.storage.mergeMessages(
         conversationId,
-        msg.id,
-        {
-          content: msg.content,
-          reactions: messageReactions.get(msg.id),
-          isDeleted: msg.isDeleted,
-          isEdited: msg.isEdited,
-          ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
-        },
+        [msg.id],
+        (current) => mergeStoredMessage(current, patch),
         ctx.deviceKeyB64
+      );
+      if (written.has(msg.id)) return;
+      ctx.log(
+        `[PENDING] own ${act.kind} on ${msg.id.slice(0, 8)} found no row under ${conversationId.slice(0, 8)}... - kept until its row is stored`
+      );
+      await keepPendingMutation(
+        pendingDeps(ctx),
+        { conversationId, messageId: msg.id, sender: canonicalUserId(ctx.userId), ...act },
+        Date.now()
       );
     } catch (e) {
       ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
@@ -2885,7 +2915,12 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx);
+      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx, {
+        kind: 'reaction',
+        slot: emoji,
+        rank: at,
+        ...(alreadyReacted ? { removed: true } : {}),
+      });
     }
 
     const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
@@ -3239,7 +3274,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
-      await persistLocalMutation(key, msgs[idx], ctx);
+      await persistLocalMutation(key, msgs[idx], ctx, { kind: 'delete', slot: '', rank: 0 });
     }
   }
 
@@ -3373,7 +3408,12 @@ export function useMessaging() {
         content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx);
+      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx, {
+        kind: 'edit',
+        slot: '',
+        rank: editedAt,
+        text,
+      });
     }
   }
 
@@ -3515,7 +3555,8 @@ export function useMessaging() {
           messageId,
           sentAt: Date.now(),
         });
-        await mlsService.sendMessage(convo.id, protoBytes, messageId);
+        // From whichever tab forwards: a follower hands the frame to the leader (`frameFromAnyTab`).
+        await sendFrameFromThisTab(mlsService, convo.id, protoBytes, { messageId });
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };

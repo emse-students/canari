@@ -40,6 +40,7 @@ function host(withBridge = true) {
     },
     dndRegrantAnswered: (arg) => calls.push({ method: 'dndRegrantAnswered', arg }),
     openCallChannelSettings: () => calls.push({ method: 'openCallChannelSettings', arg: '' }),
+    askFocus: (callId, arg) => calls.push({ method: 'askFocus', arg, callId }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
     canariCall: withBridge ? bridge : undefined,
@@ -193,6 +194,116 @@ describe('the notification mute', () => {
     );
     h.emit({ kind: 'mute' });
     expect(onMute).not.toHaveBeenCalled();
+  });
+});
+
+describe('the audio focus (D056, decided 2026-11-12)', () => {
+  it('hands a loss, a refused ask and the return to the call, never a hang-up', () => {
+    const { h, calls } = host();
+    const onFocus = vi.fn();
+    const onHangUp = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS_TRANSIENT' });
+    h.emit({ kind: 'focus', code: 'refused', reason: 'refused: an unmute tap' });
+    h.emit({ kind: 'focus', code: 'gained', reason: 'GAIN' });
+    expect(onFocus.mock.calls).toEqual([['lost'], ['refused'], ['gained']]);
+    expect(onHangUp).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.method)).toEqual(['start']);
+  });
+
+  it('a permanent LOSS, no gain ever: the member asks again through the bridge, for this call', () => {
+    const { h, calls } = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    session.askFocus('an unmute tap');
+    expect(calls.at(-1)).toEqual({ method: 'askFocus', arg: 'an unmute tap', callId: CALL });
+    h.emit({ kind: 'focus', code: 'gained', reason: 'granted: an unmute tap' });
+    expect(onFocus.mock.calls).toEqual([['lost'], ['gained']]);
+  });
+
+  it('asks nothing of a service that is not running for the call', () => {
+    const { h, calls } = host();
+    const session = openAndroidCallSession(h, { onHangUp: () => {} }, CALL);
+    session.askFocus('a mute tap');
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'stopped', reason: 'killed' });
+    session.askFocus('a mute tap');
+    expect(calls.filter((c) => c.method === 'askFocus')).toEqual([]);
+  });
+
+  it("drops another call's focus event, and one reaching a session whose service is not started", () => {
+    const { h } = host();
+    const onFocus = vi.fn();
+    openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    h.emit({ callId: 'call-0', kind: 'focus', code: 'lost', reason: 'LOSS' });
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
+  it('a service that stops while held releases the hold it handed over - once', () => {
+    const { h } = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    h.emit({ kind: 'stopped', reason: 'killed by the system' });
+    // Released by the stop itself, while the call goes on on screen - not only at the surface's close.
+    expect(onFocus.mock.calls).toEqual([['lost'], ['released']]);
+    session.dispose();
+    expect(onFocus.mock.calls).toEqual([['lost'], ['released']]);
+  });
+
+  it('closing the call surface while held releases the hold; nothing is released when none is held', () => {
+    const held = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(held.h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    held.h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    session.dispose();
+    expect(onFocus.mock.calls).toEqual([['lost'], ['released']]);
+
+    const free = host();
+    const onFree = vi.fn();
+    const other = openAndroidCallSession(free.h, { onHangUp: () => {}, onFocus: onFree }, CALL);
+    other.publish(SPEC, 'live');
+    free.h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    free.h.emit({ kind: 'focus', code: 'gained', reason: 'GAIN' });
+    other.dispose();
+    expect(onFree.mock.calls).toEqual([['lost'], ['gained']]);
+  });
+
+  /**
+   * A HOLD THAT ENDS BECAUSE THE CALL ENDS IS NOT A RELEASE (re-review of #3395): a `released`
+   * handed over before the hang-up would enable the tracks, tell the partner and toast during the
+   * ended summary. The call's own end clears its hold.
+   */
+  it('a hang-up from the notification while held ends the call and hands over no release', () => {
+    const { h } = host();
+    const order: string[] = [];
+    const session = openAndroidCallSession(
+      h,
+      { onHangUp: () => order.push('hangup'), onFocus: (s) => order.push(s) },
+      CALL
+    );
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    h.emit({ kind: 'hangup' });
+    session.dispose();
+    expect(order).toEqual(['lost', 'hangup']);
+  });
+
+  it('the page stopping the service once the call is over forgets the hold: the close sends nothing', () => {
+    const { h } = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'focus', code: 'lost', reason: 'LOSS' });
+    session.publish(null, 'the call ended');
+    session.dispose();
+    expect(onFocus.mock.calls).toEqual([['lost']]);
   });
 });
 
@@ -444,6 +555,17 @@ describe('parseNativeCallEvent', () => {
       speaker: null,
     });
     expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: 'yes' })).toBeNull();
+    for (const state of ['lost', 'gained', 'refused'] as const) {
+      expect(parseNativeCallEvent({ ...c, kind: 'focus', code: state, reason: 'R' })).toEqual({
+        ...c,
+        kind: 'focus',
+        state,
+        reason: 'R',
+      });
+    }
+    expect(parseNativeCallEvent({ ...c, kind: 'focus', code: 'released' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'focus' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'focus', code: 'other' })).toBeNull();
   });
 });
 

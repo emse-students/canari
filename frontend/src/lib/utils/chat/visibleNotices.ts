@@ -16,6 +16,7 @@
  *
  * @see docs/wiki/protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice
  */
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
 import { mkNoticeEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
@@ -179,7 +180,8 @@ export async function sendVisibleNotice(
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
-  const sent = await mlsService.sendMessage(groupId, encodeAppMessage(frame));
+  // From whichever tab acts: a follower's gesture hands its notice to the leader (`frameFromAnyTab`).
+  const sent = await sendFrameFromThisTab(mlsService, groupId, encodeAppMessage(frame));
   if (noOwnRow) return;
   if (text === null) {
     console.warn(

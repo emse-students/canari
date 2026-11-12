@@ -7,7 +7,7 @@ import { DEFAULT_REEL_ORDER, type ReelOrder } from './reelOrder';
  * 2026-10-19 every post whose only content is ONE picture or ONE video (user: photos in CanaReels, as on
  * Instagram) and since 2026-11-06 every post of two to ten pictures and videos (owner: a carousel),
  * a link in its text included (owner, the same day: the caption draws it), whatever tab the feed is
- * on - the server narrows (`GET /api/posts?feed=reels&kind=reel&multiMedia=true&withLinks=true`),
+ * on - the server narrows (`GET /api/posts?feed=reels&kind=reel&multiMedia=true`),
  * never the client. ONE list, no tab.
  *
  * RANKED LIKE POUR TOI (owner, 2026-11-10): `ranked=true` orders it by the same freshness and
@@ -42,7 +42,6 @@ function readReels(page: ListPage & { limit: number }, order: ReelOrder): Promis
     return listPosts({
       kind: 'reel',
       multiMedia: true,
-      withLinks: true,
       feed: 'reels',
       ranked: false,
       offset: page.offset,
@@ -52,7 +51,6 @@ function readReels(page: ListPage & { limit: number }, order: ReelOrder): Promis
   return listPosts({
     kind: 'reel',
     multiMedia: true,
-    withLinks: true,
     feed: 'reels',
     ranked: true,
     ...page,

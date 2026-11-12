@@ -627,6 +627,11 @@ export function savedStateFailure(
   // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
   // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
   if (reason instanceof MlsStateWriteRefusedError) {
+    // Refused before any write, because this tab does not own the state (a follower): nobody wrote
+    // over anything, so "another tab has just saved" would be false.
+    if (reason.outcome === 'follower-tab') {
+      return new LoginFailure('state_owned_by_another_tab', m.auth_state_owned_by_another_tab());
+    }
     return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
   }
   if (reason instanceof SavedStateOfAnotherAccountError) {
@@ -3659,7 +3664,12 @@ export function tearDownLiveSession(
     // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
     // the caller chains the MLS client's retirement, and the next login's wait, on it.
     finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .catch((e) => {
+        // A REFUSAL HAS BEEN SAID WHERE IT WAS DECIDED (the version guard, or a follower tab, which
+        // owns no MLS state to write); only an unexplained failure is said here.
+        if (e instanceof MlsStateWriteRefusedError) return;
+        console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
+      })
       .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely

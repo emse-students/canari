@@ -3630,13 +3630,12 @@ export class ChannelService implements OnApplicationBootstrap {
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
     // list - and an empty private salon is one nobody can open, its maker included, which is the
     // state `chat_no_allowed_members_warning` names. COMM-23 granted the owner by hand for this.
+    // The line narrating it is written AFTER the save (`grantedMaker`): the removal bound below may
+    // still refuse the flip, and a line stating an outcome before it is decided is false whenever
+    // the write is refused (RM-6, 2026-10-26).
     const actorNormalised = actorUserId.trim().toLowerCase();
-    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised)) {
-      this.logger.log(
-        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId}`
-      );
-      nextAllowed.push(actorNormalised);
-    }
+    const grantedMaker = isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised);
+    if (grantedMaker) nextAllowed.push(actorNormalised);
     // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
     // and that retirement supersedes every per-user cut - evicting people who are about to regain
     // access as ordinary community members would be work with no reader.
@@ -3746,6 +3745,11 @@ export class ChannelService implements OnApplicationBootstrap {
     channel.allowedUsers = nextAllowed;
     if (writePolicy) {
       channel.writePolicy = writePolicy;
+    }
+    if (grantedMaker) {
+      this.logger.log(
+        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId} revision=${channel.accessRevision}`
+      );
     }
 
     // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
@@ -4098,12 +4102,20 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
-    // "Membre" is how every client up to the current stable names the ordinary invitation, so it
-    // means the base role even in a community whose lowest role is called something else. Matching
-    // a role literally named Membre first waits for `minClientVersion` (see backlog).
-    if (wanted === 'Membre' || wanted === base?.name) return base;
+    if (wanted === base?.name) return base;
     const role = roles.find((r) => r.name === wanted) ?? null;
-    if (!role || role.id === base?.id) return role;
+    // A role is matched by its own name first, so a community that calls a higher role "Membre"
+    // can grant it by invitation. Only where no role carries that name does "Membre" (or "member")
+    // mean the base role: no client above the floor sends it for an ordinary invitation (#2277
+    // sends no role at all), and a caller naming the generic word still gets the base role.
+    if (!role) {
+      if (wanted !== 'Membre') return null;
+      this.logger.debug(
+        `[INVITE] "Membre" read as the base role=${base?.name ?? 'none'} workspace=${workspaceId}`
+      );
+      return base;
+    }
+    if (role.id === base?.id) return role;
 
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
     if (actorMayGrantRole(actorPermissions, role.permissions)) {
