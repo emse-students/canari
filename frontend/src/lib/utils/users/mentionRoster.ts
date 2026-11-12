@@ -98,6 +98,27 @@ export class MentionNameIndex {
     this.entries.set(key, entry);
     return entry;
   }
+
+  /**
+   * Drops every member not in `keys`, so the index never outgrows the roster it serves - one
+   * conversation's names do not stay folded for the life of a composer that moved to another.
+   * @returns how many entries were dropped
+   */
+  retain(keys: Iterable<string>): number {
+    const keep = new Set(keys);
+    let dropped = 0;
+    for (const key of this.entries.keys()) {
+      if (keep.has(key)) continue;
+      this.entries.delete(key);
+      dropped += 1;
+    }
+    return dropped;
+  }
+
+  /** How many members are folded right now. */
+  get size(): number {
+    return this.entries.size;
+  }
 }
 
 /**

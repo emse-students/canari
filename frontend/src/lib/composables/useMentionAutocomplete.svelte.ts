@@ -12,9 +12,11 @@ import {
 } from '$lib/utils/users/displayName';
 import {
   findMentionQuery,
+  foldedWords,
   MENTION_MAX_ROWS,
   MentionNameIndex,
   suggestFromRoster,
+  wordsMatchQuery,
   type MentionRosterMember,
 } from '$lib/utils/users/mentionRoster';
 import { listBlockedUsers } from '$lib/users/blocks';
@@ -28,6 +30,20 @@ type SearchRequest = { q: string; kind: 'search' | 'more'; generation: number };
 /** Whether a query holds a space, i.e. names more than one word. */
 function hasSpace(q: string): boolean {
   return /\s/.test(q);
+}
+
+/**
+ * ONE MEANING OF "MATCHES" FOR A QUERY OF SEVERAL WORDS (review of #3402). The directory search ANDs
+ * SUBSTRINGS, so "@Jean je le" or "@Marie et toi" - a sentence, not a name - still found Jean and
+ * Marie, the picker stayed open, Enter was swallowed and Tab inserted a mention nobody chose. A
+ * multi-word answer is therefore held to the roster's own rule (every word starts a different word
+ * of the name, `wordsMatchQuery`) before it may keep a mention open. One word keeps the server's
+ * reading: it is a name being typed, and its fuzzy match is what makes a typo forgivable.
+ */
+function matchingWholeQuery<T extends MentionUser>(rows: readonly T[], q: string): T[] {
+  if (!hasSpace(q.trim())) return [...rows];
+  const words = foldedWords(q);
+  return rows.filter((u) => !!u.displayName && wordsMatchQuery(foldedWords(u.displayName), words));
 }
 
 /**
@@ -80,6 +96,12 @@ export function useMentionAutocomplete(opts: {
   let searching = false;
   /** The latest search asked for while one was in flight; the ones it replaced are never sent. */
   let waiting: SearchRequest | null = null;
+  /** The roster the name index was last pruned to (see `suggestLocally`). */
+  let indexedRoster: MentionRosterMember[] | undefined;
+  /** The roster `refreshRoster` last saw: a different one makes every answer on its way stale. */
+  let refreshedRoster: MentionRosterMember[] | undefined = opts.roster;
+  /** Set by `dispose`: nothing on its way may write to a picker whose composer is gone. */
+  let disposed = false;
   /** Accounts the reader blocked, read once when a roster picker first opens (null = not read). */
   let blockedIds: string[] | null = null;
   /** Member ids whose name this picker already asked for: a roster change asks only for new ones. */
@@ -120,11 +142,13 @@ export function useMentionAutocomplete(opts: {
    */
   function applySearch(req: SearchRequest, found: MentionUser[]) {
     const me = currentUserId();
-    suggestions = filterUserSuggestions(found, {
-      excludeIds: me ? [me] : [],
-    }).slice(0, MENTION_MAX_ROWS);
+    suggestions = matchingWholeQuery(
+      filterUserSuggestions(found, { excludeIds: me ? [me] : [] }),
+      req.q
+    ).slice(0, MENTION_MAX_ROWS);
     open = suggestions.length > 0;
     selectedIdx = -1;
+    Log.d(`[mention] search answer applied: ${suggestions.length} row(s) of ${found.length}`);
     if (!open && hasSpace(req.q)) endMention('no account matches the words typed');
   }
 
@@ -139,9 +163,13 @@ export function useMentionAutocomplete(opts: {
   function requestSearch(q: string, kind: SearchRequest['kind']) {
     const req: SearchRequest = { q, kind, generation };
     if (searching) {
+      Log.d(
+        `[mention] a search is in flight - this ${kind} query waits${waiting ? ', replacing the one that was waiting' : ''}`
+      );
       waiting = req;
       return;
     }
+    Log.d(`[mention] ${kind} search sent (${q.length} char(s))`);
     void runSearch(req);
   }
 
@@ -154,6 +182,10 @@ export function useMentionAutocomplete(opts: {
       console.warn(`[mention] the name search failed (${req.kind})`, e);
     }
     searching = false;
+    if (disposed) {
+      Log.d('[mention] a search answer arrived after the picker was destroyed - dropped');
+      return;
+    }
     if (req.generation !== generation) {
       Log.d('[mention] a search answer for an earlier query dropped');
     } else if (req.kind === 'more') {
@@ -166,7 +198,13 @@ export function useMentionAutocomplete(opts: {
     }
     const next = waiting;
     waiting = null;
-    if (next && next.generation === generation) void runSearch(next);
+    if (!next) return;
+    if (next.generation !== generation) {
+      Log.d('[mention] the waiting query was overtaken - not sent');
+      return;
+    }
+    Log.d(`[mention] the waiting ${next.kind} query sent (${next.q.length} char(s))`);
+    void runSearch(next);
   }
 
   /** The directory search, then `audienceFilter`; null when the server did not answer 2xx. */
@@ -188,7 +226,7 @@ export function useMentionAutocomplete(opts: {
     const extra = filterUserSuggestions(found, {
       excludeIds: [...(me ? [me] : []), ...have, ...(blockedIds ?? [])],
     });
-    const merged = [...suggestions, ...extra].slice(0, MENTION_MAX_ROWS);
+    const merged = [...suggestions, ...matchingWholeQuery(extra, req.q)].slice(0, MENTION_MAX_ROWS);
     suggestions = merged;
     open = merged.length > 0;
     if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches');
@@ -205,6 +243,12 @@ export function useMentionAutocomplete(opts: {
    * reader) is not known to the client and stays offered.
    */
   function suggestLocally(roster: MentionRosterMember[]) {
+    if (roster !== indexedRoster) {
+      // A new roster (a list that finished loading, another conversation): the index keeps only its
+      // members, so it never grows with every conversation the composer has shown.
+      indexedRoster = roster;
+      nameIndex.retain(roster.map((m) => m.id.toLowerCase()));
+    }
     const me = currentUserId();
     const offered = suggestFromRoster(roster, query, {
       excludeIds: [...(me ? [me] : []), ...(blockedIds ?? [])],
@@ -257,17 +301,40 @@ export function useMentionAutocomplete(opts: {
     const next = blocks.map((b) => b.userId);
     const blocksChanged = next.join(',') !== (blockedIds ?? []).join(',');
     blockedIds = next;
-    if ((unnamed.length > 0 || blocksChanged) && start >= 0 && opts.roster === roster) {
+    if (disposed || !(unnamed.length > 0 || blocksChanged) || opts.roster !== roster) return;
+    if (start >= 0) {
       suggestLocally(roster);
+    } else if (ended && unnamed.length > 0) {
+      // A MENTION ENDED WHILE ITS NAMES WERE STILL ON THEIR WAY (review of #3402): on a slow link
+      // "@Camille " can be typed before the batch names Camille, and the space found nobody. The
+      // names that just landed are a new fact, so the end is undone and the caret read again.
+      Log.d('[mention] roster names landed after a mention ended - reading the caret again');
+      ended = null;
+      const text = opts.getText();
+      detectMentionAtCursor(text, readCursor(text));
     }
+  }
+
+  /** Where the caret is, from whichever surface this picker serves. */
+  function readCursor(text: string): number {
+    if (opts.getCursor) return opts.getCursor();
+    return opts.getEl?.()?.selectionStart ?? text.length;
   }
 
   /**
    * Call when the roster prop changes (a member list that finished loading, a conversation switch):
-   * an open picker re-reads it instead of keeping the rows of the roster it opened on.
+   * an open picker re-reads it instead of keeping the rows of the roster it opened on. Any search
+   * answer on its way was asked for the previous roster and is dropped ({@link generation}).
    */
   function refreshRoster() {
     const roster = opts.roster;
+    // The effect calling this also re-runs when a mention begins (it reads `start`); only a roster
+    // that really changed makes the answers on their way stale.
+    if (roster !== refreshedRoster) {
+      refreshedRoster = roster;
+      generation += 1;
+      waiting = null;
+    }
     if (start < 0 || !roster || roster.length === 0) return;
     suggestLocally(roster);
     void prepareRoster(roster);
@@ -306,6 +373,11 @@ export function useMentionAutocomplete(opts: {
       else if (!open && hasSpace(query)) endMention('no member matches the words typed');
     } else if (query.length > 0) {
       if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
+      // The rows on screen answer an earlier query: hidden until this one's answer, so Enter or Tab
+      // can never pick a row that no longer matches what is typed.
+      open = false;
+      suggestions = [];
+      selectedIdx = -1;
       requestSearch(query, 'search');
     } else {
       // A bare `@` with no roster: nothing to search for yet, but the mention has begun.
@@ -329,6 +401,22 @@ export function useMentionAutocomplete(opts: {
     Log.d(`[mention] mention closed: ${why}`);
     ended = { start, query };
     closeMention();
+  }
+
+  /**
+   * Call when the composer is destroyed: an answer still on its way (a search, the roster's names)
+   * lands on a picker nobody sees, so it is dropped and said so rather than applied.
+   */
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    generation += 1;
+    if (searching || waiting) {
+      Log.d(
+        `[mention] picker destroyed with a search in flight${waiting ? ' and one waiting' : ''} - their answers will be dropped`
+      );
+    }
+    waiting = null;
   }
 
   /** Call from `oninput` on a textarea/input. */
@@ -419,5 +507,6 @@ export function useMentionAutocomplete(opts: {
     refreshRoster,
     select,
     handleKeydown,
+    dispose,
   };
 }

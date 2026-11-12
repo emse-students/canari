@@ -991,7 +991,12 @@ reports, one code path (`useMentionAutocomplete`, `mentionRoster.ts`):
   jean" both find Jean Dupont. A space that leaves nobody ends the mention, and so do Escape and a
   newline; typing on at the same `@` then asks nothing and the text is plain text, until the reader
   edits back to something the ended query no longer starts (`ended`). Without a roster the server
-  decides, from the same words (its search already splits terms, accent- and order-insensitive).
+  searches, but its answer to a query of several words is held to the same rule before it may keep
+  the mention open (`matchingWholeQuery`): the endpoint ANDs SUBSTRINGS, so "@Jean je le" or
+  "@Marie et toi" - a sentence - still found Jean and Marie, the picker swallowed Enter and Tab
+  inserted a mention nobody chose (review of #3402). A one-word query keeps the server's fuzzy
+  reading. And a mention that ended while the roster's name batch was still on its way (a space
+  typed before "Camille" was a known name) is read again when the names land.
 - **Speed, measured.** Every keystroke folded every member's name (`normalize('NFD')`) and sorted
   every match: on 5,000 members, about 24 ms for a bare `@` and 28 ms for one letter in vitest on the
   dev machine, more than a frame. `MentionNameIndex` folds a member's name once for the life of the
@@ -1002,8 +1007,11 @@ reports, one code path (`useMentionAutocomplete`, `mentionRoster.ts`):
 - **The server search has no timer.** It waited 250 ms after each key and could apply an answer
   that landed after a newer one. Now a key sends at once when nothing is in flight; otherwise its
   query waits, replacing any query already waiting, and goes when the answer returns: at most one
-  request in flight, at most one more queued. Every change of the mention bumps a `generation`, and
-  an answer is applied only if none came after its request. The endpoint already caps at 10 rows
+  request in flight, at most one more queued, so the search runs ONCE PER KEY at most and a burst
+  of keys costs two requests. Every change of the mention, a roster switch and the composer's
+  destruction (`dispose`) bump a `generation`, and an answer is applied only if none came after its
+  request; the rows of the earlier query are hidden while the new one is asked, so Enter and Tab
+  never pick a row that no longer matches. The name index keeps only the current roster's members. The endpoint already caps at 10 rows
   (`take(10)`), the picker shows six; measured on dev it answers in 90-190 ms, which is now the
   whole wait instead of 250 ms plus that.
 

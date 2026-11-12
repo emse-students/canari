@@ -15,9 +15,23 @@ vi.mock('$lib/stores/auth', () => ({
   refresh: vi.fn().mockResolvedValue('test-token'),
 }));
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => 'u-me' }));
+/** Names the display-name cache knows, and a batch the test answers when it decides (B1 below). */
+const names = vi.hoisted(() => ({
+  known: new Map<string, string>(),
+  pending: [] as { ids: string[]; land: (named: Record<string, string>) => void }[],
+}));
 vi.mock('$lib/utils/users/displayName', () => ({
-  peekUserDisplayName: () => null,
-  resolveDisplayNames: async () => (id: string) => id,
+  peekUserDisplayName: (id: string) => names.known.get(id) ?? null,
+  resolveDisplayNames: (ids: string[]) =>
+    new Promise<void>((resolve) => {
+      names.pending.push({
+        ids,
+        land: (named) => {
+          for (const [id, name] of Object.entries(named)) names.known.set(id, name);
+          resolve();
+        },
+      });
+    }),
   seedUserDisplayName: () => {},
 }));
 vi.mock('$lib/users/blocks', () => ({ listBlockedUsers: async () => [] }));
@@ -56,6 +70,8 @@ function key(k: string): KeyboardEvent {
 
 beforeEach(() => {
   text = '';
+  names.known.clear();
+  names.pending = [];
   globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network expected'));
 });
 
@@ -171,5 +187,127 @@ describe('the server search, with no roster', () => {
     await flushMacrotask();
     // The mention ended: typing on asks the directory nothing more.
     expect(calls.length).toBe(asked);
+  });
+});
+
+describe('review of #3402', () => {
+  /** Every request, with the means to answer it when the test decides. */
+  let calls: { q: string; answer: (users: MentionUser[]) => void }[];
+
+  beforeEach(() => {
+    calls = [];
+    globalThis.fetch = vi.fn().mockImplementation(
+      (url: string) =>
+        new Promise<Response>((resolve) => {
+          const q = new URL(url, 'https://x.invalid').searchParams.get('q') ?? '';
+          calls.push({ q, answer: (users) => resolve(Response.json(users)) });
+        })
+    );
+  });
+
+  it('B1: a space typed before the roster names land does not end the mention for good', async () => {
+    const ac = picker([{ id: 'u-camille', displayName: null }, ...ROSTER]);
+    typeKeys(ac, '@Camille ');
+    // The batch has not answered: nobody is named Camille yet, the space found nobody.
+    expect(ac.open).toBe(false);
+    expect(names.pending).toHaveLength(1);
+    names.pending[0].land({ 'u-camille': 'Camille Exemple' });
+    await flushMacrotask();
+    expect(ac.open).toBe(true);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-camille']);
+    typeKeys(ac, 'Ex');
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-camille']);
+  });
+
+  it('B2, roster: a sentence after a name closes the picker and Enter reaches the composer', () => {
+    const roster: MentionRosterMember[] = [
+      ...ROSTER,
+      { id: 'u-marie', displayName: 'Marie Exemple' },
+    ];
+    for (const sentence of ['@Jean je le', '@Jean a dit', '@Marie et toi']) {
+      text = '';
+      const ac = picker(roster);
+      typeKeys(ac, sentence);
+      expect(ac.open, sentence).toBe(false);
+      expect(ac.handleKeydown(key('Enter')), sentence).toBe(false);
+      expect(ac.handleKeydown(key('Tab')), sentence).toBe(false);
+      expect(text).toBe(sentence);
+    }
+  });
+
+  it('B2, server: rows the directory matched only by substrings do not keep a sentence open', async () => {
+    const directory: Record<string, MentionUser[]> = {
+      'Jean je le': [{ id: 'u-jean', displayName: 'Jean Dupont' }],
+      'Jean a dit': [{ id: 'u-jean', displayName: 'Jean Dupont' }],
+      'Marie et toi': [{ id: 'u-marie', displayName: 'Marie Exemple' }],
+    };
+    for (const sentence of Object.keys(directory)) {
+      text = '';
+      calls = [];
+      const ac = picker();
+      // Pasted in one go, so the one request is for the whole sentence.
+      text = `@${sentence}`;
+      ac.handleEditorInput(text, text.length);
+      await flushMacrotask();
+      expect(calls.map((c) => c.q)).toEqual([sentence]);
+      calls[0].answer(directory[sentence]);
+      await flushMacrotask();
+      expect(ac.open, sentence).toBe(false);
+      expect(ac.handleKeydown(key('Enter')), sentence).toBe(false);
+      expect(ac.handleKeydown(key('Tab')), sentence).toBe(false);
+      expect(text).toBe(`@${sentence}`);
+    }
+  });
+
+  it('hides the rows of an earlier query while the new one is asked, so Tab cannot pick one', async () => {
+    const ac = picker();
+    typeKeys(ac, '@J');
+    await flushMacrotask();
+    calls[0].answer([{ id: 'u-jules', displayName: 'Jules Exemple' }]);
+    await flushMacrotask();
+    expect(ac.open).toBe(true);
+    typeKeys(ac, 'ea');
+    expect(ac.open).toBe(false);
+    expect(ac.suggestions).toEqual([]);
+    expect(ac.handleKeydown(key('Tab'))).toBe(false);
+  });
+
+  it('drops a "more" answer that was asked for the roster before a switch', async () => {
+    let roster: MentionRosterMember[] = ROSTER;
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText: (t) => {
+        text = t;
+      },
+      getCursor: () => text.length,
+      get roster() {
+        return roster;
+      },
+      audienceFilter: async (users) => users,
+    });
+    typeKeys(ac, '@Je');
+    await flushMacrotask();
+    // "J" is in flight, "Je" waits behind it.
+    expect(calls.map((c) => c.q)).toEqual(['J']);
+    roster = [{ id: 'u-jerome', displayName: 'Jerome Exemple' }];
+    ac.refreshRoster();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jerome']);
+    calls[0].answer([{ id: 'u-jeff', displayName: 'Jeff Exemple' }]);
+    await flushMacrotask();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-jerome']);
+    // The waiting "Je" was asked for the old roster too: never sent.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('applies nothing once disposed, and sends nothing that was waiting', async () => {
+    const ac = picker();
+    typeKeys(ac, '@Je');
+    await flushMacrotask();
+    expect(calls.map((c) => c.q)).toEqual(['J']);
+    ac.dispose();
+    calls[0].answer([{ id: 'u-jean', displayName: 'Jean Dupont' }]);
+    await flushMacrotask();
+    expect(ac.open).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 });

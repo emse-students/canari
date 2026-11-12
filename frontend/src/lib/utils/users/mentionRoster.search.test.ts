@@ -133,3 +133,17 @@ describe('a large population', () => {
     expect(rows.map((r) => r.id)).toEqual(expected);
   });
 });
+
+describe('MentionNameIndex.retain', () => {
+  it('keeps only the members named, so the index never outgrows the roster', () => {
+    const index = new MentionNameIndex();
+    index.entry('a', 'Alice Exemple');
+    index.entry('b', 'Bruno Exemple');
+    index.entry('c', 'Chloe Exemple');
+    expect(index.retain(['b'])).toBe(2);
+    expect(index.size).toBe(1);
+    const folds = index.folds;
+    index.entry('b', 'Bruno Exemple');
+    expect(index.folds).toBe(folds);
+  });
+});
