@@ -21,6 +21,9 @@
 # that asked for this named one crate; adding one is adding a line. `wry` joined on 2026-11-03: it
 # is not a direct dependency, so its `=` pin in `[dependencies]` exists ONLY to hold the fork in
 # place (a newer registry release would otherwise out-resolve the path patch and drop it silently).
+# `tauri-plugin-system-components` joined on 2026-11-11 (its `=0.1.8` pin sits in the iOS target
+# table). `tauri-plugin-keystore` is NOT on it: its fork is of `2.1.0-alpha.1` and crates.io has no
+# stable release of it at all, so `max_stable_version` is null - see the backlog.
 #
 # HOW IT REPORTS. `gh run list` shows 1 and 75 alike - both are an ordinary failed run - so what
 # tells them apart is the `::error` annotation TITLE, legible in the run summary without opening the
@@ -47,7 +50,8 @@ MANIFEST="$TAURI_DIR/Cargo.toml"
 # THE ALLOWLIST. One crate per line; each must be a `[patch.crates-io]` entry of `$MANIFEST` whose
 # path is `patches/<crate>`. The self-test narrows it to the one crate its fixture trees carry.
 readonly WATCHED="${VENDORED_WATCHED:-tauri-plugin-websocket
-wry}"
+wry
+tauri-plugin-system-components}"
 
 # crates.io refuses an anonymous client (its crawler policy asks for a contact in the User-Agent).
 readonly USER_AGENT='canari-ci vendored-upstream-report (https://github.com/emse-students/canari)'

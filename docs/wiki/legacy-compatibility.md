@@ -142,8 +142,10 @@ refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named
 
 ## What the 2026-08-17 gate actually retired, and what it did not
 
-`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is hard - `ensurePlatformAllowsUnlock`
-blocks the MLS unlock outright, so a client below it cannot put a group frame on the wire at all.
+`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is enforced IN THE CLIENT ONLY:
+`isBelowMinClientVersion` and `shouldBlockSessionUnlock` (`stores/appVersionCheck.svelte.ts`) block
+the login and the MLS unlock of a build that carries them. The server refuses no old client, so the
+gate says what a build that obeys it can do, never what reaches the server.
 
 It was assumed at the time that this retired most of this page. **Measured, it retired exactly one
 entry**, and the distinction is worth keeping because it is the one this page was getting wrong:
@@ -963,19 +965,6 @@ and, on the receiving side, on that receiver's own windows. It is a FALLBACK and
 `console.error` per session.
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
-
-### Floor met 2026-10-31 - history answers and asks from clients older than step A
-
-**The condition is MET:** step A (#2270) is first in the stable `v1.5.0` (`v1.4.1` was never cut as
-a stable), and production's `minClientVersion` reads `1.5.1` (`GET /api/version`, 2026-10-31). No
-client below step A can unlock MLS, so none asks without a `requestId` or answers a newcomer by
-broadcast any more.
-**What can go, and what cannot:** the no-id refusal line (a new answerer sends nothing addressed to
-an ask with no id, `sendBundleChunks`) is now dead and goes in its own client pull request. The
-broadcast branch of the `history_bundle` receiver STAYS: it is not only a shim - a current build still
-broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)` in
-`groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the same
-`dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 
