@@ -11,7 +11,9 @@ import {
   seedUserDisplayName,
 } from '$lib/utils/users/displayName';
 import {
+  findMentionQuery,
   MENTION_MAX_ROWS,
+  MentionNameIndex,
   suggestFromRoster,
   type MentionRosterMember,
 } from '$lib/utils/users/mentionRoster';
@@ -19,6 +21,14 @@ import { listBlockedUsers } from '$lib/users/blocks';
 import { Log } from '$lib/utils/Log';
 
 export type MentionUser = { id: string; displayName: string | null };
+
+/** One name search: `search` fills the list (no roster), `more` tops a roster's rows up (a live). */
+type SearchRequest = { q: string; kind: 'search' | 'more'; generation: number };
+
+/** Whether a query holds a space, i.e. names more than one word. */
+function hasSpace(q: string): boolean {
+  return /\s/.test(q);
+}
 
 /**
  * Composable for @mention autocomplete in text inputs or mention editors.
@@ -52,7 +62,24 @@ export function useMentionAutocomplete(opts: {
   let open = $state(false);
   let start = $state(-1);
   let selectedIdx = $state(-1);
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The picker's folded names, kept for its whole life: a keystroke folds nothing it already has. */
+  const nameIndex = new MentionNameIndex();
+  /**
+   * A mention the reader gave up on - Escape, or a query with a space that matched nobody (the text
+   * after the `@` is plain text then). Typing on at the same `@` keeps it closed and asks nothing;
+   * editing it back to something it no longer extends revives it.
+   */
+  let ended: { start: number; query: string } | null = null;
+  /**
+   * Bumped by every change of the mention (a keystroke in it, its end). A server answer is applied
+   * only if nothing changed since its request - a SEQUENCE, so an answer that arrives late, or out of
+   * order, is dropped whatever the network's timing was.
+   */
+  let generation = 0;
+  /** True while a name search is in flight: there is never more than one. */
+  let searching = false;
+  /** The latest search asked for while one was in flight; the ones it replaced are never sent. */
+  let waiting: SearchRequest | null = null;
   /** Accounts the reader blocked, read once when a roster picker first opens (null = not read). */
   let blockedIds: string[] | null = null;
   /** Member ids whose name this picker already asked for: a roster change asks only for new ones. */
@@ -91,21 +118,55 @@ export function useMentionAutocomplete(opts: {
    * made HERE and the fact is already known globally - three components would otherwise have to
    * thread a prop through, and any surface added later could forget to.
    */
-  async function search(q: string) {
+  function applySearch(req: SearchRequest, found: MentionUser[]) {
+    const me = currentUserId();
+    suggestions = filterUserSuggestions(found, {
+      excludeIds: me ? [me] : [],
+    }).slice(0, MENTION_MAX_ROWS);
+    open = suggestions.length > 0;
+    selectedIdx = -1;
+    if (!open && hasSpace(req.q)) endMention('no account matches the words typed');
+  }
+
+  /**
+   * Asks the directory for `q`, ONE REQUEST AT A TIME AND NO TIMER (owner, 2026-11-12: the `@` was
+   * slow on the posts page). It used to wait 250 ms after each key, then send; every key paid that
+   * wait and a slow answer could still land after a newer one. Now a key sends at once when nothing
+   * is in flight; otherwise its query waits, replacing any query that was waiting, and goes when the
+   * answer comes back. So a burst of keys costs at most two requests, and the answer applied is the
+   * one asked for the mention as it stands ({@link generation}).
+   */
+  function requestSearch(q: string, kind: SearchRequest['kind']) {
+    const req: SearchRequest = { q, kind, generation };
+    if (searching) {
+      waiting = req;
+      return;
+    }
+    void runSearch(req);
+  }
+
+  async function runSearch(req: SearchRequest) {
+    searching = true;
+    let found: MentionUser[] | null = null;
     try {
-      const found = await searchDirectory(q);
-      if (found) {
-        const me = currentUserId();
-        suggestions = filterUserSuggestions(found, {
-          excludeIds: me ? [me] : [],
-        }).slice(0, MENTION_MAX_ROWS);
-        open = suggestions.length > 0;
-        selectedIdx = -1;
-      }
-    } catch {
+      found = await searchDirectory(req.q);
+    } catch (e) {
+      console.warn(`[mention] the name search failed (${req.kind})`, e);
+    }
+    searching = false;
+    if (req.generation !== generation) {
+      Log.d('[mention] a search answer for an earlier query dropped');
+    } else if (req.kind === 'more') {
+      if (found) applyMore(req, found);
+    } else if (found) {
+      applySearch(req, found);
+    } else {
       suggestions = [];
       open = false;
     }
+    const next = waiting;
+    waiting = null;
+    if (next && next.generation === generation) void runSearch(next);
   }
 
   /** The directory search, then `audienceFilter`; null when the server did not answer 2xx. */
@@ -121,22 +182,16 @@ export function useMentionAutocomplete(opts: {
    * live chat's "first the people who are here, then anyone who may see it". Rows already offered
    * stay first and are never repeated; a stale answer (the query moved on) is dropped.
    */
-  async function searchMore(q: string) {
-    try {
-      const found = await searchDirectory(q);
-      if (!found || q !== query || start < 0) return;
-      const me = currentUserId();
-      const have = suggestions.map((u) => u.id.toLowerCase());
-      const extra = filterUserSuggestions(found, {
-        excludeIds: [...(me ? [me] : []), ...have, ...(blockedIds ?? [])],
-      });
-      if (extra.length === 0) return;
-      const merged = [...suggestions, ...extra].slice(0, MENTION_MAX_ROWS);
-      suggestions = merged;
-      open = merged.length > 0;
-    } catch (e) {
-      console.warn('[mention] the audience search failed, the roster rows stay', e);
-    }
+  function applyMore(req: SearchRequest, found: MentionUser[]) {
+    const me = currentUserId();
+    const have = suggestions.map((u) => u.id.toLowerCase());
+    const extra = filterUserSuggestions(found, {
+      excludeIds: [...(me ? [me] : []), ...have, ...(blockedIds ?? [])],
+    });
+    const merged = [...suggestions, ...extra].slice(0, MENTION_MAX_ROWS);
+    suggestions = merged;
+    open = merged.length > 0;
+    if (!open && hasSpace(req.q)) endMention('nobody here or in the audience matches');
   }
 
   /**
@@ -144,7 +199,7 @@ export function useMentionAutocomplete(opts: {
    *
    * The server search only returned the school's top 10 matches, so with one letter a member of a
    * small group was almost never among them and "@M" proposed nobody. The members are already on
-   * the client, so the roster is filtered here. The reader is never offered (see {@link search}),
+   * the client, so the roster is filtered here. The reader is never offered (see {@link applySearch}),
    * nor an account the reader blocked: the server hides blocked accounts from every picker, and a
    * group formed before the block still lists them. The reverse direction (someone who blocked the
    * reader) is not known to the client and stays offered.
@@ -159,7 +214,9 @@ export function useMentionAutocomplete(opts: {
         droppedLogged.add(id);
         console.warn(`[mention] member ${id.slice(0, 8)} has no known name and is not offered`);
       },
-    }).slice(0, MENTION_MAX_ROWS);
+      index: nameIndex,
+      limit: MENTION_MAX_ROWS,
+    });
     suggestions = offered;
     open = offered.length > 0;
     selectedIdx = -1;
@@ -216,38 +273,62 @@ export function useMentionAutocomplete(opts: {
     void prepareRoster(roster);
   }
 
+  /**
+   * Reads the mention at the caret and updates the picker.
+   *
+   * The query may hold spaces, so "@Jean Dup" is still a mention (see `findMentionQuery`). It stays
+   * one for as long as somebody matches the WHOLE query: a space that leaves nobody ends it, and the
+   * text is plain text from there ({@link ended}). With a roster that is known at once; without one,
+   * from the search's answer.
+   */
   function detectMentionAtCursor(text: string, cursor: number) {
-    const textBeforeCursor = text.slice(0, cursor);
-    const m = textBeforeCursor.match(/@([\wÀ-ž]*)$/);
+    const found = findMentionQuery(text.slice(0, cursor));
+    if (!found) {
+      ended = null;
+      if (start >= 0 || open) closeMention();
+      return;
+    }
+    if (ended && found.start === ended.start && found.query.startsWith(ended.query)) {
+      // Still the mention the reader gave up on, typed further: plain text, nothing asked.
+      if (start >= 0 || open) closeMention();
+      return;
+    }
+    ended = null;
+    if (found.start === start && found.query === query) return;
+    generation += 1;
+    start = found.start;
+    query = found.query;
     const roster = opts.roster;
-    if (m && roster && roster.length > 0) {
-      start = cursor - m[0].length;
-      query = m[1];
-      if (debounceTimer) clearTimeout(debounceTimer);
+    if (roster && roster.length > 0) {
       suggestLocally(roster);
       void prepareRoster(roster);
-      if (opts.audienceFilter && m[1].length > 0) {
-        debounceTimer = setTimeout(() => void searchMore(query), 250);
-      }
-    } else if (m && m[1].length > 0) {
+      if (opts.audienceFilter && query.length > 0) requestSearch(query, 'more');
+      else if (!open && hasSpace(query)) endMention('no member matches the words typed');
+    } else if (query.length > 0) {
       if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
-      start = cursor - m[0].length;
-      query = m[1];
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => void search(query), 250);
+      requestSearch(query, 'search');
     } else {
-      // The mention ended: a search still waiting for its delay would otherwise run for a query
-      // that no longer exists and reopen the picker on plain text (start -1, nothing to select).
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-        Log.d('[mention] the mention ended before its search ran - search dropped');
-      }
+      // A bare `@` with no roster: nothing to search for yet, but the mention has begun.
       open = false;
       suggestions = [];
-      query = '';
-      start = -1;
     }
+  }
+
+  /** Closes the picker and forgets the mention; any answer still on its way is dropped. */
+  function closeMention() {
+    generation += 1;
+    waiting = null;
+    open = false;
+    suggestions = [];
+    query = '';
+    start = -1;
+  }
+
+  /** The reader gave up on this mention (see {@link ended}); `why` is logged. */
+  function endMention(why: string) {
+    Log.d(`[mention] mention closed: ${why}`);
+    ended = { start, query };
+    closeMention();
   }
 
   /** Call from `oninput` on a textarea/input. */
@@ -280,10 +361,7 @@ export function useMentionAutocomplete(opts: {
     const newText = `${before}${token} `;
     const newCursor = before.length + token.length + 1;
     opts.setText(newText + after, newCursor);
-    open = false;
-    suggestions = [];
-    query = '';
-    start = -1;
+    closeMention();
     void tick().then(() => {
       opts.focus?.();
       applyCursor(newCursor);
@@ -320,8 +398,7 @@ export function useMentionAutocomplete(opts: {
       return true;
     }
     if (e.key === 'Escape') {
-      open = false;
-      suggestions = [];
+      endMention('Escape');
       return true;
     }
     return false;
