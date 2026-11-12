@@ -7,7 +7,13 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import type { ChatMessage } from '$lib/types';
-import { serializeEnvelope, mkTextEnvelope, mkPollEnvelope, parseEnvelope } from '$lib/envelope';
+import {
+  serializeEnvelope,
+  mkTextEnvelope,
+  mkMediaEnvelope,
+  mkPollEnvelope,
+  parseEnvelope,
+} from '$lib/envelope';
 import { encodeAppMessage, decodeAppMessage, mkEdit } from '$lib/proto/codec';
 import { applyChannelEdit, applyChannelEdits, revertChannelEdit } from './channelEdit';
 
@@ -94,6 +100,38 @@ describe('applyChannelEdit', () => {
     expect(applyChannelEdit([msg({ isDeleted: true })], edit(), log).applied).toBe(false);
     expect(applyChannelEdit([msg({ isSystem: true })], edit(), log).applied).toBe(false);
     expect(applyChannelEdit([msg()], edit({ targetMessageId: 'ghost' }), log).applied).toBe(false);
+  });
+
+  it("edits a media message's CAPTION and keeps its attachment (owner, 2026-11-11)", () => {
+    const photo = msg({
+      content: serializeEnvelope(
+        mkMediaEnvelope(
+          {
+            type: 'image',
+            mediaId: 'blob-1',
+            key: 'ab',
+            iv: 'cd',
+            mimeType: 'image/jpeg',
+            size: 9,
+          },
+          'old caption'
+        )
+      ),
+    });
+    const { messages, applied } = applyChannelEdit([photo], edit({ newContent: 'new' }), vi.fn());
+    expect(applied).toBe(true);
+    expect(messages[0].isEdited).toBe(true);
+    const env = parseEnvelope(messages[0].content);
+    expect(env.kind === 'media' && env.caption).toBe('new');
+    expect(env.kind === 'media' && env.media.mediaId).toBe('blob-1');
+    expect(env.kind === 'media' && env.media.key).toBe('ab');
+
+    // An EMPTY text removes the caption - the photo stays, drawn bare.
+    const emptied = applyChannelEdit([photo], edit({ newContent: '' }), vi.fn());
+    expect(emptied.applied).toBe(true);
+    const bare = parseEnvelope(emptied.messages[0].content);
+    expect(bare.kind === 'media' && bare.caption).toBeUndefined();
+    expect(bare.kind === 'media' && bare.media.mediaId).toBe('blob-1');
   });
 
   it('keeps the reply reference the row already holds', () => {

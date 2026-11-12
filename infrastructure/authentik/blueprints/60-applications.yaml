@@ -38,6 +38,10 @@ entries:
   - model: authentik_core.application
     identifiers:
       slug: "cercle"
+    # The handoff reader may see this application, and no other (55-handoff-reader.yaml).
+    permissions:
+      - permission: authentik_core.view_application
+        role: !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
     attrs:
       name: "Cercle"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-cercle"]]
@@ -45,6 +49,10 @@ entries:
   - model: authentik_core.application
     identifiers:
       slug: "migallery"
+    # The handoff reader may see this application, and no other (55-handoff-reader.yaml).
+    permissions:
+      - permission: authentik_core.view_application
+        role: !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
     attrs:
       name: "MiGallery"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-migallery"]]
@@ -64,6 +72,10 @@ entries:
   - model: authentik_core.application
     identifiers:
       slug: "sky"
+    # The handoff reader may see this application, and no other (55-handoff-reader.yaml).
+    permissions:
+      - permission: authentik_core.view_application
+        role: !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
     attrs:
       name: "Sky"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-sky"]]

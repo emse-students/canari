@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import type { Snippet } from 'svelte';
   import {
     Camera,
@@ -20,7 +21,6 @@
   import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
   import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
   import { POST_ATTACHMENTS_MAX, attachmentsFull } from '$lib/posts/attachmentCap';
 
@@ -148,7 +148,7 @@
   const scheduledLabel = $derived.by(() => {
     if (!scheduledAt) return m.post_create_schedule_button_label();
     const d = new Date(scheduledAt);
-    return d.toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    return d.toLocaleString(intlLocale(), {
       day: 'numeric',
       month: 'short',
       hour: '2-digit',

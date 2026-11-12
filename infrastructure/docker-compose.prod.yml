@@ -423,6 +423,9 @@ services:
       # Signs the one-time sign-in handoff to the MiConnect sites (docs/wiki/sessions.md, "The
       # sign-in handoff"). Unset: no handoff is minted and every site opens plainly.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      # The read-only MiConnect account a handoff mint asks whether the user may enter the site
+      # (F3-bound). Unset: every mint is refused HANDOFF_MICONNECT_UNAVAILABLE and the site opens plainly.
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
       # does not set it, so core-service issues no session there and the route does not exist.
       # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.
@@ -533,6 +536,9 @@ services:
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
       # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
       LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # The communities one account may hold as their creator; empty means 20
+      # (apps/social-service/src/channels/community-limits.ts).
+      COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.

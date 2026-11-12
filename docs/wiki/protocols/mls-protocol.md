@@ -2350,7 +2350,16 @@ people, logged `REJECT admit_refused` - the shape `WelcomeSeatGone` already answ
 any version clears its staged commit on it): nothing advances, nobody gets a leaf, no device row is
 written. A commit accepted with its admits dropped would still have given those people a leaf in
 every member's tree - a leaf no seat holds - so the gate refuses it rather than accept it in part,
-the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Every candidate is decided before anything
+the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Key groups are to follow the same whole-commit rule -
+decided by the lead on 2026-11-12, under the owner's delegation, NOT BUILT YET**: a key group's gate
+still accepts a commit and drops an admit it may not record (`not_entitled`, the RM-5 grant that
+raced a kick), which leaves exactly that seatless leaf in the tree. The build is one change on each
+side, landed together: the gate refuses with `admit_refused` and the refused `userIds` in a key
+group too (the `admitClaims` loop of `MessagingService`), and the key-group Add
+(`graine/distributionGroup.ts`) rebuilds without the named people the way `addDevicesRebuildingOnRace`
+does - it reads no `admit_refused` today, so the server half alone would stall every grant that
+races a kick. The `no_key_package` drop keeps its own reasoning (below) in both kinds of group.
+([backlog](../backlog.md#p3---key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review-2026-10-26)) **Every candidate is decided before anything
 is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
 rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
@@ -2977,7 +2986,7 @@ has the before/after table).
   restart the browser and sign in again; meanwhile use the app or another browser, which are other
   devices and leave this one's state intact; ask support before any reset, which would erase it. The
   persistent case - what, if anything, the product offers after N starts - is an owed item
-  ([backlog](../backlog.md#p2---unreadable-right-now-on-every-start-has-no-exit-but-the-user)).
+  ([backlog](../backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md), item 5).
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.

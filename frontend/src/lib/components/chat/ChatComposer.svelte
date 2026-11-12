@@ -83,6 +83,7 @@
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
   import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface ReplyTo {
     id: string;
@@ -120,6 +121,11 @@
      * aside, and Escape cancels. The text field's own content (`messageText`) is the edit.
      */
     editingText?: string | null;
+    /**
+     * The edit is a media message's CAPTION (owner, 2026-11-11), which may be emptied: the photo
+     * stays and loses its caption. A text message's edit may not be empty.
+     */
+    editingAllowsEmpty?: boolean;
     /** Abandons the edit and gives the draft back. */
     onCancelEdit?: () => void;
     /** Saves the edit. Called instead of `onSend`; the parent restores the draft itself. */
@@ -139,7 +145,8 @@
      * the clock and lifting the finger away from the bin IS the send. Staging it asked for the
      * same consent twice, behind a "files pending" banner.
      */
-    onSendVoiceNote?: (file: File) => void;
+    /** A finished recording, and its sound measured while recorded (null: unmeasured). */
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -170,6 +177,7 @@
     replyingTo,
     onCancelReply,
     editingText = null,
+    editingAllowsEmpty = false,
     onCancelEdit,
     onConfirmEdit,
     onFilesSelected,
@@ -528,10 +536,12 @@
   /** The attachments, GIF, poll and microphone give way while a message is edited or recorded. */
   const actionsHidden = $derived(isVoiceActive || isEditing);
 
-  // SAVE NEEDS A CHANGE: an empty text would erase the message and an identical one says nothing.
+  // SAVE NEEDS A CHANGE: an empty text would erase the message and an identical one says nothing -
+  // except on a caption, which an empty text removes while the media stays.
   const isSendDisabled = $derived(
     isEditing
-      ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
+      ? (!messageText.trim() && !editingAllowsEmpty) ||
+          messageText.trim() === (editingText ?? '').trim()
       : !messageText.trim() && pendingFiles.length === 0
   );
 
@@ -770,7 +780,7 @@
     return file.type.startsWith('audio/');
   }
 
-  function handleVoiceRecording(audioBlob: Blob) {
+  function handleVoiceRecording(audioBlob: Blob, loudness: MediaLoudness | null) {
     if (!onSendVoiceNote) return;
 
     const mimeType = audioBlob.type || 'audio/webm';
@@ -786,7 +796,7 @@
       type: mimeType,
     });
 
-    onSendVoiceNote(audioFile);
+    onSendVoiceNote(audioFile, loudness);
   }
 
   $effect(() => {

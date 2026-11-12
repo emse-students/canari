@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import {
@@ -23,7 +24,6 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { productLabel, purchaseItemLabel } from '$lib/associations/productLabel';
   import { formatAmount } from '$lib/forms/fillAnswers';
@@ -449,7 +449,7 @@
           {#each filteredPurchases as purchase (purchase.id)}
             <tr class="bg-cn-bg/20 hover:bg-cn-bg">
               <td class="text-text-muted px-4 py-3 whitespace-nowrap">
-                {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
+                {new Date(purchase.paidAt).toLocaleString(intlLocale())}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
               <td class="text-text-main px-4 py-3">
@@ -466,9 +466,7 @@
                       class="bg-cn-bg text-text-muted ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
                       title={purchase.closedAt
                         ? m.asso_achats_closed_hint({
-                            date: new Date(purchase.closedAt).toLocaleString(
-                              getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                            ),
+                            date: new Date(purchase.closedAt).toLocaleString(intlLocale()),
                           })
                         : undefined}
                     >

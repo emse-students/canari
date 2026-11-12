@@ -247,7 +247,6 @@ jobs:
           APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -265,7 +264,6 @@ jobs:
             APPLE_PROVISIONING_PROFILE_SHARE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
-            JWT_SECRET
             BASE_URL
             AUTHENTIK_URL
             AUTHENTIK_CLIENT_ID

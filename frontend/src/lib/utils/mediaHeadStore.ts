@@ -188,8 +188,8 @@ export function headedRangeSource(
 ): CiphertextRangeSource {
   let failed = false;
   return {
-    async read(start, endExclusive, signal) {
-      if (failed) return inner.read(start, endExclusive, signal);
+    async read(start, endExclusive, signal, rank) {
+      if (failed) return inner.read(start, endExclusive, signal, rank);
       let bytes: Uint8Array<ArrayBuffer>;
       try {
         bytes = await headOrAbort(head.bytes, signal);
@@ -200,14 +200,14 @@ export function headedRangeSource(
           failed = true;
           console.warn('[media-head] the head failed - this stream reads every range itself', err);
         }
-        return inner.read(start, endExclusive, signal);
+        return inner.read(start, endExclusive, signal, rank);
       }
       const len = bytes.byteLength;
       if (endExclusive <= len || headIsWholeFile(bytes)) {
         return new Uint8Array(bytes.slice(start, Math.min(endExclusive, len)));
       }
-      if (start >= len) return inner.read(start, endExclusive, signal);
-      const rest = await inner.read(len, endExclusive, signal);
+      if (start >= len) return inner.read(start, endExclusive, signal, rank);
+      const rest = await inner.read(len, endExclusive, signal, rank);
       const out = new Uint8Array(len - start + rest.byteLength);
       out.set(bytes.subarray(start), 0);
       out.set(rest, len - start);

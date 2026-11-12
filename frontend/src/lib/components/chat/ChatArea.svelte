@@ -85,6 +85,7 @@
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import {
     isNarrowChatLayout,
     isOverlayLayout,
@@ -240,7 +241,7 @@
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Sends a finished recording straight out, without staging it. Enables the microphone. */
-    onSendVoiceNote?: (file: File) => void;
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -2076,6 +2077,7 @@
           {onCancelReply}
           {nicknameScope}
           editingText={editSession.original}
+          editingAllowsEmpty={editSession.emptyAllowed}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}

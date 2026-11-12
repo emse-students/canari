@@ -1189,6 +1189,10 @@ describe('one take, several conversations (RC-13)', () => {
     const w = world();
     const l = life(w, { prepare: () => NEVER() });
     await enqueueTake(l, 2);
+    // The take's flush writes its row (the preparing state) before the encoder is called; reading
+    // the reach while that write is in flight races it. The encoder being called, and parked, is
+    // the event after which nothing writes the row, so the reads below see durable state only.
+    await waitForEvent(() => expect(w.prepares).toHaveLength(1));
     const OTHER_TAKE = '99999999-2222-4333-8444-555555555555';
     const OTHER_SEND = 'bbbbbbbb-2222-4333-8444-555555555551';
     const other = buildChatReelTake({

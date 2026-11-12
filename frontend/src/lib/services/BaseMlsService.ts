@@ -2348,6 +2348,9 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** @inheritdoc */
   whenGroupDrained(groupId: string): Promise<void> {
+    // A DESTROYED CLIENT DRAINS NOTHING MORE, so a waiter registered after `destroy` would wait for
+    // ever: `abandonGroupDrainedWaiters` ran once, at the destroy, and never again.
+    if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
     if (this.groupDrainedNow(groupId)) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const waiters = this.groupDrainedWaiters.get(groupId) ?? [];

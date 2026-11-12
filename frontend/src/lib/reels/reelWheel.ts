@@ -27,6 +27,14 @@ export function wheelStep(e: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'ctrlKey'>):
 }
 
 /**
+ * Whether the wheel is over a video's volume pill (`data-video-volume`): the wheel is the volume's
+ * there, never a page turn or a zoom. The pill stops the event itself; this is the viewers' own guard.
+ */
+export function wheelOverVolume(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-video-volume]') !== null;
+}
+
+/**
  * Whether the wheel over `target` belongs to a child that scrolls on that axis (the comments list,
  * an unfolded caption) - checked up to `root`, the viewer. Such a child scrolls; the reel stays.
  */
