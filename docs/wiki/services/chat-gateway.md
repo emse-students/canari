@@ -81,21 +81,37 @@ too, with a `warn` naming its kind. [call-service](call-service.md) carries the 
 
 ## Admission: one step, two limits (2026-11-12)
 
-A socket is counted and registered in ONE step, `AppState::admit`, under the lock of the
-connection map - so two sockets arriving together are judged one after the other and neither limit
+A socket's place is counted and registered in ONE step, `AppState::admit`, under the lock of the
+connection map - so two requests arriving together are judged one after the other and neither limit
 can be passed. Two limits, per process:
 
-- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT`), all its devices and tabs together;
+- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT` = `2 * MAX_DEVICES_PER_ACCOUNT + 2`): the 15
+  devices an account may enrol (chat-delivery's `MAX_DEVICES_PER_USER`, the source), each with a
+  socket and the one that socket is replacing, plus two for a second tab;
 - **1000 in all** (`MAX_CONNECTIONS`).
 
-The account is counted first, so a refusal names the narrower reason. A refused socket is upgraded,
-closed with **1013** ("try again later") and never registered: no presence, no sessions-hash field,
-no guard. The duplicate-connection rule is unchanged - a new socket of a device is added beside its
-siblings, never replaces them.
+**The place is taken BEFORE the upgrade, and a refusal is a `503`.** A client resets its
+reconnection delay when its socket OPENS (`openGatewayConnection`), so a refusal delivered as a
+close frame after the upgrade would be asked again at the shortest delay, forever. A request past a
+limit is therefore never upgraded: the handshake fails, the client's socket never opens, and its
+delay climbs. The account is counted first, so a refusal names the narrower reason.
 
-The refusal is logged at WARN through `RepeatCounter`, keyed by account: the first one says the
-sentence, then the 10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... -
-refusal #N for this account`). A line at #100 is a client that keeps asking.
+The place is held by a `ConnectionGuard` that travels inside the upgrade callback (`Admitted`). A
+socket that runs keeps it until its task ends; an upgrade that never completes drops the callback
+unrun, and the place with it. A frame published between admission and upgrade waits in the
+connection's channel. The duplicate-connection rule is unchanged - a new socket of a device is
+added beside its siblings, never replaces them.
+
+The refusal is logged at WARN through `RepeatCounter`: the first one says the sentence, then the
+10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... - refusal #N for
+<subject>`). The subject is the ACCOUNT when an account is at its limit, and `process` when the
+process is full - one line for a full process, not one per account it turned away. A line at #100
+is a client that keeps asking.
+
+**Owed reading: the 1000 against a measured peak.** The limit was chosen, not measured. What the
+repository records today suggests roughly 250-350 live sockets at most, so 1000 leaves a wide
+margin; the number that settles it is the census peak of
+`GET /api/admin/presence/history?window=30d`, to be written here once read.
 
 Frame size and per-socket message rate have no limit of the gateway's own yet; the ceiling is to be
 measured before one is built.

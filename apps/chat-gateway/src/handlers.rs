@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         Query, State,
-        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -15,11 +15,7 @@ use std::sync::{
 use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, TokenRejection, decode_access_claims};
-use crate::state::AppState;
-
-/// The WebSocket close code "try again later" (RFC 6455 registry): what a socket past a
-/// connection limit is closed with.
-const CLOSE_TRY_AGAIN_LATER: u16 = 1013;
+use crate::state::{AdmissionRefusal, AppState};
 
 /// Heartbeat cadence: one WebSocket ping every this many seconds.
 const PING_INTERVAL_SECS: u64 = 15;
@@ -258,8 +254,40 @@ pub async fn ws_handler(
                 params.platform.as_deref(),
                 params.app_version.as_deref(),
             );
+            // THE PLACE IS TAKEN BEFORE THE UPGRADE (`AppState::admit`): counted and registered
+            // under the map lock, per account and for the process. A request past either limit is
+            // answered 503 and never upgraded, so the client's socket FAILS before it opens and
+            // its reconnection delay climbs; a socket opened and then closed would reset that
+            // delay on every attempt.
+            let conn_key = format!("{}:{}", claims.sub, device_id);
+            // A unique monotonic id, so the guard removes exactly this connection from the map.
+            let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = mpsc::channel::<String>(256);
+            match state.admit(&claims.sub, &conn_key, conn_id, tx.clone(), declared) {
+                Ok(active) => tracing::info!(
+                    "Registered connection key: {} (conn_id={}, {} active)",
+                    conn_key,
+                    conn_id,
+                    active
+                ),
+                Err(refusal) => return refuse_admission(&state, &claims.sub, &refusal),
+            }
+            // The guard travels INSIDE the upgrade callback: an upgrade that never completes drops
+            // the callback unrun, and the place with it.
+            let admitted = Admitted {
+                guard: ConnectionGuard {
+                    state: state.clone(),
+                    field: crate::addressing::session_field(&state.instance_id, conn_id),
+                    conn_key,
+                    conn_id,
+                },
+                tx,
+                rx,
+            };
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, claims.sub, device_id, declared, client)
+                handle_socket(
+                    socket, state, claims.sub, device_id, declared, client, admitted,
+                )
             })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
@@ -276,12 +304,49 @@ pub async fn ws_handler(
     }
 }
 
+/// A socket's place on this process, held from before its upgrade until its task ends.
+struct Admitted {
+    /// Frees the place when dropped, whether the socket ran or was never upgraded.
+    guard: ConnectionGuard,
+    /// The sender registered in `AppState::connected_users`.
+    tx: mpsc::Sender<String>,
+    /// Its receiver; a frame published between admission and upgrade waits here.
+    rx: mpsc::Receiver<String>,
+}
+
+/// The subject a full PROCESS is counted under: one line for it, not one per account it refused.
+const PROCESS_REFUSAL_SUBJECT: &str = "process";
+
+/// Answer a request `AppState::admit` refused: 503, before any upgrade.
+///
+/// Logged once per subject, then at each power of ten: a client that keeps asking is a RATE, and
+/// the count is what says so. The subject is the ACCOUNT for an account at its limit, and the
+/// process itself when the process is full.
+fn refuse_admission(state: &AppState, user_id: &str, refusal: &AdmissionRefusal) -> Response {
+    let subject = match refusal {
+        AdmissionRefusal::Account { .. } => user_id,
+        AdmissionRefusal::Process { .. } => PROCESS_REFUSAL_SUBJECT,
+    };
+    if let Some(n) = state.refused_admissions.hit(subject) {
+        tracing::warn!(
+            "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} for {}",
+            user_id,
+            refusal,
+            state.max_connections_per_account,
+            state.max_connections,
+            n,
+            subject
+        );
+    }
+    (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response()
+}
+
 // ── Socket lifecycle ──────────────────────────────────────────────────────
 
 /// Drive a single authenticated WebSocket connection.
 ///
 /// Responsibilities:
-/// - Registers the outbound sender in `AppState::connected_users`.
+/// - Receives its place already taken (`Admitted`, registered by `ws_handler` before the upgrade).
 /// - Sets (and periodically refreshes) the `user:online:{userId}:{deviceId}` Redis key.
 /// - Drains `pending_welcome_notify:{userId}` - welcome_request signals stored while
 ///   all group members were offline - and forwards them so this device can handle them.
@@ -296,6 +361,7 @@ async fn handle_socket(
     device_id: String,
     declared: crate::addressing::SessionCaps,
     client: crate::census::ClientKind,
+    admitted: Admitted,
 ) {
     tracing::info!(
         "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}, platform={}, version={}",
@@ -307,13 +373,15 @@ async fn handle_socket(
         client.version
     );
 
-    let (tx, mut rx) = mpsc::channel::<String>(256);
-    let conn_key = format!("{}:{}", user_id, device_id);
-
-    // Assign a unique monotonic ID to this connection so ConnectionGuard::drop
-    // can remove it from the map without relying on is_closed(), which has a
-    // race with abort() on the send task.
-    let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+    // The guard lives as long as this task: cleanup happens on every exit.
+    let Admitted {
+        guard: _guard,
+        tx,
+        mut rx,
+    } = admitted;
+    let conn_key = _guard.conn_key.clone();
+    let conn_id = _guard.conn_id;
+    let field = _guard.field.clone();
 
     // THE DUPLICATE-CONNECTION RULE: A NEW SOCKET FOR A DEVICE IS ADDED BESIDE ITS SIBLINGS, NEVER
     // REPLACES OR REFUSES THEM. Several sessions of one device id are legitimate - two tabs of one
@@ -322,54 +390,9 @@ async fn handle_socket(
     // this process could not see, let alone close, a sibling held by another. Replacing would also
     // turn two live tabs into a reconnect duel. What this rule costs: a socket its client forgot
     // keeps answering pings and keeps the device online, so the CLIENT owns releasing every socket
-    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count below is
-    // the reading that shows one.
-    //
-    // ADMISSION IS ONE STEP (`AppState::admit`): counted and registered under the map lock, per
-    // account and for the process. A socket past either limit is closed with 1013 ("try again
-    // later") and never registered, so nothing below runs for it and no guard is owed.
-    let mut socket = socket;
-    match state.admit(&user_id, &conn_key, conn_id, tx.clone(), declared) {
-        Ok(active) => tracing::info!(
-            "Registered connection key: {} (conn_id={}, {} active)",
-            conn_key,
-            conn_id,
-            active
-        ),
-        Err(refusal) => {
-            // One line per account, then at each power of ten: a client that keeps asking is a
-            // RATE, and the count is what says so.
-            if let Some(n) = state.refused_admissions.hit(&user_id) {
-                tracing::warn!(
-                    "[ws] socket REFUSED for {} ({:?}; limits {} per account, {} in all) - refusal #{} for this account",
-                    user_id,
-                    refusal,
-                    state.max_connections_per_account,
-                    state.max_connections,
-                    n
-                );
-            }
-            if let Err(e) = socket
-                .send(Message::Close(Some(CloseFrame {
-                    code: CLOSE_TRY_AGAIN_LATER,
-                    reason: "too many connections".into(),
-                })))
-                .await
-            {
-                tracing::debug!("[ws] refusal close not delivered to {}: {}", conn_key, e);
-            }
-            return;
-        }
-    }
+    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count is
+    // the reading that shows one, taken at admission (`ws_handler`).
     let (mut ws_sender, mut receiver) = socket.split();
-
-    let field = crate::addressing::session_field(&state.instance_id, conn_id);
-    let _guard = ConnectionGuard {
-        state: state.clone(),
-        conn_key: conn_key.clone(),
-        field: field.clone(),
-        conn_id,
-    };
 
     // Consecutive-pings-without-Pong counter. Incremented on each ping tick,
     // reset to zero as soon as a frame (Pong or Text) proves the client is responsive.
@@ -901,5 +924,145 @@ mod tests {
         // session end as normal is strictly worse than the noise this change removes.
         let foreign = axum::Error::new(std::io::Error::other("not a websocket error"));
         assert_eq!(classify_socket_error(&foreign), SocketEnd::Unreadable);
+    }
+
+    // ── Admission, as a client sees it ────────────────────────────────────
+
+    use super::{Admitted, ConnectionGuard, PROCESS_REFUSAL_SUBJECT, refuse_admission, ws_handler};
+    use crate::audience::PresenceAudience;
+    use crate::state::{AdmissionRefusal, AppState};
+    use axum::{Router, http::StatusCode, routing::get};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    const SECRET: &str = "test-secret";
+
+    /// An `AppState` with no I/O: `Client::open` only parses the URL.
+    fn state() -> AppState {
+        AppState::new(
+            redis::Client::open("redis://127.0.0.1:1/").unwrap(),
+            SECRET.to_string(),
+            PresenceAudience::new(String::new(), String::new(), String::new()),
+        )
+    }
+
+    /// An access token for `user`, signed with [`SECRET`].
+    fn token_of(user: &str) -> String {
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &crate::models::Claims {
+                sub: user.to_string(),
+                exp: 4_000_000_000,
+                kind: Some("access".to_string()),
+            },
+            &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    /// Serve `/api/ws` over `state` on a free local port; returns the socket URL of `user`'s
+    /// `device`.
+    async fn serve(state: Arc<AppState>) -> impl Fn(&str, &str) -> String {
+        let app = Router::new()
+            .route("/api/ws", get(ws_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        move |user: &str, device: &str| {
+            format!(
+                "ws://{addr}/api/ws?token={}&device_id={device}",
+                token_of(user)
+            )
+        }
+    }
+
+    /// THE REFUSAL IS AN HTTP ANSWER, NOT A SOCKET THAT OPENS AND CLOSES. A client resets its
+    /// reconnection delay when its socket OPENS, so a refusal delivered after the upgrade would be
+    /// asked again at the shortest delay, forever. Here the handshake itself fails.
+    #[tokio::test]
+    async fn a_request_past_the_limit_fails_before_the_socket_opens() {
+        let mut state = state();
+        state.max_connections_per_account = 1;
+        let state = Arc::new(state);
+        let url = serve(state.clone()).await;
+
+        let (_held, answer) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .expect("the first socket of the account opens");
+        assert_eq!(answer.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+        let refused = tokio_tungstenite::connect_async(url("user-1", "device-2")).await;
+
+        match refused {
+            Err(WsError::Http(answer)) => {
+                assert_eq!(answer.status(), StatusCode::SERVICE_UNAVAILABLE)
+            }
+            other => panic!("the handshake must fail with a 503, got {other:?}"),
+        }
+        assert!(
+            !state
+                .connected_users
+                .lock()
+                .unwrap()
+                .contains_key("user-1:device-2")
+        );
+
+        // Another account is not refused by the first one's limit.
+        tokio_tungstenite::connect_async(url("user-2", "device-1"))
+            .await
+            .expect("another account still opens a socket");
+    }
+
+    /// The place is held by the guard the upgrade callback owns: a callback dropped unrun (an
+    /// upgrade that never completed) gives it back.
+    #[tokio::test]
+    async fn a_place_whose_upgrade_never_ran_is_given_back() {
+        let state = Arc::new(state());
+        let (tx, rx) = mpsc::channel::<String>(1);
+        state
+            .admit(
+                "user-1",
+                "user-1:device-1",
+                7,
+                tx.clone(),
+                crate::addressing::SessionCaps::default(),
+            )
+            .unwrap();
+        let admitted = Admitted {
+            guard: ConnectionGuard {
+                state: state.clone(),
+                conn_key: "user-1:device-1".to_string(),
+                field: crate::addressing::session_field(&state.instance_id, 7),
+                conn_id: 7,
+            },
+            tx,
+            rx,
+        };
+
+        drop(admitted);
+
+        assert!(state.connected_users.lock().unwrap().is_empty());
+        assert!(!state.session_caps.lock().unwrap().contains_key(&7));
+    }
+
+    /// A full process says so ONCE, whatever the number of accounts it turns away; an account at
+    /// its own limit is counted under its own name.
+    #[test]
+    fn a_full_process_is_one_subject_and_an_account_is_its_own() {
+        let state = state();
+        let full = AdmissionRefusal::Process { held: 1_000 };
+
+        let first = refuse_admission(&state, "user-a", &full);
+        refuse_admission(&state, "user-b", &full);
+
+        assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // Two refusals already counted under the process: the third prints nothing.
+        assert_eq!(state.refused_admissions.hit(PROCESS_REFUSAL_SUBJECT), None);
+        // Neither account was counted.
+        assert_eq!(state.refused_admissions.hit("user-b"), Some(1));
+
+        refuse_admission(&state, "user-c", &AdmissionRefusal::Account { held: 32 });
+        assert_eq!(state.refused_admissions.hit("user-c"), None);
     }
 }

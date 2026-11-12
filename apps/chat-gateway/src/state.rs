@@ -9,13 +9,20 @@ use tokio::sync::mpsc;
 /// and stores senders here so it can push frames without holding the lock.
 type ConnectedUser = mpsc::Sender<String>;
 
-/// Live sockets this process holds at most, all accounts together.
+/// Live sockets this process holds at most, all accounts together. Not yet set against a measured
+/// peak: the census (`GET /api/admin/presence/history?window=30d`) is the reading owed, see
+/// `docs/wiki/services/chat-gateway.md`.
 pub const MAX_CONNECTIONS: usize = 1_000;
 
-/// Live sockets one ACCOUNT holds at most on this process, all its devices together. A person has
-/// a few devices and a few tabs; thirty-two leaves room for every one of them and for the overlap
-/// of their reconnections.
-pub const MAX_CONNECTIONS_PER_ACCOUNT: usize = 32;
+/// Devices one account may enrol: chat-delivery's `MAX_DEVICES_PER_USER`
+/// (`apps/chat-delivery-service/src/retention.constants.ts`), which is the source; this copy moves
+/// with it.
+pub const MAX_DEVICES_PER_ACCOUNT: usize = 15;
+
+/// Live sockets one ACCOUNT holds at most on this process, all its devices together: every device
+/// it may enrol with a socket AND the one that socket is replacing (a reconnection overlaps its
+/// predecessor's close), plus two for a second tab of a browser.
+pub const MAX_CONNECTIONS_PER_ACCOUNT: usize = 2 * MAX_DEVICES_PER_ACCOUNT + 2;
 
 /// Why [`AppState::admit`] did not register a socket. Each carries the count that decided.
 #[derive(Debug, PartialEq, Eq)]
