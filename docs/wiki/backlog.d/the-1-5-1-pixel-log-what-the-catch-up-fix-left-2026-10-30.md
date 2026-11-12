@@ -17,6 +17,11 @@ These are the lines of the same log that fix does NOT cover, each with its count
 - **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
   ([architecture](../frontend/architecture.md)) reached from the salon send path: a `$derived` read
   after its owner was destroyed. Name the component whose effect outlives the send first.
+  **Not reproduced on the web (2026-11-12, dev `1.6.11-alpha.1`):** the W1 rig profile sent three
+  messages in a community salon on desktop Chrome, and three more under mobile emulation (412x915,
+  touch, after a reload) before going back to the list. Its console was kept with stack traces and
+  checked to hear a warning. No `derived_inert` appeared, and no other warning or error. The Pixel's
+  lines came from the Android WebView, so the next reading is on the Mi 9T, at `alpha.2`.
 - **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
   600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
   rejection says why, read it from the log line before touching the code.
