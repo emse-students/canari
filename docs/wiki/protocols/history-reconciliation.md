@@ -228,12 +228,16 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
-  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
-  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
-  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
-  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
-  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
-  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
+  **The window is what the local collector enforces (owner, 2026-11-11: 5 years on a phone or
+  desktop app, 90 days in a browser).** The only local deletion is the garbage collector in
+  `ChatBackgroundService.svelte`, every 6 hours, and it calls `deleteOldMessages()` with no age: both
+  stores (`db/indexeddb.ts`, `db/sqlite.ts`) default it to `deviceWindowMs()`, so the window a device
+  claims and the one it keeps are one value (`db/retentionWindow.test.ts`: native keeps a
+  1-year-old message, a browser drops a 91-day-old one). Until then the collector deleted at 90 days
+  on every platform while native claimed 5 years (found 2026-10-22). **What it costs, accepted:** a
+  native store now grows past 90 days - storage on the phone, a heavier backup, a larger store for
+  cold queries, and a longer window of history at rest on a lost device. A native store holds
+  nothing older than 90 days on the day this ships, so the growth starts then.
 
 ### Completeness is asked from the requester's side
 
@@ -1712,7 +1716,7 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   are tens of kilobytes per conversation, and a clock would decide wrongly in both directions. Why
   200 per sender: a fifth of that, so at least five senders fill a conversation before the larger
   bound has anything to choose between;
-- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` also removes the entries whose
+- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` (the device window by default) also removes the entries whose
   FRAME is older than the same cutoff, on both backends. The frame's time is an upper bound on its
   target's, so the message such an entry waits for is older still, and would be collected the moment
   it arrived;

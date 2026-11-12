@@ -1534,6 +1534,33 @@ member as `new-person`. The server takes the report from a member of the group o
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
 
+**The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
+stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with
+nothing to remove - the lift by the accepted commit's `admits` is how every Add admits, and stays.
+
+**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
+every existing row to `false`, so a person who accepted a link before the deploy and had not entered
+yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
+`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+own external commit exactly as before the rule, and the members then report it:
+`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
+population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
+read-only on production, once, right after the deploy - each seat with no trace of an admission:
+
+```sql
+SELECT m."groupId", m."userId" FROM dm_group_members m
+WHERE NOT m."awaitingAdmission"
+  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
+                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
+                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
+```
+
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
+and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
+the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
+line after the floor is the rule failing. The list stays in the private operations notes with the
+deploy date; only this query and the rule live here.
+
 ### A device of a member is added, never asked about (2026-10-31)
 
 **The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un

@@ -1885,7 +1885,7 @@ serving `maxAspectRatio`, a bench account, the console for `[PUBLISH-QUEUE]`, `[
 **Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
 on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
 and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
-carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+carrying `multiMedia`, a bench account, at least two reels and one post of exactly one photo;
 the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
 `[reel-comments]` lines.
 
