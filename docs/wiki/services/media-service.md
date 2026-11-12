@@ -59,6 +59,11 @@ or `access` (a refresh token never stands in for an access token); a non-empty s
 payload that is not a JSON object is a 401 like the rest. Every access token core-service signs
 carries `exp` and `type: 'access'`.
 
+**A refusal is logged by the controller** (`verifyToken`): one `warn`,
+`[auth] request refused, 401: <the check that refused>`, never the token. Nest logs no
+`HttpException` and this service has no exception filter, so that line is all a 401 leaves here
+(`media.controller.refusal-log.spec.ts`).
+
 ### A load on the wire stays joinable, and the pool's URL is the one handed out (2026-10-05)
 
 **The report.** On the web, a picture the member had just SENT drew as its blurred ThumbHash with

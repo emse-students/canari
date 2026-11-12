@@ -201,18 +201,27 @@ export class MediaController {
   // Auth helper - reads the account of an ACCESS token (`subjectOfAccessToken`: the signature, an
   // expiry that is there and ahead, the type, the subject - the checks chat-gateway makes)
   // ---------------------------------------------------------------------------
+  //
+  // EVERY REFUSAL IS LOGGED HERE, with the check that refused. Nest logs no HttpException and this
+  // service has no exception filter, so without this line a 401 leaves nothing on the server. The
+  // token itself is never written.
   private verifyToken(req: Request): string {
-    const header = req.headers['authorization'] ?? '';
-    if (!header.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing Bearer token');
+    try {
+      const header = req.headers['authorization'] ?? '';
+      if (!header.startsWith('Bearer ')) {
+        throw new UnauthorizedException('Missing Bearer token');
+      }
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        throw new UnauthorizedException('JWT_SECRET not configured');
+      }
+      return subjectOfAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
+    } catch (err) {
+      if (err instanceof UnauthorizedException) {
+        this.logger.warn(`[auth] request refused, 401: ${err.message}`);
+      }
+      throw err;
     }
-    const token = header.slice(7);
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      throw new UnauthorizedException('JWT_SECRET not configured');
-    }
-
-    return subjectOfAccessToken(token, secret, Math.floor(Date.now() / 1000));
   }
 
   // ---------------------------------------------------------------------------

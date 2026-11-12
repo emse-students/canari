@@ -212,8 +212,10 @@ the token exchange and the userinfo read, and neither carries a bound of its own
   never answers ends for the browser whatever the service does;
 - a bound inside the service would therefore only free the service-side socket and its pending
   promise sooner - it changes what core-service HOLDS, not what the user waits;
-- no backend service bounds an outbound call today, so a bound here would be the first, and a
-  number chosen without a measurement is the kind of timer the standing rules refuse.
+- chat-delivery-service already bounds its outbound calls with `AbortSignal.timeout` (the push
+  senders, the device-session read, the GIF provider), so a bound here would not be a new kind of
+  thing; what is missing is the NUMBER, and one chosen without a measurement is the kind of timer
+  the standing rules refuse.
 
 **The question is what a hung provider costs core-service**, and it is not answered: how many
 callbacks can be pending at once, what each holds (a socket, a promise, nothing else?), and
