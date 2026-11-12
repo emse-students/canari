@@ -289,11 +289,6 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
-## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
-
-A production count of legacy tier tags without a consistent issuer is owed to the operator after
-the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
-
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
 **BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
@@ -336,6 +331,8 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   device that some route refuses. Holds today only because the provider's ids are 64-hex.
 - Owed: one shared shape for the user id and the device id, asserted by the minting side and every
   validator, rather than four regexes that agree by accident.
+
+**Plan (batch 15, 2026-11-12) - a count first, then one contract.** (1) A read-only count of user ids outside `^[a-zA-Z0-9_-]{1,64}$` on each estate (a column of `users`; the ids are not printed). (2) If 0: a `libs/contracts/user-id.json` like `device-id.json`, asserted by the mint rule (`core-service/src/users/user-id.ts`) and by every user-id validator's spec, and the device-id pattern derived from it. If not 0: the ids outside it are the decision, before any rule is tightened - the mint rule deliberately lets an older plain ASCII id keep signing in. No agent needed for (2).
 
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -861,18 +858,7 @@ directory). Owed: say what serialises two joins of one account into one key grou
 deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
 reproduces the pair. Not narrated: it stays dirt until fixed.
 
-## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
-
-`rosterReconcile.ts` logs `[GRAINE] could not remove N departed member(s) from ...: <error> - they
-can still read it` on every failure of its Remove. On dev `1.5.0-alpha.1` the failure was
-`concurrent_commit`. The line just before it in the same console says the commit log was read and the
-concurrent commit WAS that departure (`refused concurrent_commit at epoch 7: read the commit log, 1
-commit(s) applied, now epoch 8`, with the member gone from the tree). So the line states something
-false, and a reader told "they can still read it" is sent after a leak that did not happen. Owed:
-classify the refusal against the commit log the client just read. Say "still read it" only when the
-departed member's leaves are still in the tree after that read; say "removed by another member's
-commit" when the log already removed them. Never branch on the error's message: the outcome is a
-fact the caller already holds.
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Answer first, in the wiki, what serialises two external joins of ONE account into one key group: read the key-group join path (`graine/distributionGroup.ts` `ensureJoined`, the native `mobile/key_group_join.rs`, and the server gate of WP-KEYGROUP-JOIN-GATE in social-service). Expected shape of the fix: the second device of an account does not external-join while a sibling's join of the same group is in flight - it waits for that commit and joins from its base, or is added by the sibling - decided from a fact the server already holds (the sibling's claim), never a larger retry bound. Then re-run LIST-RACE-1-W on the rig and read no give-up line and no past-epoch application frame.
 
 ## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
 
@@ -1425,6 +1411,8 @@ docblock, which still calls the join's commit staged.
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
 
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Build in the order above, one pull request each, each mergeable alone. **PR0 first:** the host test that a pending external join survives a save and a reload and that dropping the group leaves the key store byte-identical (`mls-core` tests), and the corrected docblock of the external join, which still calls its commit staged. **PR1, the outbox:** one Rust module in the app crate owning both outbox files behind ONE OS file lock (`fs2`/`flock`, one descriptor per acquisition), atomic writes (temp file + rename), a claim before sealing and an incremental settle; the Android drain (`CanariFirebaseMessagingService.kt` `drainOutboxBackground`) and the app's flush call it instead of rewriting the files; tests: two writers interleaved never lose an entry, a claimed entry is sent once. **PR2, the job fence:** a session generation stamped at install (`initialiser_mls`) in the native slot, carried by every command, a typed refusal on mismatch (`state.rs` `live_manager`), with a test that a command of client A after B's install is refused. **PR3, the register:** `Vacant | Foreground | Parked` under the state-file write lock, written from the platform lifecycle callbacks (Android `onStart`/`onStop`, iOS scene phase) and re-read under the lock at every transition, in the lock order written above; a live call counts as visible. **PR4, the stages:** the background key-group join staged in the state file, hidden from listings until settled. Each PR writes its part of the design into the wiki page of the code it changes, and lists the Mi 9T rows (D1-D10) it owes. Do not build a reconcile of the file into the live manager, nor any of the variants REJECTED above.
+
 ## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
 
 Tauri can serialise an error object instead of a string: one `{ code, message }` type, decoded into
@@ -1450,6 +1438,8 @@ separately reviewed.**
 
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** Step 2 only, one pull request. Before moving any code: a test per marker PAIR of `classifyIncomingDecryptError` pinning today's decode order (`mlsDecryptError.ts`), green on main. Then move `MLS_MANAGER_ABSENT`, `EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:` and `UNRECOVERABLE:` to the typed `{ code, message }` of step 1, on BOTH crossings (Tauri and WASM, the `MlsError` Display in `mls-core/src/lib.rs`), decoded at the one `invoke` boundary; delete `isMlsManagerAbsent`'s prefix read and every `startsWith` on these markers. The interim two-convention note is deleted with it.
+
 ## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
 
 A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
@@ -1459,6 +1449,8 @@ makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" 
 broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
 stops the unlock with its own typed outcome instead of another lap
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+**Brief for an agent (batch 15, 2026-11-12; MLS and native - opus, adversarial review before each merge, every PR born `--draft`).** A durable count of consecutive failed rotations for this install (stored beside the MLS state, reset by the first success), and past a bound decided in the PR, the unlock answers its own typed outcome (a screen that says the device cannot renew its identity and offers sign-out) instead of another lap. Termination from that durable proof, never a clock. Tests: N failures stop the loop; one success resets the count; a count from another account is not read.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -1568,42 +1560,6 @@ A product's `customAmountMinCents` / `customAmountMaxCents` can be saved outside
   re-joined later shows the old text.
 
 [chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
-
-## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
-
-A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
-`CompleteUnlessOpen`, the app-side manifest's `Complete` - a locked read deletes nothing, and the
-unlock offers what the lock held back; Android keeps its credential-encrypted storage, with the
-reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
-[sharing](frontend/sharing.md) ("At rest", iOS path item 5). Nothing here compiles iOS, so the
-Swift, the Objective-C and the iOS-only Rust ride the next iOS build.
-
-**Owed on the iPhone, with a passcode set, waiting more than 10 s after each lock** (the key is
-discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and category `share`:
-
-1. Cold launch, unlocked: the `launch sweep:` line appears, and no `deferred` line (the sweep and
-   import no longer ask UIKit before it exists).
-2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
-   (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
-3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
-   the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
-   or handed over` (a refused protection or create must classify as locked, by its code) - the
-   share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
-   Seeing instead a refusal named `NSCocoaErrorDomain 513` WITHOUT an underlying POSIX error is the
-   outcome this reading exists to find, not a regression: Foundation then gave no code to classify
-   by. Record it here as measured, and the classification is redesigned from that fact.
-4. Unlock straight into Canari: the share is offered on the first activation.
-5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
-   and the locked push launch mounts the page: after the unlock it is offered with no new launch
-   (`a share waits (unlock), the page was told`).
-6. A large iCloud video, the phone locked during the capture: with nothing waiting, the share
-   survives; with an older share waiting, that one is not deleted and the new one is refused, said
-   on the extension's card and in its log. KEEP-OLD BY CHOICE: the locked older share cannot be
-   read, and the member was already told it is ready; the member sharing now is told of the
-   failure. The reasons, and the newest-wins alternative rejected, are in
-   [sharing](frontend/sharing.md) ("At rest"). The app side no longer meets this case while
-   locked: it consumes nothing until the unlock, where newest wins as usual.
-7. Sign out while locked, then unlock: the old share is dropped as stale.
 
 ## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
 
@@ -1759,6 +1715,8 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
 | LIVE-STALL-1, after the owner's "the viewer must not stall" (2026-10-29): the longest wait bounded from the deliveries' shape, and a wait of the engine's own with media ahead held, not seeked, within `LIVE_PLAYER_HELD_WAIT_BUDGET_MS` ([live](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); the rig judge imports the same constant | LIVE-STALL-1 rerun on the current pre-release, consoles kept: no viewer stall and no hold over the budget after the first delivery gap |
 | a key-group join reads its seat after the base it builds on (#2721), and a refused external join logs every attempt and gives up as `refused` only after its third logged refusal (`BaseMlsService.ts`, `externalJoin`: every other exit names its own reason) | SALON-REVOKE-COMMIT and RM-4, RM-4b, RM-5 rerun on the current pre-release with consoles kept: no `already held - redelivered Welcome ignored` line in either spelling (key group, conversation), and any `could not join ... (refused)` preceded by attempts 1/3, 2/3 and 3/3 |
+| a waiting share is locked with the device on iOS (built 2026-10-27; the mechanism and the seven steps are in [sharing](frontend/sharing.md), "At rest", iOS path item 5) | on the iPhone 12 with a passcode, waiting over 10 s after each lock, Console on `[CanariShare]` / `[SHARE]`: (1) cold launch, a `launch sweep:` line and no `deferred`; (2) a text and a photo, `moved copy protection = NSFileProtectionCompleteUnlessOpen`; (3) Canari killed, locked, a push: `locked with the device`, the share kept, no `dropped`/`unreadable` (a bare `NSCocoaErrorDomain 513` is a finding to record, not a regression); (4) unlock, offered at once; (5) already imported, offered with no new launch; (6) a large iCloud video locked mid-capture, the older share kept and the new one refused on the card; (7) sign-out while locked, the old share dropped as stale |
+| legacy tier tags without a consistent issuer ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)) | `tools/read-only-sql/tier-tags-without-a-consistent-issuer.sql`, read-only, on dev then production with the owner: 0 in every column closes it |
 
 ---
 
