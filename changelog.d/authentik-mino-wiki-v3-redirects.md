@@ -1,0 +1,1 @@
+- **MiConnect: MinoWiki's sign-in callbacks are Wiki.js 3's in the blueprint.** The `1.6.11` deploy re-applied the Wiki.js 2 callbacks over the live provider and `mino.emse.fr` refused sign-ins (400) until they were restored by hand ([mino-access](docs/wiki/infrastructure/mino-access.md)).
