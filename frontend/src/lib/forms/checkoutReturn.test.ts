@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { readPaymentOnReturnToApp, readPaymentReturnOnce } from './checkoutReturn';
+import {
+  createPaymentReader,
+  isConfirmUnreadableHere,
+  paymentReturnSubmissionId,
+  readPaymentReturnOnce,
+  watchReturnsToApp,
+} from './checkoutReturn';
 import type { PaymentRequestState } from './paymentReturn';
 
 type Answer = { paymentStatus: string; requestState?: PaymentRequestState };
@@ -18,9 +24,6 @@ function screen() {
     off,
   };
 }
-
-/** Lets the read's promise chain settle. */
-const settle = () => new Promise((done) => setTimeout(done, 0));
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -55,73 +58,74 @@ describe('readPaymentReturnOnce', () => {
   });
 });
 
-describe('readPaymentOnReturnToApp', () => {
-  it('reads nothing until the app comes back on screen, then once per return', async () => {
-    const s = screen();
-    const read = vi.fn(async () => ({ paymentStatus: 'pending' }));
-    const onOutcome = vi.fn();
-    readPaymentOnReturnToApp({ read, onOutcome, subscribe: s.subscribe });
-    expect(read).not.toHaveBeenCalled();
-
-    s.edge(false);
-    await settle();
-    expect(read).not.toHaveBeenCalled();
-
-    s.edge(true);
-    await settle();
-    expect(read).toHaveBeenCalledTimes(1);
-    expect(onOutcome).toHaveBeenLastCalledWith('pending', { paymentStatus: 'pending' });
-
-    s.edge(false);
-    s.edge(true);
-    await settle();
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not ask twice while a read is in flight', async () => {
-    const s = screen();
+describe('createPaymentReader', () => {
+  it('reads once at a time: a second ask while one is in flight answers null, asks nothing', async () => {
     let answer!: (a: Answer) => void;
     const read = vi.fn(() => new Promise<Answer>((done) => (answer = done)));
-    const onOutcome = vi.fn();
-    readPaymentOnReturnToApp({ read, onOutcome, subscribe: s.subscribe });
-    s.edge(true);
-    s.edge(true);
+    const reader = createPaymentReader(read);
+    const first = reader.readOnce();
+    await expect(reader.readOnce()).resolves.toBeNull();
     expect(read).toHaveBeenCalledTimes(1);
     answer({ paymentStatus: 'paid' });
-    await settle();
-    expect(onOutcome).toHaveBeenCalledExactlyOnceWith('confirmed', { paymentStatus: 'paid' });
+    await expect(first).resolves.toBe('confirmed');
+    // Free again once the read has answered.
+    read.mockResolvedValueOnce({ paymentStatus: 'pending' });
+    await expect(reader.readOnce()).resolves.toBe('pending');
   });
 
-  it('says nothing to a page that stopped watching, and unsubscribes', async () => {
-    const s = screen();
-    let answer!: (a: Answer) => void;
-    const read = vi.fn(() => new Promise<Answer>((done) => (answer = done)));
-    const onOutcome = vi.fn();
-    const stop = readPaymentOnReturnToApp({ read, onOutcome, subscribe: s.subscribe });
-    s.edge(true);
-    stop();
-    expect(s.off).toHaveBeenCalledTimes(1);
-    answer({ paymentStatus: 'paid' });
-    await settle();
-    expect(onOutcome).not.toHaveBeenCalled();
-  });
-
-  it('keeps pending on a failed read, says it, and asks again on the next return', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const s = screen();
+  it('frees itself after a failed read, which it throws', async () => {
     const read = vi
       .fn<() => Promise<Answer>>()
       .mockRejectedValueOnce(new TypeError('network'))
       .mockResolvedValueOnce({ paymentStatus: 'paid' });
-    const onOutcome = vi.fn();
-    readPaymentOnReturnToApp({ read, onOutcome, subscribe: s.subscribe });
+    const reader = createPaymentReader(read);
+    await expect(reader.readOnce()).rejects.toBeInstanceOf(TypeError);
+    await expect(reader.readOnce()).resolves.toBe('confirmed');
+  });
+});
+
+describe('watchReturnsToApp', () => {
+  it('calls back on each return to the screen, never on leaving it, until unsubscribed', () => {
+    const s = screen();
+    const onReturn = vi.fn();
+    const stop = watchReturnsToApp(onReturn, s.subscribe);
+    s.edge(false);
+    expect(onReturn).not.toHaveBeenCalled();
     s.edge(true);
-    await settle();
-    expect(onOutcome).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalled();
     s.edge(false);
     s.edge(true);
-    await settle();
-    expect(onOutcome).toHaveBeenCalledExactlyOnceWith('confirmed', { paymentStatus: 'paid' });
+    expect(onReturn).toHaveBeenCalledTimes(2);
+    stop();
+    expect(s.off).toHaveBeenCalledTimes(1);
+    s.edge(true);
+    expect(onReturn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('paymentReturnSubmissionId', () => {
+  it.each([
+    ['/forms/success?submission_id=s1', 's1'],
+    ['/forms/success/?submission_id=s1&transaction=AB', 's1'],
+    ['/forms/success', null],
+    ['/forms/successor?submission_id=s1', null],
+    ['/forms/f1', null],
+    ['', null],
+  ])('reads %s as %s', (returnTo, id) => {
+    expect(paymentReturnSubmissionId(returnTo)).toBe(id);
+  });
+});
+
+describe('isConfirmUnreadableHere', () => {
+  it.each([
+    [401, true],
+    [403, true],
+    [404, false],
+    [429, false],
+  ])('status %i -> %s', (status, unreadable) => {
+    expect(isConfirmUnreadableHere(new ApiRefusalError(status, null, 'x'))).toBe(unreadable);
+  });
+
+  it('a transport failure is not a refusal', () => {
+    expect(isConfirmUnreadableHere(new TypeError('network'))).toBe(false);
   });
 });

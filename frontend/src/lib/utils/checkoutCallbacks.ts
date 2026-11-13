@@ -26,6 +26,15 @@ function checkoutDeepLink(path: 'success' | 'cancel', query: string): string {
   return appDeepLink(`${CHECKOUT_RETURN_HOST}/${path}${q}`);
 }
 
+/**
+ * The app's own link to a form answer's payment return (`fr.emse.canari://payment/success`), for a
+ * page in a BROWSER offering "Ouvrir Canari": a tap is a gesture, which a redirect is not, so the
+ * system hands it to the app, whose router opens `/forms/success` on that answer.
+ */
+export function formPaymentReturnDeepLink(submissionId: string): string {
+  return checkoutDeepLink('success', `submission_id=${encodeURIComponent(submissionId)}`);
+}
+
 function webUrl(path: string): string {
   return publicAppUrl(path.startsWith('/') ? path : `/${path}`);
 }

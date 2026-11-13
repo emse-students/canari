@@ -5,7 +5,8 @@
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { pollPaymentReturn } from '$lib/forms/paymentReturnPoll';
-  import { isConfirmThrottled } from '$lib/forms/checkoutReturn';
+  import { isConfirmThrottled, isConfirmUnreadableHere } from '$lib/forms/checkoutReturn';
+  import { formPaymentReturnDeepLink } from '$lib/utils/checkoutCallbacks';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
@@ -20,7 +21,7 @@
    * reads at the navigation, is already "Paiement introuvable".
    */
   let status = $state<
-    'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'declined' | 'ended' | 'error'
+    'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'declined' | 'ended' | 'error' | 'handed'
   >(untrack(() => submissionId) ? 'loading' : 'error');
   let formId = $state<string | null>(null);
 
@@ -37,6 +38,7 @@
     declined: () => m.form_success_declined_heading(),
     ended: () => m.form_success_ended_heading(),
     error: () => m.form_success_not_found_heading(),
+    handed: () => m.form_payment_handed_heading(),
   };
   $effect(() => {
     setPageTitle(STATUS_TITLE[status]());
@@ -60,6 +62,15 @@
         // not a failure - the callback still decides, and the page says it is awaited.
         console.info('[forms/success] confirmation limit reached, waiting on the callback');
         status = 'pending';
+        return;
+      }
+      if (isConfirmUnreadableHere(err)) {
+        // This browser may not read the answer (the Android return left the payer in the phone's
+        // browser, signed in as someone else): nothing is known here, so nothing is accused.
+        console.info(
+          '[forms/success] the answer is not readable from this session, sent to the app'
+        );
+        status = 'handed';
         return;
       }
       console.error('[forms/success] could not read the submission:', err);
@@ -115,7 +126,9 @@
                   ? m.form_success_declined_desc()
                   : status === 'ended'
                     ? m.form_success_ended_desc()
-                    : m.form_success_not_found_desc()}
+                    : status === 'handed'
+                      ? m.form_payment_handed_desc()
+                      : m.form_success_not_found_desc()}
         </p>
       {/if}
     </div>
@@ -141,6 +154,13 @@
         class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"
       >
         {m.form_success_back_to_form()}
+      </a>
+    {:else if status === 'handed' && submissionId}
+      <a
+        href={formPaymentReturnDeepLink(submissionId)}
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+      >
+        {m.form_payment_open_canari()}
       </a>
     {:else if status === 'error'}
       <a

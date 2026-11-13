@@ -21,6 +21,12 @@
     showStoreBadges?: boolean;
     /** Where "Ouvrir dans l'application" goes (phone web visit with a claimed host); null hides it. */
     openInAppHref?: string | null;
+    /**
+     * The app's link to a form payment this login stands in front of (a payer the Android return
+     * left in the phone's browser): the page says where the payment went and offers the app. Null
+     * hides it.
+     */
+    paymentReturnHref?: string | null;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
@@ -36,6 +42,7 @@
     loginDisabled = false,
     showStoreBadges = false,
     openInAppHref = null,
+    paymentReturnHref = null,
     onLogin,
     onPasswordLogin,
   }: Props = $props();
@@ -79,6 +86,22 @@
         >
           <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{maintenanceNotice}</span>
+        </div>
+      {/if}
+
+      {#if paymentReturnHref}
+        <div
+          role="status"
+          data-payment-return
+          class="border-cn-border bg-cn-border/20 text-text-main rounded-xl border px-4 py-3 text-sm"
+        >
+          <p class="font-bold">{m.form_payment_handed_heading()}</p>
+          <p class="text-text-muted mt-1">{m.form_payment_handed_desc()}</p>
+          <a
+            href={paymentReturnHref}
+            class="text-accent-text mt-2 inline-block font-semibold underline"
+            >{m.form_payment_open_canari()}</a
+          >
         </div>
       {/if}
 

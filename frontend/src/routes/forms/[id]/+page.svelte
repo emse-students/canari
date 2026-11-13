@@ -5,7 +5,7 @@
   import { Log } from '$lib/utils/Log';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -31,7 +31,12 @@
     getAssociation,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import { readPaymentOnReturnToApp, readPaymentReturnOnce } from '$lib/forms/checkoutReturn';
+  import {
+    createPaymentReader,
+    watchReturnsToApp,
+    type PaymentReader,
+  } from '$lib/forms/checkoutReturn';
+  import { isMobileTauri } from '$lib/utils/checkoutCallbacks';
   import type { PaymentReturnOutcome } from '$lib/forms/paymentReturnPoll';
   import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -97,7 +102,7 @@
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
   const isNotOpenYet = $derived(!!opensLaterIso);
-  const reminder = useFormReminder(page.params.id ?? '');
+  const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
   let paymentPending = $state(false);
@@ -107,12 +112,21 @@
    */
   let paymentRetry = $state<'declined' | 'ended' | null>(null);
   /**
-   * The pending answer this page watches, and Lydia's payer page when THIS page handed the payer to
-   * it (null when the pending answer was found on load: the page never had its address). While set
-   * and pending, every return of the app to the screen reads the answer once
-   * (`readPaymentOnReturnToApp`).
+   * The pending answer this page watches: its reader, and Lydia's payer page when THIS page handed
+   * the payer to it (null when the pending answer was found on load: the page never had its
+   * address). While set and pending, every return of the app to the screen reads the answer once.
+   *
+   * RAW, AND ITS IDENTITY IS THE CHECKOUT'S GENERATION. A read answers about the checkout it was
+   * asked for: when it lands after the page moved on (the answer released by another read, then
+   * paid again under the SAME answer id), its checkout is no longer this one and it is dropped.
    */
-  let pendingCheckout = $state<{ submissionId: string; checkoutUrl: string | null } | null>(null);
+  let pendingCheckout = $state.raw<{
+    submissionId: string;
+    checkoutUrl: string | null;
+    reader: PaymentReader;
+  } | null>(null);
+  /** The phones only: a desktop window switch fires no return edge, so it is never promised there. */
+  const updatesOnReturn = isMobileTauri();
   /** The payment landed after the form filled up: final, and the organiser owes a refund. */
   let paidOverCapacity = $state(false);
   let formFull = $state(false);
@@ -253,7 +267,7 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
     void loadActivePaymentProvider();
     const savedUser = currentUserId();
     if (savedUser) {
@@ -267,15 +281,64 @@
         // apiFetch will retry on the first API call.
       });
     }
+  });
 
+  /** The form id the page last started loading: a load for any other id is stale. */
+  let loadedFormId: string | undefined;
+
+  /**
+   * ONE FORM PER LOAD. The route reuses this component from one form to the next (`/forms/A` to
+   * `/forms/B`), so everything a load or a checkout wrote about A is cleared before B is read.
+   */
+  function resetFormState(): void {
+    form = null;
+    selections = {};
+    submitted = false;
+    paymentPending = false;
+    paymentRetry = null;
+    pendingCheckout = null;
+    paidOverCapacity = false;
+    formFull = false;
+    pricing = null;
+    productGridPrices = {};
+    missingAnswer = null;
+    hiddenItemIds = [];
+    maySubmit = true;
+    cotisationHeld = false;
+    error = '';
+    successMessage = '';
+    successDetail = '';
+    askingPayerEmail = false;
+    linkedAgendaEvent = null;
+    agendaAssociationSlug = '';
+    revisionShown = false;
+    paymentMethodChoice = 'online';
+    reachedEnd = false;
+    qrOpen = false;
+    loading = true;
+  }
+
+  $effect(() => {
+    const id = formId;
+    untrack(() => {
+      if (id === loadedFormId) return;
+      Log.d('FormView', `loading form ${id ?? '(none)'}`);
+      loadedFormId = id;
+      resetFormState();
+      void loadForm(id);
+    });
+  });
+
+  async function loadForm(id: string | undefined): Promise<void> {
+    const stale = () => loadedFormId !== id;
     try {
-      const id = formId;
       if (!id) {
         error = m.form_view_not_found();
         loading = false;
         return;
       }
       const f = await getForm(id);
+      if (stale()) return;
       form = f;
       selections = initialSelections(f.items);
       // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
@@ -283,6 +346,7 @@
       // form's send - a respondent handed such a link answers as usual.
       if (isDraftForm(f) || page.url.searchParams.get(FORM_PREVIEW_PARAM) === '1') {
         const revision = await unpublishedRevision(f);
+        if (stale()) return;
         revisionShown = revision !== null;
         if (isPreview(f, revisionShown)) {
           // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's
@@ -320,6 +384,7 @@
         }),
         checkSubmission(f.id),
       ]);
+      if (stale()) return;
       linkedAgendaEvent = linked.linkedEvent;
       if (linked.linkedEvent) {
         void getAssociation(linked.linkedEvent.associationId)
@@ -353,8 +418,8 @@
       productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
-        pendingCheckout = { submissionId: submission.submissionId, checkoutUrl: null };
-        void settlePendingPayment(submission.submissionId);
+        watchCheckout(submission.submissionId, null);
+        void readPending('load');
       }
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
@@ -363,21 +428,23 @@
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
+          if (stale()) return;
           if (sub?.answers) selections = selectionsFromAnswers(f.items, sub.answers);
         } catch {
           // ignore
         }
       }
     } catch (e: any) {
+      if (stale()) return;
       error =
         e instanceof FormNotFoundError
           ? m.form_view_not_found()
           : (describeApiRefusal(refusalStatus(e), m.form_view_load_action()) ??
             m.form_view_load_error());
     } finally {
-      loading = false;
+      if (!stale()) loading = false;
     }
-  });
+  }
 
   /**
    * Questions that pass their display check.
@@ -440,52 +507,83 @@
   /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
   const uploadingFiles = new SvelteSet<string>();
 
-  /**
-   * A pending answer is asked about ONCE on load: a payer who declined on Lydia's page gets no
-   * callback and no link back, so this read is what releases the answer (the server reads the
-   * request and releases it when it is declined, cancelled or expired). Before it, the page said
-   * "pending" with no button for up to 30 minutes.
-   */
-  async function settlePendingPayment(submissionId: string) {
-    try {
-      await applyPaymentOutcome(
-        await readPaymentReturnOnce(() => confirmSubmissionPayment(submissionId))
-      );
-    } catch (err) {
-      console.warn('[FormView] could not read the pending answer:', err);
-    }
+  /** Starts watching a pending answer: a new checkout, so a new reader (its generation). */
+  function watchCheckout(submissionId: string, checkoutUrl: string | null): void {
+    Log.d(
+      'FormView',
+      `watching the pending answer (${checkoutUrl ? 'handed to Lydia here' : 'found on load'})`
+    );
+    pendingCheckout = {
+      submissionId,
+      checkoutUrl,
+      reader: createPaymentReader(() => confirmSubmissionPayment(submissionId)),
+    };
   }
 
   /**
-   * What one read of the pending answer changes on the page - on load, and on every return of the
-   * app to the screen. Worded as the return page words it (`/forms/success`): paid is said as a
-   * confirmed payment, a dead request releases the answer and the pay button is the retry, and
-   * anything that can still change keeps "pending" with the way back to Lydia's page.
+   * ONE read of the pending answer, through its checkout's reader: on load, on each return of the
+   * app to the screen, and on "Vérifier le paiement". A pending answer is asked about on load because
+   * a payer who declined on Lydia's page gets no callback and no link back, so this read is what
+   * releases the answer. One read at a time across the three (`readOnce` answers null while one is
+   * in flight), and an outcome whose checkout is no longer the page's is dropped.
+   */
+  async function readPending(why: 'load' | 'return' | 'tap'): Promise<void> {
+    const checkout = pendingCheckout;
+    if (!checkout || !paymentPending) return;
+    Log.d('FormView', `pending answer read (${why})`);
+    let outcome: PaymentReturnOutcome | null;
+    try {
+      outcome = await checkout.reader.readOnce();
+    } catch (err) {
+      // Unknown is not a verdict: the page keeps "pending", and the next return asks again.
+      console.warn(
+        `[FormView] could not read the pending answer (${why}) status=${refusalStatus(err) ?? 'transport'}`,
+        err
+      );
+      return;
+    }
+    if (outcome === null) return;
+    if (pendingCheckout !== checkout) {
+      Log.d('FormView', `pending answer read (${why}) answered a checkout that ended, dropped`);
+      return;
+    }
+    await applyPaymentOutcome(outcome);
+  }
+
+  /**
+   * What one read of the pending answer changes on the page. Worded as the return page words it
+   * (`/forms/success`): paid is said as a confirmed payment, a dead request releases the answer and
+   * the pay button is the retry, and anything that can still change keeps "pending" with the way
+   * back to Lydia's page.
    */
   async function applyPaymentOutcome(outcome: PaymentReturnOutcome): Promise<void> {
     Log.d('FormView', `pending answer outcome: ${outcome}`);
-    if (!paymentPending) return;
+    if (outcome === 'pending') return;
+    const formShown = form?.id;
+    paymentPending = false;
+    pendingCheckout = null;
     if (outcome === 'confirmed') {
-      paymentPending = false;
-      pendingCheckout = null;
       submitted = true;
       successMessage = m.form_success_confirmed_heading();
       successDetail = m.form_success_confirmed_desc();
     } else if (outcome === 'overCapacity') {
-      paymentPending = false;
-      pendingCheckout = null;
       submitted = true;
       paidOverCapacity = true;
-    } else if (outcome === 'declined' || outcome === 'ended') {
-      paymentRetry = outcome;
-      paymentPending = false;
-      pendingCheckout = null;
-      submitted = false;
+    } else {
+      if (outcome === 'declined' || outcome === 'ended') {
+        paymentRetry = outcome;
+        submitted = false;
+      } else {
+        // A final state that is neither paid nor a dead request (cancelled elsewhere): the
+        // in-progress block goes, and the server's own answer says whether this person answered.
+        Log.d('FormView', 'the pending answer read a final unpaid state, the answer is re-read');
+      }
+      if (!formShown) return;
       // The released answer gave its seat back: "full" was counted with it.
-      if (form) formFull = (await checkSubmission(form.id)).formFull;
-    } else if (outcome === 'error') {
-      // A final state that is neither paid nor a dead request: nothing to offer, said in the log.
-      console.warn('[FormView] the pending answer read a final unpaid state, left as it was');
+      const check = await checkSubmission(formShown);
+      if (form?.id !== formShown) return;
+      formFull = check.formFull;
+      if (outcome === 'error') submitted = check.hasSubmitted;
     }
   }
 
@@ -503,15 +601,11 @@
   // While an answer is pending, each return of the app to the screen reads it once - the payer
   // confirms on Lydia's page or in the Lydia app and comes back BY HAND, so no return URL is relied on.
   $effect(() => {
-    const id = paymentPending ? pendingCheckout?.submissionId : undefined;
-    if (!id) return;
-    return readPaymentOnReturnToApp({
-      read: () => confirmSubmissionPayment(id),
-      onOutcome: (outcome) => {
-        applyPaymentOutcome(outcome).catch((err: unknown) =>
-          console.warn('[FormView] applying the payment read failed:', err)
-        );
-      },
+    if (!paymentPending || !pendingCheckout) return;
+    return watchReturnsToApp(() => {
+      readPending('return').catch((err: unknown) =>
+        console.warn('[FormView] applying the payment read failed:', err)
+      );
     });
   });
 
@@ -586,7 +680,7 @@
           paymentRetry = null;
           submitted = true;
           paymentPending = true;
-          pendingCheckout = { submissionId: res.submissionId, checkoutUrl: res.checkoutUrl };
+          watchCheckout(res.submissionId, res.checkoutUrl);
         } else {
           console.warn('[FormView] a checkout came back without its submission id');
         }
@@ -1057,11 +1151,20 @@
       <!-- This page handed the payer to Lydia: they come back by hand, and the page reads on return. -->
       <div class="mt-2 flex flex-col items-center gap-2" role="status" data-payment-in-progress>
         <p class="text-amber-warn-text text-center text-sm font-medium">
-          {m.form_view_payment_in_progress_note()}
+          {updatesOnReturn
+            ? m.form_view_payment_in_progress_note()
+            : m.form_view_payment_in_progress_note_desktop()}
         </p>
-        <Button variant="secondary" onclick={() => void reopenCheckout()}>
-          {m.form_view_payment_reopen()}
-        </Button>
+        <div class="flex flex-wrap justify-center gap-2">
+          <Button variant="secondary" onclick={() => void reopenCheckout()}>
+            {m.form_view_payment_reopen()}
+          </Button>
+          {#if !updatesOnReturn}
+            <Button variant="secondary" onclick={() => void readPending('tap')}>
+              {m.form_view_payment_check()}
+            </Button>
+          {/if}
+        </div>
       </div>
     {:else if paymentPending}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium">
