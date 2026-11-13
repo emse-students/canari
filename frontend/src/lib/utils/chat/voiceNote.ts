@@ -1,4 +1,5 @@
-import type { MediaRef } from '$lib/media';
+import type { MediaRef, PendingMediaFile } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /**
  * The name the composer's recorder generates, and the ONLY evidence a message sent before
@@ -46,4 +47,17 @@ const RECORDER_FILE_NAME = /^vocal_\d+\.(?:m4a|ogg|wav|webm)$/i;
 export function isVoiceNote(media: Pick<MediaRef, 'type' | 'voiceNote' | 'fileName'>): boolean {
   if (media.voiceNote !== undefined) return media.voiceNote;
   return media.type === 'audio' && RECORDER_FILE_NAME.test(media.fileName ?? '');
+}
+
+/**
+ * The pending entry a RECORDING is sent as: declared a voice note (see {@link isVoiceNote}) and
+ * carrying its measured sound when there is one (`MediaRef.loudness`, `recordingLoudness.ts`), so
+ * the reader's player brings it to the same loudness as every other note. `null` - not decodable
+ * here, or silence - sends it unmeasured, which plays exactly as every note before this did.
+ */
+export function voiceNoteEntry(
+  prepared: PendingMediaFile,
+  loudness: MediaLoudness | null
+): PendingMediaFile {
+  return { ...prepared, voiceNote: true, ...(loudness ? { loudness } : {}) };
 }

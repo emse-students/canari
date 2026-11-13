@@ -26,7 +26,7 @@ const FUTURE = new Date(NOW + 60_000);
 interface Row {
   id: string;
   authorId: string;
-  kind: 'post' | 'reel';
+  kind: 'post' | 'reel' | 'replay';
   expiresAt: Date | null;
   images: Array<{ mediaId: string }>;
   comments: Array<{ id: string; userId: string; media?: { mediaId: string } }>;
@@ -67,7 +67,7 @@ function makeWorld(initial: {
           posts
             .filter(
               (p) =>
-                p.kind === 'reel' &&
+                (p.kind === 'reel' || p.kind === 'replay') &&
                 p.expiresAt !== null &&
                 p.expiresAt.getTime() <= NOW &&
                 !kept.includes(p.id)
@@ -81,12 +81,14 @@ function makeWorld(initial: {
         notifications = notifications.filter((n) => n.postId !== params[0]);
         return Promise.resolve([[], 0]);
       }
-      if (/^DELETE FROM posts WHERE id = \$1 AND kind = 'reel'/i.test(statement.trim())) {
+      if (
+        /^DELETE FROM posts WHERE id = \$1 AND kind IN \('reel', 'replay'\)/i.test(statement.trim())
+      ) {
         // The clause the allowlist lives in: evaluated, not assumed.
         const i = posts.findIndex(
           (p) =>
             p.id === params[0] &&
-            p.kind === 'reel' &&
+            (p.kind === 'reel' || p.kind === 'replay') &&
             p.expiresAt !== null &&
             p.expiresAt.getTime() <= NOW
         );
@@ -290,6 +292,23 @@ describe('ReelRetentionScheduler - a non-reel post is never touched', () => {
     expect([...world.blobs.keys()].sort()).toEqual(['blob-live', 'blob-p1', 'blob-p2']);
     // Not one blob of a non-reel was even NAMED to the media service.
     expect(world.purgeCalls.flat().map((i) => i.mediaId)).toEqual(['blob-due']);
+  });
+
+  it('deletes a LIVE REPLAY past its three days by the same path, and leaves one still showing (docs/wiki/live-replays.md)', async () => {
+    // A replay carries no `images` of its own (its media are the live's segments, which the live
+    // sweep purges once this row is gone); its comments' media go here like a reel's.
+    const world = makeWorld({
+      posts: [
+        { ...reel('gone', { kind: 'replay', images: [] }) },
+        { ...reel('showing', { kind: 'replay', expiresAt: FUTURE, images: [] }) },
+      ],
+      blobs: {},
+    });
+
+    const report = await world.scheduler.purgeOnce();
+
+    expect(report).toMatchObject({ due: 1, deleted: 1, failed: 0 });
+    expect(world.posts.map((p) => p.id)).toEqual(['showing']);
   });
 
   it('cannot delete a non-reel even if its id is handed to the row delete', async () => {

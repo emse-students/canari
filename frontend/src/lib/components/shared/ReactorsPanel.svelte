@@ -133,7 +133,7 @@
     role="tooltip"
     {id}
   >
-    <p class="text-2xs mb-1.5 font-bold tracking-wide text-white/60 uppercase">
+    <p class="text-2xs mb-1.5 font-bold text-white/60">
       <EmojiText text={emoji} />{#if label}&nbsp;{label}{/if}
     </p>
     {#if names.size > 0}

@@ -167,9 +167,23 @@ describe('the error page for an answer that is not a crash', () => {
     mounted.push(() => void unmount(app));
     flushSync();
     expect(target.textContent).toContain('404');
-    expect(target.textContent).toContain('Not Found');
+    expect(target.textContent).toContain(m.error_not_found_message());
+    // Kit's English status text is never printed raw under a localized button.
+    expect(target.textContent).not.toContain('Not Found');
     const buttons = [...target.querySelectorAll('button')];
     expect(buttons.map((b) => b.textContent?.trim())).toEqual([m.error_back_home()]);
+  });
+
+  it('any other 4xx gets the generic localized line, never the raw message', () => {
+    state.page.status = 403;
+    state.page.error = { status: 403, message: 'Forbidden' };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ErrorPage, { target });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    expect(target.textContent).toContain(m.error_unexpected_message());
+    expect(target.textContent).not.toContain('Forbidden');
   });
 });
 

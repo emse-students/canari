@@ -69,6 +69,7 @@ describe('ChatGroupPanel notification level', () => {
   it('checks the level the server stated for this conversation', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: { [G]: 'mentions' },
       groupCalls: {},
     });
@@ -88,6 +89,7 @@ describe('ChatGroupPanel notification level', () => {
   it('writes a choice for this conversation', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -102,6 +104,7 @@ describe('ChatGroupPanel notification level', () => {
   it('says so, and puts the level back, when the server refuses the choice', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -121,12 +124,14 @@ describe('ChatGroupPanel notification level', () => {
   it('re-reads the levels at every opening, so a change made on another device shows', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
     await notificationPreferences.load();
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: { [G]: 'none' },
       groupCalls: {},
     });

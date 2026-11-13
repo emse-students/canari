@@ -364,3 +364,15 @@ describe('doubleTapLike', () => {
     expect(onLink.defaultPrevented).toBe(false);
   });
 });
+
+describe('the surface says whether it likes', () => {
+  it('carries `data-double-tap-likes` while on, for a video player inside to read', () => {
+    const { node, action } = surface();
+    expect(node.hasAttribute('data-double-tap-likes')).toBe(true);
+    action.update({ onDoubleTap: () => {}, enabled: false });
+    expect(node.hasAttribute('data-double-tap-likes')).toBe(false);
+    action.update({ onDoubleTap: () => {} });
+    action.destroy();
+    expect(node.hasAttribute('data-double-tap-likes')).toBe(false);
+  });
+});

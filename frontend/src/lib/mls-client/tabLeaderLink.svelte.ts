@@ -13,7 +13,11 @@
  * next change or the follower's next query.
  */
 import { currentUserId } from '$lib/stores/userState.svelte';
-import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import {
+  getIsTabLeader,
+  getTabLeadership,
+  whenTabLeadershipDecided,
+} from '$lib/mls-client/tabLeader';
 
 const CHANNEL = 'canari-tab-messages';
 
@@ -27,6 +31,8 @@ let leaderConnected = $state<boolean | null>(null);
 let channel: BroadcastChannel | null = null;
 /** The leader's own socket state, kept so a query can be answered. */
 let ownConnected = false;
+/** The teardown of the one running link, `null` before the first start. */
+let started: (() => void) | null = null;
 
 function ensureChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === 'undefined') return null;
@@ -34,9 +40,12 @@ function ensureChannel(): BroadcastChannel | null {
   return channel;
 }
 
-/** Whether a follower tab's leader reports an open socket (false until one answers). */
-export function leaderSocketConnected(): boolean {
-  return leaderConnected === true;
+/**
+ * Whether the leader EXPLICITLY said it has no open socket. Null (no answer yet, or another account's)
+ * is UNKNOWN and is not this: a follower tab shows nothing wrong before its leader has spoken.
+ */
+export function leaderReportsNoSocket(): boolean {
+  return leaderConnected === false;
 }
 
 /**
@@ -65,11 +74,39 @@ export function handleLeaderLinkEvent(event: TabLeaderLinkEvent): void {
 }
 
 /**
- * Starts listening and asks the leader for its state, once per document. A tab that is the leader
- * ignores the answers; a follower records them. The query goes out whatever the role, since the
- * election may not have decided yet - only a leader answers it.
+ * Says where this tab stands, once the two facts that make the message meaningful are known: WHO the
+ * account is (every event is stamped with it and a receiver drops another account's) and WHICH side
+ * of the election this tab is on. A follower asks the leader; the leader publishes its socket, so a
+ * follower whose query it could not answer (its own account was not known yet) still hears it.
+ */
+function announce(): void {
+  const account = currentUserId();
+  if (!account || getTabLeadership() === 'undecided') return;
+  if (getIsTabLeader()) {
+    publishLeaderLink(ownConnected);
+    return;
+  }
+  console.debug('[TAB] leader link asked');
+  ensureChannel()?.postMessage({
+    type: 'leader_link_query',
+    account,
+  } satisfies TabLeaderLinkEvent);
+}
+
+/**
+ * Starts listening, once per document. A tab that is the leader ignores the answers; a follower
+ * records them.
+ *
+ * THE QUERY MUST NOT OUTRUN THE ACCOUNT (a second tab read "Hors-ligne" while the account was
+ * online): this ran at module start with `currentUserId() ?? ''`, before the user id was known, and
+ * the leader dropped it as another account's - so no answer ever came until its socket changed.
+ * {@link announce} now runs when the account becomes known AND when the election is decided, in
+ * whichever order those happen.
  */
 export function startLeaderLink(): () => void {
+  // ONCE PER DOCUMENT: every session creation calls this and discards the teardown, so without the
+  // guard each one added an effect and a listener.
+  if (started) return started;
   const ch = ensureChannel();
   if (!ch) return () => {};
   const onMessage = (ev: MessageEvent<TabLeaderLinkEvent>) => {
@@ -77,15 +114,38 @@ export function startLeaderLink(): () => void {
     if (t === 'leader_link' || t === 'leader_link_query') handleLeaderLinkEvent(ev.data);
   };
   ch.addEventListener('message', onMessage);
-  ch.postMessage({
-    type: 'leader_link_query',
-    account: currentUserId() ?? '',
-  } satisfies TabLeaderLinkEvent);
-  return () => ch.removeEventListener('message', onMessage);
+  let lastAccount: string | null | undefined;
+  const stopEffect = $effect.root(() => {
+    $effect(() => {
+      const account = currentUserId();
+      // A last answer belongs to the account it was given for: never carried to another one.
+      if (lastAccount !== undefined && account !== lastAccount) leaderConnected = null;
+      lastAccount = account;
+      // The role is read inside `announce` once decided.
+      if (account) announce();
+    });
+  });
+  void whenTabLeadershipDecided().then(announce);
+  started = () => {
+    stopEffect();
+    ch.removeEventListener('message', onMessage);
+    started = null;
+  };
+  return started;
+}
+
+/**
+ * This tab's role changed (promotion or demotion): forget the last leader's answer - a follower
+ * must never keep a dead leader's "connected" - and say where the tab stands now.
+ */
+export function leadershipChanged(): void {
+  leaderConnected = null;
+  announce();
 }
 
 /** Test seam: back to a document no leader has answered. */
 export function resetLeaderLinkForTests(): void {
+  started?.();
   leaderConnected = null;
   ownConnected = false;
 }

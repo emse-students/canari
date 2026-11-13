@@ -1,5 +1,5 @@
+import { intlLocale } from '$lib/utils/intlLocale';
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
 import { priceRange, type PriceMatrix } from '$lib/pricing/priceMatrix';
 
 /**
@@ -21,7 +21,7 @@ export interface FormSummaryInput {
 
 /** Euros, in the reader's locale, with no trailing zeros to read past. */
 function euros(value: number): string {
-  return value.toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+  return value.toLocaleString(intlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
@@ -48,10 +48,7 @@ function priceLabel(input: FormSummaryInput): string | null {
 }
 
 export function formSummary(input: FormSummaryInput): string {
-  const questions =
-    input.questionCount === 1
-      ? m.form_questions_count_one()
-      : m.form_questions_count({ count: input.questionCount });
+  const questions = m.form_questions_count({ count: input.questionCount });
   const price = priceLabel(input);
   return price ? `${questions} · ${price}` : questions;
 }

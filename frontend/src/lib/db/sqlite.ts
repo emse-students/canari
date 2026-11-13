@@ -1,14 +1,16 @@
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { deviceWindowMs, parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
 } from '$lib/utils/chat/historyStateKey';
-import { parseReadWatermarks } from '$lib/utils/chat/readState';
+import { parseLocalReadSeed, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { OutboxEntryWrittenAloneError } from '$lib/utils/chat/messageWrittenError';
 import type {
+  MergeMessagesOptions,
+  MessageRowStanding,
   ConversationMeta,
   EncryptedGraineRow,
   EncryptedMessageRow,
@@ -79,6 +81,9 @@ import {
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
+  conversationLocalReadSeedStatement,
+  CONVERSATION_LOCAL_READ_SEED_VALUE,
+  CONVERSATION_LOCAL_READ_SEED_FILL,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   LEGACY_MESSAGE_TIME_INDEX_DROP,
@@ -89,6 +94,7 @@ import {
   messageOrderColumnsStatements,
   messageRevisionStatement,
   outboxServerErrorsStatement,
+  outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
 import {
   compareStoredOrder,
@@ -263,7 +269,8 @@ export class SqliteStorage implements IStorage {
                 image_media_id   TEXT,
                 awaiting_admission INTEGER,
                 server_read_watermarks TEXT,
-                started_at       INTEGER
+                started_at       INTEGER,
+                local_read_seed  INTEGER
             )
         `);
 
@@ -308,6 +315,7 @@ export class SqliteStorage implements IStorage {
                 last_attempt_at INTEGER,
                 next_attempt_at INTEGER,
                 server_errors   INTEGER DEFAULT 0,
+                unavailable_answers INTEGER DEFAULT 0,
                 created_at      INTEGER,
                 iv              TEXT,
                 cipher_text     TEXT
@@ -602,6 +610,33 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 18');
     }
 
+    if (currentVersion < 19) {
+      // v18->v19: the outbox row counts its "not now" answers (`unavailable_answers`, 502/503/504),
+      // so a withdrawal after a reload still knows the frame may have been stored, and the bound on
+      // a text answered only "not now" holds across reloads. Additive and 0 on arrival.
+      const cols: any[] = await this.db.select('PRAGMA table_info(outbox)');
+      const add = outboxUnavailableAnswersStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 19, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 19');
+    }
+
+    if (currentVersion < 20) {
+      // v19->v20: the conversation gains `local_read_seed`, the upgrade's one-time LOCAL read point
+      // (`ConversationMeta.localReadSeed`), and every row gets it HERE, per row, from its own stored
+      // messages - before `init` resolves, so before anything this boot delivers can be stored
+      // (`CONVERSATION_LOCAL_READ_SEED_FILL`). Idempotent: it fills only what is still NULL.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const add = conversationLocalReadSeedStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      const filled = await this.db.execute(CONVERSATION_LOCAL_READ_SEED_FILL);
+      console.info(
+        `[SQLITE] Migration v19->v20: local read seed written on ${filled?.rowsAffected ?? '?'} conversation(s)`
+      );
+      // Stamped at 20, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 20');
+    }
+
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
     // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
@@ -616,7 +651,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+        CONVERSATION_LOCAL_READ_SEED_VALUE +
+        ')',
       [
         conv.id,
         conv.name,
@@ -628,6 +665,7 @@ export class SqliteStorage implements IStorage {
         conv.awaitingAdmission === true ? 1 : 0,
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
         conv.startedAt ?? null,
+        typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
       ]
     );
   }
@@ -652,6 +690,8 @@ export class SqliteStorage implements IStorage {
       awaitingAdmission: Number(r.awaiting_admission) === 1,
       // INTEGER, so a string on Android too; absent or unusable reads as unknown.
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
+      // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
+      localReadSeed: parseLocalReadSeed(r.local_read_seed),
     };
   }
 
@@ -810,9 +850,17 @@ export class SqliteStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts: MergeMessagesOptions = {}
   ): Promise<Set<string>> {
-    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+    return casMergeMessages(
+      this.revisedRows(),
+      conversationId,
+      ids,
+      merge,
+      deviceKeyB64,
+      opts.foreignExpected === true
+    );
   }
 
   /**
@@ -822,8 +870,12 @@ export class SqliteStorage implements IStorage {
    */
   private revisedRows() {
     return {
-      read: (conversationId: string | null, ids: readonly string[], deviceKeyB64: string) =>
-        this.readRows(conversationId, ids, deviceKeyB64),
+      read: (
+        conversationId: string | null,
+        ids: readonly string[],
+        deviceKeyB64: string,
+        foreignExpected: boolean
+      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
       writeIfUnchanged: async (
         conversationId: string | null,
         writes: ReadonlyArray<RevisedWrite>,
@@ -859,12 +911,14 @@ export class SqliteStorage implements IStorage {
 
   /**
    * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn.
+   * a row of another conversation is never opened, and is said at warn unless the caller handles it
+   * (`foreignExpected`).
    */
   private async readRows(
     conversationId: string | null,
     ids: readonly string[],
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    foreignExpected = false
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
@@ -876,6 +930,7 @@ export class SqliteStorage implements IStorage {
       );
       for (const row of rows) {
         if (conversationId !== null && row.conversation_id !== conversationId) {
+          if (foreignExpected) continue;
           console.warn(
             `[DB] ${String(row.id).slice(0, 8)} is a message of another conversation than ${conversationId.slice(0, 8)}... - read as absent there`
           );
@@ -906,6 +961,25 @@ export class SqliteStorage implements IStorage {
       }
     }
     return out;
+  }
+
+  /** See {@link IStorage.getMessageStanding}: one row by primary key, one open, nothing said. */
+  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+    const rows: any[] = await this.db.select(
+      'SELECT conversation_id, iv, cipher_text FROM messages WHERE id = $1',
+      [id]
+    );
+    if (rows.length === 0) return { kind: 'absent' };
+    const row = rows[0];
+    try {
+      await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
+    } catch (e) {
+      if (e instanceof PayloadUnreadableError) {
+        return { kind: 'unreadable', conversationId: row.conversation_id };
+      }
+      throw e;
+    }
+    return { kind: 'readable', conversationId: row.conversation_id };
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
@@ -1152,6 +1226,26 @@ export class SqliteStorage implements IStorage {
         );
         out.removedUnreadable += removed?.rowsAffected ?? 0;
       }
+    }
+    return out;
+  }
+
+  /**
+   * See {@link IStorage.getPendingMutationsOf}: every row of the conversation, opened; one that does
+   * not open is left as it is - it may be under another key (a reseal in flight).
+   */
+  async getPendingMutationsOf(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM pending_mutations WHERE conversation_id = $1',
+      [conversationId]
+    );
+    const out: PendingMutationRead = { entries: [], removedUnreadable: 0 };
+    for (const row of rows) {
+      const entry = await openPendingRow(row, deviceKeyB64);
+      if (entry) out.entries.push(entry);
     }
     return out;
   }
@@ -1411,7 +1505,9 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+      // An imported row keeps the seed state it was exported with; one from before the column is
+      // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
       [
         conv.id,
         conv.name,
@@ -1423,6 +1519,7 @@ export class SqliteStorage implements IStorage {
         conv.awaitingAdmission === true ? 1 : 0,
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
         conv.startedAt ?? null,
+        typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
       ]
     );
   }
@@ -1444,8 +1541,9 @@ export class SqliteStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
-  /** Delete messages older than `maxAgeMs` milliseconds using a single DELETE statement; returns the number of affected rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+  /** Delete messages older than `maxAgeMs` milliseconds (this device's window, `deviceWindowMs()`, unless a caller names another) using a single DELETE statement; returns the number of affected rows. */
+  async deleteOldMessages(maxAgeMs: number = deviceWindowMs()): Promise<number> {
+    appendLog(`[GC] deleteOldMessages maxAgeMs=${maxAgeMs}`);
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
     const cutoff = Date.now() - maxAgeMs;
@@ -1482,6 +1580,8 @@ export class SqliteStorage implements IStorage {
       lastAttemptAt: row.last_attempt_at ?? undefined,
       nextAttemptAt: row.next_attempt_at ?? undefined,
       serverErrors: typeof row.server_errors === 'number' ? row.server_errors : undefined,
+      unavailableAnswers:
+        typeof row.unavailable_answers === 'number' ? row.unavailable_answers : undefined,
       createdAt: rowTimestampMs(row.created_at),
     };
   }
@@ -1598,6 +1698,7 @@ export class SqliteStorage implements IStorage {
       c.lastAttemptAt ?? null,
       c.nextAttemptAt ?? null,
       c.serverErrors ?? 0,
+      c.unavailableAnswers ?? 0,
       c.createdAt,
       uint8ToBase64(encrypted.iv),
       uint8ToBase64(encrypted.cipherText),
@@ -1628,7 +1729,7 @@ export class SqliteStorage implements IStorage {
    */
   async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const rows: any[] = await this.db.select(
-      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at,
+      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, unavailable_answers, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
        FROM outbox WHERE conversation_id <> $1 ORDER BY sent_at ASC, id ASC`,
@@ -1704,7 +1805,8 @@ export class SqliteStorage implements IStorage {
       await this.db.execute(
         `UPDATE outbox SET status = COALESCE($2, status), attempts = COALESCE($3, attempts),
            last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at),
-           server_errors = COALESCE($6, server_errors)
+           server_errors = COALESCE($6, server_errors),
+           unavailable_answers = COALESCE($7, unavailable_answers)
          WHERE id = $1`,
         [
           id,
@@ -1713,6 +1815,7 @@ export class SqliteStorage implements IStorage {
           patch.lastAttemptAt ?? null,
           patch.nextAttemptAt ?? null,
           patch.serverErrors ?? null,
+          patch.unavailableAnswers ?? null,
         ]
       );
       return;
@@ -2066,11 +2169,25 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
-  async deleteFeedPages(): Promise<number> {
+  async deleteFeedPages(keyPrefix?: string): Promise<number> {
+    // `substr`, not `LIKE`: a prefix is literal text, never a pattern.
+    const where = keyPrefix === undefined ? '' : ' WHERE substr(feed_key, 1, length($1)) = $1';
+    const args = keyPrefix === undefined ? [] : [keyPrefix];
     const rows: Array<{ n: number | string }> = await this.db.select(
-      'SELECT COUNT(*) AS n FROM feed_pages'
+      `SELECT COUNT(*) AS n FROM feed_pages${where}`,
+      args
     );
-    await this.db.execute('DELETE FROM feed_pages');
+    await this.db.execute(`DELETE FROM feed_pages${where}`, args);
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /** Delete one stored feed page. See {@link IStorage.deleteFeedPage}. */
+  async deleteFeedPage(key: string): Promise<number> {
+    const rows: Array<{ n: number | string }> = await this.db.select(
+      'SELECT COUNT(*) AS n FROM feed_pages WHERE feed_key = $1',
+      [key]
+    );
+    await this.db.execute('DELETE FROM feed_pages WHERE feed_key = $1', [key]);
     return Number(rows[0]?.n ?? 0);
   }
 

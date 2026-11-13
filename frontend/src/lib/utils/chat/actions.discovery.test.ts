@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import { discoverMissingGroups } from './actions';
+import { discoverMissingGroups, uiKeptLatch } from './actions';
 import {
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -32,7 +32,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getLocalGroups: vi.fn().mockReturnValue([]),
     forgetGroup: vi.fn(),
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
-    getDismissedGroups: vi.fn().mockResolvedValue([]),
+    getDismissedGroups: vi.fn().mockResolvedValue({ kind: 'listed', groupIds: [] }),
     getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     isDistributionGroup: vi.fn().mockReturnValue(false),
@@ -159,6 +159,129 @@ describe('purgeOrphanGroup', () => {
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
     expect(conversations.has('g1')).toBe(false);
+  });
+});
+
+describe('discoverMissingGroups - the reads of one sweep leave together (weak-network audit, 2026-11-10)', () => {
+  it('asks every absent conversation its status before the first is answered, and the dismissed list beside the group list', async () => {
+    const ids = ['a1', 'a2', 'a3'];
+    const conversations = new Map<string, Conversation>(
+      ids.map((id) => [
+        id,
+        { id, contactName: id, name: id, messages: [], lifecycle: 'active', mlsStateHex: null },
+      ])
+    );
+    const pending: Array<() => void> = [];
+    const getGroupServerStatus = vi.fn(
+      (groupId: string) =>
+        new Promise((resolve) =>
+          pending.push(() => resolve({ groupId, deletedAt: '2026-01-01T00:00:00Z' }))
+        )
+    );
+    let releaseGroups: (rows: unknown[]) => void = () => {};
+    const getUserGroups = vi.fn(() => new Promise<unknown[]>((r) => (releaseGroups = r)));
+    const mlsService = makeMls({
+      getUserGroups,
+      getGroupServerStatus,
+    } as unknown as Partial<IMlsService>);
+
+    const sweep = discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+    // The group list is still unanswered, and the dismissed list has already left.
+    await vi.waitFor(() => expect(getUserGroups).toHaveBeenCalledTimes(1));
+    expect(mlsService.getDismissedGroups).toHaveBeenCalledTimes(1);
+    releaseGroups([]);
+
+    await vi.waitFor(() => expect(getGroupServerStatus).toHaveBeenCalledTimes(3));
+    for (const release of pending) release();
+    await sweep;
+
+    expect(getGroupServerStatus.mock.calls.map((c) => c[0])).toEqual(ids);
+    // Each answer still reached its own conversation: a tombstone keeps the row, retired.
+    for (const id of ids) expect(conversations.get(id)?.lifecycle).toBe('removed');
+  });
+
+  const sweepOf = (mlsService: IMlsService, conversations: Map<string, Conversation>) =>
+    discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+  const row = (id: string): Conversation => ({
+    id,
+    contactName: id,
+    name: id,
+    messages: [],
+    lifecycle: 'active',
+    mlsStateHex: null,
+  });
+
+  it('never asks the status of a dismissed conversation: it is purged unasked', async () => {
+    const conversations = new Map<string, Conversation>([
+      ['gone', row('gone')],
+      ['kept', row('kept')],
+    ]);
+    const mlsService = makeMls({
+      getDismissedGroups: vi.fn().mockResolvedValue({ kind: 'listed', groupIds: ['gone'] }),
+      getGroupServerStatus: vi.fn().mockResolvedValue('error'),
+    });
+    await sweepOf(mlsService, conversations);
+    expect(vi.mocked(mlsService.getGroupServerStatus).mock.calls.map((c) => c[0])).toEqual([
+      'kept',
+    ]);
+    expect(conversations.has('gone')).toBe(false);
+  });
+
+  it('asks a row that arrived DURING the reads at its turn in the loop, once', async () => {
+    const conversations = new Map<string, Conversation>([['early', row('early')]]);
+    const getGroupServerStatus = vi.fn(async (groupId: string) => {
+      // A placeholder made while the sweep's reads were in flight: the prefetch never saw it.
+      if (groupId === 'early') conversations.set('late', row('late'));
+      return 'error' as const;
+    });
+    const mlsService = makeMls({ getGroupServerStatus });
+    await sweepOf(mlsService, conversations);
+    expect(getGroupServerStatus.mock.calls.map((c) => c[0])).toEqual(['early', 'late']);
+  });
+
+  it('says nothing about the dismissed list on a dead link, where nothing reads it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+      getDismissedGroups: vi.fn().mockResolvedValue({
+        kind: 'failed',
+        transport: true,
+        error: new TypeError('Failed to fetch'),
+      }),
+    });
+    await sweepOf(mlsService, new Map([['c1', row('c1')]]));
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('dismissed-groups');
+    warn.mockRestore();
+  });
+
+  it('says a refused dismissed list once, where the list is used, and purges nothing on it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new Map<string, Conversation>([['c1', row('c1')]]);
+    const mlsService = makeMls({
+      getDismissedGroups: vi.fn().mockResolvedValue({ kind: 'refused', status: 503 }),
+      getGroupServerStatus: vi.fn().mockResolvedValue('error'),
+    });
+    await sweepOf(mlsService, conversations);
+    const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('dismissed'));
+    expect(lines).toEqual([expect.stringContaining('503')]);
+    expect(conversations.has('c1')).toBe(true);
+    warn.mockRestore();
   });
 });
 
@@ -365,7 +488,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     const mlsService = makeMls({
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue([]),
-      getDismissedGroups: vi.fn().mockResolvedValue(['dismissed-id']),
+      getDismissedGroups: vi.fn().mockResolvedValue({ kind: 'listed', groupIds: ['dismissed-id'] }),
       // Even if the group still exists server-side, dismiss takes priority -> purge.
       getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'dismissed-id', deletedAt: null }),
     });
@@ -974,5 +1097,48 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
 
     expect(conversations.has('ask-id')).toBe(true);
     expect(deleteConversation).not.toHaveBeenCalledWith('ask-id');
+  });
+});
+
+describe('discoverMissingGroups - removed rows', () => {
+  beforeEach(() => uiKeptLatch.reset());
+
+  const removedRow = (id: string): Conversation => ({
+    id,
+    contactName: id,
+    name: 'Groupe',
+    messages: [],
+    lifecycle: 'removed',
+    mlsStateHex: null,
+    conversationType: 'group',
+  });
+  const run = (conversations: Map<string, Conversation>, mls: IMlsService, log = vi.fn()) =>
+    discoverMissingGroups({
+      mlsService: mls,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+  it('says a removed row awaiting its manual deletion once, not on every connection', async () => {
+    const conversations = new Map([['r1', removedRow('r1')]]);
+    const log = vi.fn();
+    for (let connection = 0; connection < 3; connection++) {
+      await run(conversations, makeMls(), log);
+    }
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('awaiting a manual deletion'))).toHaveLength(1);
+    expect(conversations.has('r1')).toBe(true);
+  });
+
+  it('drops the removed row of a registered key-distribution group - it is no conversation', async () => {
+    const conversations = new Map([['kd1', removedRow('kd1')]]);
+    const mls = makeMls({ isDistributionGroup: vi.fn((id: string) => id === 'kd1') });
+    await run(conversations, mls);
+    expect(conversations.has('kd1')).toBe(false);
+    // The row only: the MLS state is the sweep's to spare or forget.
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
   });
 });

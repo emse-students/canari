@@ -2,8 +2,10 @@ import { getStorage, type IStorage } from '$lib/db';
 import { FeedPageUnreadableError } from '$lib/db/types';
 import type { PostEntity } from '$lib/posts/api';
 import type { FeedCacheParams } from '$lib/posts/feedCache';
+import { rowsInListShape } from '$lib/posts/rankedFeeds';
 import { currentFeedEpoch, ensureFeedEpoch, forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { getSavedUserId } from '$lib/stores/user';
+import { serverRankedFeeds } from '$lib/stores/appVersionCheck.svelte';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
@@ -35,6 +37,12 @@ interface StoredFeedPage {
   epoch: string;
   key: string;
   posts: PostEntity[];
+  /**
+   * `'followed'` when a Pour toi page was stored in the older shape because the estate SAID it serves
+   * no ranked list. Durable, so a cold start (where the capability is unknown again) still knows the
+   * copy is that estate's own page and not an alpha.6 leftover. Absent otherwise.
+   */
+  shape?: 'followed';
 }
 
 /** What may decide whether the stored feed is readable now - every value the page already holds. */
@@ -130,10 +138,23 @@ export function listAfterFirstPage(input: {
   return input.onScreen === input.painted ? input.answer : null;
 }
 
-/** Deletes every stored page, logging rather than throwing: it runs on a read or write path. */
+/** Deletes one stored page, logging rather than throwing: it runs on a read path. */
+async function deleteOnePage(storage: IStorage, key: string, why: string): Promise<void> {
+  try {
+    const deleted = await storage.deleteFeedPage(key);
+    console.log(`[FEED-STORE] ${deleted} stored page(s) deleted under ${key} (${why})`);
+  } catch (error) {
+    console.warn(`[FEED-STORE] ${key} could not be deleted (${why}): ${String(error)}`);
+  }
+}
+
+/**
+ * Deletes every stored FEED page - the keys `feed:*` only, never the device copies that share the
+ * table (`copy:*`, the peer names) - logging rather than throwing: it runs on a read or write path.
+ */
 async function deleteAllPages(storage: IStorage, why: string): Promise<void> {
   try {
-    const deleted = await storage.deleteFeedPages();
+    const deleted = await storage.deleteFeedPages('feed:');
     console.log(`[FEED-STORE] ${deleted} stored feed page(s) deleted (${why})`);
   } catch (error) {
     console.warn(`[FEED-STORE] stored feed pages could not be deleted (${why}): ${String(error)}`);
@@ -180,6 +201,18 @@ export async function readStoredFeedPage(
       `[FEED-STORE] the stored ${key} page is not one this build wrote for this account - every stored page deleted`
     );
     await deleteAllPages(storage, 'foreign or malformed page');
+    return null;
+  }
+  // A page marked `followed` is judged by what the estate is KNOWN to be: drawable while the
+  // capability is unknown (cold start) or false, deleted only once the estate is known ranked.
+  // An unmarked page keeps the rule of an unknown estate counting as ranked (alpha.6 leftovers).
+  const known = serverRankedFeeds();
+  const rankedEstate = payload.shape === 'followed' ? known === true : known !== false;
+  if (!rowsInListShape(params.feed, payload.posts as PostEntity[], rankedEstate)) {
+    // Another list's rows kept under this key (alpha.6 stored the old `followed` rows as Pour toi,
+    // on an estate that serves `foryou`): ONLY this page goes, the other tabs' copies are sound.
+    console.warn(`[FEED-STORE] the stored ${key} page holds another list's rows - deleted`);
+    await deleteOnePage(storage, key, 'another list');
     return null;
   }
   if (payload.epoch !== currentFeedEpoch(access.userId)) {
@@ -233,6 +266,11 @@ export async function writeStoredFeedPage(
 ): Promise<void> {
   const key = storedFeedKey(params);
   if (!key) return;
+  if (!rowsInListShape(params.feed, posts, serverRankedFeeds() !== false)) {
+    // Another list's rows (Pour toi asked in the old `followed` shape): never kept under this key.
+    console.warn(`[FEED-STORE] ${key} not stored - its rows were served in another list's shape`);
+    return;
+  }
   if (epoch.started) await deleteAllPages(storage, 'new epoch');
   if (currentFeedEpoch(access.userId) !== epoch.epoch) {
     console.log(`[FEED-STORE] ${key} not stored - its epoch ended while the write waited`);
@@ -243,6 +281,11 @@ export async function writeStoredFeedPage(
     epoch: epoch.epoch,
     key,
     posts: posts.map(storableFeedRow),
+    ...(params.feed === 'foryou' &&
+    serverRankedFeeds() === false &&
+    !posts.every((r) => typeof r.feedAsOf === 'string')
+      ? { shape: 'followed' as const }
+      : {}),
   };
   await storage.saveFeedPage(key, page, access.deviceKeyB64);
 }
@@ -297,7 +340,7 @@ export type FeedRefreshOutcome =
  *
  * THE TAB IS TAKEN BEFORE THE AWAIT, AND AN ANSWER FOR A TAB THE READER HAS LEFT IS DROPPED (review
  * of the reconnect refresh, 2026-10-15). The page used to read `data.feedParams` after its await: a
- * refresh of "Suivis" landing after a switch to the all tab (then "Tout") was drawn over it and written into its
+ * refresh of "Suivis" (now Pour toi) landing after a switch to the all tab (then "Tout") was drawn over it and written into its
  * cache and its stored page. The reconnect made that race ordinary - it fires whenever it fires.
  *
  * @param stillCurrent - Whether the tab this refresh was issued for is still the one on screen,

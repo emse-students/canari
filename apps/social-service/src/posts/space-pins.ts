@@ -39,14 +39,15 @@ const MODERATE = String(AssociationPermissionFlag.MODERATE);
 
 /**
  * Post row `post` may be promoted in space row `space`: its readers see it, and it is live. The
- * lifecycle terms are the feed's own (`PostsService`: scheduled, `hiddenByModeration`, a reel's
- * `expiresAt`), so a pin is never shown for a post the feed would not show anyone.
+ * lifecycle terms are the feed's own (`PostsService`: scheduled, `hiddenByModeration`, a reel's or
+ * a replay's `expiresAt`; a live replay is never pinned, docs/wiki/live-replays.md), so a pin is never shown for a post the feed would not show anyone.
  */
 export function postPinnableInSpaceSql(post: string, space: string): string {
   return `(${postReachesSpaceSql(post, space)}
     AND (${post}."scheduledAt" IS NULL OR ${post}."scheduledAt" <= NOW())
     AND NOT COALESCE(${post}."hiddenByModeration", false)
-    AND (${post}.kind <> 'reel' OR ${post}."expiresAt" > NOW()))`;
+    AND (${post}."expiresAt" IS NULL OR ${post}."expiresAt" > NOW())
+    AND ${post}.kind <> 'replay')`;
 }
 
 /**

@@ -15,17 +15,8 @@
   import {
     startMinesweeperChallenge,
     submitMinesweeperChallenge,
-    fetchMinesweeperLeaderboard,
-    fetchMinesweeperStats,
-    fetchMinesweeperBans,
-    banMinesweeperUser,
-    removeMinesweeperScore,
-    unbanMinesweeperUser,
     formatDurationMs,
     MinesweeperBannedError,
-    type LeaderboardEntry,
-    type MinesweeperBan,
-    type MinesweeperStats,
   } from '$lib/minesweeper/api';
   import {
     ANIMATION_SPEEDS,
@@ -40,7 +31,6 @@
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
   import MinesweeperCell from './MinesweeperCell.svelte';
-  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     HAPTIC_FLAG,
     HAPTIC_LONG_PRESS,
@@ -63,23 +53,19 @@
   } from '$lib/minesweeper/view';
   import {
     ArrowLeft,
-    Ban,
     Bomb,
     Flag,
     Pickaxe,
     RotateCcw,
     Settings,
     Timer,
-    Trash2,
     Trophy,
-    Undo2,
     X,
   } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { m } from '$lib/paraglide/messages';
-  import { exactDate, formatRelative } from '$lib/utils/time';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
-  import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { globalAdminState } from '$lib/stores/userState.svelte';
 
   interface Props {
     /** Whether the modal is visible; becoming true starts a fresh game. */
@@ -90,10 +76,6 @@
 
   let { open = false, onClose }: Props = $props();
 
-  /** The leaderboard is a sheet over the board, opened from the floating button; the game keeps running under it. */
-  let showLeaderboard = $state(false);
-  /** The two tabs of that sheet: the paged ranking, and the caller's own ranked record. */
-  let sheetTab = $state<'ranking' | 'stats'>('ranking');
   /** The settings sheet, opened from the gear beside the leaderboard button. */
   let showSettings = $state(false);
 
@@ -110,8 +92,6 @@
     if (settings.haptics) haptic(pattern);
   }
 
-  /** Entries per page of the ranking. */
-  const LEADERBOARD_PAGE = 10;
   /** Pointer movement (px) past which a pending tap/long-press is treated as a pan gesture instead. */
   const PAN_THRESHOLD_PX = 10;
   /** How far (px) a board larger than the screen may be dragged past its edge. */
@@ -182,18 +162,8 @@
   /** Index of the cell whose first dig is being prepared (challenge fetch + generation), shown pressed meanwhile. */
   let pendingCell = $state<number | null>(null);
 
-  /** The pages of the ranking loaded so far, in order; "show more" appends the next one. */
-  let leaderboard = $state<LeaderboardEntry[]>([]);
-  /** How many ranked players there are in all, so the last page can end the button. */
-  let leaderboardTotal = $state(0);
-  let leaderboardLoading = $state(false);
-  let leaderboardMoreLoading = $state(false);
-  let stats = $state<MinesweeperStats | null>(null);
-  let statsLoading = $state(false);
-  let statsFailed = $state(false);
   let submitMessage = $state<string | null>(null);
   let submitError = $state(false);
-  let personalBestMs = $state<number | null>(null);
   /** Ranked submit in flight after a win (rank line shows a pending state). */
   let submitPending = $state(false);
   /** Final standing from the last accepted submit (shown on the win overlay). */
@@ -262,53 +232,6 @@
     }, 100);
   }
 
-  /** Loads the first page of the ranking, replacing what was shown. */
-  async function loadLeaderboard() {
-    leaderboardLoading = true;
-    try {
-      const page = await fetchMinesweeperLeaderboard(LEADERBOARD_PAGE, 0);
-      leaderboard = page.entries;
-      leaderboardTotal = page.total;
-    } catch (err) {
-      console.debug('[minesweeper] leaderboard load failed', err);
-      leaderboard = [];
-      leaderboardTotal = 0;
-    } finally {
-      leaderboardLoading = false;
-    }
-    if (isAdmin) await loadBans();
-  }
-
-  /** Appends the next page of the ranking, from where the loaded ones end. */
-  async function loadMoreLeaderboard() {
-    if (leaderboardMoreLoading) return;
-    leaderboardMoreLoading = true;
-    try {
-      const page = await fetchMinesweeperLeaderboard(LEADERBOARD_PAGE, leaderboard.length);
-      leaderboard = [...leaderboard, ...page.entries];
-      leaderboardTotal = page.total;
-    } catch (err) {
-      console.warn('[minesweeper] next page of the leaderboard failed', err);
-    } finally {
-      leaderboardMoreLoading = false;
-    }
-  }
-
-  /** Loads the caller's own ranked record for the stats tab. */
-  async function loadStats() {
-    statsLoading = true;
-    statsFailed = false;
-    try {
-      stats = await fetchMinesweeperStats();
-    } catch (err) {
-      console.warn('[minesweeper] stats load failed', err);
-      stats = null;
-      statsFailed = true;
-    } finally {
-      statsLoading = false;
-    }
-  }
-
   /** The label of an animation speed, in the player's language. */
   function animationLabel(speed: AnimationSpeed): string {
     return speed === 'normal'
@@ -318,89 +241,14 @@
         : m.minesweeper_anim_off();
   }
 
-  function selectSheetTab(tab: 'ranking' | 'stats') {
-    sheetTab = tab;
-    if (tab === 'stats') void loadStats();
-  }
-
-  /** "il y a 3 j"; nothing for a date the server did not send, never "NaN". */
-  function relativeDate(iso: string): string {
-    return Number.isNaN(new Date(iso).getTime()) ? '' : formatRelative(iso);
-  }
-
-  /** The bars of the stats sparkline: oldest win first, each as a share of the slowest shown. */
-  const sparkBars = $derived.by(() => {
-    const wins = [...(stats?.recent ?? [])].reverse();
-    const slowest = Math.max(1, ...wins.map((w) => w.durationMs));
-    const fastest = Math.min(...wins.map((w) => w.durationMs));
-    return wins.map((w) => ({
-      scoreId: w.scoreId,
-      percent: Math.max(8, Math.round((w.durationMs / slowest) * 100)),
-      best: w.durationMs === fastest,
-      label: formatDurationMs(w.durationMs),
-    }));
-  });
-
-  // ---- Moderation (global admins; the server refuses anyone else) ----
-  /** The buttons are drawn for a global admin only - the 403 behind them is the real gate. */
-  const isAdmin = $derived(globalAdminState());
-  let bans = $state<MinesweeperBan[]>([]);
-  /** An admin action failed - said on the tab, never swallowed. */
-  let moderationFailed = $state(false);
-
-  async function loadBans() {
-    try {
-      bans = await fetchMinesweeperBans();
-    } catch (err) {
-      console.warn('[minesweeper] could not load the bans', err);
-      bans = [];
-    }
-  }
-
-  /** Runs one admin action, then refreshes both lists; a failure is logged and shown. */
-  async function moderate(action: () => Promise<void>) {
-    moderationFailed = false;
-    try {
-      await action();
-    } catch (err) {
-      console.warn('[minesweeper] moderation action failed', err);
-      moderationFailed = true;
-    }
-    await loadLeaderboard();
-  }
-
-  async function removeScore(entry: LeaderboardEntry) {
-    const confirmed = await showConfirm(
-      m.minesweeper_admin_confirm_remove({
-        name: entry.displayName,
-        time: formatDurationMs(entry.durationMs),
-      }),
-      { danger: true, confirmLabel: m.minesweeper_admin_confirm_remove_label() }
-    );
-    if (confirmed) await moderate(() => removeMinesweeperScore(entry.scoreId));
-  }
-
-  async function banPlayer(entry: LeaderboardEntry) {
-    const confirmed = await showConfirm(
-      m.minesweeper_admin_confirm_ban({ name: entry.displayName }),
-      { danger: true, confirmLabel: m.minesweeper_admin_confirm_ban_label() }
-    );
-    if (confirmed) await moderate(() => banMinesweeperUser(entry.userId));
-  }
-
-  async function unbanPlayer(ban: MinesweeperBan) {
-    const confirmed = await showConfirm(
-      m.minesweeper_admin_confirm_unban({ name: ban.displayName }),
-      { confirmLabel: m.minesweeper_admin_unban() }
-    );
-    if (confirmed) await moderate(() => unbanMinesweeperUser(ban.userId));
-  }
-
-  /** Opens the scores over the board; refreshes them on entry (the game timer keeps running). */
+  /**
+   * The trophy: the ranking is the Games page, the one leaderboard (owner, 2026-11-13). Closes the
+   * game and goes there; from the Games page itself it only closes, and the page reads again.
+   */
   function openLeaderboard() {
-    showLeaderboard = true;
-    sheetTab = 'ranking';
-    void loadLeaderboard();
+    console.debug('[minesweeper] trophy: closing the game for the Games page');
+    onClose();
+    void goto(resolve('/games'));
   }
 
   // --- View: fit, bounds, animation ----------------------------------------
@@ -475,7 +323,6 @@
     moves = [];
     submitMessage = null;
     submitError = false;
-    personalBestMs = null;
     submitPending = false;
     winRank = null;
     winRanksGained = 0;
@@ -590,14 +437,12 @@
         claimedDurationMs,
         challengeRoundTripMs
       );
-      personalBestMs = result.personalBestMs;
       winDurationMs = result.durationMs;
       winRank = result.rank;
       winRanksGained = result.ranksGained;
       submitError = false;
       submitMessage = m.minesweeper_submit_ok({ time: formatDurationMs(result.durationMs) });
       console.debug('[minesweeper] submit accepted', result);
-      await loadLeaderboard();
     } catch (err) {
       console.debug('[minesweeper] submit failed', err);
       submitError = true;
@@ -626,11 +471,9 @@
 
   $effect(() => {
     if (!open) return;
-    showLeaderboard = false;
     showSettings = false;
     startGame();
     void afterBoardChange();
-    void loadLeaderboard();
     return () => {
       stopTimer();
       stopGlide();
@@ -1067,7 +910,7 @@
             cx="22"
             cy="22"
             r="18"
-            class="stroke-cn-yellow fill-none"
+            class="stroke-accent-icon fill-none"
             stroke-width="4"
             stroke-linecap="round"
             transform="rotate(-90 22 22)"
@@ -1093,22 +936,22 @@
             }}
           >
             {#if isWin}
-              <Trophy size={28} class="text-cn-yellow" />
+              <Trophy size={28} class="text-accent-icon" />
             {:else}
               <Bomb size={28} class="text-red-500" />
             {/if}
             <p
               class="text-2xl font-bold sm:text-3xl {isWin
-                ? 'ms-win-pulse text-cn-yellow'
+                ? 'ms-win-pulse text-accent-text'
                 : 'text-red-500'}"
             >
               {isWin ? m.minesweeper_status_won() : m.minesweeper_status_lost()}
             </p>
             {#if isWin}
               <p
-                class="bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
+                class="bg-accent/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
               >
-                <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
+                <Timer size={20} class="text-accent-icon shrink-0" strokeWidth={2.5} />
                 {m.minesweeper_time({
                   time: formatDurationMs(winDurationMs ?? elapsedMs),
                 })}
@@ -1120,9 +963,9 @@
                   </p>
                 {:else if winRank != null}
                   <p
-                    class="bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
+                    class="bg-accent/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
                   >
-                    <Trophy size={14} class="text-cn-yellow" strokeWidth={2.5} />
+                    <Trophy size={14} class="text-accent-icon" strokeWidth={2.5} />
                     {#if winRanksGained > 0}
                       {m.minesweeper_rank_up({
                         rank: String(winRank),
@@ -1138,7 +981,7 @@
             <button
               type="button"
               onclick={newGame}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+              class="bg-accent text-on-accent hover:bg-accent-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             >
               <RotateCcw size={15} strokeWidth={2.5} />
               {m.minesweeper_new_game()}
@@ -1174,7 +1017,7 @@
           </span>
           {#if rankedMode}
             <span title={m.minesweeper_ranked()} role="img" aria-label={m.minesweeper_ranked()}>
-              <Trophy size={14} class="text-cn-yellow" />
+              <Trophy size={14} class="text-accent-icon" />
             </span>
           {/if}
           <button
@@ -1182,7 +1025,7 @@
             onclick={newGame}
             aria-label={m.minesweeper_new_game()}
             title={m.minesweeper_new_game()}
-            class="ui-icon-button text-cn-dark hover:bg-cn-yellow/20 rounded-full transition-colors"
+            class="ui-icon-button text-cn-dark hover:bg-accent/20 rounded-full transition-colors"
           >
             <RotateCcw size={16} strokeWidth={2.5} />
           </button>
@@ -1203,7 +1046,7 @@
           onclick={openLeaderboard}
           aria-label={m.minesweeper_leaderboard()}
           title={m.minesweeper_leaderboard()}
-          class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto rounded-full shadow-sm transition-colors"
+          class="ui-icon-button bg-accent text-on-accent hover:bg-accent-hover pointer-events-auto rounded-full shadow-sm transition-colors"
         >
           <Trophy size={20} strokeWidth={2.5} />
         </button>
@@ -1229,7 +1072,7 @@
         aria-pressed={flagPrimary}
         title={m.minesweeper_mode_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
-          ? 'bg-cn-yellow text-cn-ink'
+          ? 'bg-accent text-on-accent'
           : 'ms-chip text-text-main'}"
       >
         {#if flagPrimary}
@@ -1247,160 +1090,13 @@
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-cn-yellow text-cn-ink'
+          ? 'bg-accent text-on-accent'
           : 'ms-chip text-text-main'}"
       >
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
       </button>
     </div>
-
-    {#if showLeaderboard}
-      <!-- Leaderboard sheet: covers the board and the controls, the game keeps running under it. -->
-      <div
-        class="bg-cn-surface absolute inset-0 z-30 flex flex-col"
-        transition:fade={{ duration: 150 }}
-      >
-        <div class="flex shrink-0 items-center gap-2 p-2">
-          <button
-            type="button"
-            onclick={() => (showLeaderboard = false)}
-            aria-label={m.minesweeper_leaderboard_back()}
-            class="ui-icon-button text-text-main hover:bg-cn-bg rounded-full transition-colors"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_leaderboard()}</h2>
-        </div>
-        <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4">
-          <SegmentedControl
-            class="mb-3 shrink-0"
-            tone="yellow"
-            label={m.minesweeper_leaderboard()}
-            items={[
-              { key: 'ranking', label: m.minesweeper_tab_ranking() },
-              { key: 'stats', label: m.minesweeper_tab_stats() },
-            ]}
-            value={sheetTab}
-            onSelect={selectSheetTab}
-          />
-
-          {#if sheetTab === 'stats'}
-            {@render statsTab()}
-          {:else}
-            {#if personalBestMs !== null}
-              <p class="text-text-muted mb-2 shrink-0 text-sm">
-                {m.minesweeper_personal_best({ time: formatDurationMs(personalBestMs) })}
-              </p>
-            {/if}
-
-            {#if leaderboardLoading}
-              <p class="text-text-muted text-sm">…</p>
-            {:else if leaderboard.length === 0}
-              <p class="text-text-muted text-sm">{m.minesweeper_empty_leaderboard()}</p>
-            {:else}
-              <ol class="space-y-1.5">
-                {#each leaderboard as entry (entry.userId)}
-                  <li
-                    class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
-                  >
-                    <span class="flex min-w-0 items-center gap-2.5">
-                      <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">
-                        #{entry.rank}
-                      </span>
-                      <span class="min-w-0">
-                        <span class="text-text-main block truncate text-sm font-semibold">
-                          {entry.displayName}
-                        </span>
-                        {#if relativeDate(entry.verifiedAt)}
-                          <span
-                            class="text-text-muted block truncate text-xs"
-                            title={exactDate(entry.verifiedAt)}
-                          >
-                            {relativeDate(entry.verifiedAt)}
-                          </span>
-                        {/if}
-                      </span>
-                    </span>
-                    <span class="flex shrink-0 items-center gap-1">
-                      <span class="text-cn-dark font-mono text-sm font-semibold">
-                        {formatDurationMs(entry.durationMs)}
-                      </span>
-                      {#if isAdmin}
-                        <button
-                          type="button"
-                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
-                          aria-label={m.minesweeper_admin_remove_score()}
-                          title={m.minesweeper_admin_remove_score()}
-                          onclick={() => void removeScore(entry)}
-                        >
-                          <Trash2 size={14} strokeWidth={2.25} />
-                        </button>
-                        <button
-                          type="button"
-                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
-                          aria-label={m.minesweeper_admin_ban()}
-                          title={m.minesweeper_admin_ban()}
-                          onclick={() => void banPlayer(entry)}
-                        >
-                          <Ban size={14} strokeWidth={2.25} />
-                        </button>
-                      {/if}
-                    </span>
-                  </li>
-                {/each}
-              </ol>
-              {#if leaderboard.length < leaderboardTotal}
-                <button
-                  type="button"
-                  onclick={() => void loadMoreLeaderboard()}
-                  disabled={leaderboardMoreLoading}
-                  class="ms-tile text-text-main hover:bg-cn-bg mt-3 shrink-0 self-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
-                >
-                  {m.minesweeper_load_more()}
-                </button>
-              {/if}
-            {/if}
-          {/if}
-
-          {#if isAdmin && sheetTab === 'ranking'}
-            {#if moderationFailed}
-              <p class="text-red-err mt-2 text-xs font-semibold" role="alert">
-                {m.minesweeper_admin_failed()}
-              </p>
-            {/if}
-            {#if bans.length > 0}
-              <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
-                {m.minesweeper_admin_bans_title()}
-              </h3>
-              <ul class="space-y-1.5">
-                {#each bans as ban (ban.userId)}
-                  <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
-                    <span class="min-w-0">
-                      <span class="text-text-main block truncate text-sm font-semibold">
-                        {ban.displayName}
-                      </span>
-                      {#if ban.reason}
-                        <span class="text-text-muted block truncate text-xs">{ban.reason}</span>
-                      {/if}
-                    </span>
-                    <button
-                      type="button"
-                      class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                      aria-label={m.minesweeper_admin_unban()}
-                      title={m.minesweeper_admin_unban()}
-                      onclick={() => void unbanPlayer(ban)}
-                    >
-                      <Undo2 size={14} strokeWidth={2.25} />
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          {/if}
-        </div>
-      </div>
-    {/if}
 
     {#if showSettings}
       <!-- Settings sheet: how input is read and how the screen moves; never what a move is. -->
@@ -1437,7 +1133,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.doubleTapZoom
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-on-accent'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.doubleTapZoom ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1456,7 +1152,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.haptics
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-on-accent'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.haptics ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1481,7 +1177,7 @@
               value={settings.longPressMs}
               oninput={(e) =>
                 updateSettings({ longPressMs: clampLongPressMs(e.currentTarget.valueAsNumber) })}
-              class="accent-cn-yellow mt-2 w-full"
+              class="accent-accent mt-2 w-full"
             />
           </div>
 
@@ -1498,7 +1194,7 @@
                   onclick={() => updateSettings({ animations: speed })}
                   class="flex-1 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {settings.animations ===
                   speed
-                    ? 'bg-cn-yellow text-cn-ink'
+                    ? 'bg-accent text-on-accent'
                     : 'text-text-muted hover:text-text-main'}"
                 >
                   {animationLabel(speed)}
@@ -1511,87 +1207,6 @@
     {/if}
   </div>
 </Modal>
-
-{#snippet statsTab()}
-  {#if statsLoading && !stats}
-    <p class="text-text-muted text-sm">…</p>
-  {:else if statsFailed}
-    <p class="text-red-err text-sm font-semibold" role="alert">{m.minesweeper_stats_failed()}</p>
-  {:else if stats}
-    {@const cards = [
-      { label: m.minesweeper_stats_played(), value: String(stats.played) },
-      { label: m.minesweeper_stats_won(), value: String(stats.won) },
-      {
-        label: m.minesweeper_stats_win_rate(),
-        value: stats.winRate === null ? '-' : `${Math.round(stats.winRate * 100)} %`,
-      },
-      {
-        label: m.minesweeper_stats_rank(),
-        value: stats.rank === null ? '-' : m.minesweeper_rank({ rank: String(stats.rank) }),
-      },
-      {
-        label: m.minesweeper_stats_best(),
-        value: stats.bestMs === null ? '-' : formatDurationMs(stats.bestMs),
-      },
-      {
-        label: m.minesweeper_stats_average(),
-        value: stats.averageMs === null ? '-' : formatDurationMs(stats.averageMs),
-      },
-      {
-        label: m.minesweeper_stats_median(),
-        value: stats.medianMs === null ? '-' : formatDurationMs(stats.medianMs),
-      },
-      { label: m.minesweeper_stats_lost(), value: String(stats.lost) },
-    ]}
-    <dl class="grid grid-cols-2 gap-2">
-      {#each cards as card (card.label)}
-        <div class="ms-tile rounded-lg px-3 py-2.5">
-          <dt class="text-text-muted text-xs">{card.label}</dt>
-          <dd class="text-cn-dark font-mono text-lg font-bold tabular-nums">{card.value}</dd>
-        </div>
-      {/each}
-    </dl>
-
-    {#if stats.recent.length === 0}
-      <p class="text-text-muted mt-4 text-sm">{m.minesweeper_stats_empty()}</p>
-    {:else}
-      <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
-        {m.minesweeper_stats_recent()}
-      </h3>
-      <div
-        role="img"
-        aria-label={m.minesweeper_stats_chart()}
-        class="ms-tile flex h-20 items-end gap-1 rounded-lg px-3 py-2"
-      >
-        {#each sparkBars as bar (bar.scoreId)}
-          <span
-            title={bar.label}
-            class="min-w-0 flex-1 rounded-sm {bar.best ? 'bg-cn-yellow' : 'bg-cn-yellow/40'}"
-            style="height: {bar.percent}%;"
-          ></span>
-        {/each}
-      </div>
-      <ul class="mt-2 space-y-1.5">
-        {#each stats.recent as win (win.scoreId)}
-          <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
-            <span
-              class="text-text-muted truncate text-xs"
-              title={Number.isNaN(new Date(win.verifiedAt).getTime())
-                ? ''
-                : exactDate(win.verifiedAt)}
-            >
-              {relativeDate(win.verifiedAt)}
-            </span>
-            <span class="text-cn-dark font-mono text-sm font-semibold">
-              {formatDurationMs(win.durationMs)}
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <p class="text-text-muted mt-4 text-xs">{m.minesweeper_stats_note()}</p>
-  {/if}
-{/snippet}
 
 <style>
   /* FLAT TONAL, like the cells (user's pick, 2026-11-04): no borders anywhere in the section. A tile is

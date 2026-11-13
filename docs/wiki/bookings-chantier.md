@@ -532,7 +532,19 @@ wizard is ONE call and a space is never half made.
   "Occupe", listed or link only).
 - **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
   else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
-  mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
+  mockup's: a working week 8h-20h, bookings of any length by 30 min steps, everybody, names hidden, listed.
+- **A new space has NO longest booking** (owner, 2026-11-09, migration 153): `create` stores
+  `maxSteps` NULL, and `booking_spaces_step_shape` accepts NULL on a step space (a non-NULL value is
+  still >= 1). The organiser sets "Duree maximale d'une reservation" (minutes, a multiple of the step,
+  at most 96 steps) in "Regles de reservation"; empty = no limit, and the live line under it says
+  steps x length in words. The editor stores `maxSteps` = minutes / step (`maxStepsFromMinutes`).
+  With no maximum the booker's picker is bounded by the openings alone (`bookingUnitLimit` is
+  `Infinity`: a run of free touching units ends where the opening does), and the server keeps ONE
+  safety cap of 14 days (`UNBOUNDED_MAX_MS` in `slots.ts`) so a request cannot make it build windows
+  for years. Existing spaces are NOT touched (no backfill): an organiser empties the field to lift
+  theirs. The creation wizard's "longest booking" select opens on "Pas de limite" (`maxMinutes` null, sends
+  `maxSteps` null); picking a duration sends minutes / step. The editor's field also shows the
+  hint pointing at the per-person and per-period quotas just below.
 - **Fixed slots are cut on the client** (`fixedSlotLines`): in a `slots` space each line IS a slot
   (WP-B2), so the painted hours become one line per slot; a tail shorter than a slot is not
   offered and no slot crosses midnight. More than `MAX_AVAILABILITY_LINES` (200) is said on the
@@ -1253,6 +1265,11 @@ id to the organiser and the linked account, not to a booker.
   sheet and re-reads the grid and my bookings, so the reader sees why.
 - **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
   participant, so the page indexes my own bookings by id - which also carries the private texts.
+- **"Ma reservation" is the booker's alone** (owner, 2026-11-10): `mine` also covers an INVITED
+  participant, so the grid and the planning read the role from the payload - `mine` with
+  `holderId` (sent exactly where the name is) other than the viewer is invited (`isInvitedUnit`,
+  `grid.ts`). An invited unit keeps the highlight, shows the booker's avatar and name and a small
+  "Invite" mention; a viewer id not yet known is never called invited.
 - **THE KNOWN COSTS ARE SAID ON SCREEN, NOT HIDDEN**: no notification (D13, on both pages and in
   the organiser's cancel confirmation); people added directly, no acceptance (D34); a booking is
   never edited, cancel and book again (D36); a personal space's coming bookings vanish with its

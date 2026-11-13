@@ -29,10 +29,10 @@ describe('the edit page head, resolved by the KIND of the entity', () => {
     }
   );
 
-  it('an institution is not titled "Associations" on a direct load', async () => {
+  it('an institution is not titled as the directory on a direct load', async () => {
     fetchJson.mockResolvedValue({ type: 'institution' });
     const { meta } = await resolveServerSeo('/associations/bde-inst/edit');
-    expect(meta.title).not.toBe('Associations');
+    expect(meta.title).not.toBe(m.assoc_list_heading());
     expect(meta.title).toBe(wordingFor('institution').editTitle());
   });
 

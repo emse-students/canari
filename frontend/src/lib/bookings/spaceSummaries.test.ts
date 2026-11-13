@@ -36,7 +36,7 @@ const SPACE = {
 describe('the one line under each section (WP-R6, D51)', () => {
   it('reads the choices as they stand', () => {
     const s = sectionSummaries(draftFromSpace(SPACE), 1);
-    expect(s.when).toBe(m.bookings_summary_when_step({ step: '30', max: '6' }));
+    expect(s.when).toBe(m.bookings_summary_when_step({ step: '30', max: '3 h' }));
     expect(s.who).toBe(
       [
         m.bookings_summary_audience_all(),

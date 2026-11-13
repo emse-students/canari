@@ -134,11 +134,14 @@ describe('dashboard hub', () => {
       'shop',
       'forms',
       'bookings',
+      'games',
       'notifications',
       'settings',
       'sign-out',
     ]);
     expect(rows().find(([k]) => k === 'profile')?.[1]).toBe('/profile');
+    // The Games page is open to every account (owner, 2026-11-10).
+    expect(rows().find(([k]) => k === 'games')?.[1]).toBe('/games');
     expect(document.body.textContent).toContain('Ada Lovelace');
   });
 

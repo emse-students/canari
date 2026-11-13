@@ -35,6 +35,11 @@ misreads the dependencies. CI runs the step after the check.
 
 The baseline is a COUNT per category, not a list, so two pull requests that each delete something
 do not conflict. The target is every number at 0, after which the file is just zeros.
+
+**The first baseline is the count measured when the ratchet first reaches `main`, not the count of
+the day it was written** (2026-11-13: the PR sat in draft for days and `main` kept adding unused
+exports, so the numbers were re-measured on the last merge: exports 411, types 178, duplicates 6).
+Once it is on `main` it only goes down; the first export sweep is the next pull request.
 `frontend/knip.json` is the only place a false positive is declared.
 
 ## Entry points, configured as reachable (never deleted)

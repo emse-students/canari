@@ -25,6 +25,11 @@ const page = vi.hoisted(() => ({
   url: new URL('https://canari.test/posts'),
   state: {},
 }));
+// The follow suggestions (engagement WP-6) are a read of their own: none in these feeds.
+vi.mock('$lib/follows/suggestions.svelte', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  ensureFeedSuggestions: () => {},
+}));
 vi.mock('$app/state', () => ({ page }));
 
 const goto = vi.hoisted(() => vi.fn());
@@ -192,5 +197,41 @@ describe('the feed commands of the app header', () => {
     expect(page.url.searchParams.get('feed')).toBe('followed');
     expect(page.url.searchParams.has('compose')).toBe(false);
     expect(composer()).not.toBeNull();
+  });
+});
+
+describe('a change of feed tab', () => {
+  /** The layout's page scroller, scrolled down; the offsets seen at each `goto` are recorded. */
+  function scroller(scrollTop: number) {
+    const el = document.createElement('div');
+    el.className = 'page-scroll-wrap';
+    document.body.appendChild(el);
+    el.scrollTop = scrollTop;
+    return el;
+  }
+
+  it('opens the other list at its top, before and after the swap (owner, 2026-11-10)', async () => {
+    const el = scroller(600);
+    open('feed=all');
+    await settle();
+    const seen: number[] = [];
+    goto.mockImplementation(async () => {
+      seen.push(el.scrollTop);
+      el.scrollTop = 450; // the load moved the box again
+    });
+    document.querySelector<HTMLButtonElement>('[data-feed-tab="foryou"]')!.click();
+    await settle();
+    expect(goto).toHaveBeenCalled();
+    expect(seen).toEqual([0]); // already at the top when the navigation starts
+    expect(el.scrollTop).toBe(0); // and put back once it has settled
+  });
+
+  it('leaves the scroll alone when the tab pressed is the one already open', async () => {
+    const el = scroller(600);
+    open('feed=all');
+    await settle();
+    document.querySelector<HTMLButtonElement>('[data-feed-tab="all"]')!.click();
+    await settle();
+    expect(el.scrollTop).toBe(600);
   });
 });

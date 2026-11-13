@@ -4,6 +4,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
@@ -79,6 +81,10 @@ describe('PushController - POST mls/push/membership-active', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })

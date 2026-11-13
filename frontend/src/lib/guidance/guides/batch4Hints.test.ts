@@ -44,7 +44,7 @@ const CASES: {
     route: '/bookings/spaces/abc',
     elsewhere: '/bookings',
     files: [WEEK],
-    anchors: ['bookings.column', 'bookings.week'],
+    anchors: ['bookings.column', 'bookings.week', 'bookings.week.add'],
   },
 ];
 
@@ -79,7 +79,7 @@ describe.each(CASES)('$guide.id', ({ guide, route, elsewhere, files, anchors }) 
 
 describe('the anchors follow what the page draws', () => {
   it('a space with one column shows the week step only', () => {
-    const { steps } = planGuide(bookingWeekHint, PHONE, (a) => a === 'bookings.week');
+    const { steps } = planGuide(bookingWeekHint, PHONE, (a) => a === 'bookings.week.add');
     expect(steps.map((s) => s.id)).toEqual(['week']);
   });
 
@@ -102,8 +102,32 @@ describe('the anchors follow what the page draws', () => {
 
   it('the week anchors are marked only once the first read landed, in book mode', () => {
     const week = src(WEEK);
-    expect(week).toContain("mode === 'book' && loaded ? 'bookings.week' : undefined");
+    expect(week).toContain("mode === 'book' && loaded ? 'bookings.week.add' : undefined");
     expect(week).toContain("mode === 'book' && loaded ? 'bookings.column' : undefined");
+  });
+
+  it('the week step points at the phone "+" or the wide grid, whichever is drawn', () => {
+    const phone = planGuide(bookingWeekHint, PHONE, (a) => a === 'bookings.week.add');
+    expect(phone.steps.map((s) => s.id)).toEqual(['week']);
+    // The grid wrapper alone is not the phone's anchor: it is marked only when not narrow.
+    const phoneGrid = planGuide(bookingWeekHint, PHONE, (a) => a === 'bookings.week');
+    expect(phoneGrid.steps).toEqual([]);
+    const wide = planGuide(bookingWeekHint, DESKTOP, (a) => a === 'bookings.week');
+    expect(wide.steps.map((s) => s.id)).toEqual(['week']);
+  });
+
+  it('an empty week marks neither anchor: the step is left out, not-rendered', () => {
+    const { steps, skipped } = planGuide(bookingWeekHint, PHONE, () => false);
+    expect(steps).toEqual([]);
+    expect(skipped.every((s) => s.reason === 'not-rendered')).toBe(true);
+    const week = src(WEEK);
+    // ONE definition of "empty", shared by the line and by both anchors.
+    expect(week).toContain('const weekDrawn = $derived(drawn.endMin !== drawn.startMin)');
+    expect(week).toContain('{#if !weekDrawn}');
+    expect(week).toContain("mode === 'book' && loaded && weekDrawn && !narrow");
+    expect(src('lib/components/bookings/booker/PlanningList.svelte')).toContain(
+      'use:guideAnchorWhen={guideAnchorId}'
+    );
   });
 
   it('the week step words differ by layout (planning list on a phone, grid on a wide screen)', () => {
@@ -112,8 +136,8 @@ describe('the anchors follow what the page draws', () => {
     // The phone's "Réserver un créneau" is only the aria-label of an icon-only "+": name the button.
     const fr = JSON.parse(src('../messages/fr.json')) as Record<string, string>;
     const en = JSON.parse(src('../messages/en.json')) as Record<string, string>;
-    expect(fr.guide_hint_booking_week_body_phone).toContain('le bouton +');
-    expect(en.guide_hint_booking_week_body_phone).toContain('the + button');
+    expect(fr.guide_hint_booking_week_body_phone).toContain('ce bouton +');
+    expect(en.guide_hint_booking_week_body_phone).toContain('this + button');
     expect(fr.guide_hint_booking_week_body_phone).not.toContain('Réserver un créneau');
     expect(en.guide_hint_booking_week_body_phone).not.toContain('Book a slot');
   });

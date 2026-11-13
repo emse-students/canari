@@ -39,6 +39,15 @@ import type {
  * a key group refused the person. `welcome` is then ABSENT: the commit merged, the Welcome
  * the merge owed is already discharged, and nothing is to be sent to that device (DEV-3, 2026-10-25).
  */
+/** One Welcome the server stored for one device ({@link IMlsService.onWelcomeDelivered}). */
+export type DeliveredWelcome = {
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  /** The Welcome's bytes - what tells this delivery from a later Welcome to the same device. */
+  welcome: Uint8Array;
+};
+
 export interface OneDeviceAddResult {
   welcome?: Uint8Array;
   ratchetTree?: Uint8Array;
@@ -835,6 +844,22 @@ export type DeviceMembershipRow = {
   admittedAtEpoch?: number | null;
 };
 
+/**
+ * The dismissed-groups read, CLASSIFIED WHERE IT IS MADE (`MlsDeliveryApi.getDismissedGroups`).
+ *
+ * WHY A TYPE AND NOT `[]` PLUS A WARNING. Discovery starts this read alongside the group list
+ * (weak-network audit, 2026-11-10) and consults it only when that list may be believed. A read that
+ * warned on its own failure would warn on every dead-link boot about a list nothing was going to
+ * read. The read now says WHAT happened, and the one consumer logs it on the branch that uses it: a
+ * refusal or an unexpected failure at warn, a transport failure at debug (the link is down, and the
+ * group list's own line already says so). Every failure is read as "nothing dismissed" - never purge
+ * on a doubt.
+ */
+export type DismissedGroupsRead =
+  | { kind: 'listed'; groupIds: string[] }
+  | { kind: 'refused'; status: number }
+  | { kind: 'failed'; transport: boolean; error: unknown };
+
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
   init(
@@ -1558,7 +1583,8 @@ export interface IMlsService {
    * the group itself: that frame is the group's current work, so the group cannot be drained until
    * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
    *
-   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first, or
+   *   already was when asked.
    */
   whenGroupDrained(groupId: string): Promise<void>;
   /**
@@ -1769,8 +1795,12 @@ export interface IMlsService {
    * on a confirmed absence.
    */
   getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta>;
-  /** Lists the groups this user dismissed (manual deletion/leave, propagated to all their devices). */
-  getDismissedGroups(): Promise<string[]>;
+  /**
+   * Lists the groups this user dismissed (manual deletion/leave, propagated to all their devices),
+   * as a {@link DismissedGroupsRead}: never rejects, and never logs - the caller says the failure
+   * only where the list is actually used.
+   */
+  getDismissedGroups(): Promise<DismissedGroupsRead>;
   /** Marks a group as dismissed (manual deletion/leave) - propagates the purge to the other devices. */
   dismissGroup(groupId: string): Promise<void>;
   /** Lifts a group's dismiss (re-add via Welcome). */
@@ -1857,6 +1887,14 @@ export interface IMlsService {
   onDisconnect(callback: () => void): void;
   /** Registers a callback invoked after a Welcome message has been successfully processed. */
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
+
+  /**
+   * Installs THE listener of every Welcome this device delivers: called once per send the server
+   * stored, whichever path sent it (an Add, a pending invitation, a welcome_request answer, the
+   * owed-Welcome drain). Called synchronously and never awaited; one listener, installed by the
+   * session when it builds this service, so no delivery can precede it.
+   */
+  onWelcomeDelivered(listener: (delivered: DeliveredWelcome) => void): void;
 
   /**
    * Registers an observer of the bulk-ingest window lifecycle. Observers are notified in

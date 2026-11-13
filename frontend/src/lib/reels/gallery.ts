@@ -64,10 +64,23 @@ export function blobToBase64(blob: Blob): Promise<string> {
  * file on its way to the share sheet (`sharing/shareOut.ts`).
  */
 export async function stageBlob(session: string, blob: Blob): Promise<void> {
-  for (let offset = 0; offset < blob.size; offset += GALLERY_CHUNK_BYTES) {
-    const data = await blobToBase64(blob.slice(offset, offset + GALLERY_CHUNK_BYTES));
-    await invoke<number>(galleryCommand('appendVideoChunk'), { session, offset, data });
+  await stageBlobAt(session, blob, 0);
+}
+
+/**
+ * Stages `blob` into `session` starting at byte `offset` of the staged file, and returns the offset
+ * after it: a file written in PIECES (a live replay, segment by segment - never the whole of it in
+ * memory) calls this once per piece with the offset the last call returned. Rust refuses a chunk that
+ * does not start where the file ends, so a wrong offset is a failure, never a corrupt file.
+ */
+export async function stageBlobAt(session: string, blob: Blob, offset: number): Promise<number> {
+  let at = offset;
+  for (let done = 0; done < blob.size; done += GALLERY_CHUNK_BYTES) {
+    const data = await blobToBase64(blob.slice(done, done + GALLERY_CHUNK_BYTES));
+    await invoke<number>(galleryCommand('appendVideoChunk'), { session, offset: at, data });
+    at += Math.min(GALLERY_CHUNK_BYTES, blob.size - done);
   }
+  return at;
 }
 
 /**
@@ -83,21 +96,38 @@ export async function saveVideoToGallery(
   if (!hasNativeGallery()) throw new GalleryError('unavailable', 'gallery: not a phone build');
   const session = crypto.randomUUID();
   console.debug(`[gallery] saving ${name}, ${video.size} bytes, session ${session}`);
-  let answer: { status: string };
   try {
     await stageBlob(session, video);
+  } catch (err) {
+    return discardStaged(session, err);
+  }
+  return commitStaged(session, name, mime);
+}
+
+/** Removes a staged file after a failure BEFORE `save_video` (which removes its own on every path), then throws. */
+export async function discardStaged(session: string, err: unknown): Promise<never> {
+  console.error('[gallery] the save failed', err);
+  await invoke(galleryCommand('discardVideo'), { session }).catch((discardErr: unknown) => {
+    console.error('[gallery] the staged copy was not discarded', discardErr);
+  });
+  throw new GalleryError('failed', 'gallery: the save failed', { cause: err });
+}
+
+/** Asks the platform to import the file staged under `session`; `name` carries the extension iOS reads. */
+export async function commitStaged(
+  session: string,
+  name: string,
+  mime = 'video/mp4'
+): Promise<GallerySaveOutcome> {
+  let answer: { status: string };
+  try {
     answer = await invoke<{ status: string }>(galleryCommand('saveVideo'), {
       session,
       name,
       mime,
     });
   } catch (err) {
-    console.error('[gallery] the save failed', err);
-    // `save_video` removes its file on every path; a failure BEFORE it leaves a staged one behind.
-    await invoke(galleryCommand('discardVideo'), { session }).catch((discardErr: unknown) => {
-      console.error('[gallery] the staged copy was not discarded', discardErr);
-    });
-    throw new GalleryError('failed', 'gallery: the save failed', { cause: err });
+    return discardStaged(session, err);
   }
   if (answer.status === 'saved' || answer.status === 'denied') {
     console.debug(`[gallery] ${answer.status}`);

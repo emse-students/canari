@@ -34,6 +34,18 @@ export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
 /** The 410 refusing a create key whose form was deleted since. */
 const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 
+/**
+ * The 400 refusing to move a PUBLISHED form to another association: its answers, payments and
+ * reminders are the association's it was published under. A draft moves freely (owner, 2026-11-09).
+ */
+export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
+
+/**
+ * The 403 refusing to move a draft between associations when the actor is not a member of both the
+ * association it leaves and the one it joins.
+ */
+export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
+
 /** The 409 refusing an online answer on a cash-only form. */
 export const FORM_ONLINE_PAYMENT_NOT_OFFERED = 'FORM_ONLINE_PAYMENT_NOT_OFFERED';
 
@@ -152,6 +164,10 @@ export function draftRefusalMessage(code: string | null | undefined): string | n
       return m.form_draft_invalid_refusal();
     case FORM_CHANGED_SINCE_REVISION:
       return m.form_changed_since_revision_refusal();
+    case FORM_ASSOCIATION_FIXED:
+      return m.form_association_fixed_refusal();
+    case FORM_ASSOCIATION_NOT_YOURS:
+      return m.form_association_not_yours_refusal();
     default:
       return null;
   }

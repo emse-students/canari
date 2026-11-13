@@ -4,6 +4,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { InternalServerErrorException, Logger } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { SecurityController } from './security.controller';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -48,6 +50,10 @@ describe('SecurityController - checkPinVerifier', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
@@ -289,6 +295,10 @@ describe('SecurityController - resetPin', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

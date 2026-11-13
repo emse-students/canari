@@ -83,7 +83,7 @@ const ci = readFileSync(
   'utf8'
 );
 ok('ci.yml runs the production build on push to main', /if: github\.event_name == 'push'[\s\S]{0,400}BUILD_WEB: '1'/.test(ci));
-ok('ci.yml runs assert-frontend-build.mjs on it', ci.includes('assert-frontend-build.mjs frontend "${{ github.sha }}"'));
+ok('ci.yml runs assert-frontend-build.mjs on it', /BUILD_SHA: \$\{\{ github\.sha \}\}\s+run: bun \.github\/scripts\/assert-frontend-build\.mjs frontend "\$BUILD_SHA"/.test(ci));
 
 console.log(failures ? `[frontend-build] ${failures} FAILURE(S)` : '[frontend-build] clean');
 process.exit(failures ? 1 : 0);

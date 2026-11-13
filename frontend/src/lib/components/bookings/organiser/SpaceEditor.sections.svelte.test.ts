@@ -109,7 +109,7 @@ describe('SpaceEditor - the five sections in plain words', () => {
       expect(summaryOf(section(title))?.textContent?.trim()).toBeTruthy();
     }
     expect(section(m.bookings_section_resources()).textContent).toContain(
-      m.bookings_summary_when_step({ step: '30', max: '6' })
+      m.bookings_summary_when_step({ step: '30', max: '3 h' })
     );
   });
 

@@ -1,25 +1,20 @@
 /**
- * The CanaReels list's "one picture and nothing else" clause, against a REAL PostgreSQL.
+ * The CanaReels list's full-screen clause, against a REAL PostgreSQL.
  *
  * `posts.service.reels.spec.ts` proves the clause reaches every feed arm; only a database proves
  * the `jsonb` arithmetic says what `full-screen-post-sql.ts` claims. The cases are the client's
  * (`frontend/src/lib/reels/fullScreenPost.test.ts`): one picture in, one picture with a legacy
  * row's `mimeType` only in, a video, two pictures, a file, text alone, a picture with a poll and a
- * picture with a form out; a linked calendar event out, and a link in the text out unless the
- * client sends `withLinks` (owner, 2026-11-06); a column holding JSON `null` or a scalar read as empty, never raising.
+ * picture with a form out; a linked calendar event out; a link in the text IN (owner, 2026-11-06,
+ * the only rule since the older switches went on 2026-11-11); a column holding JSON `null` or a
+ * scalar read as empty, never raising.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here: skipped without a database,
  * never passing. CI's `test-social-integration` sets it and fails on a skipped test. Everything
  * happens in a throwaway schema, dropped at the end.
  */
 import { Client } from 'pg';
-import {
-  CAROUSEL_MAX_MEDIA,
-  MULTI_MEDIA_POST_SQL,
-  SINGLE_MEDIA_POST_SQL,
-  SINGLE_PHOTO_POST_SQL,
-  singleMediaSql,
-} from './full-screen-post-sql';
+import { CAROUSEL_MAX_MEDIA, FULL_SCREEN_POST_SQL, singleMediaSql } from './full-screen-post-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -172,90 +167,65 @@ maybe('the one-picture clause against PostgreSQL', () => {
     await client.end();
   });
 
-  it('keeps exactly the posts whose only content is one picture', async () => {
+  it('keeps exactly the full-screen posts: one or 2..10 pictures and videos, a link allowed, nothing else', async () => {
     const res = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${SINGLE_PHOTO_POST_SQL} ORDER BY id`
+      `SELECT id FROM posts WHERE ${FULL_SCREEN_POST_SQL} ORDER BY id`
     );
-    expect(res.rows.map((r) => r.id)).toEqual([
-      'legacy-picture',
-      'one-picture',
-      'picture-and-caption',
-      'picture-scalar-polls',
-    ]);
+    expect(res.rows.map((r) => r.id)).toEqual(
+      [
+        // One picture or one video, by its `type` or a legacy row's `mimeType`, a caption allowed.
+        'legacy-picture',
+        'legacy-video',
+        'one-picture',
+        'one-video',
+        'picture-and-caption',
+        'picture-scalar-polls',
+        'video-and-caption',
+        // A carousel: 2..10 pictures and videos.
+        'carousel-legacy-mime',
+        'carousel-max',
+        'carousel-mixed-caption',
+        'two-pictures',
+        'video-and-picture',
+        // A link in the text comes too.
+        'carousel-and-link',
+        'picture-and-link',
+        'video-and-link',
+      ].sort()
+    );
   });
 
-  it('with videos too: one picture OR one video, nothing else, and no expiry to read', async () => {
+  it('the one mode reads the same clause', async () => {
     const res = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${SINGLE_MEDIA_POST_SQL} ORDER BY id`
+      `SELECT id FROM posts WHERE ${singleMediaSql('carousel-links')} ORDER BY id`
     );
-    expect(res.rows.map((r) => r.id)).toEqual([
-      'legacy-picture',
-      'legacy-video',
-      'one-picture',
-      'one-video',
-      'picture-and-caption',
-      'picture-scalar-polls',
-      'video-and-caption',
-    ]);
-  });
-
-  it('a carousel: 2..10 pictures and videos, nothing else, never raising on a scalar', async () => {
-    const res = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${MULTI_MEDIA_POST_SQL} ORDER BY id`
+    const direct = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${FULL_SCREEN_POST_SQL} ORDER BY id`
     );
-    expect(res.rows.map((r) => r.id)).toEqual([
-      'carousel-legacy-mime',
-      'carousel-max',
-      'carousel-mixed-caption',
-      'two-pictures',
-      'video-and-picture',
-    ]);
-  });
-
-  it('the carousel mode answers the single rows AND the carousels, and neither older mode does', async () => {
-    const res = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${singleMediaSql('carousel')} ORDER BY id`
-    );
-    const single = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${SINGLE_MEDIA_POST_SQL} ORDER BY id`
-    );
-    const multi = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${MULTI_MEDIA_POST_SQL} ORDER BY id`
-    );
-    expect(res.rows.map((r) => r.id).sort((a, b) => a.localeCompare(b))).toEqual(
-      [...single.rows, ...multi.rows].map((r) => r.id).sort((a, b) => a.localeCompare(b))
-    );
-    expect(single.rows.map((r) => r.id)).not.toContain('two-pictures');
-  });
-
-  it('withLinks (owner, 2026-11-06): the carousel mode plus exactly the rows whose only extra is a link', async () => {
-    const byId = (rows: Array<{ id: string }>) =>
-      rows.map((r) => r.id).sort((a, b) => a.localeCompare(b));
-    const linked = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${singleMediaSql('carousel-links')}`
-    );
-    const carousel = await client.query<{ id: string }>(
-      `SELECT id FROM posts WHERE ${singleMediaSql('carousel')}`
-    );
-    expect(byId(linked.rows)).toEqual(
-      byId([
-        ...carousel.rows,
-        { id: 'carousel-and-link' },
-        { id: 'picture-and-link' },
-        { id: 'video-and-link' },
-      ])
-    );
-    // A poll, a form, an attached form and a linked event still keep a post out.
+    expect(res.rows).toEqual(direct.rows);
+    // A poll, a form, an attached form, a linked event, a file, an audio and an 11th media keep a
+    // post out; JSON `null` and scalars never raise.
     for (const out of [
       'picture-and-poll',
       'picture-and-form',
       'picture-and-attached-form',
       'picture-and-event',
       'video-and-event',
+      'video-and-poll',
       'carousel-and-event',
       'carousel-and-poll',
+      'carousel-and-form',
+      'carousel-and-attached-form',
+      'carousel-and-file',
+      'carousel-and-audio',
+      'carousel-untyped-unknown',
+      'carousel-too-many',
+      'one-file',
+      'text-only',
+      'nulls',
+      'json-null-images',
     ]) {
-      expect(byId(linked.rows)).not.toContain(out);
+      expect(res.rows.map((r) => r.id)).not.toContain(out);
     }
   });
 });

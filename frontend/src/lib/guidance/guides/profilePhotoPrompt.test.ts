@@ -19,7 +19,14 @@ vi.mock('$lib/utils/profilePhotoLink', () => ({
   openProfilePhotoPage: () => openProfilePhotoPage(),
 }));
 
-const base = { hasPhoto: false, firstSeen: false, reminderSeen: false, firstAgeSeconds: null };
+const base = {
+  eligible: true,
+  hasPhoto: false,
+  firstSeen: false,
+  reminderSeen: false,
+  firstAgeSeconds: null,
+  month: 11,
+};
 
 describe('profilePhotoPromptStage', () => {
   it('invites an account with no photo that was never shown it', () => {
@@ -65,6 +72,27 @@ describe('profilePhotoPromptStage', () => {
         })
       ).toBeNull();
     }
+  });
+
+  it('shows nothing in September, the first prompt or the reminder, and resumes in October', () => {
+    expect(profilePhotoPromptStage({ ...base, month: 9 })).toBeNull();
+    expect(
+      profilePhotoPromptStage({ ...base, firstSeen: true, firstAgeSeconds: THIRTY_DAYS, month: 9 })
+    ).toBeNull();
+    expect(profilePhotoPromptStage({ ...base, month: 10 })).toBe('first');
+    expect(profilePhotoPromptStage({ ...base, month: 8 })).toBe('first');
+  });
+
+  it('shows nothing to an account the server does not offer it to, first or reminder', () => {
+    expect(profilePhotoPromptStage({ ...base, eligible: false })).toBeNull();
+    expect(
+      profilePhotoPromptStage({
+        ...base,
+        eligible: false,
+        firstSeen: true,
+        firstAgeSeconds: THIRTY_DAYS,
+      })
+    ).toBeNull();
   });
 
   it('does not guess an age the server has not given (first showing still owed)', () => {

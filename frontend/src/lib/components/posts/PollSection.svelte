@@ -102,8 +102,8 @@
 >
   <!-- Header row -->
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold tracking-widest uppercase">
-      <ChartColumn size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
+    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold">
+      <ChartColumn size={16} strokeWidth={2.5} class="text-accent-icon shrink-0" />
       {m.post_poll_section_title()}
     </p>
     <button
@@ -143,7 +143,7 @@
       <div class="relative flex items-center">
         <input type="checkbox" bind:checked={multipleChoice} class="peer sr-only" />
         <div
-          class="peer-checked:bg-cn-yellow h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
+          class="peer-checked:bg-accent h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
         ></div>
         <div
           class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
@@ -174,7 +174,7 @@
           class="peer sr-only"
         />
         <div
-          class="peer-checked:bg-cn-yellow h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
+          class="peer-checked:bg-accent h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
         ></div>
         <div
           class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
@@ -195,7 +195,7 @@
           value={maxSelections === null ? '' : String(maxSelections)}
           options={capOptions}
           onValueChange={(v) => (maxSelections = v === '' ? null : Number(v))}
-          triggerClass="border-cn-border/70 bg-cn-surface text-text-main focus:border-cn-yellow focus:ring-cn-yellow/25 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border px-4 py-3 text-left text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
+          triggerClass="border-cn-border/70 bg-cn-surface text-text-main focus:border-accent-icon focus:ring-accent/25 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border px-4 py-3 text-left text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
         />
       </div>
     {/if}

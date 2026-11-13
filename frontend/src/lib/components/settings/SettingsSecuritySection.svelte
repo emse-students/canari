@@ -1,13 +1,5 @@
 <script lang="ts">
-  import {
-    Shield,
-    KeyRound,
-    Monitor,
-    CircleCheck,
-    FingerprintPattern,
-    LogIn,
-    Clock,
-  } from '@lucide/svelte';
+  import { KeyRound, Monitor, CircleCheck, FingerprintPattern, LogIn, Clock } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
@@ -171,12 +163,7 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-6 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <Shield size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_security_heading()}</h2>
-  </div>
+  <h2 class="sr-only">{m.profile_security_heading()}</h2>
 
   {#if changePinSuccess}
     <div
@@ -249,8 +236,8 @@
             aria-label={m.profile_biometric_heading()}
             disabled={biometricBusy}
             onclick={toggleBiometric}
-            class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50
- {biometricEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+            class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50
+ {biometricEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -290,9 +277,9 @@
                 aria-checked={biometricCadence === opt.value}
                 disabled={cadenceBusy}
                 onclick={() => chooseCadence(opt.value)}
-                class="focus-visible:ring-cn-yellow rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 disabled:opacity-50
+                class="focus-visible:ring-accent-icon rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 disabled:opacity-50
  {biometricCadence === opt.value
-                  ? 'bg-cn-yellow text-cn-ink shadow'
+                  ? 'bg-accent text-on-accent shadow'
                   : 'text-text-muted hover:text-text-main'}"
               >
                 {opt.label}
@@ -322,8 +309,8 @@
             aria-checked={staySignedIn}
             aria-label={m.profile_stay_signed_in_heading()}
             onclick={toggleStaySignedIn}
-            class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {staySignedIn ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+            class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {staySignedIn ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200

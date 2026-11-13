@@ -1,11 +1,14 @@
 import {
+  BadRequestException,
   ForbiddenException,
+  HttpException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { COMMUNITY_CREATIONS_PER_HOUR, COMMUNITY_OWNED_MAX_DEFAULT } from './community-limits';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -56,6 +59,7 @@ describe('ChannelService - the community distribution group', () => {
     const workspaceRepo = {
       findOne: jest.fn().mockResolvedValue(null),
       find: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn((x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve({ id: WORKSPACE, ...x })),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -148,6 +152,104 @@ describe('ChannelService - the community distribution group', () => {
       // Saved twice: the row, then the row carrying its group id. The second save is what makes
       // the pointer durable - without it the community would look created and be unusable.
       expect(workspaceRepo.save).toHaveBeenCalledTimes(2);
+    });
+
+    it('stores the name trimmed, under the slug asked for', async () => {
+      const { service, workspaceRepo } = makeService();
+
+      await service.createWorkspace({
+        name: '  Les Canaris 🐤 ',
+        slug: 'les-canaris',
+        createdBy: USER,
+      });
+
+      expect(workspaceRepo.create).toHaveBeenCalledWith({
+        name: 'Les Canaris 🐤',
+        slug: 'les-canaris',
+        createdBy: USER,
+      });
+    });
+
+    it.each([
+      ['no name', { name: '   ', slug: 'test' }],
+      ['a name that is not text', { name: { $ne: '' }, slug: 'test' }],
+      ['a name of 81 characters', { name: 'a'.repeat(81), slug: 'test' }],
+      ['a name holding a line break', { name: 'Les\nCanaris', slug: 'test' }],
+      ['no slug', { name: 'Test', slug: '' }],
+      ['a slug that is not text', { name: 'Test', slug: ['test'] }],
+      ['a slug of 49 characters', { name: 'Test', slug: 'a'.repeat(49) }],
+      ['a slug with an uppercase letter', { name: 'Test', slug: 'Test' }],
+      ['a slug with a slash', { name: 'Test', slug: 'a/b' }],
+      ['a slug ending with a hyphen', { name: 'Test', slug: 'test-' }],
+    ])('refuses %s with a 400, and reads and writes nothing', async (_what, body) => {
+      const { service, workspaceRepo } = makeService();
+
+      await expect(
+        service.createWorkspace({ ...body, createdBy: USER } as never)
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(workspaceRepo.findOne).not.toHaveBeenCalled();
+      expect(workspaceRepo.count).not.toHaveBeenCalled();
+      expect(workspaceRepo.save).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a name', { name: ' ', slug: 'test' }, 'COMMUNITY_NAME_INVALID'],
+      ['a slug', { name: 'Test', slug: 'Te st' }, 'COMMUNITY_SLUG_INVALID'],
+    ])('names the refusal of %s by its code', async (_what, body, code) => {
+      const { service } = makeService();
+
+      const refusal = await service
+        .createWorkspace({ ...body, createdBy: USER })
+        .catch((e: unknown) => e);
+
+      expect((refusal as BadRequestException).getResponse()).toMatchObject({ code });
+    });
+
+    it('refuses an eleventh community in one hour with a 429, counted from the table', async () => {
+      const { service, workspaceRepo } = makeService();
+      // The first count asked is the last hour's.
+      workspaceRepo.count.mockResolvedValueOnce(COMMUNITY_CREATIONS_PER_HOUR);
+
+      const refusal = (await service
+        .createWorkspace({ name: 'Test', slug: 'test', createdBy: USER })
+        .catch((e: unknown) => e)) as HttpException;
+
+      expect(refusal.getStatus()).toBe(429);
+      expect(refusal.getResponse()).toMatchObject({ code: 'COMMUNITY_CREATION_RATE' });
+      const [{ where }] = workspaceRepo.count.mock.calls[0] as [{ where: Record<string, unknown> }];
+      expect(where.createdBy).toBe(USER);
+      expect(where.createdAt).toBeDefined();
+      expect(workspaceRepo.save).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a community past the twenty one account may hold, with a 403', async () => {
+      const { service, workspaceRepo } = makeService();
+      workspaceRepo.count
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(COMMUNITY_OWNED_MAX_DEFAULT);
+
+      const refusal = (await service
+        .createWorkspace({ name: 'Test', slug: 'test', createdBy: USER })
+        .catch((e: unknown) => e)) as HttpException;
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect(refusal.getResponse()).toMatchObject({ code: 'COMMUNITY_OWNED_LIMIT' });
+      expect(workspaceRepo.count).toHaveBeenLastCalledWith({ where: { createdBy: USER } });
+      expect(workspaceRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('creates the twentieth', async () => {
+      const { service, workspaceRepo } = makeService();
+      workspaceRepo.count
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(COMMUNITY_OWNED_MAX_DEFAULT - 1);
+
+      await service.createWorkspace({ name: 'Test', slug: 'test', createdBy: USER });
+
+      expect(workspaceRepo.save).toHaveBeenCalled();
     });
 
     it("answers the creator's whole standing, moderation included", async () => {

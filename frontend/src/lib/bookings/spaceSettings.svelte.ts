@@ -23,7 +23,6 @@ import type {
 /** The integer settings, each a text field in the editor; `''` is "none". */
 const NUMBER_FIELDS = [
   'stepMinutes',
-  'maxSteps',
   'minNoticeMinutes',
   'horizonDays',
   'maxActiveBookings',
@@ -35,10 +34,12 @@ const NUMBER_FIELDS = [
 
 export type NumberField = (typeof NUMBER_FIELDS)[number];
 
+/** The DTO's bound on `maxSteps`: how many steps one booking may cover when a maximum is set. */
+export const MAX_STEPS_BOUND = 96;
+
 /** The DTO's bounds, both included. */
 export const NUMBER_BOUNDS: Record<NumberField, { min: number; max: number }> = {
   stepMinutes: { min: 5, max: 1440 },
-  maxSteps: { min: 1, max: 96 },
   minNoticeMinutes: { min: 0, max: 525_600 },
   horizonDays: { min: 1, max: 730 },
   maxActiveBookings: { min: 1, max: 1000 },
@@ -50,6 +51,11 @@ export const NUMBER_BOUNDS: Record<NumberField, { min: number; max: number }> = 
 
 /** What the editor binds. */
 export interface SettingsDraft extends Record<NumberField, string> {
+  /**
+   * The longest single booking of a step space, in minutes; `''` = no limit (migration 153). Stored
+   * as `maxSteps` = minutes / step, so it must be a multiple of the step.
+   */
+  maxMinutes: string;
   name: string;
   description: string;
   timeZone: string;
@@ -92,6 +98,10 @@ export function draftFromSpace(space: ManagedSpace): SettingsDraft {
   >;
   return {
     ...numbers,
+    maxMinutes:
+      space.slotMode === 'step' && space.maxSteps !== null && space.stepMinutes !== null
+        ? String(space.maxSteps * space.stepMinutes)
+        : '',
     name: space.name,
     description: space.description ?? '',
     timeZone: space.timeZone,
@@ -122,20 +132,44 @@ function parseNumber(field: NumberField, value: string): number | null | 'invali
 const REQUIRED: readonly NumberField[] = ['participantWithdrawMinMinutes', 'retentionDays'];
 
 /** Why the draft cannot be saved, by field; empty when it can. */
-export type DraftProblems = Partial<Record<NumberField | 'name', 'required' | 'range'>>;
+export type DraftProblems = Partial<
+  Record<NumberField | 'name' | 'maxMinutes', 'required' | 'range'>
+>;
+
+/**
+ * `maxSteps` for a typed maximum in minutes, null for an empty field (no limit), `'invalid'` when it
+ * is not a whole multiple of the step or covers more than {@link MAX_STEPS_BOUND} steps.
+ */
+export function maxStepsFromMinutes(
+  minutes: string,
+  stepMinutes: string
+): number | null | 'invalid' {
+  const v = minutes.trim();
+  if (v === '') return null;
+  const step = parseNumber('stepMinutes', stepMinutes);
+  if (!/^\d+$/.test(v) || typeof step !== 'number') return 'invalid';
+  const n = Number(v);
+  return n > 0 && n % step === 0 && n / step <= MAX_STEPS_BOUND ? n / step : 'invalid';
+}
 
 export function draftProblems(draft: SettingsDraft): DraftProblems {
   const problems: DraftProblems = {};
   if (!draft.name.trim()) problems.name = 'required';
   for (const field of NUMBER_FIELDS) {
     // A slots space carries no step: its two fields are not read, so they are not judged.
-    if (draft.slotMode === 'slots' && (field === 'stepMinutes' || field === 'maxSteps')) continue;
+    if (draft.slotMode === 'slots' && field === 'stepMinutes') continue;
     const parsed = parseNumber(field, draft[field]);
     if (parsed === 'invalid') problems[field] = 'range';
     else if (parsed === null) {
-      const stepNeeded =
-        draft.slotMode === 'step' && (field === 'stepMinutes' || field === 'maxSteps');
+      const stepNeeded = draft.slotMode === 'step' && field === 'stepMinutes';
       if (stepNeeded || REQUIRED.includes(field)) problems[field] = 'required';
+    }
+  }
+  // Empty is no limit; a typed one must fit whole steps. A step the draft got wrong is its own
+  // problem, so it is not judged here twice.
+  if (draft.slotMode === 'step' && problems.stepMinutes === undefined) {
+    if (maxStepsFromMinutes(draft.maxMinutes, draft.stepMinutes) === 'invalid') {
+      problems.maxMinutes = 'range';
     }
   }
   return problems;
@@ -162,7 +196,9 @@ export function settingsFromDraft(
     privateInfo: draft.privateInfo.trim() || null,
     slotMode: draft.slotMode,
     stepMinutes: step ? num('stepMinutes') : null,
-    maxSteps: step ? num('maxSteps') : null,
+    maxSteps: step
+      ? (maxStepsFromMinutes(draft.maxMinutes, draft.stepMinutes) as number | null)
+      : null,
     // The mirror: a step space stores no slot length, so a switch to step clears it.
     slotMinutes: step || draft.slotMinutes === '' ? null : Number(draft.slotMinutes),
     nameVisibility: draft.nameVisibility,

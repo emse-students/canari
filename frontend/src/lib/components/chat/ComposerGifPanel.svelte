@@ -4,6 +4,7 @@
   import { m } from '$lib/paraglide/messages';
   import GifGrid from './GifGrid.svelte';
   import type { GifResult } from '$lib/utils/chat/gifSearch';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE GIF PANEL THAT TAKES THE KEYBOARD'S PLACE (user, 2026-10-02: *"un panneau de la taille du
@@ -49,6 +50,9 @@
     onClose,
   }: Props = $props();
 
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => fullscreen, 'ComposerGifPanel');
+
   /** A tap on the close button must not move focus: the search field would blur and the keyboard fall. */
   function keepFocus(e: MouseEvent): void {
     e.preventDefault();
@@ -64,6 +68,7 @@
 >
   <div
     class="flex flex-col {fullscreen ? 'composer-gif-fullscreen' : ''}"
+    style:z-index={layer.z}
     style={fullscreen
       ? undefined
       : `height: ${contentPx}px; padding-bottom: var(--safe-area-inset-bottom, 0px)`}

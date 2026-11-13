@@ -1,13 +1,22 @@
 import type { PostKind } from './reel.constants';
 
 /**
- * The values `GET /api/posts?feed=` accepts. Four are TABS of the feed (`all` is "Mon espace",
- * `followed` is "Suivis", `associations`, and the promo/formation browse `custom`); `reels` is NOT a
+ * The values `GET /api/posts?feed=` accepts. The TABS of the feed: `all` is "Campus" ("Mon espace"
+ * until 1.6.9), `foryou` is "Pour toi" (ranked, `for-you-feed.ts`), `associations`, and the
+ * promo/formation browse `custom`. `followed` is the chronological "Suivis" that Pour toi replaced
+ * in 1.6.9, kept unchanged for installed clients (docs/wiki/legacy-compatibility.md). `reels` is NOT a
  * tab: it is the CanaReels viewer's list (docs/wiki/frontend/modules/reels.md, "The CanaReels
  * entry", point 3) - every reel the reader may see, the union of the three tabs, read with the WHOLE
  * visibility predicate (`postVisibleToViewerSql`, no disjunct turned off).
  */
-export const LIST_POST_FEEDS = ['all', 'followed', 'custom', 'associations', 'reels'] as const;
+export const LIST_POST_FEEDS = [
+  'all',
+  'followed',
+  'foryou',
+  'custom',
+  'associations',
+  'reels',
+] as const;
 
 /** One of {@link LIST_POST_FEEDS}. */
 export type ListPostsFeed = (typeof LIST_POST_FEEDS)[number];
@@ -49,14 +58,16 @@ export interface ListPostsParams {
   formation?: string;
   /** Restricts the page to one kind; absent means posts AND reels. Always `reel` on `reels`. */
   kind?: PostKind;
-  /** With `kind: 'reel'`, the posts whose only content is ONE picture come too (`full-screen-post-sql.ts`). */
-  singlePhotos?: boolean;
-  /** With `kind: 'reel'`, the posts whose only content is ONE picture OR ONE video come too; wins over `singlePhotos`. */
-  singleMedia?: boolean;
-  /** With `kind: 'reel'`, the posts of 2..10 pictures and videos come too, with the single ones; wins over both. */
+  /** With `kind: 'reel'`, the full-screen posts come too: pictures and videos only, a link allowed (`full-screen-post-sql.ts`). */
   multiMedia?: boolean;
-  /** With `multiMedia`, a post with a link in its text comes too. */
-  withLinks?: boolean;
+  /** A live replay comes too; never without it (docs/wiki/live-replays.md). */
+  withReplays?: boolean;
+  /** The CanaReels viewer only: ranked like Pour toi (`for-you-feed.ts`) rather than newest first. */
+  ranked?: boolean;
+  /** A ranked list only: the ranking a later page is a slice of (`for-you-feed.ts`); absent ranks anew. */
+  asOf?: string;
+  /** A ranked list's tail only: the last tail row served (`feedCursor`), read below. */
+  cursor?: string;
 }
 
 /** The kind a page is narrowed to: `reel` on the viewer's list whatever was asked, else the request's. */

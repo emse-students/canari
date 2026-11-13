@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade, slide } from 'svelte/transition';
   import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
+  import { TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -65,7 +66,7 @@
       >
         <img src="/favicon.png" alt="Canari Logo" class="h-2/3 w-2/3 object-contain" />
       </div>
-      <h1 class="font-brand text-text-main text-5xl font-bold tracking-wide">Canari</h1>
+      <h1 class="font-brand text-text-main text-5xl font-bold">Canari</h1>
       <p class="text-text-muted mt-3 text-base font-medium">{m.auth_brand_subtitle()}</p>
     </div>
 
@@ -74,16 +75,17 @@
       {#if maintenanceNotice}
         <div
           role="status"
-          class="rounded-xl border border-amber-500/25 bg-amber-500/15 px-4 py-3 text-sm font-medium text-amber-700 dark:text-amber-300"
+          class="border-amber-warn/25 bg-amber-warn/15 text-amber-warn-text flex items-start gap-2 rounded-xl border px-4 py-3 text-sm font-medium"
         >
-          {maintenanceNotice}
+          <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{maintenanceNotice}</span>
         </div>
       {/if}
 
       <button
         onclick={onLogin}
         disabled={isLoggingIn || loginDisabled}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-2xl py-4 text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-70"
+        class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-2xl py-4 text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-70"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">
@@ -132,7 +134,7 @@
           {#if openInAppHref}
             <a
               href={openInAppHref}
-              class="text-cn-yellow mb-4 inline-block text-sm font-semibold underline"
+              class="text-accent-text mb-4 inline-block text-sm font-semibold underline"
               >{m.auth_open_in_app()}</a
             >
           {/if}
@@ -152,11 +154,11 @@
       {/if}
 
       <div class="text-text-muted mt-6 flex justify-center gap-4 text-xs">
-        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors"
+        <a href="/legal/privacy" class="hover:text-accent-text transition-colors"
           >{m.auth_privacy()}</a
         >
         <span>·</span>
-        <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">{m.auth_terms()}</a>
+        <a href="/legal/cgu" class="hover:text-accent-text transition-colors">{m.auth_terms()}</a>
       </div>
     </div>
   </div>

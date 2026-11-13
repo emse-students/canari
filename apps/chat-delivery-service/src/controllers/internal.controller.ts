@@ -14,7 +14,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -43,19 +43,29 @@ import {
 } from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
 import { publisherAdmissionBase } from '../utils/mls-frame-epoch';
-import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { tombstoneGroups, tombstoneGroupsIf, totalGroupOwnedRows } from '../utils/group-purge';
 import { deleteAccountPushTokens } from '../utils/push-envelope';
 import {
   eraseUserRedisTraces,
   findRoutesOfUser,
   markErasedDms,
   purgeErasedDmKeys,
+  unmarkErasedDms,
 } from '../utils/erasure-redis';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 import { describeSeat, readDeviceSeat, type DeviceSeat } from '../utils/device-seat';
+
+/**
+ * Whether a flagged 1:1's roster lets an erasure END the conversation: KNOWN (something still names
+ * someone) and at most two people. An empty or unknown roster is not a 1:1, it is a conversation this
+ * route cannot see the people of, and it takes the remove-this-account-only path.
+ */
+function isOneToOneRoster(roster: Set<string> | undefined): boolean {
+  return roster !== undefined && roster.size > 0 && roster.size <= 2;
+}
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -843,6 +853,29 @@ export class InternalController {
   }
 
   /**
+   * The DISTINCT people each group's roster names, by group: every seat (admitted or awaiting
+   * admission) and every device row - the membership an erasure's discovery reads. A group nothing
+   * names is absent from the map, which {@link isOneToOneRoster} reads as unknown.
+   *
+   * @param m the manager to read through: the plain one to choose, the transaction's under the seat
+   *   lock to confirm
+   */
+  private async rostersOf(m: EntityManager, groupIds: string[]): Promise<Map<string, Set<string>>> {
+    const rosters = new Map<string, Set<string>>();
+    if (groupIds.length === 0) return rosters;
+    const where = { groupId: In(groupIds) };
+    const select = { groupId: true, userId: true } as const;
+    const seats = await m.getRepository(GroupMember).find({ where, select });
+    const devices = await m.getRepository(DeviceGroupMembership).find({ where, select });
+    for (const row of [...seats, ...devices]) {
+      const people = rosters.get(row.groupId) ?? new Set<string>();
+      people.add(row.userId.toLowerCase());
+      rosters.set(row.groupId, people);
+    }
+    return rosters;
+  }
+
+  /**
    * Deletes all MLS/device/conversation data for the given user - the chat-delivery half of an
    * account erasure, driven by core-service's durable erasure queue (`account-erasure.service.ts`).
    *
@@ -917,28 +950,71 @@ export class InternalController {
     if (groupIds.length > 0) {
       const groups = await this.groupRepo.findBy({ id: In(groupIds) });
 
-      const dmGroups = groups.filter((g) => !g.isGroup);
-      const multiGroups = groups.filter((g) => g.isGroup);
+      // THE FLAG ALONE DOES NOT MAKE A 1:1, THE ROSTER DOES. Nothing bounds a conversation flagged
+      // `isGroup = false` to two people (review of #2585, 2026-10-27), and tombstoning one that holds
+      // more would end it for every other member over one member's erasure. The roster is every
+      // DISTINCT person a seat OR a device row names - the same membership the discovery above
+      // reads - so a third person with a device and no seat counts. Only a KNOWN roster of one or two
+      // people ends the conversation; three or more, or one nothing names any more, loses this
+      // account only, like any group - and a roster of three says so, being a defect upstream.
+      const flaggedOneToOne = groups.filter((g) => !g.isGroup).map((g) => g.id);
+      const rosters = await this.rostersOf(this.groupRepo.manager, flaggedOneToOne);
+      const candidates = flaggedOneToOne.filter((id) => isOneToOneRoster(rosters.get(id)));
+      for (const id of flaggedOneToOne) {
+        const people = rosters.get(id)?.size ?? 0;
+        if (people > 2) {
+          this.logger.warn(
+            `[INTERNAL_DELETE] group=${id} is flagged one-to-one and its roster holds ` +
+              `${people} people - only this account is removed from it, the conversation stays`
+          );
+        } else if (people === 0) {
+          this.logger.log(
+            `[INTERNAL_DELETE] group=${id} is flagged one-to-one and no seat or device names anyone - only this account's traces go, the conversation is not ended`
+          );
+        }
+      }
 
       // ── DMs: delete the entire group ─────────────────────────────────────
-      // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through {@link tombstoneGroups}. This branch used to
+      // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through {@link tombstoneGroupsIf}. This branch used to
       // name three tables by hand and left `mls_commit_log`, `mls_group_info`, `group_invites` and
       // `user_dismissed_groups` behind; the tombstone rows survive on purpose, so the orphan sweep -
-      // which only finds groups with no row - could never collect them. Batched rather than one
-      // transaction per DM: `Promise.all` over transactions opens N connections to do what one
-      // statement per table does. The tombstones are what let the OTHER party's device detect the
-      // deletion rather than infer it, and that party's dismissal markers are their own fact.
-      if (dmGroups.length > 0) {
-        const dmIds = dmGroups.map((g) => g.id);
-        // NAMED FIRST, in the account's erasure marker: the tombstone deletes every row that names
-        // these DMs for the account and commits before their Redis keys go, so a run that dies in
-        // between leaves keys only the marker still names ({@link purgeErasedDmKeys}, below).
-        await markErasedDms(this.redis, userId, dmIds);
-        const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, dmIds);
+      // which only finds groups with no row - could never collect them. The tombstones are what let
+      // the OTHER party's device detect the deletion rather than infer it, and that party's
+      // dismissal markers are their own fact.
+      //
+      // THE ROSTER IS READ AGAIN UNDER EACH DM'S SEAT LOCK, inside the transaction that ends it: a
+      // seat or a device written since the read above would otherwise be tombstoned with it (review
+      // of #3383, 2026-11-12). A DM that no longer qualifies is cut below like any group.
+      //
+      // NAMED IN THE ACCOUNT'S ERASURE MARKER under that lock, before the tombstone commits: the
+      // tombstone deletes every row that names the DM for the account and commits before its Redis
+      // keys go, so a run that dies in between leaves keys only the marker still names
+      // ({@link purgeErasedDmKeys}, below). A DM the re-read refuses is taken OUT of the marker, so a
+      // marker an earlier run wrote never purges the keys of a conversation that stays.
+      let tombstoned = new Set<string>();
+      if (candidates.length > 0) {
+        const { counts, ended } = await tombstoneGroupsIf(
+          this.groupRepo.manager,
+          this.redis,
+          candidates,
+          async (tx, groupId) => {
+            const confirmed = isOneToOneRoster((await this.rostersOf(tx, [groupId])).get(groupId));
+            if (confirmed) {
+              await markErasedDms(this.redis, userId, [groupId]);
+            } else {
+              await unmarkErasedDms(this.redis, userId, [groupId]);
+              this.logger.warn(
+                `[INTERNAL_DELETE] group=${groupId} gained a member between the roster read and its seat lock - only this account is removed from it`
+              );
+            }
+            return confirmed;
+          }
+        );
+        tombstoned = new Set(ended);
         this.logger.log(
-          `[INTERNAL_DELETE] ${dmIds.length} DM(s) deleted, ` +
+          `[INTERNAL_DELETE] ${ended.length} DM(s) deleted, ` +
             `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)} - ` +
-            dmIds.join(', ')
+            ended.join(', ')
         );
       }
 
@@ -948,15 +1024,15 @@ export class InternalController {
       // before this waits for it, then is refused or finds no row - so a retry never leaves one.
       // A group with no `dm_groups` row any more (an orphan the sweep has not reached) is cut the
       // same way: its device rows are what name it, so they go with its routes, never before them.
-      const tombstoned = new Set(dmGroups.map((g) => g.id));
       const cut = groupIds.filter((id) => !tombstoned.has(id));
       let routes = 0;
       for (const groupId of cut) {
         routes += (await this.messagingService.eraseSeats(groupId, userId)).toRemove;
       }
+      const withRow = groups.filter((g) => !tombstoned.has(g.id)).length;
       this.logger.log(
-        `[INTERNAL_DELETE] removed from ${multiGroups.length} group(s) ` +
-          `(+${cut.length - multiGroups.length} with no group row) user=${who} routes=${routes}`
+        `[INTERNAL_DELETE] removed from ${withRow} group(s) ` +
+          `(+${cut.length - withRow} with no group row) user=${who} routes=${routes}`
       );
     }
 

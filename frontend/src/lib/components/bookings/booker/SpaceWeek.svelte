@@ -145,6 +145,12 @@
     if (weekHeld || !lastDrawn) lastDrawn = week;
     return lastDrawn;
   });
+  /**
+   * Whether the week draws any hour at all - the ONE definition of "an empty week" (the line "Nothing
+   * is offered over these 7 days") and of the controls the first-time hint points at: the grid and
+   * the planning list's "+" exist only when it holds.
+   */
+  const weekDrawn = $derived(drawn.endMin !== drawn.startMin);
   /** The phone's planning: the same week, one list of rows per day. */
   const planning = $derived(
     planningDays(
@@ -415,9 +421,11 @@
         class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
         inert={!weekHeld}
         data-week-grid
-        use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.week' : undefined}
+        use:guideAnchorWhen={mode === 'book' && loaded && weekDrawn && !narrow
+          ? 'bookings.week'
+          : undefined}
       >
-        {#if drawn.endMin === drawn.startMin}
+        {#if !weekDrawn}
           <p class="text-text-muted py-8 text-center text-sm">
             {m.bookings_week_empty()}
           </p>
@@ -431,6 +439,7 @@
             blockMode={mode === 'block'}
             focusDate={date}
             {today}
+            guideAnchorId={mode === 'book' && loaded ? 'bookings.week.add' : undefined}
             onOpen={(unit) => pick(resource, unit)}
             onFree={(run) => {
               Log.d('BOOKINGS', 'planning: a free row opens the range form');

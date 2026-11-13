@@ -426,7 +426,7 @@ export function fitEventText(
   const fontSize = Math.max(ladder, minFontSize);
   const maxLines = Math.max(1, Math.floor(availH / (fontSize * EVENT_TITLE_LINE_HEIGHT)));
   const ph = availH >= 40 ? 8 : 5;
-  const clampCss = `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+  const clampCss = `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:auto;`;
   return { fontSize, clampCss, ph };
 }
 

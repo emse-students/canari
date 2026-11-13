@@ -54,6 +54,23 @@ describe('loadOpenLivesForFeed', () => {
   });
 });
 
+describe('a switched-off estate', () => {
+  it('is asked again on the next load, so a kill switch reopened later shows its lives', async () => {
+    let off = true;
+    const list = vi.fn(async (): Promise<LiveListItem[]> => {
+      if (off) throw new LiveRefusalError(404, null, 'x', 'disabled', null, null, null);
+      return [item('a', 'u1')];
+    });
+    expect(await loadOpenLivesForFeed('me', list)).toEqual({ kind: 'hidden' });
+    off = false;
+    expect(await loadOpenLivesForFeed('me', list)).toEqual({
+      kind: 'answered',
+      lives: [item('a', 'u1')],
+    });
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('formatLiveElapsed', () => {
   it('is m:ss under an hour and h:mm:ss from it', () => {
     expect(formatLiveElapsed(0)).toBe('0:00');

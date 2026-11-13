@@ -23,6 +23,7 @@ import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { PushToken } from './entities/push-token.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
+import { stubQueryBuilder } from './testing/queryBuilder';
 
 /**
  * AN ORPHAN GROUP IS REPAIRED IN ONE WAY, FROM WHEREVER IT IS FOUND.
@@ -247,7 +248,11 @@ describe('an orphan group - one repair, three paths', () => {
             ),
           },
         },
-        { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(DeviceGroupMembership),
+          // The reader's earliest device row per group, read once per history request: none here.
+          useValue: { ...emptyRepo(), createQueryBuilder: () => stubQueryBuilder() },
+        },
         { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },

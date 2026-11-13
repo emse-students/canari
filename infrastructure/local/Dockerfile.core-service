@@ -26,7 +26,13 @@ WORKDIR /app
 COPY --from=builder /app/apps/core-service/dist ./dist
 COPY --from=builder /app/apps/core-service/node_modules ./node_modules
 COPY --from=builder /app/apps/core-service/package.json ./
+# Eight invented dev avatars: inert unless DEV_AVATAR_OVERRIDE_DIR is set, which only the dev compose does.
+COPY --from=builder /app/apps/core-service/dev-avatars ./dev-avatars
 
 EXPOSE 3013
+
+# NON-ROOT: the image's own `bun` user (uid 1000). This service writes nothing to disk and mounts no
+# volume (both compose files), and listens above 1024, so root bought it nothing (Trivy DS-0002).
+USER bun
 
 CMD ["bun", "dist/main.js"]

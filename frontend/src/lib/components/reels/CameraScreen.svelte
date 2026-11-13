@@ -36,6 +36,18 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
+  import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
+  import { useScreenOrientation, viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import {
+    captureTurn,
+    deviceTurn,
+    nextGlyphRotation,
+    useCameraHardware,
+    type CameraKeyPhase,
+    type Quadrant,
+  } from '$lib/mobile/cameraHardware.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
   import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
@@ -99,6 +111,12 @@
      * it apart (`postCameraOpener`), so their refusal is the camera's alone.
      */
     microphoneAsked?: boolean;
+    /**
+     * A hardware volume key went down or up while this camera's live preview is in front - the
+     * shutter's owner treats it as its own press and release (`hardwareShutterEvent`). Native sends
+     * it only while the flag this screen holds is armed (`cameraHardware.svelte.ts`).
+     */
+    onvolumekey?: (phase: CameraKeyPhase) => void;
   }
 
   let {
@@ -113,10 +131,85 @@
     onBeforeRelease,
     onclose,
     microphoneAsked = true,
+    onvolumekey,
     capture = $bindable(),
   }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
+
+  /**
+   * THE CAMERA KEEPS ITS LAYOUT, AS THE SYSTEM CAMERA APPS DO (owner, 2026-11-11, replacing the
+   * turning camera of 2026-11-09; screen-orientation.md): the screen stays portrait while mounted, so
+   * a phone held sideways moves no control - the shutter stays under the thumb - and only the glyphs
+   * turn in place. A take still FREEZES the orientation on screen: on a tablet, whose `portrait` is
+   * free rotation, `FramedStream`'s one canvas size must not turn under it.
+   */
+  const orientation = useScreenOrientation('camera', 'portrait');
+  $effect(() => orientation.hold(recording));
+
+  /**
+   * THE FLAG NATIVE HOLDS FOR THE CAMERA IN FRONT: the volume keys are the shutter and the
+   * accelerometer says how the phone is held - armed only while the preview is live and IN FRONT:
+   * not held off by a review (`paused`), and not under the gallery picker or anything the owner
+   * opened over it (`deferOpen`; iOS's PHPicker runs in the app's own process, so a key pressed
+   * behind it would shoot). Released by this effect's teardown (an unmount included).
+   */
+  useCameraHardware(
+    'camera',
+    () => session.phase === 'live' && !paused && !deferOpen,
+    (phase) => onvolumekey?.(phase)
+  );
+
+  /** `screen.orientation.angle`: 0 on a phone locked upright; a tablet's layout may still turn. */
+  function readScreenAngle(): number {
+    return typeof screen !== 'undefined' ? (screen.orientation?.angle ?? 0) : 0;
+  }
+
+  /**
+   * The screen's angle, re-read at every `screen.orientation` change: a tablet's 180-degree flip
+   * between its two landscape sides changes the angle and NOT the viewport's orientation, so the
+   * viewport alone would leave the glyphs on the old turn.
+   */
+  let screenAngle = $state(readScreenAngle());
+  $effect(() => {
+    const orientationApi = typeof screen !== 'undefined' ? screen.orientation : undefined;
+    if (!orientationApi || typeof orientationApi.addEventListener !== 'function') return;
+    const onChange = () => {
+      screenAngle = readScreenAngle();
+      console.debug(`[camera] the screen turned to ${screenAngle}`);
+    };
+    orientationApi.addEventListener('change', onChange);
+    return () => orientationApi.removeEventListener('change', onChange);
+  });
+
+  /**
+   * How far a capture is turned to come out upright: the phone's turn as the sensor reads it, less
+   * what the screen turned itself. A photo or take made with the phone sideways is a LANDSCAPE file.
+   */
+  function currentTurn(): Quadrant {
+    return captureTurn(deviceTurn.quadrant, screenAngle);
+  }
+
+  /**
+   * The glyphs' rotation: the capture's turn, undone, taken the short way from the angle drawn now
+   * (`nextGlyphRotation`), so each round control turns a quarter in place, animated
+   * (`.camera-glyph-turn`).
+   */
+  let glyphRotation = $state(0);
+  $effect(() => {
+    const turn = currentTurn();
+    glyphRotation = untrack(() => nextGlyphRotation(glyphRotation, turn));
+  });
+
+  /**
+   * The frame follows the SCREEN: 9:16 upright (every phone, its layout locked), 16:9 on a tablet or
+   * a browser window that is landscape. A phone held sideways keeps the 9:16 preview, and its capture
+   * is turned into a 16:9 file (`PreviewBox.turn`); the review, the editor and the reel slide take
+   * the MEDIA's own ratio, so a landscape reel is letterboxed in the pager.
+   */
+  const frameRatio = $derived(
+    viewportOrientation.landscape ? 1 / REEL_FRAME_RATIO : REEL_FRAME_RATIO
+  );
 
   /**
    * The element holds a decoded frame of the CURRENT stream. `live` only says a track is in hand: from
@@ -162,6 +255,7 @@
       dpr: window.devicePixelRatio || 1,
       mirror: shouldMirrorCapture(session.facing),
       zoom: digitalZoom,
+      turn: currentTurn(),
     };
   }
 
@@ -348,6 +442,8 @@
     enabled: session.phase === 'live' && flipAllowed && session.canSwitch,
   }}
   aria-label={m.reels_camera_title()}
+  style:--camera-glyph-rotation="{glyphRotation}deg"
+  data-camera-glyph-rotation={glyphRotation}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
@@ -359,7 +455,7 @@
        `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
        2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
        is the state the engine gets right. -->
-  <ReelFrame>
+  <ReelFrame ratio={frameRatio}>
     {#key session.stream}
       <video
         bind:this={video}
@@ -404,7 +500,7 @@
     <div class="absolute inset-0 flex items-center justify-center">
       <button
         type="button"
-        class="inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2"
         data-camera-reopen
         onclick={reopen}
       >
@@ -425,7 +521,7 @@
       <p class="text-sm text-white/70">{text.body()}</p>
       <button
         type="button"
-        class="mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2"
         onclick={() => void session.start()}
       >
         <RefreshCcw size={16} strokeWidth={2.5} />
@@ -434,7 +530,7 @@
       {#if session.fault === 'denied' && canOpenSettings}
         <button
           type="button"
-          class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+          class="text-on-accent bg-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => void openSettings()}
           data-camera-open-settings
         >
@@ -453,50 +549,39 @@
        not leave the tab - the shutter and Back are what end it. -->
   <div
     class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+    style={sideSafePadding('0.75rem')}
   >
     {#if recording}
       <span></span>
     {:else}
-      <button
-        type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={m.reels_camera_close()}
-        title={m.reels_camera_close()}
-        onclick={close}
-      >
+      <CameraControlButton label={m.reels_camera_close()} onclick={close}>
         <X size={24} strokeWidth={2.5} />
-      </button>
+      </CameraControlButton>
     {/if}
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
         {#if session.canSwitch}
-          <button
-            type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
-            aria-label={m.reels_camera_switch()}
-            title={m.reels_camera_switch()}
+          <CameraControlButton
+            label={m.reels_camera_switch()}
             disabled={session.flipping || !flipAllowed}
             onclick={flip}
           >
             <SwitchCamera size={22} strokeWidth={2.25} />
-          </button>
+          </CameraControlButton>
         {/if}
         {#if session.torchAvailable}
-          <button
-            type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-            aria-label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
-            aria-pressed={session.torchOn}
-            title={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
+          <CameraControlButton
+            label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
+            pressed={session.torchOn}
             onclick={() => void session.toggleTorch()}
           >
             {#if session.torchOn}
-              <Zap size={22} strokeWidth={2.25} class="text-amber-400" />
+              <Zap size={22} strokeWidth={2.25} class="text-accent-text" />
             {:else}
               <ZapOff size={22} strokeWidth={2.25} />
             {/if}
-          </button>
+          </CameraControlButton>
         {/if}
       </div>
     {/if}
@@ -507,6 +592,7 @@
          down here for the whole take. -->
     <div
       class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
+      style={sideSafePadding()}
       data-no-double-tap
     >
       {@render controls()}

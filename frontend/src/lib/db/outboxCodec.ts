@@ -6,7 +6,7 @@ import type { OutboxBlobRef, OutboxEntry } from './types';
 //
 // An outbox row splits into:
 //  - clear columns (id, conversationId, sentAt, kind, status, attempts, lastAttemptAt,
-//    nextAttemptAt, serverErrors, createdAt): authoritative for querying/sorting/re-keying without the PIN,
+//    nextAttemptAt, serverErrors, unavailableAnswers, createdAt): authoritative for querying/sorting/re-keying without the PIN,
 //    mirroring the StoredMessage convention (timestamp/conversationId stored in the clear).
 //  - an encrypted blob: the sensitive payload { text, replyTo, media }. Binary media bytes are
 //    base64-encoded so they survive JSON serialization inside encryptData/decryptData.
@@ -47,6 +47,7 @@ export interface OutboxClearColumns {
   lastAttemptAt?: number;
   nextAttemptAt?: number;
   serverErrors?: number;
+  unavailableAnswers?: number;
   createdAt: number;
 }
 
@@ -86,6 +87,7 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
     lastAttemptAt: entry.lastAttemptAt,
     nextAttemptAt: entry.nextAttemptAt,
     serverErrors: entry.serverErrors,
+    unavailableAnswers: entry.unavailableAnswers,
     createdAt: entry.createdAt,
   };
 }
@@ -146,6 +148,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
     lastAttemptAt: clear.lastAttemptAt,
     nextAttemptAt: clear.nextAttemptAt,
     serverErrors: clear.serverErrors,
+    unavailableAnswers: clear.unavailableAnswers,
     createdAt: clear.createdAt,
     text: typeof payload?.text === 'string' ? payload.text : undefined,
     replyTo: payload?.replyTo,
@@ -168,6 +171,7 @@ export const OUTBOX_CLEAR_PATCH_KEYS = [
   'lastAttemptAt',
   'nextAttemptAt',
   'serverErrors',
+  'unavailableAnswers',
 ] as const;
 
 /**

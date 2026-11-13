@@ -173,7 +173,7 @@ added later without the pipe fails there.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/channels/workspaces` | Create workspace |
+| POST | `/api/channels/workspaces` | Create workspace. `name` is a display name (trimmed, 1-80 characters, no control character - `validateDisplayName`, the rule a salon name shares), `slug` is what the client derives from it (`a-z0-9` groups joined by single hyphens, at most 48; the server appends `-2`, `-3`... to keep it unique); anything else is a 400 before any read or write, coded `COMMUNITY_NAME_INVALID` or `COMMUNITY_SLUG_INVALID`. Two limits are COUNTED FROM THE `workspaces` TABLE at each creation, so they hold across replicas and deploys (`community-limits.ts`): ten created by one account in the last hour (429 `COMMUNITY_CREATION_RATE`), and twenty held by one account as their creator (403 `COMMUNITY_OWNED_LIMIT`; the server setting `COMMUNITY_OWNED_MAX`, default 20). The client names all four through `describeCommunityRefusal` |
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |
@@ -239,15 +239,36 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   able to offer people who are not in it yet. Getting this wrong is visible: the members sidebar
   listed all nine people of a community in a channel only five of them could read.
 - **Write policy.** Independent of read access, `channels.writePolicy` (migration 031) gates
-  posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
-  `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
-  `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
-  **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and three callers
-  read it: `canWriteToChannel` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
-  on every channel, and `writeDecisionsFor` when the policy changes. The client is sent the DECISION
-  and never the policy - it holds no roles to apply one - and `ChatArea` replaces the composer with
-  `chat_channel_read_only` when the answer is no. Absent means YES, deliberately: a client too old to
-  be sent the field fails open onto the server's refusal, which is the guarantee.
+  posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate`, `channel.manage`
+  or `workspace.manage` - `roleGrantsModeration`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
+  `writeStandingIn`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+  **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and every caller
+  reads it: `writeStandingIn` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
+  on every channel, `writeDecisionsFor` when the policy changes, `writeVerdicts` on a role change and
+  `rolesQualifyingFor` for the access panel. The client is sent DECISIONS and never applies the
+  policy - it holds no roles to apply one - and `ChatArea` replaces the composer with the line saying
+  WHO may write (`writePolicyLine`) when the answer is no. Absent means YES, deliberately: a client
+  too old to be sent the field fails open onto the server's refusal, which is the guarantee.
+- **A refused post is TYPED and LOGGED (2026-11-10).** Production: a member of a community's
+  Moderateur role, in an "admins and moderators" salon, had a composer and every post came back
+  "no permission"; the role had been emptied of every permission (each revoke is one grid click,
+  logged `[ROLE] revoked <key> role=<id>`), so the rule was right and nothing said so. Now each
+  `ForbiddenException` of `sendMessage` logs one `[SEND] refused` WARN naming the cause (not a
+  member, no access, or `write policy <policy>` with the sender's role ids and
+  `grantsModeration`/`grantsManage`); the policy refusal carries `CHANNEL_WRITE_REQUIRES_MODERATION`
+  or `CHANNEL_WRITE_REQUIRES_ADMIN`, which the client maps to "only admins (and moderators) can post
+  here" and uses to take the stale composer away (`handleChannelWriteRefused`).
+  `workspace.role.changed` carries `canWriteByPolicy` (the verdict for each of the three policies),
+  and every salon row keeps its `writePolicy` (listing, `channel.updated`) to look its own verdict
+  up - before this, a role edit moved the three cached flags and left every composer where it was.
+  **And the sidebar's own listing (`listChannelsForUser`) never carried `viewerCanWrite` at all** -
+  only `getWorkspaceBySlug` did - so every load drew a composer in every restricted salon; it now
+  projects `writePolicy` and `viewerCanWrite` like the community page, and `channel.member.joined`
+  (one helper, `announceSalonJoined`, split by verdict) and `createChannel`'s answer carry both, so
+  a row added live knows its policy too.
+  The access read (`getChannelAccess`) carries `writerRoles`, the roles each restricted policy admits
+  by what they grant; the panel names them under the select and warns when "admins and moderators"
+  admits the administrators alone.
 - **A change is ANNOUNCED, split by the answer.** A listing is fetched once, so `viewerCanWrite`
   alone left everyone already in the salon holding a stale composer until their next full load -
   COMM-7 failed twice for this, the second time on the fix for the first. `updateChannelAccess` now
@@ -1034,8 +1055,7 @@ pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
 
 ### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
 
-Every personal account is private (Q1 of the
-[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+Every personal account is private ([profiles-and-access](../profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)):
 `POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
 only the followed person's answer makes it `accepted`. An association, a list or an institution
 (`association_follows`) is followed at once and has no status.
@@ -1337,7 +1357,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.removed` | `removeMemberFromChannel` |
 | `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
-| `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
+| `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite` and `writePolicy`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
 | `workspace.role.permissions` | a role's permission set changed - addressed to the MEMBERSHIP, since every open grid draws it |
 
@@ -1581,12 +1601,11 @@ its lowest-priority one (`baseMemberRole`, the one definition). A direct invitat
 `roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
 role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
 `403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
-downgrade. `Membre`, or the base role's own name, means the base role, so a deployed client's
-ordinary invitation works in a community whose lowest role is called otherwise; a role literally
-named `Membre` above the base role is therefore not grantable by invitation until `minClientVersion`
-reaches a client that sends no `roleName` for an ordinary invitation ([backlog](../backlog.md)).
-The client sends no `roleName` at all for an ordinary invitation since #2277, and names a role only
-when the inviter picked one.
+downgrade. A named role is matched by its own name first, so a role literally named `Membre` above
+the base role is granted under the same right as any other (since 2026-11-11, once
+`minClientVersion` passed `v1.4.0`); only where no role carries the name does `Membre` (or `member`)
+mean the base role. The client sends no `roleName` at all for an ordinary invitation since #2277,
+and names a role only when the inviter picked one.
 
 **Role changes are bounded by the actor's own permissions, by the same function.** Every
 role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
