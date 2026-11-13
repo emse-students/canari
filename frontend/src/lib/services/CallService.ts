@@ -1133,13 +1133,18 @@ export class CallService {
    * Sends one MLS call signal (invite, answered, hangup). A GROUP call's signal travels as the
    * `group_call` kind (WP-GC2): a build before group calls drops an unknown kind in silence, so it
    * never rings for a call it could not carry; a 1:1 call's is the `call` kind, unchanged.
+   *
+   * The kind is `groupCall` once the room token said it, and the INVITE's kind while this device
+   * is only ringing: a member's decline leaves before any token, and sent as `call` it would reach
+   * the caller as a 1:1 hangup and end the whole group call (review of #3501).
    */
   private sendCallSignal(
     groupId: string,
     appMsgPartial: canari.IAppMessage,
     sentAt?: number
   ): Promise<EventTime> {
-    const msg = this.groupCall ? asGroupCallSignal(appMsgPartial) : appMsgPartial;
+    const group = this.groupCall || this.incomingKind === 'group';
+    const msg = group ? asGroupCallSignal(appMsgPartial) : appMsgPartial;
     return this.sendMlsNotification(groupId, msg, sentAt);
   }
 
@@ -2474,6 +2479,13 @@ export class CallService {
       // It counts its bytes from zero: a rate against the old one's totals would be negative.
       // (A tick of the old one still in flight is refused by `writeEndReport`: it names its pc.)
       leg.resetNegotiation();
+      if (this.groupCall) {
+        // The old device's stream leaves the published map NOW: its tile would otherwise show the
+        // dead stream until the new device's first track arrives. (A 1:1 call keeps its `remote`
+        // until the new track replaces the stale one in place.)
+        appendLog(`[Call]${leg.tag} the replaced device's stream is unpublished`);
+        this.publishRemoteStream(leg);
+      }
     }
     await this.initPeerConnection(leg);
     this.publishTiles();

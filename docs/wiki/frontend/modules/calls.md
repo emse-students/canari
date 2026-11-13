@@ -2090,7 +2090,15 @@ conversation is unchanged. Nothing here is proven on hardware yet: the readings 
   last other participant leaves, the call ends (`closeLeg` -> `endCall(true)`: its hangup carries
   no unanswered outcome, so it stops nobody's call, and its ring-end stops the system rings of
   members still rung for an empty room). A member whose ring window closes while others talk
-  writes its own missed record (`ringOutIncoming`).
+  writes its own missed record (`ringOutIncoming`). **A ringing member's decline is a `group_call`
+  frame** (review of #3501, 2026-11-14): the member has no room token yet, so `sendCallSignal` takes
+  the kind from the invite (`incomingKind`) until the token says it - sent as `call`, the decline
+  reached the caller as a 1:1 hangup and ended the whole call. The decline tests send their decline
+  through a real ringing device and route the sent frame as the message pipeline does. Owed before
+  `groupMode` flips: [an empty-room answer and a ring after an outcome-less end](../../backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md).
+- **A replaced device's stream is unpublished at once**: a second `PeerReady` naming a new seat of a
+  participant rebuilds the leg and takes the old stream off `remoteStreams` there, not when the new
+  device's first track arrives.
 - **Sound and picture.** Every leg's audio is mixed into ONE stream (`remoteAudioMix`) played by
   the call's one sink; the microphone switch (`CallMicSwitch`) holds one sender per leg, so the
   RNNoise choice reaches every participant. `CallOverlay` draws one `CallGroupTile` per leg -

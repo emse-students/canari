@@ -5521,6 +5521,21 @@ describe('a group call, client side (WP-GC2)', () => {
     expect(hangups[0]?.groupCall?.endReason ?? 0).toBe(0);
   });
 
+  it("a participant's replaced device takes its old stream off the published map at once", async () => {
+    const service = new CallService(fakeMls);
+    const { ws, bob, carol } = await groupCallWithTwo(service);
+    bob.remoteOfferAdds('audio');
+    carol.remoteOfferAdds('audio');
+    expect([...get(service.remoteStreams).keys()]).toContain('bob');
+
+    ws.deliver({ type: 'PeerReady', initiator: true, peer: 'bob:seat-b2' });
+    await settle();
+
+    expect(bob.closed).toBe(true);
+    expect([...get(service.remoteStreams).keys()]).not.toContain('bob');
+    expect([...get(service.remoteStreams).keys()]).toContain('carol');
+  });
+
   it('a PeerAway pauses only that leg', async () => {
     const service = new CallService(fakeMls);
     const { ws } = await groupCallWithTwo(service);
@@ -5535,17 +5550,74 @@ describe('a group call, client side (WP-GC2)', () => {
     expect(get(service.reconnecting)).toBe(false);
   });
 
+  /**
+   * A member's decline of a GROUP call, made the way the app makes it: a second device is rung by
+   * a `group_call` invite and refuses it (`endCall()` while ringing), and the frame it SENT is
+   * decoded and routed as the message pipeline routes it (`setupMessageHandler`: `group = !msg.call`)
+   * - never a hangup built by hand and flagged a group call by the test.
+   */
+  async function realDecline(
+    member: string
+  ): Promise<{ callMsg: NonNullable<canari.IAppMessage['call']>; group: boolean }> {
+    const decliner = new CallService(fakeMls);
+    await decliner.handleCallSignal(
+      'alice',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-1', 60_000).call!,
+      member,
+      `device-${member}`,
+      true
+    );
+    expect(get(decliner.callState)).toBe('incoming');
+    const before = vi.mocked(fakeMls.sendMessage).mock.calls.length;
+    decliner.endCall();
+    await settle();
+    const sent = vi
+      .mocked(fakeMls.sendMessage)
+      .mock.calls.slice(before)
+      .map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1]))
+      .find((m) => m?.call?.hangup || m?.groupCall?.hangup);
+    expect(sent).toBeTruthy();
+    return { callMsg: (sent!.call ?? sent!.groupCall)!, group: !sent!.call };
+  }
+
+  it('a member declines a group invite as a group_call hangup, never a 1:1 call one', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'alice',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-1', 60_000).call!,
+      'bob',
+      'device-b',
+      true
+    );
+    expect(get(service.callState)).toBe('incoming');
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    service.endCall();
+    await settle();
+
+    const hangups = vi
+      .mocked(fakeMls.sendMessage)
+      .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1]))
+      .filter((m) => m?.call?.hangup || m?.groupCall?.hangup);
+    expect(hangups).toHaveLength(1);
+    expect(hangups[0]?.call).toBeFalsy();
+    expect(hangups[0]?.groupCall?.hangup).toBe(true);
+  });
+
   it('one decline does not end it: the caller keeps ringing the others', async () => {
     const service = new CallService(fakeMls);
     await groupCaller(service);
+    const declined = await realDecline('bob');
 
     await service.handleCallSignal(
       'bob',
       'group-1',
-      mkCallHangup('room-1', 'device-b', 'declined').call!,
+      declined.callMsg,
       'alice',
       'device-1',
-      true
+      declined.group
     );
     await service.handleCallSignal(
       'carol',
@@ -5628,6 +5700,7 @@ describe('a group call, client side (WP-GC2)', () => {
   });
 
   it("a ringing callee's ring stops on the caller's cancel, and not on another member's decline", async () => {
+    const declined = await realDecline('carol');
     const service = new CallService(fakeMls);
     await service.handleCallSignal(
       'bob',
@@ -5640,10 +5713,10 @@ describe('a group call, client side (WP-GC2)', () => {
     await service.handleCallSignal(
       'carol',
       'group-1',
-      mkCallHangup('room-1', 'device-c', 'declined').call!,
+      declined.callMsg,
       'alice',
       'device-1',
-      true
+      declined.group
     );
     expect(get(service.callState)).toBe('incoming');
 
