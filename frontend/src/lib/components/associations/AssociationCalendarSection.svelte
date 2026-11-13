@@ -55,6 +55,7 @@
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { institutionReachOffered } from '$lib/posts/institutionReach';
   import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -77,6 +78,13 @@
      * anyone else (`CALENDAR_NEUTRAL_NOT_A_BDE`, and the route's PROPOSE_EVENT).
      */
     canPresentNeutral?: boolean;
+    /** This association's name: the reach picker names it. */
+    associationName?: string;
+    /**
+     * This association's type. An INSTITUTION chooses each event's spaces and public (owner,
+     * 2026-11-13); every other type files to its whole audience.
+     */
+    associationType?: string | null;
   }
 
   let {
@@ -85,6 +93,8 @@
     canEdit = false,
     canDeclareBreak = false,
     canPresentNeutral = false,
+    associationName = '',
+    associationType = null,
   }: Props = $props();
 
   /**
@@ -139,6 +149,9 @@
     // Only this BDE's OWN events: one it co-organises belongs to another association, which is
     // never a BDE's to present as "Campus".
     canSetPresentation: canPresentNeutral && formValues.targetAssociationId === associationId,
+    // Only this institution's OWN events: one it co-organises is another owner's to reach.
+    canSetReach:
+      institutionReachOffered(associationType) && formValues.targetAssociationId === associationId,
   });
 
   let showSubscribeModal = $state(false);
@@ -616,6 +629,7 @@
   savingLabel={m.asso_calendar_saving_label()}
   onSubmit={submitEvent}
   onWithdraw={formValues.writeSide === 'partner' ? withdrawFromEvent : null}
+  ownerName={associationName}
   onClose={closeModal}
 />
 

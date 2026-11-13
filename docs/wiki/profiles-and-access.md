@@ -2726,7 +2726,7 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   narrower; the picker's "Personnel" hint names who it reaches in those terms.
 - **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
   `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
-  `postVisibleToUserSql` passes `postReachHoldsSpaceSql` for the post's own association only. So a
+  `postVisibleToUserSql` passes `institutionReachHoldsSpaceSql` for the post's own association only. So a
   reader is reached through a space that BOTH one of the institution's rules reaches AND the post
   ticked - never wider than the audience, and shrinking with it. A membership is not narrowed (D21),
   and **a republisher still reaches its own readers** (G4, republication stays the inter-campus
@@ -2743,7 +2743,8 @@ to the post. The public link preview (`PostPreviewService.findShareable`) refuse
 is `students` or `staff`, as it refuses "Entre étudiants"; spaces alone narrow an audience as any
 association's does, and leave the preview as it was.
 
-**The write** (`posts/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision):
+**The write** (`spaces/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision, shared
+with [calendar events](#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)):
 `reach: { spaces, public }` on `POST /api/posts` and `PATCH /api/posts/:id`. On a create, an
 institution's post without one is a 400 `institution_reach_required`; on any other post a reach is
 `institution_reach_not_offered` (a live replay too: it keeps its live's audience, D8); a malformed one
@@ -2809,8 +2810,9 @@ would be refused word for word - the banner offers Delete alone.
    `"reachPublic"`/`"reachSpaces"` on that entity's posts in the same transaction (or the write
    accept a reach on a post that already has one), and the edit form draw the picker from the
    served `type` alone (review of #3314, unreachable today, nothing built).
-6. **Events are not touched**: the event a post announces keeps its own visibility. The events half
-   of C1 (`association_calendar_event_audiences`, reform section 3) is not built.
+6. **Events carry their own reach since 2026-11-13** (below): the event a post announces is read
+   through the EVENT's predicate, never the post's. The `association_calendar_event_audiences` table
+   of reform section 3 was not built: events took the posts' two columns instead.
 
 #### Proof
 
@@ -2825,6 +2827,92 @@ a real audience, and migration 162's CHECKs and re-run. `posts.service.instituti
 the contract, the create (stored, required, outside, not offered), the edit (narrow and widen with the
 cache dropped, absent leaves it, refused on an association and a replay), the options' refusals, the
 served field; `post-preview.service.spec.ts`, the link preview refused for students or staff and
-kept for everyone. **Break-proof, run 2026-11-10**: with `postReachHoldsSpaceSql` always true, 9 of the 28
+kept for everyone. **Break-proof, run 2026-11-10**: with `institutionReachHoldsSpaceSql` (then
+`postReachHoldsSpaceSql`) always true, 9 of the 28
 integration tests fail; with `institutionReachAdmitsUserSql` always true, 11.
+
+### An institution's reach per calendar event, as built (owner, 2026-11-13)
+
+The owner's decisions, final: an INSTITUTION chooses, for EACH calendar event it files, the
+formation x campus spaces (with "tout un campus" and "toute une formation") and the public (Tous /
+Étudiants / Personnel, the posts' meaning); nothing is pre-selected and "Déposer" stays disabled
+until both are chosen; the reach is editable after validation or publication, both ways, sends no
+notification and does NOT send the event back to validation; and it is ONE model with posts - the
+same picker, the same refusals, the same chip, the post code factored rather than copied.
+
+**Schema - migration 164** (`164_institution_event_reach.sql`): `association_calendar_events` gains
+the posts' two nullable columns, `"reachPublic"` and `"reachSpaces"`, with the same three CHECKs
+(added `NOT VALID`, then validated). NULL is every event that is not an institution's and every
+institution event filed before the migration: its whole audience, as before. No backfill. **Not
+held**: `migration_hold_reason` returns empty (additive only), as for 162.
+
+**One shared code path** - nothing of the posts' half was copied:
+
+- `spaces/institution-reach.ts` (moved from `posts/`): `resolveInstitutionReachWrite` takes a
+  `subject` (`'post' | 'event'`) that changes only its dev-facing messages; the typed codes are the
+  posts' four. `institutionReachOptionsOffered` is the options statement both routes answer with.
+- `spaces/reader-spaces.ts`: `institutionReachHoldsSpaceSql` (the ticked-pair containment, renamed
+  from `postReachHoldsSpaceSql`), `institutionReachAdmitsUserSql` (the public gate) and
+  `institutionReachNotForStudentsSql` (what closes the read-grant and admin doors to a `students`
+  item) are read by BOTH `postVisibleToUserSql` and `eventVisibleToUserSql`.
+- The client: `InstitutionReachPicker.svelte` takes `subject` (the missing-choice line says
+  "déposer") and `loadOptions` (the event form passes `getEventReachOptions`);
+  `InstitutionReachChip.svelte` on the event's detail.
+
+**The predicate** - `eventVisibleToUserSql(event, user)`, the ONE event predicate: the public gates
+every door (`institutionReachAdmitsUserSql`), the spaces narrow the organiser's own door (rules and
+read grants, through `ReadOpts.spaceFilter`), and a `students` event closes the read-grant door.
+`eventReachesSpaceMatchingSql` (the agenda's space filter and the anonymous per-selection feed) asks
+the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` does.
+
+**Co-organised events - decided by the lead, reversible:**
+
+1. **The public gates every door**, an accepted co-organiser's included.
+2. **The organiser's members AND an accepted co-organiser's members are exempt from the public**:
+   they co-own the event, edit it from the partner side, and list it on their own page - hiding it
+   from them would hide their own event.
+3. **The spaces narrow only the institution's own door** (rules and read grants). **An accepted
+   co-organiser keeps its own audience**, as a republisher keeps its readers for a post (G4): an
+   institution that co-organises with an association reaches that association's readers through it.
+4. **Only the organiser sets the reach** (E2): a partner's PATCH naming one is refused with
+   `partnerOrganiserOnlyRefusal('reach')`, and the form draws the picker on the organiser side only.
+
+**Every surface asks it**: the agenda lists and their filters, the event by id, the search, the
+`.ics` feeds (personal and signed; an anonymous association-only link withholds a `students` or
+`staff` event, a space selection follows `eventReachesSpaceMatchingSql`, a one-event signed link is
+left whole), the opening reminders (`eventOpeningSeenBySql`, asked when the followers are written AND
+again at the opening, so a narrowing in between drops a reader), the feed's event card and a post's
+linked event (`eventCardShownToViewerSql`: an event with a reach is shown only to a reader its own
+predicate admits; one without is unchanged).
+
+**The write**: `reach` on the event create and update routes, through `resolveInstitutionReachWrite`:
+mandatory on a create by an institution, refused on any other owner, and on an edit absent leaves
+the stored one alone. The status is never touched. **The options**:
+`GET /api/associations/:id/events/reach-options` - a global admin, anyone who may propose the
+institution's events (`PROPOSE_EVENT`), or anyone who validates them; 403 otherwise; 400
+`institution_reach_not_offered` for a non-institution.
+
+**Served**: every event carries `reach: { spaces, public } | null` (`servedInstitutionReach`).
+
+**The form** (`frontend/src/lib/calendar/eventForm.ts`): `canSetReach` is true when "Au nom de" is an
+institution (the global agenda) or on the institution's own page for its own events; `offersReach`
+adds the organiser side; `reachBlocksSave` keeps the save disabled while a required reach is
+incomplete. A new event's reach is required; an existing one's only when it already carries one (a
+legacy event saves without until a choice is complete). An edit sends the reach only once the picker
+was touched (the posts' rule from the review of #3314). The four codes read as event sentences
+(`calendarErrors.ts`).
+
+#### Proof - events
+
+`associations/institution-event-reach.integration.spec.ts` (real PostgreSQL; an institution on a
+whole campus, an association co-organising from another campus, readers of a ticked space, of an
+unticked space inside the audience, staff, members of both, an outsider): migration 164's CHECKs and
+re-run; a reader of a ticked space sees the event; a reader of an unticked space inside the audience
+does not; the public gate (students, staff, all); an edit narrows at once and widens back; a space
+outside the audience opens nothing; the co-organiser door; the anonymous selection; the event card;
+the write's refusals and the options. `opening-reminders.integration.spec.ts` (11): a narrowed event's
+opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: with
+`institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
+always true, 11 of 11. The readings owed on a phone are in
+[the backlog](backlog.d/institution-event-reach.md).
 

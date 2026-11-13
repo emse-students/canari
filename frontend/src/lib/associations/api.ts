@@ -16,6 +16,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
@@ -395,6 +396,11 @@ export interface AssociationCalendarEvent {
   imageUrl: string | null;
   /** The ACCEPTED co-organisers (D39); one asked and not yet answering is not here. */
   coOwners: CalendarEventCoOwner[];
+  /**
+   * The spaces and the public an institution chose for this event (owner, 2026-11-13), served to
+   * every reader like a post's; `null` (or absent, from an older server) when it carries none.
+   */
+  reach?: InstitutionReach | null;
 }
 
 /** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
@@ -430,6 +436,8 @@ export interface CreateAssociationCalendarEventPayload {
   coOwnerIds?: string[];
   /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
   presentation?: AssociationCalendarEventPresentation;
+  /** MANDATORY when the owner is an institution, refused otherwise (owner, 2026-11-13). */
+  reach?: InstitutionReach;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -441,6 +449,8 @@ export interface UpdateAssociationCalendarEventPayload {
   kind?: AssociationCalendarEventKind;
   /** Omitted unless the surface may decide it (`canSetPresentation`). */
   presentation?: AssociationCalendarEventPresentation;
+  /** An institution's reach, replaced both ways; omitted leaves it as stored (organiser side). */
+  reach?: InstitutionReach;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -869,6 +879,19 @@ export async function createAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events`,
     { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/**
+ * The spaces an institution's EVENT may target (owner, 2026-11-13): its audience's, the statement
+ * the write checks a reach against. `associationId` is the event's owner; 403 for a caller who files
+ * none of its events, 400 `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getEventReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/reach-options`
   );
 }
 

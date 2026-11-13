@@ -56,12 +56,11 @@ import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students
 import {
   INSTITUTION_REACH_CODES,
   foldServedReach,
-  institutionReachOffered,
-  institutionReachOptions,
+  institutionReachOptionsOffered,
   resolveInstitutionReachWrite,
   servedInstitutionReach,
   type InstitutionReachSpace,
-} from './institution-reach';
+} from '../spaces/institution-reach';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
@@ -1040,7 +1039,8 @@ export class PostsService {
     }
     if (raw.linkedCalendarEventId) {
       raw.linkedCalendarEvent = await this.associationsService.findValidatedCalendarEventSummary(
-        raw.linkedCalendarEventId as string
+        raw.linkedCalendarEventId as string,
+        viewer.viewerId
       );
     }
     return raw;
@@ -1509,14 +1509,16 @@ export class PostsService {
    * row is what keeps a page of "same event, many posts" from repeating the same lookup.
    */
   private async batchLoadLinkedCalendarEvents(
-    rows: { linkedCalendarEventId?: string | null }[]
+    rows: { linkedCalendarEventId?: string | null }[],
+    viewerId: string | undefined
   ): Promise<Map<string, Record<string, unknown>>> {
     const eventIds = [
       ...new Set(rows.map((r) => r.linkedCalendarEventId).filter((id): id is string => !!id)),
     ];
     if (eventIds.length === 0) return new Map();
     const summaries = await Promise.all(
-      eventIds.map((id) => this.associationsService.findValidatedCalendarEventSummary(id))
+      // The event keeps its OWN visibility (an institution's reach, owner 2026-11-13).
+      eventIds.map((id) => this.associationsService.findValidatedCalendarEventSummary(id, viewerId))
     );
     const map = new Map<string, Record<string, unknown>>();
     eventIds.forEach((id, i) => {
@@ -1611,7 +1613,7 @@ export class PostsService {
 
     await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
-    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts, viewerCtx.viewerId);
 
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewer?.viewerUserId,
@@ -1868,7 +1870,7 @@ export class PostsService {
 
     await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin);
-    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts, viewerCtx.viewerId);
 
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewerUserId,
@@ -2914,20 +2916,14 @@ export class PostsService {
       );
       throw new ForbiddenException('You may not publish as this association');
     }
-    if (!institutionReachOffered(await this.associationTypeOf(associationId))) {
-      this.logger.warn(
-        `[INSTITUTION_REACH] options asked of ${associationId.slice(0, 8)}, which is not an institution`
-      );
-      throw new BadRequestException({
-        code: INSTITUTION_REACH_CODES.notOffered,
-        message: 'Only an institution chooses the reach of a post.',
-      });
-    }
-    const spaces = await institutionReachOptions(this.postRepo.manager, associationId);
-    this.logger.debug(
-      `[INSTITUTION_REACH] options of ${associationId.slice(0, 8)}: ${spaces.length} space(s)`
+    // The not-offered refusal and the statement are the shared module's, which the event form's
+    // options route asks too (owner, 2026-11-13: one model with posts).
+    return institutionReachOptionsOffered(
+      this.postRepo.manager,
+      associationId,
+      await this.associationTypeOf(associationId),
+      'post'
     );
-    return { spaces };
   }
 
   /**

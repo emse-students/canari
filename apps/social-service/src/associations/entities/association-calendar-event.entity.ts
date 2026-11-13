@@ -1,4 +1,5 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
+import type { InstitutionReachPublic, InstitutionReachSpace } from '../../spaces/institution-reach';
 
 export enum AssociationCalendarEventStatus {
   Pending = 'pending',
@@ -67,6 +68,23 @@ export class AssociationCalendarEvent {
     default: AssociationCalendarEventPresentation.Association,
   })
   presentation: AssociationCalendarEventPresentation;
+
+  /**
+   * THE REACH AN INSTITUTION CHOSE FOR THIS EVENT (owner, 2026-11-13; migration 164), the posts'
+   * column of migration 162 in the same shape: the public in the ticked spaces - 'all', 'students'
+   * or 'staff'. NULL on every event that is not an institution's, and on an institution event filed
+   * before the reach existed (read as its whole audience, everyone). Set with {@link reachSpaces},
+   * never alone (a CHECK says so); read by `institutionReachAdmitsUserSql` in `eventVisibleToUserSql`.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  reachPublic: InstitutionReachPublic | null;
+
+  /**
+   * The spaces an institution's event targets, inside the institution's audience (migration 164): a
+   * jsonb array of `{formation, campus}` pairs, NULL exactly when {@link reachPublic} is.
+   */
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  reachSpaces: InstitutionReachSpace[] | null;
 
   /** Visual kind: normal `event` (card) or `break` (full-day background band). */
   @Column({ type: 'varchar', length: 16, default: AssociationCalendarEventKind.Event })

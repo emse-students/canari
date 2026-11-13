@@ -1,5 +1,18 @@
 import { Logger } from '@nestjs/common';
-import { associationVisibleToUserSql } from '../spaces/reader-spaces';
+import { associationVisibleToUserSql, eventVisibleToUserSql } from '../spaces/reader-spaces';
+
+/**
+ * AN EVENT'S OPENING IS TOLD ONLY TO WHO SEES THE EVENT (owner, 2026-11-13): row `targetId` of kind
+ * `kind` (SQL expressions) is not an event, or it is one user row `user` sees by the event's own
+ * predicate - an institution's reach (its ticked spaces, its public) included, which the
+ * association's visibility alone does not know. The PLAIN predicate: read grants never notify.
+ * Asked when the followers are written AND again at the opening, so a reach narrowed in between
+ * withdraws the push, and a widening tells nobody new (an edit announces nothing).
+ */
+function eventOpeningSeenBySql(kind: string, targetId: string, user: string): string {
+  return `(${kind} <> 'event' OR EXISTS (SELECT 1 FROM association_calendar_events op_ev
+      WHERE op_ev.id = ${targetId} AND ${eventVisibleToUserSql('op_ev', user)}))`;
+}
 
 /**
  * THE OPENING REMINDERS (engagement WP-4, decision 5d, L9; docs/wiki/engagement.md, "(d) openings
@@ -130,7 +143,8 @@ export async function isTold(
  *
  * "Who sees it" is the association's own visibility (`associationVisibleToUserSql`, the PLAIN
  * predicate an entity post's announcement uses: a member anywhere, or anyone its rules reach - read
- * grants never notify); an ARCHIVED association announces nothing. The target's own audience
+ * grants never notify), and for an EVENT also the event's own predicate (`eventOpeningSeenBySql`:
+ * an institution's reach, owner 2026-11-13); an ARCHIVED association announces nothing. The target's own audience
  * condition (a form's `submitCondition`) is NOT asked: it is a profile predicate evaluated in code
  * against core-service facts, one call per person, and the form's page tells a follower it does not
  * admit (lead decision, engagement.md L25). A booking space WITH an audience is never announced
@@ -148,6 +162,7 @@ export const ANNOUNCE_OPENING_TO_FOLLOWERS_SQL = `INSERT INTO opening_reminders
     JOIN users op_user ON op_user.id = op_follow."followerUserId"
    WHERE op_follow."associationId" = $3::uuid AND op_user.id <> $5
      AND ${associationVisibleToUserSql('op_asso.id', 'op_user')}
+     AND ${eventOpeningSeenBySql('$1::varchar', '$2::uuid', 'op_user')}
   ON CONFLICT (kind, "targetId", "userId") DO NOTHING
   RETURNING "userId"`;
 
@@ -289,12 +304,14 @@ export interface DueOpening {
  */
 export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", o.origin,
          (COALESCE(t.live, false) AND NOT COALESCE(a.archived, false)) AS "targetLive",
-         COALESCE(o.origin = 'asked' OR (
+         COALESCE((o.origin = 'asked' OR (
            t."associationId" IS NOT NULL AND t."followersTold" AND op_user.id IS NOT NULL
            AND EXISTS (SELECT 1 FROM association_follows op_follow
                         WHERE op_follow."followerUserId" = o."userId"
                           AND op_follow."associationId" = t."associationId")
-           AND ${associationVisibleToUserSql('t."associationId"', 'op_user')}), false) AS "stillOwed",
+           AND ${associationVisibleToUserSql('t."associationId"', 'op_user')}))
+           AND (o.kind <> 'event' OR (op_user.id IS NOT NULL
+             AND ${eventOpeningSeenBySql('o.kind', 'o."targetId"', 'op_user')})), false) AS "stillOwed",
          t."associationId", t."linkOnly",
          t.name AS "targetName", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl",
          (o.origin = 'followed' AND t."associationId" IS NOT NULL AND EXISTS (
