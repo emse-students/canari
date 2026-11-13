@@ -1419,15 +1419,65 @@ Each row therefore says whose form it is, by NAME (`Form.associationName`, resol
 null for a personal form and for a form whose association has since been deleted). That line used to
 print the raw form id, which told a person nothing.
 
-`EditFormsTab` offers edit and delete on the same set from the association's own space. Its actions
-are unconditional because the tab itself only renders for a caller holding `MANAGE_FORMS`.
+### ONE list for `/forms` and for an association's tab (owner, 2026-11-13)
 
-**The global list's row carries SIX actions** (edit, share link, QR, export, responses, delete) -
-labelled pill buttons for all six demanded more width than a row had to give, and the name (the only
-flex item with a `min-w-0` floor) lost that fight first, truncating to almost nothing. All six are
-now icon-only (`.ui-icon-button`, `title=` for the label), matching the delete button, which already
-was. `EditFormsTab`'s three-action row kept its text labels (it never ran out of room) but gained the
-same `min-w-0`/`truncate` floor on its name, for the same reason (2026-09-20).
+*"Les interfaces /associations/[slug]/edit/formulaires et /forms sont tres differentes, on ne
+pourrait pas homogeneiser tout ca, et avoir le meilleur des deux mondes ?"* They were two products:
+`/forms` had six icon-only buttons and the responses accordion; the tab had three text buttons, the
+price line, the cash strip and the payments banner. **Both now draw `FormsManagerList`**
+(`components/forms/FormsManagerList.svelte`), which carries the UNION. Scope is data, not a fork:
+
+| | `/forms` | the tab (`EditFormsTab`) |
+|---|---|---|
+| Source (`load`) | `getForms()`: forms the caller owns, plus those of associations where they hold `MANAGE_FORMS` | `loadAssociationForms(asso.id)` (`forms/associationForms.ts`) |
+| `scoped` | no: each row names its association, or says "Personnel" | yes: the association is implied, the name is omitted |
+| Header and "Nouveau formulaire" | the page's `PageHeader`, `/forms/create` | the tab's header, `/forms/create?association=<id>&returnTo=<this tab>` |
+| `paymentsReady` | absent (rows span associations): no warning | the association's: a PAID row carries "Paiements non configurees" |
+| `notice` snippet | none | the paid-forms banner (it is about the association, so it stays the tab's) |
+| Row heading | `h2` (an `h1` above) | `h3` (an `h2` above) |
+
+**The tab's source is the association's route AND `GET /forms`, on purpose.** `GET
+/associations/:id/forms` is the authority on which forms belong to it - it also admits a global
+admin or a super-admin holding no `MANAGE_FORMS` flag, who are in no `GET /forms` list - but its
+row is thin (no questions, no association name, no unpublished-changes flag). The list needs the
+whole form for the export menu and the accordion, so `loadAssociationForms` takes the full row from
+`GET /forms` when the caller's list holds it (the ordinary case) and reads a form that list lacks
+by id (`getForm`).
+
+**What a row is, everywhere.** The name has the whole width (two lines, `min-w-0`). Under it, the
+price ("Gratuit" or the amount, "Paiement sur place accepte") and the states, which read the same in
+both places: **Brouillon** (the managers' alone, nobody links it believing it live) and
+**Modifications non publiees** on a published form. An archived form (a form with answers that was
+deleted) is in neither list: the server's `deletedAt` filter drops it, so there is no archived
+badge to draw. Then ONE row of actions, the same at every width:
+
+- **"Modifier" and "Reponses", labelled.** They are what a manager does most; a word costs less
+  than guessing a glyph. Under the row's own `md` (a CONTAINER query, `@container`, so the narrow
+  settings column and a phone both count) the two share the width equally and the "..." keeps its
+  square; from `md` they sit beside the name.
+- **Everything else behind one "..."** (`FormRowMenu`: `FloatingSurface` holding `MenuList`, a sheet
+  on a phone and a popover on a wide window, the shape of the profile's "..." and the editor's
+  menus): the respondent view (the live page, or the preview of a draft or of unpublished edits),
+  copy the link, the QR code, the exports, the delete in the error colour. **A draft is offered no
+  link and no QR code**, which nobody could open.
+
+*Why this pattern.* Six icon buttons wrapped a phone's row and made every glyph a riddle; three
+text buttons crushed the name to a sliver of letters on an iPhone (2026-11-08); two labelled
+buttons and a menu fit a 390 px row beside nothing, leave the name its width, and keep every
+capability one tap away. The export menu is no longer a second dropdown: its entries (`exportEntries`
+in `forms/exportEntries.ts`, workbook plus the two grid CSVs on a priced-grid form) are a section
+of the same menu, and `downloadFormExport` is the one place that writes the file.
+
+**Cash awaiting validation is on the row in both places** (the tab used to be the only one):
+validate or cancel a payment from the strip, with the same guest naming (`submitterName`) as the
+responses screen. A form that takes no cash is never asked. Validating from the strip re-reads an
+open accordion, and the accordion's own payment actions re-read the strip (`reloadResponses`).
+
+**A failed read says so** (`common_load_error`) in both places; `/forms` used to render an empty
+list for a failed `GET /forms`, which read as "you have no forms".
+
+`/forms?responses=<form id>` (the organiser alert for a payment over capacity) works through the
+list, so it opens the accordion on either screen the form is on.
 
 ### The responses accordion shows the ANSWERS, and the form decides its own layout (2026-09-20)
 
@@ -1577,8 +1627,8 @@ A file question is refused on a public or an anonymous form, and `fileRetentionD
 
 ## Sharing a form: the link, and the same link as a QR code
 
-Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
-it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
+Both the list's "..." menu (`FormRowMenu`) and the detail screen offer two entries: copy the public
+link, and show it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
 it an already absolute URL (`publicAppUrl`), the label the plate and the file name are built from, an
 optional owner line, and the sentence saying what scanning it opens. That is what lets whatever comes
 next reuse it without a prop naming a feature.
@@ -1627,15 +1677,17 @@ renders the page in its own webview never consults the resolver at all.
 
 ## Note on form management
 
-Association admins also reach a form's submissions, cash validation, edit and delete through the
-associations module (`edit/EditFormsTab.svelte`). Building and configuring a form happens in the two
-admin routes above.
+Association admins reach the same list, scoped to their association, through the associations
+module (`edit/EditFormsTab.svelte`, [one list](#one-list-for-forms-and-for-an-associations-tab-owner-2026-11-13)).
+Building and configuring a form happens in the two admin routes above.
 
 ## Tests
 
 `apps/social-service/src/forms/forms.service.cotisation.spec.ts` (the config refusals, the
 `MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (both
-sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
+sources, dedup, ordering, naming). The unified list is tested in `FormsManagerList.svelte.test.ts`
+(the row, both scopes, the menu, the responses link, cash), `EditFormsTab.svelte.test.ts` (what is
+the tab's own) and `forms/associationForms.test.ts` (its source). The forms module had no test at all before 2026-08-23.
 
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s

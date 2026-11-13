@@ -2333,7 +2333,6 @@
   "asso_forms_price_free": "Free",
   "asso_forms_cash_accepted": "On-site payment accepted",
   "asso_forms_payments_not_configured_badge": "Payments not configured",
-  "asso_forms_view_link": "View form ↗",
   "asso_forms_pending_cash_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -2348,7 +2347,6 @@
   "asso_forms_cancel_cash_confirm_button": "Cancel payment",
   "asso_forms_cancel_cash_cancel": "No",
   "asso_forms_no_pending_cash": "No on-site payments pending.",
-  "asso_forms_no_forms": "No forms linked to this association.",
   "asso_achats_title": "Purchases & buyers",
   "asso_achats_subtitle": "Payment history for shop products and paid forms. Grant a product manually (on-site payment, pre-Canari payment).",
   "asso_achats_filter_label": "Filter by product",
@@ -2935,9 +2933,7 @@
   "form_payment_needs_setup_desc": "Its payment setup is not complete (validation can take a few days). You can prepare everything and save the draft; the form can be published as soon as it is.",
   "form_list_association_badge": "{association}'s form",
   "form_list_personal_badge": "Personal",
-  "asso_forms_edit_action": "Edit",
-  "asso_forms_delete_action": "Delete",
-  "asso_forms_delete_confirm": "Permanently delete the form “{title}” and all its responses?",
+  "form_row_more_actions": "More actions",
   "form_title_label": "Form title",
   "form_title_placeholder": "e.g. Event registration",
   "form_description_label": "Description",

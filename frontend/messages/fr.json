@@ -2365,7 +2365,6 @@
   "asso_forms_price_free": "Gratuit",
   "asso_forms_cash_accepted": "Paiement sur place accepté",
   "asso_forms_payments_not_configured_badge": "Paiements non configurés",
-  "asso_forms_view_link": "Voir le formulaire ↗",
   "asso_forms_pending_cash_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -2380,7 +2379,6 @@
   "asso_forms_cancel_cash_confirm_button": "Annuler le paiement",
   "asso_forms_cancel_cash_cancel": "Non",
   "asso_forms_no_pending_cash": "Aucun paiement sur place en attente.",
-  "asso_forms_no_forms": "Aucun formulaire lié à cette association.",
   "asso_achats_title": "Achats et acheteurs",
   "asso_achats_subtitle": "Historique des paiements boutique et formulaires payants. Attribuez un produit manuellement (paiement sur place, paiement antérieur à Canari).",
   "asso_achats_filter_label": "Filtrer par produit",
@@ -2967,9 +2965,7 @@
   "form_payment_needs_setup_desc": "Sa configuration d'encaissement n'est pas terminée (la validation peut prendre quelques jours). Vous pouvez tout préparer et enregistrer le brouillon ; le formulaire pourra être publié dès qu'elle le sera.",
   "form_list_association_badge": "Formulaire de {association}",
   "form_list_personal_badge": "Personnel",
-  "asso_forms_edit_action": "Modifier",
-  "asso_forms_delete_action": "Supprimer",
-  "asso_forms_delete_confirm": "Supprimer définitivement le formulaire « {title} » et toutes ses réponses ?",
+  "form_row_more_actions": "Plus d'actions",
   "form_title_label": "Titre du formulaire",
   "form_title_placeholder": "ex : Inscription événement",
   "form_description_label": "Description",
