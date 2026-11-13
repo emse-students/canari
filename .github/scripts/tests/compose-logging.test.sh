@@ -150,5 +150,20 @@ else
   fail "deploy-environment.sh does not call archive_logs before the first up -d (call=$call up=$up)"
 fi
 
+# --- the noisy third-party services are told to speak only when it matters ---
+# Garage logged every S3 request and every health check at INFO: ~53k lines a day on production
+# (2026-11-13), the whole of its volume. Every compose file that runs it carries RUST_LOG: warn, so
+# the estates stay alike (a request is already in media-service's and nginx's own logs).
+for f in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml infrastructure/local/docker-compose.yml; do
+  block="$(awk '/^  garage:[[:space:]]*$/ { on = 1; next } on && /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { exit } on { print }' "$REPO/$f")"
+  if grep -Eq '^      RUST_LOG: warn[[:space:]]*$' <<<"$block"; then ok "$f: garage logs warn and above only"; else fail "$f: the garage service does not set RUST_LOG: warn"; fi
+done
+# Postgres logs every checkpoint unless told not to: the same three files pass the flag, and the
+# image's own entrypoint is kept (`postgres` first, so the docker-entrypoint still initialises).
+for f in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml infrastructure/local/docker-compose.yml; do
+  block="$(awk '/^  postgres:[[:space:]]*$/ { on = 1; next } on && /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { exit } on { print }' "$REPO/$f")"
+  if grep -Fxq '    command: ["postgres", "-c", "log_checkpoints=off"]' <<<"$block"; then ok "$f: postgres does not log checkpoints"; else fail "$f: the postgres service does not pass log_checkpoints=off"; fi
+done
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

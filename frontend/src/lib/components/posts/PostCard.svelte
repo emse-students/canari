@@ -1,6 +1,6 @@
 <script lang="ts">
   import { intlLocale } from '$lib/utils/intlLocale';
-  import { publicSectionHref } from '$lib/associations/publicSections';
+  import { postEventHref } from '$lib/calendar/postEventLink';
   import {
     votePoll,
     getPost,
@@ -763,11 +763,7 @@
           {@const ev = localPost.linkedCalendarEvent}
           <div class="px-4 pb-3">
             <a
-              href="{publicSectionHref(
-                '/associations',
-                ev.associationSlug,
-                'calendar'
-              )}?fromPost={encodeURIComponent(localPost.id)}"
+              href={postEventHref(localPost.id)}
               class="border-accent/25 bg-accent/10 text-accent-text hover:bg-accent/20 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
             >
               <CalendarCheck size={14} strokeWidth={2.5} />

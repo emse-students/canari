@@ -16,6 +16,10 @@ Owed, in this order, before any refusal is re-armed:
    container's log (`docker logs`), and a deploy recreates the container. It is not enough to decide
    anything: it is a 4-hour window, not a measure of the legitimate paths.
 
+   **Reading, 2026-11-13 (read-only sweep of the production logs, 24 h).** 5 `[UNINVITED_ENTRY]` lines, all
+   `kind=returning`, 0 `new-person`. A 24-hour window of live logs, subject to the same dedup and restart
+   gap below, so it advances the count without closing item 1.
+
    **The gap: the count does not accumulate.** `[UNINVITED_ENTRY]` exists only as a log line, and
    its dedup set (`reportedUninvitedEntries`, `messaging.controller.ts`) is in memory per replica,
    so a deploy restarts both. Two facts bound how bad that is:

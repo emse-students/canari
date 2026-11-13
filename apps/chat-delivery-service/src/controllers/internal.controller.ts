@@ -1153,6 +1153,8 @@ export class InternalController {
       // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).
       manager.query(`DELETE FROM dm_seat_evictions WHERE "userId" = $1`, [userId]),
       manager.query(`DELETE FROM dm_join_ask_pushes WHERE "userId" = $1`, [userId]),
+      // What the account sent, by id: the receipts that answer its resends (migration 048).
+      manager.query(`DELETE FROM dm_sent_frame_receipt WHERE "senderId" = $1`, [userId]),
       // The key groups its revoked devices held: a binding for a person nothing will answer for.
       manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.

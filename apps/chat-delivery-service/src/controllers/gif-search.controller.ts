@@ -119,10 +119,23 @@ export class GifSearchController {
     }
 
     try {
-      const { page: result, received, dropped } = await fetchKlipyPage(apiKey, query, page);
+      const {
+        page: result,
+        received,
+        dropped,
+        oversized,
+      } = await fetchKlipyPage(apiKey, query, page);
       if (dropped > 0) {
         this.logger.warn(
           `[GIF_SEARCH] ${dropped} of ${received} results declared no size and were left out`
+        );
+      }
+      if (oversized > 0) {
+        // Handled, not wrong: the answer carries a lighter rendition (or leaves the result out), so
+        // the relay never has to refuse it 413. The count says how often KLIPY offers one.
+        this.logger.debug(
+          `[GIF_SEARCH] ${oversized} of ${received} results had a rendition over the relay ceiling, ` +
+            'a lighter one is offered'
         );
       }
       GifSearchController.cache.set(cacheKey, result, GIF_CACHE_TTL_MS);

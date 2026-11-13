@@ -209,15 +209,16 @@ import {
   normaliseProductGridItems,
   priceProductGridAnswer,
   productGridItems,
-  productGridOrderEmpty,
   productGridPriceFingerprint,
   productGridPricesFor,
   productGridsCharge,
   productGridsNameCotisation,
   productGridsNeedProfile,
   respondentItems,
+  type ProductGridFormContext,
 } from './product-grid';
 import {
+  productGridOrdered,
   productGridTotalCents,
   type ProductGridLine,
   type ProductGridPrices,
@@ -770,7 +771,7 @@ export class FormsService {
    */
   private async normalisedProductGrids<T extends { type?: string }>(
     items: readonly T[] | null | undefined,
-    form: { isPublic: boolean; requiresPayment: boolean; associationId: string | null }
+    form: ProductGridFormContext
   ): Promise<T[]> {
     const list = [...(items ?? [])];
     const tiers =
@@ -778,9 +779,14 @@ export class FormsService {
         ? await this.userTagService.listCotisationTiers(form.associationId)
         : [];
     const normalised = normaliseProductGridItems(list, criteriaContextFor(tiers, []), form);
-    const grids = productGridItems(normalised).length;
-    if (grids > 0)
-      this.logger.debug(`[FORMS] save: ${grids} product grid(s) judged and normalised`);
+    const grids = productGridItems(normalised);
+    if (grids.length > 0) {
+      const required = grids.filter((g) => (g as { required?: unknown }).required === true).length;
+      this.logger.debug(
+        `[FORMS] save: ${grids.length} product grid(s) judged and normalised, ${required} required` +
+          (form.requiredSwitch ? '' : ' (an editor without the switch: stored flags kept)')
+      );
+    }
     return normalised;
   }
 
@@ -950,6 +956,8 @@ export class FormsService {
         isPublic: input.isPublic === true,
         requiresPayment: input.requiresPayment === true,
         associationId: input.associationId?.trim() || null,
+        requiredSwitch: input.gridRequiredSwitch === true,
+        storedItems: null,
       }),
     };
     // Whether the association may collect, and collect NOW, is judged at PUBLICATION for a draft
@@ -961,7 +969,14 @@ export class FormsService {
       userId: input.ownerId!,
       isGlobalAdmin,
     });
-    const { opensAt: opensAtRaw, closedAt: closedAtRaw, draft: _draft, ...rest } = input;
+    // `gridRequiredSwitch` is read by the save (`normalisedProductGrids`), never stored.
+    const {
+      opensAt: opensAtRaw,
+      closedAt: closedAtRaw,
+      draft: _draft,
+      gridRequiredSwitch: _gridRequiredSwitch,
+      ...rest
+    } = input;
     const form = this.formRepo.create({
       ...rest,
       status,
@@ -1428,6 +1443,9 @@ export class FormsService {
       isPublic: input.isPublic ?? form.isPublic,
       requiresPayment: input.requiresPayment ?? form.requiresPayment,
       associationId,
+      // An absent list re-judges the stored grids, which keep their flag either way.
+      requiredSwitch: input.gridRequiredSwitch === true,
+      storedItems: form.items,
     });
     if (input.items !== undefined) input = { ...input, items: gridItems };
 
@@ -1467,6 +1485,7 @@ export class FormsService {
       ownerId: _ownerId,
       associationId: _associationId,
       anonymous: _anonymous,
+      gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
     const citedBefore = questionImageIds(form.items);
@@ -2376,10 +2395,6 @@ export class FormsService {
     // The priced grids' lines, computed HERE from the stored grid and this person's category - never
     // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
     const gridLines: ProductGridLine[] = [];
-    // The ORDER rule is the form's, not a grid's: a form of several grids (one per article) is
-    // ordered from whichever the buyer wants, and only the VISIBLE grids together must hold a unit.
-    let visibleGrids = 0;
-    let orderedUnits = 0;
     for (const item of form.items) {
       // A question this submitter never saw neither charges them nor blocks them.
       if (!visible.has(item.id)) continue;
@@ -2387,11 +2402,17 @@ export class FormsService {
       // A priced grid is judged by its own rule (declared cells, 0..maxPerCell, no closed cell) with
       // a CODED refusal - an app that cannot draw it sends a non-object and is told to update
       // (`PRODUCT_GRID_ANSWER_MISSING`). An untouched grid (no answer, `{}`) is accepted and stores
-      // nothing; what is stored otherwise is the answer as judged: the ordered cells only.
+      // nothing; what is stored otherwise is the answer as judged: the ordered cells only. A grid
+      // switched "Obligatoire" demands ONE unit of its own, refused like any required question
+      // (owner, 2026-11-13: no rule over the whole order).
       if (isProductGridItem(item)) {
         const priced = priceProductGridAnswer(item, answer, facts);
-        visibleGrids += 1;
-        orderedUnits += priced.units;
+        if (item.required && !productGridOrdered(priced.answer)) {
+          this.logger.debug(
+            `[FORMS] submit refused: required grid ${item.id} holds no unit form=${form.id.slice(0, 8)}`
+          );
+          throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+        }
         if (priced.units > 0) storedAnswers[item.id] = priced.answer;
         else delete storedAnswers[item.id];
         gridLines.push(...priced.lines);
@@ -2412,13 +2433,6 @@ export class FormsService {
       ) {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
-    }
-    if (visibleGrids > 0 && orderedUnits === 0) {
-      this.logger.debug(
-        `[FORMS] submit refused: an empty order across ${visibleGrids} visible grid(s) ` +
-          `form=${form.id.slice(0, 8)}`
-      );
-      throw productGridOrderEmpty();
     }
     const lines = gridLines.length > 0 ? gridLines : null;
     // What the price depends on NOW, kept with the row it prices (migration 166): an answer change

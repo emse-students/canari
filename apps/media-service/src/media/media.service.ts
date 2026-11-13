@@ -63,6 +63,28 @@ export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
  * attribution this service has - and refused with a 429, an ANSWER the client must not retry blindly.
  */
 const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 * 1024 * 1024);
+/**
+ * The `code` of the 422 that says a member reached the daily bound on everything they upload: an
+ * ANSWER, like {@link CHAT_REEL_OVER_BUDGET}. `MEMBER_UPLOAD_OVER_BUDGET` in
+ * `frontend/src/lib/utils/mediaErrors.ts` is the other copy of this string.
+ *
+ * WHY 422 AND NOT 429. An app released before this code existed reads only the status. It holds an
+ * attachment answered 429 on its retry ladder with no count, sending the file again each minute; a
+ * 422 it fails for good, with its generic "refused" line. So the status is the one every released
+ * app stops on, and the code is what a current app explains.
+ */
+export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
+/**
+ * What one member may upload per rolling 24 hours, every class and every MEMBER upload route
+ * together - the plain upload, the legacy chunked routes, the resumable sessions -
+ * (lead, 2026-11-13: 2 GB). Measured on production over 60 days before it was chosen: the busiest
+ * member-day held 22 files, under a per-file ceiling of 100 MB
+ * (docs/wiki/backlog.d/p2-a-daily-upload-bound-per-member.md).
+ */
+const MEMBER_DAILY_UPLOAD_BYTES = positiveIntEnv(
+  'MEDIA_MEMBER_DAILY_UPLOAD_BYTES',
+  2 * 1024 * 1024 * 1024
+);
 /** The shortest life an unclaimed `reel-pending` upload may be given - see {@link resolvePendingReelTtlMs}. */
 export const PENDING_REEL_TTL_FLOOR_MS = 60 * 60 * 1000;
 const PENDING_REEL_TTL_DEFAULT_MS = 24 * 60 * 60 * 1000;
@@ -552,9 +574,9 @@ interface MediaMetaEntry {
   /** The booking space a CLAIMED poster (`poster`, `poster-association`) belongs to. */
   claimedFor?: string;
   /**
-   * Ciphertext size in bytes, recorded for `chat-reel` uploads and when a chat hold is placed: the
-   * daily cap sums it per owner, and nothing else in the index needs a size (the listing of the store
-   * has them).
+   * Ciphertext size in bytes, recorded by every upload and when a chat hold is placed: the daily
+   * bounds sum it per owner (the member's on every class, the `chat-reel` budget on chat holds).
+   * Absent on what was stored before every class recorded it.
    */
   size?: number;
   /** The holds on a shared reel file; absent means "read them from the class" ({@link holdsOf}). */
@@ -652,6 +674,11 @@ export class MediaService {
    * {@link reserveChatReelBudget}.
    */
   private chatReelReservations?: Map<string, number>;
+  /**
+   * Bytes of uploads of ANY class that passed the member's daily bound and are not yet in the
+   * index, per owner. Lazily created, same reason. See {@link reserveMemberUploadBudget}.
+   */
+  private memberUploadReservations?: Map<string, number>;
   /** Chunked sessions that hold a reservation, by uploadId. Lazily created, same reason. */
   private chunkSessions?: Map<string, ChunkSession>;
   /**
@@ -702,7 +729,7 @@ export class MediaService {
     ownerId?: string,
     retentionClass?: RetentionClass
   ): Promise<string> {
-    const release = this.reserveChatReelBudget(retentionClass, ownerId, encryptedBytes.length);
+    const release = this.reserveUploadBudgets(retentionClass, ownerId, encryptedBytes.length);
     const mediaId = uuidv4();
     try {
       await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
@@ -1902,8 +1929,93 @@ export class MediaService {
   }
 
   /**
-   * The daily `chat-reel` budget for the session routes, which reserve ONCE at init and release at
-   * complete, cancel or expiry. Same machinery as {@link upload}; see {@link reserveChatReelBudget}.
+   * The member's daily bound, for every upload of any class: refuses (422,
+   * {@link MEMBER_UPLOAD_OVER_BUDGET}) the bytes that would take `ownerId` past
+   * {@link MEMBER_DAILY_UPLOAD_BYTES} in a rolling 24 hours, and RESERVES them in the same
+   * synchronous run, exactly as {@link reserveChatReelBudget} does and for the same reason.
+   *
+   * The sum is read from the index: every entry of the member created in the window carries the
+   * size its upload registered ({@link setAccess}). An entry stored before sizes were recorded for
+   * every class counts for nothing, so the bound is complete one day after it ships.
+   *
+   * OUTSIDE THE BOUND, ON PURPOSE: what a member does not upload through these routes. A public
+   * asset has no owner; a form's file (`internal/form-file`) and a live's segments
+   * (`internal/live`) arrive server-to-server, each under its own cap ({@link FORM_FILE_MAX_BYTES},
+   * `LIVE_SEGMENT_MAX_BYTES`), and reserve nothing here.
+   */
+  private reserveMemberUploadBudget(
+    ownerId: string | undefined,
+    incomingBytes: number,
+    restore: boolean
+  ): () => void {
+    if (!ownerId) return () => {};
+    const reservations = (this.memberUploadReservations ??= new Map<string, number>());
+    const since = Date.now() - DAY_MS;
+    let used = reservations.get(ownerId) ?? 0;
+    let uploads = 0;
+    for (const entry of Object.values(this.meta.items)) {
+      if (entry.ownerId !== ownerId || entry.createdAt < since) continue;
+      uploads += 1;
+      used += entry.size ?? 0;
+    }
+    if (!restore && used + incomingBytes > MEMBER_DAILY_UPLOAD_BYTES) {
+      // One line per refusal, with the member's day in it: the rate of this line over a week is
+      // what says whether the bound is right.
+      this.logger.warn(
+        `[MEMBER_UPLOAD_BUDGET] upload refused for ${ownerId}: ${uploads} uploads and ${used} bytes in the last 24 hours or in flight, ${incomingBytes} more over the ${MEMBER_DAILY_UPLOAD_BYTES} cap`
+      );
+      // The code is the discriminator, never the message (see the chat-reel refusal below).
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+          message: 'Daily upload limit reached. Try again tomorrow.',
+          code: MEMBER_UPLOAD_OVER_BUDGET,
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY
+      );
+    }
+    reservations.set(ownerId, (reservations.get(ownerId) ?? 0) + incomingBytes);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (reservations.get(ownerId) ?? 0) - incomingBytes;
+      if (left > 0) reservations.set(ownerId, left);
+      else reservations.delete(ownerId);
+    };
+  }
+
+  /**
+   * Both budgets of NEW bytes, in one synchronous run: the member's daily bound, then the
+   * `chat-reel` budget. A refusal by the second gives the first one's reservation back before it
+   * is thrown, so a refused upload reserves nothing. (A chat hold placed on a file already stored
+   * brings no new bytes and charges {@link reserveChatReelBudget} alone.)
+   *
+   * @returns the function that releases both reservations
+   */
+  private reserveUploadBudgets(
+    retentionClass: RetentionClass | undefined,
+    ownerId: string | undefined,
+    incomingBytes: number,
+    restore = false
+  ): () => void {
+    const releaseMember = this.reserveMemberUploadBudget(ownerId, incomingBytes, restore);
+    let releaseChatReel: () => void;
+    try {
+      releaseChatReel = this.reserveChatReelBudget(retentionClass, ownerId, incomingBytes, restore);
+    } catch (err) {
+      releaseMember();
+      throw err;
+    }
+    return () => {
+      releaseChatReel();
+      releaseMember();
+    };
+  }
+
+  /**
+   * The daily budgets for the session routes, which reserve ONCE at init and release at
+   * complete, cancel or expiry. Same machinery as {@link upload}; see {@link reserveUploadBudgets}.
    * `restore` puts back a reservation granted before a restart without re-judging it.
    */
   reserveUploadBudget(
@@ -1912,7 +2024,7 @@ export class MediaService {
     bytes: number,
     restore = false
   ): () => void {
-    return this.reserveChatReelBudget(retentionClass, ownerId, bytes, restore);
+    return this.reserveUploadBudgets(retentionClass, ownerId, bytes, restore);
   }
 
   /**
@@ -2297,7 +2409,7 @@ export class MediaService {
       if (maxBytes !== undefined && (totalBytes as number) > maxBytes) {
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
       }
-      const release = this.reserveChatReelBudget(retentionClass, ownerId, totalBytes as number);
+      const release = this.reserveUploadBudgets(retentionClass, ownerId, totalBytes as number);
       (this.chunkSessions ??= new Map()).set(uploadId, {
         ownerId: ownerId as string,
         declaredBytes: totalBytes as number,
@@ -2479,7 +2591,7 @@ export class MediaService {
           // No declaration at init (or another class): checked here, at assembly. A declared
           // session is already covered by its own reservation, appends being capped to it.
           try {
-            release = this.reserveChatReelBudget(retentionClass, ownerId, stat.size);
+            release = this.reserveUploadBudgets(retentionClass, ownerId, stat.size);
           } catch (err) {
             // The member is over their daily budget: the staged bytes are of no use to anyone.
             await fs.remove(tempFile);
@@ -2790,8 +2902,8 @@ export class MediaService {
       createdAt: current?.createdAt ?? now,
       lastAccessAt: now,
       ...(ownerId ? { ownerId } : {}),
-      // Written for a `chat-reel` only (the daily cap sums it); `download()` passes none.
-      ...(size !== undefined && retentionClass === 'chat-reel' ? { size } : {}),
+      // Written by every upload (the daily bounds sum it); `download()` passes none.
+      ...(size !== undefined ? { size } : {}),
       // Conditional for the same reason as ownerId: `download()` and `touch()` call this with
       // neither argument, and an unconditional spread would strip the class on every read.
       ...(retentionClass ? { retentionClass } : {}),

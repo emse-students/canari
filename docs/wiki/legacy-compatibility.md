@@ -656,6 +656,30 @@ of `LIST_POST_FEEDS`, its arm and `followedFeedSql`, the `me/suggested-posts` ro
 (a preference stored before 1.6.9 then falls back to the default tab).
 **Cost while it stands:** none - one arm nobody new asks, one route.
 
+### Removal once `minClientVersion` passes `1.6.12` - a form editor that cannot draw a priced grid's "Obligatoire" switch (owner, 2026-11-13)
+
+**Site:** `productGridRequiredOnSave` (`product-grid-contract.ts`, both copies), its `chosen = false`
+branch, read by `normaliseProductGridItems` (`forms/product-grid.ts`) and the editor's
+`revisionItems` (`frontend/src/lib/forms/itemsPayload.ts`); the payload field `gridRequiredSwitch`
+(`CreateFormDto`, `GRID_REQUIRED_SWITCH`).
+**What it humours:** an editor from `1.6.6` to `1.6.11` sends `required: true` on EVERY priced grid -
+the flag meant nothing then ([forms](frontend/modules/forms.md#the-priced-grid-product_grid-wp-g1-2026-11-06)).
+Honoured as sent, an old app's edit would make every grid of the form required. So a save without
+`gridRequiredSwitch: true` keeps each grid's STORED flag and stores a new grid optional, and a
+revision such an editor saved opens in a current editor with the same rule. **The cost while it
+stands:** an old app cannot change a grid's switch (the web and an updated app can).
+**A tolerated degradation beside it, no shim:** an old FILL page still holds a send on "Commandez au
+moins un article" when no visible grid holds a unit (the rule this release removed - stricter than
+the server), and does not mark a required grid on its card; the server's `FORM_ANSWER_MISSING`, which
+it words generically, holds the send instead.
+**Removal condition:** `minClientVersion` at or above `1.6.12` on both estates, AND no open revision
+saved by an old editor still holding a grid -
+`SELECT count(*) FROM form_drafts WHERE document IS NOT NULL AND NOT coalesce((document ->> 'gridRequiredSwitch')::boolean, false) AND document -> 'items' @> '[{"type":"product_grid"}]'`
+reads 0 on both. Then, in one pull request: `productGridRequiredOnSave` reads `item.required === true`
+alone (its `chosen` and `stored` parameters go, and `ProductGridFormContext`'s two fields), delete
+`revisionItems` and its call, stop sending `gridRequiredSwitch` and delete its DTO field (the
+`whitelist` pipe strips it from any client still sending it), and delete this entry.
+
 ### No date yet - a form editor newer than its server (2026-11-08)
 
 **Site:** `serverFormDrafts()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by the
@@ -670,6 +694,36 @@ older server, or no answer yet - it saves as it always did: one "Enregistrer" th
 published, and an edit saved straight to the form (`PATCH /forms/:id`).
 **Removal condition:** when no estate older than the release carrying `formDrafts` is served (both
 estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - a form editor or fill page newer than its server's priced grids (2026-11-13)
+
+**Site:** `gridRequiredSwitchOn()` (`frontend/src/lib/forms/gridRequiredGate.ts`, over
+`serverGridRequiredSwitch()` in `stores/appVersionCheck.svelte.ts`), read by `FormBuilder`,
+`ProductGridQuestion`, both editor pages (`gridRequiredPayload`, `toFormItemsPayload`) and both fill
+pages and `BookingSheet` (`firstMissingAnswer`'s `gridSwitch`); the server half is
+`gridRequiredSwitch: true` in core-service's `GET /api/version`. Beside it, the words of the two
+codes an older server still says (`PRODUCT_GRID_NOT_REQUIRED` in `productGridDefinitionMessage`,
+`PRODUCT_GRID_EMPTY` in `productGridRefusalMessage`, compared as strings - neither is a contract code
+any more) and the restored `isOrderEmpty`, `ORDER_MISSING_ID`, `revealOrderMissing`.
+**Why.** A stable ships both stores before production deploys, so for days a `1.6.12` phone build
+talks to a social-service before each grid's switch: that server refuses a grid sent
+`required: false` (`PRODUCT_GRID_NOT_REQUIRED`) and its `whitelist` pipe drops `gridRequiredSwitch`,
+so every save of a form with a new (optional by default) grid would fail; and it refuses an answer
+whose visible grids hold no unit between them (`PRODUCT_GRID_EMPTY`), which the new fill page would
+send.
+**What the client does.** Only on an estate whose `/api/version` says `gridRequiredSwitch: true` does
+it draw the switch and the asterisk on a grid, send each grid's flag with the marker, and hold a
+required grid on its own card. Otherwise - an older server, or no answer yet - it behaves as `1.6.11`:
+no switch and no asterisk on a grid, every grid sent `required: true` without the marker, a grid's flag
+ignored by the fill pages, and an empty ORDER across the visible grids held beside the send button
+("Commandez au moins un article"). A newer server reached with the gate still off (no answer yet)
+reads a payload without the marker as an old editor's: it keeps each grid's stored flag ("a form editor
+that cannot draw a priced grid's switch" above), so nothing is lost.
+**Removal condition:** when no estate older than the release carrying `gridRequiredSwitch` is served
+(both estates deployed past it), delete the client branch for `false` (the gate, the `gridSwitch`
+parameters, the `order` kind of `MissingAnswer` and its helpers, the three restored French and English
+strings `form_view_error_order_empty`, `form_refusal_grid_empty`, `form_pgrid_refusal_not_required`, and
+the two string-compared codes) and this entry; the `/api/version` field stays, always `true`.
 
 ### No date yet - a form created by a build that does not know drafts (2026-11-08)
 

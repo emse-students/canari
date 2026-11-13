@@ -210,6 +210,17 @@ export class CreateFormDto {
   @IsOptional()
   clientCreateId?: string;
 
+  /**
+   * `true` from an editor that draws each priced grid's "Obligatoire" switch (owner, 2026-11-13):
+   * the `required` it sends on a grid is the manager's choice. Absent from an older editor, which
+   * sends `required: true` on every grid whatever it means - each grid then keeps its stored flag
+   * (`productGridRequiredOnSave`). Read at save, never stored. [LEGACY] the absent case, see
+   * docs/wiki/legacy-compatibility.md.
+   */
+  @IsBoolean()
+  @IsOptional()
+  gridRequiredSwitch?: boolean;
+
   @IsString()
   @IsNotEmpty()
   title: string;

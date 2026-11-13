@@ -41,7 +41,14 @@ describe('the saved position of a conversation', () => {
     expect(dropAnchorsExcept('c2')).toBe(2);
     expect(peekConversationAnchor('c1')).toBeNull();
     expect(peekConversationAnchor('c2')).toEqual(anchor);
-    expect(peekConversationAnchor('c2')).toEqual(anchor);
+    expect(peekConversationAnchor('c3')).toBeNull();
+  });
+
+  it("drops every other entry whatever the kept id's position (a Map survives deleting the visited key)", () => {
+    for (const id of ['a', 'b', 'c', 'd', 'e']) rememberConversationAnchor(id, anchor);
+    expect(dropAnchorsExcept('c')).toBe(4);
+    expect(peekConversationAnchor('c')).toEqual(anchor);
+    for (const id of ['a', 'b', 'd', 'e']) expect(peekConversationAnchor(id)).toBeNull();
   });
 
   it('a sign-out drops every one', () => {

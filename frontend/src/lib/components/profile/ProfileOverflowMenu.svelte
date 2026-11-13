@@ -12,7 +12,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
   import MenuList from '$lib/components/ui/MenuList.svelte';
-  import { opensAsSheet } from '$lib/components/ui/floatingSurface';
+  import { OverflowMenuState } from '$lib/components/ui/overflowMenuState.svelte';
   import type { MenuListSection } from '$lib/components/ui/menuList';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -28,9 +28,7 @@
 
   let { blocked, busy = false, onReport, onBlockToggle }: Props = $props();
 
-  let open = $state(false);
-  let asSheet = $state(false);
-  let anchor = $state<HTMLElement | null>(null);
+  const menu = new OverflowMenuState();
 
   const sections = $derived<MenuListSection[]>([
     {
@@ -43,33 +41,24 @@
     },
   ]);
 
-  function toggle() {
-    if (open) {
-      open = false;
-      return;
-    }
-    asSheet = opensAsSheet();
-    open = true;
-  }
-
   function select(key: string) {
-    open = false;
+    menu.close();
     Log.d('ProfileOverflowMenu', `picked ${key}${busy ? ' (a block change is in flight)' : ''}`);
     if (key === 'report') onReport();
     else if (!busy) onBlockToggle();
   }
 </script>
 
-<span bind:this={anchor} class="inline-flex shrink-0">
+<span bind:this={menu.anchor} class="inline-flex shrink-0">
   <Button
     variant="secondary"
     icon
     class="min-h-11 w-11"
-    onclick={toggle}
+    onclick={() => menu.toggle()}
     aria-label={m.profile_more_actions()}
     title={m.profile_more_actions()}
     aria-haspopup="menu"
-    aria-expanded={open}
+    aria-expanded={menu.open}
     data-testid="profile-overflow"
   >
     <Ellipsis size={16} class="shrink-0" aria-hidden="true" />
@@ -77,15 +66,12 @@
 </span>
 
 <FloatingSurface
-  {open}
-  {asSheet}
-  {anchor}
+  open={menu.open}
+  asSheet={menu.asSheet}
+  anchor={menu.anchor}
   label={m.profile_more_actions()}
   popoverWidth="content"
-  onClose={(refocus) => {
-    open = false;
-    if (refocus) anchor?.querySelector('button')?.focus();
-  }}
+  onClose={(refocus) => menu.close(refocus)}
 >
   <div class="min-w-52">
     <MenuList {sections} label={m.profile_more_actions()} onSelect={select} />

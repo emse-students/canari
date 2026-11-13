@@ -85,6 +85,12 @@ describe('VersionService', () => {
     expect(out.formAnswerEdit).toBe(true);
   });
 
+  it("says its estate stores each priced grid's own switch, so a form client draws it only then", async () => {
+    const out = await service.getVersion();
+
+    expect(out.gridRequiredSwitch).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 

@@ -71,7 +71,12 @@
     firstItemsFaultQuestion,
     refusedProductGridFault,
   } from '$lib/forms/questionFault';
-  import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    gridRequiredPayload,
+    fromFormItems,
+    revisionItems,
+    toFormItemsPayload,
+  } from '$lib/forms/itemsPayload';
   import {
     firstProductGridProblem,
     multipleSubmissionsAfterGridAdded,
@@ -113,6 +118,7 @@
   import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
   import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
   import { answerEditPayload } from '$lib/forms/answerEditGate';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
@@ -124,6 +130,8 @@
    * (docs/wiki/legacy-compatibility.md).
    */
   const formDrafts = serverFormDrafts() === true;
+  /** Whether this estate stores each priced grid's own switch ([LEGACY] gate, `gridRequiredGate.ts`). */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
 
   let form = $state<Form | null>(null);
   let loadError = $state('');
@@ -247,7 +255,15 @@
       // else the unpublished revision, else the form as published (owner, 2026-11-08).
       const copy = revision ? await unsentCopy(id, revision) : null;
       const typed = copy?.document ?? revision?.document;
-      const f: Form = typed ? ({ ...stored, ...typed } as Form) : stored;
+      // A revision an older editor saved carries `required: true` on every grid, meaning nothing:
+      // each grid opens with the flag the form stores ([LEGACY], `revisionItems`).
+      const f: Form = typed
+        ? ({
+            ...stored,
+            ...typed,
+            items: revisionItems(typed, stored.items) ?? stored.items,
+          } as Form)
+        : stored;
       const userId = currentUserId();
       if (revision) {
         autosave = new FormAutosave({
@@ -615,6 +631,8 @@
   /** The editor's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
+      // Each priced grid's "Obligatoire" switch is the manager's, on an estate that stores it.
+      ...gridRequiredPayload(gridSwitch),
       title,
       description,
       basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -622,7 +640,7 @@
       submitCondition,
       ...cotisationPayload(cotisation, requiresPayment),
       currency: 'eur',
-      items: toFormItemsPayload(items),
+      items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
       ...answerEditPayload(answerEditAvailable, allowAnswerEdit),

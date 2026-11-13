@@ -4,6 +4,8 @@
 **Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
 **Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
 
+**What forms cannot do yet, and the decided priced grid**: [forms capability audit, 2026-11-06](../../forms-capability-audit-2026-11-06.md).
+
 ## Responsibilities
 
 - Render dynamic association forms for member submissions.
@@ -1546,15 +1548,75 @@ Each row therefore says whose form it is, by NAME (`Form.associationName`, resol
 null for a personal form and for a form whose association has since been deleted). That line used to
 print the raw form id, which told a person nothing.
 
-`EditFormsTab` offers edit and delete on the same set from the association's own space. Its actions
-are unconditional because the tab itself only renders for a caller holding `MANAGE_FORMS`.
+### ONE list for `/forms` and for an association's tab (owner, 2026-11-13)
 
-**The global list's row carries SIX actions** (edit, share link, QR, export, responses, delete) -
-labelled pill buttons for all six demanded more width than a row had to give, and the name (the only
-flex item with a `min-w-0` floor) lost that fight first, truncating to almost nothing. All six are
-now icon-only (`.ui-icon-button`, `title=` for the label), matching the delete button, which already
-was. `EditFormsTab`'s three-action row kept its text labels (it never ran out of room) but gained the
-same `min-w-0`/`truncate` floor on its name, for the same reason (2026-09-20).
+*"Les interfaces /associations/[slug]/edit/formulaires et /forms sont tres differentes, on ne
+pourrait pas homogeneiser tout ca, et avoir le meilleur des deux mondes ?"* They were two products:
+`/forms` had six icon-only buttons and the responses accordion; the tab had three text buttons, the
+price line, the cash strip and the payments banner. **Both now draw `FormsManagerList`**
+(`components/forms/FormsManagerList.svelte`), which carries the UNION. Scope is data, not a fork:
+
+| | `/forms` | the tab (`EditFormsTab`) |
+|---|---|---|
+| Source (`load`) | `getForms()`: forms the caller owns, plus those of associations where they hold `MANAGE_FORMS` | `listAssociationForms(asso.id)`: `GET /associations/:id/forms` |
+| `scoped` | no: each row names its association, or says "Personnel" | yes: the association is implied, the name is omitted |
+| Header and "Nouveau formulaire" | the page's `PageHeader`, `/forms/create` | the tab's header, `/forms/create?association=<id>&returnTo=<this tab>` |
+| `paymentsReady` | absent (rows span associations): no warning | the association's: a PAID row carries "Paiements non configurees" |
+| `notice` snippet | none | the paid-forms banner (it is about the association, so it stays the tab's) |
+| Row heading | `h2` (an `h1` above) | `h3` (an `h2` above) |
+
+**The tab's source is the association's route, which returns the WHOLE form.** `GET
+/associations/:id/forms` is the authority on which forms belong to it - it also admits a global
+admin or a super-admin holding no `MANAGE_FORMS` flag, who are in no `GET /forms` list - and
+`listFormsByAssociation` returns the same row `FormsService.list` does (every column, plus
+`associationName` and `hasUnpublishedChanges`, archived forms excluded). One read, no per-form
+follow-up: a first version read each missing form by id, which was an N+1 where one deleted form
+sank the tab, and whose rows lacked the unpublished flag (so a global admin saw no badge and "view"
+opened the published page instead of the preview).
+
+**What a row is, everywhere.** The name has the whole width (two lines, `min-w-0`). Under it, the
+price ("Gratuit" or the amount, "Paiement sur place accepte") and the states, which read the same in
+both places: **Brouillon** (the managers' alone, nobody links it believing it live) and
+**Modifications non publiees** on a published form. An archived form (a form with answers that was
+deleted) is in neither list: the server's `deletedAt` filter drops it, so there is no archived
+badge to draw. Then ONE row of actions, the same at every width:
+
+- **"Modifier" and "Reponses", labelled.** They are what a manager does most; a word costs less
+  than guessing a glyph. Under the row's own `md` (a CONTAINER query, `@container`, so the narrow
+  settings column and a phone both count) the two share the width equally and the "..." keeps its
+  square; from `md` they sit beside the name.
+- **Everything else behind one "..."** (`FormRowMenu`: `FloatingSurface` holding `MenuList`, a sheet
+  on a phone and a popover on a wide window, the shape of the profile's "..." and the editor's
+  menus): the respondent view (the live page, or the preview of a draft or of unpublished edits),
+  copy the link, the QR code, the exports, the delete in the error colour. **A draft is offered no
+  link and no QR code**, which nobody could open.
+
+*Why this pattern.* Six icon buttons wrapped a phone's row and made every glyph a riddle; three
+text buttons crushed the name to a sliver of letters on an iPhone (2026-11-08); two labelled
+buttons and a menu fit a 390 px row beside nothing, leave the name its width, and keep every
+capability one tap away. The export menu is no longer a second dropdown: its entries (`exportEntries`
+in `forms/exportEntries.ts`, workbook plus the two grid CSVs on a priced-grid form) are a section
+of the same menu, and `downloadFormExport` is the one place that writes the file.
+
+**Cash awaiting validation: a strip on the tab's rows, the accordion everywhere.** The strip
+(validate or cancel a payment, with the same guest naming, `submitterName`, as the responses
+screen) is the tab's: one association's forms, a handful of reads. `/forms` spans every association
+the caller manages, so a strip there would fire one `pending-cash` read per cash form on every open;
+it validates cash in the responses accordion, which holds the same actions (no capability lost).
+Validating from the strip re-reads an open accordion, and the accordion's payment actions re-read
+the strip (`reloadResponses`).
+
+**Two in-flight guards.** A delete is guarded from the moment its confirmation OPENS (two quick
+selections would queue two confirmations and the second delete would 404), and an export disables
+the row's "..." with a spinner until the file is written, so a second tap starts no second export.
+The empty state draws a create button only when the screen has none of its own (`createHref`): the
+tab's header has one.
+
+**A failed read says so** (`common_load_error`) in both places; `/forms` used to render an empty
+list for a failed `GET /forms`, which read as "you have no forms".
+
+`/forms?responses=<form id>` (the organiser alert for a payment over capacity) works through the
+list, so it opens the accordion on either screen the form is on.
 
 ### The responses accordion shows the ANSWERS, and the form decides its own layout (2026-09-20)
 
@@ -1711,8 +1773,8 @@ A file question is refused on a public or an anonymous form, and `fileRetentionD
 
 ## Sharing a form: the link, and the same link as a QR code
 
-Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
-it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
+Both the list's "..." menu (`FormRowMenu`) and the detail screen offer two entries: copy the public
+link, and show it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
 it an already absolute URL (`publicAppUrl`), the label the plate and the file name are built from, an
 optional owner line, and the sentence saying what scanning it opens. That is what lets whatever comes
 next reuse it without a prop naming a feature.
@@ -1761,15 +1823,17 @@ renders the page in its own webview never consults the resolver at all.
 
 ## Note on form management
 
-Association admins also reach a form's submissions, cash validation, edit and delete through the
-associations module (`edit/EditFormsTab.svelte`). Building and configuring a form happens in the two
-admin routes above.
+Association admins reach the same list, scoped to their association, through the associations
+module (`edit/EditFormsTab.svelte`, [one list](#one-list-for-forms-and-for-an-associations-tab-owner-2026-11-13)).
+Building and configuring a form happens in the two admin routes above.
 
 ## Tests
 
 `apps/social-service/src/forms/forms.service.cotisation.spec.ts` (the config refusals, the
 `MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (both
-sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
+sources, dedup, ordering, naming). The unified list is tested in `FormsManagerList.svelte.test.ts`
+(the row, both scopes, the menu, the responses link, cash), `EditFormsTab.svelte.test.ts` (what is
+the tab's own) and `associations.service.list-forms.spec.ts` (its source). The forms module had no test at all before 2026-08-23.
 
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s
@@ -1906,6 +1970,27 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **A stale state is never answered** (review of #2210): a retry may replace the request between `confirmPayment`'s read and its answer (two tabs, the success page polling while the payer retries). `requestState` is answered only while the row still names the uuid that was read, and the client never derives `declined` / `ended` from a row still `pending`: either would offer a retry that cancels the request being paid.
 - **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.md#p2---an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for-up-to-28-minutes-2026-10-21)).
 
+### The native payer's return: read on resume, and an https return on Android (2026-11-13)
+
+**What broke (owner, production, Android store app 1.6.10).** "Payer" opened Lydia's payer page in the phone's DEFAULT BROWSER (`navigateExternal`, the opener plugin); the owner paid THERE, and the browser never brought him back to Canari. He switched back by hand to a form page exactly as he had left it: nothing said the payment was in progress or done. The payment was recorded by the confirm callback 43 s later - only the payer's view was wrong.
+
+**What is measured, what is inferred.** Measured: Lydia redirects to an **https** `browser_success_url` after a payment (sandbox, from the dev web page, 2026-10-21, [lydia-api](../../lydia-api.md#4-where-the-payer-goes-back)). Never measured: a redirect to the **custom scheme** `fr.emse.canari://payment/success` the native builds sent - the hand-typed deep link of [device-verification](../../device-verification.md) proves the router, not Lydia. Inferred, not separated: either Lydia does not follow a non-https return, or the browser refuses to leave for an external scheme on a redirect with no fresh gesture.
+
+**Which half depends on that cause.** The read on return does NOT: it needs no return URL at all. The https return DOES: if the browser is what refuses (no gesture), the same rule can keep a verified App Link in the browser too, and the payer lands on the web return page instead of the app - the browser half below is what makes that landing say the right thing. If Lydia is what refuses, https fixes it outright. A phone reading of an Android payment separates the two.
+
+**The fix, in three parts.**
+
+- **The form page reads the answer when the payer comes back** (`checkoutReturn.ts`). After `navigateExternal`, the submit keeps the answer's id and Lydia's page (`pendingCheckout`, with its own `PaymentReader`), and the page switches to `paymentPending`: "Paiement en cours sur Lydia" with a "Rouvrir la page de paiement" button. While it is pending, `watchReturnsToApp` listens to the app's ONE screen-transition source (`onAppScreenChange`, `appForeground.ts`: `canari:foreground` on the phones, `visibilitychange` elsewhere) and each return to the screen reads the answer ONCE through `confirm-payment` - the read `/forms/success` polls, which asks Lydia itself, so a lost callback is still caught. No timer.
+  - **One read at a time, and only about the checkout shown.** The load-time read, the return read and the desktop tap all go through the checkout's reader, which answers `null` without asking while a read is in flight. The reader's IDENTITY is the checkout's generation: a read that lands after its checkout ended (released, then paid again under the SAME answer id; or the page moved from form A to form B, which reuses the component and resets everything per form, the reminder bell included) is dropped (`page.paymentReturn.svelte.test.ts`, with a control that fails without the check).
+  - **The outcome** goes through `returnOutcomeOf` (`paymentReturnPoll.ts`), the mapping the return pages' poll uses: paid shows `form_success_confirmed_*` in the success banner, over capacity the `form_success_over_capacity_*` sentence, declined / ended the existing retry path, a final unpaid state (cancelled elsewhere) leaves the in-progress block and re-reads whether the person answered, and anything that can still change keeps "pending". A 429 is "pending" (`isConfirmThrottled`, shared with `/forms/success` and the guest receipt page); a failed read decides nothing and the next return asks again.
+  - **Desktop.** A window switch fires no return edge there, so the desktop note promises nothing (`form_view_payment_in_progress_note_desktop`) and offers "Vérifier le paiement", the same single read on a tap.
+- **Android returns on an https App Link** (`formCheckoutCallbacks`): `https://<public origin>/forms/success?...` instead of the custom scheme. `/forms/success` is under the `/forms/` prefix both platforms claim (`MOBILE_UNIVERSAL_LINK_PATHS`), and the server's allowlist (`isAllowedCheckoutCallbackUrl`) already accepted it - no server change. **iOS keeps the scheme** until a reading says otherwise (Safari prompts for a custom scheme rather than dropping it). The router keeps the `payment` host for builds already installed.
+- **A browser landing never accuses.** When the https return stays in the phone's browser - a redirect the browser does not hand to the app, and ALWAYS on a pre-release build, since `dev.canari-emse.fr` is not an App Link host - `/forms/success` is read with whatever session that browser has. With none, the boot sends it to `/login` with the return behind it, and the login page now says "Paiement transmis à Lydia - retournez dans l'application Canari pour voir sa confirmation" with an "Ouvrir Canari" link (`paymentReturnSubmissionId`, `formPaymentReturnDeepLink`: the app's own `payment/success` link, which a TAP may open where a redirect could not). With a session that may not read the answer (401 / 403, `isConfirmUnreadableHere`), `/forms/success` says the same instead of "Paiement introuvable".
+
+**The shop follows the same mechanism (2026-11-13).** `ProductPurchaseButton.svelte`, on a native phone, keeps the attempt after `navigateExternal` (`checkoutId` from `createProductCheckout`), says "Paiement en cours sur Lydia" with "Rouvrir la page de paiement", and reads it ONCE per return of the app to the screen through `createShopCheckoutReader` (`lib/shop/checkoutReturn.ts`, over the same `createOnceReader` / `readUnlessThrottled` the form page's reader is built on): the read is `confirmProductCheckout`, the call `/shop` already polls, worded by `checkoutReturnText`, which the shop page's banner now uses too. 429 stays "waiting", 404 says "introuvable", another failure keeps the note. The reader is the attempt's identity (a read landing after a newer purchase is dropped). Android now returns on the https `/shop` link (`shopCheckoutCallbacks`; `/shop` is an App Link path), iOS keeps the scheme. The watch starts BEFORE `navigateExternal` (here and on the form page): the browser may open and the call still reject, or resolve after the app already returned. A paid read says so in the button's own line and disables the button for a product that cannot be repeated; it does not reload the product listing. A buyer left in the phone's browser with no session sees, on `/shop` or behind `/login`, the same "Paiement transmis à Lydia" + "Ouvrir Canari" notice as a form payer (`PaymentHandedNotice`, `paymentReturnAppLink`).
+
+**Not covered.** The public form (`/f/:id`) hands the guest to Lydia the same way but has NO read to use: its only key is the receipt, minted by the server and handed once in the Lydia return URL (`/f/:id/receipt?receipt=...`); the submit reply carries only `checkoutUrl`. Reading on return would need the receipt in that reply, a change to the security surface above that is a server decision, not taken here. `dev.canari-emse.fr` is not an App Link host, so a pre-release's https return always stays in the browser - adding it is a separate change. A WebView killed while the payer is in the browser reloads the form, whose load-time read covers it but without the reopen button (the shop button, being component state, loses its note the same way). Also not covered: no load-time read for a shop purchase (a page opened fresh after the browser was left reads nothing until the next return), the button's read does not share its in-flight guard with `/shop`'s own poll (two reads of one attempt may overlap; both are replays), and a remount on the same route loses the note. The https return's effect on Android is INFERRED from the sandbox measurement for forms, not measured for `/shop`; the landing notice is written for the case where it does not reach the app. Lydia's page inside the app is [a separate question](../../backlog.d/lydia-payer-page-inside-the-app.md).
+
 ### D1-D3 (user, 2026-10-15) and where each stands
 
 | # | Decision | What it changes | State |
@@ -1989,28 +2074,58 @@ order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the pri
 category. No stock (a pre-order); no total cap per order (the cap per cell is enough); a second
 order is a second answer (`allowMultipleSubmissions`), never an edit.
 
-**The ORDER is required, never one grid (decided 2026-11-06, for `1.6.6`).** A merch form holds one
-grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell) and a buyer orders
-whichever they want, so any single grid may be left untouched; what is refused is an answer whose
-VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per submit, `itemId`
-null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
-buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
-neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
-A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
-selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+**Each grid has its own "Obligatoire" switch, OFF by default (owner, 2026-11-13, for `1.6.12`).**
+A merch form holds one grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell)
+and a buyer orders whichever they want, so a grid is optional unless its manager switches it on;
+switched on, a VISIBLE grid demands at least ONE unit of its own (no configurable number). A grid
+hidden by an audience or an answer condition is never demanded. **No rule spans the grids**: a form
+whose grids are all optional accepts an answer with no article at all, which the owner intends
+(*"Avoir des règles globales interdit des formulaires moins conventionnels, il faut éviter les
+règles globales"*). History in one line: a per-grid rule of WP-G1 (every article demanded) became on
+2026-11-06 a rule over the whole order (`PRODUCT_GRID_EMPTY`, one unit across the visible grids,
+`required` stored `true` and meaningless), which this switch replaced.
 
-**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
-view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
-end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
+**One predicate, both sides.** A grid is answered when it holds >= 1 unit: `productGridOrdered` in
+the shared contract, read by the fill page (`isItemAnswered`, `firstMissingAnswer`) and by the submit
+(`FormsService.submit`). A required grid left empty is refused like every other required question:
+`FORM_ANSWER_MISSING` with the grid's `itemId` on the server, `MissingAnswer { itemId, kind: 'grid' }`
+on the page, said on the grid's own card ("Commandez au moins un article de 'Sweat'"), which is
+scrolled into view. An order in another grid does not rescue it.
 
-**`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
-refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
-(`toFormItemsPayload`) and no longer draws the switch or the asterisk; the fill page draws no
-asterisk on a grid and `firstMissingAnswer` skips grids, then asks the order. Chosen over dropping
-the flag because (1) every form already saved stays valid with no migration, and (2) a build older
-than WP-G2, which cannot draw the type and knows only "a required question of a type I do not
-know", keeps holding the send with "mettez à jour l'application" instead of sending the form
-without its order.
+**The stored flags were turned off by migration 164** (held, a backfill): every grid saved before the
+switch held `required: true`, and honouring that as it stood would have demanded one of EVERY article -
+the defect of 2026-11-06. 164 sets `required: false` on every stored grid, keeps every other question
+and key, and moves the base of an open revision built on the form (so its publication is not refused
+`FORM_CHANGED_SINCE_REVISION`); `product-grid-required.integration.spec.ts` proves it, the idempotence
+and the ROLLBACK statement of its header.
+
+**An editor older than the switch** (native `1.6.6`..`1.6.11`) sends `required: true` on every grid,
+meaning nothing. This editor marks its payload `gridRequiredSwitch: true` (`GRID_REQUIRED_SWITCH`,
+never stored); a save WITHOUT it keeps each grid's STORED flag and stores a new grid optional
+(`productGridRequiredOnSave`, the contract) - an old editor neither makes a grid required by surprise
+nor drops a choice a newer one made. A revision such an editor saved opens here with the same rule
+(`revisionItems`). [LEGACY] in [legacy-compatibility](../../legacy-compatibility.md). An older FILL
+page still holds a send on "Commandez au moins un article" across the grids (stricter than the server)
+and does not mark a required grid's card - the server's `FORM_ANSWER_MISSING` then words it.
+
+**A newer app reaching a SERVER older than the switch** (a store build lives on phones days before
+production deploys) is the reverse hazard: that server refuses a grid sent optional
+(`PRODUCT_GRID_NOT_REQUIRED`), drops `gridRequiredSwitch`, and refuses an empty order
+(`PRODUCT_GRID_EMPTY`). So core-service's `GET /api/version` says `gridRequiredSwitch: true`, and the
+client reads it through ONE gate, `gridRequiredSwitchOn()` (`lib/forms/gridRequiredGate.ts`). Off -
+an older server, or no answer yet - the editor draws no switch and no asterisk on a grid and sends
+every grid `required: true` without the marker; the fill pages ignore a grid's flag and hold an
+empty ORDER across the visible grids beside the send button (`firstMissingAnswer(..., gridSwitch)`,
+kind `order`). The two old codes keep their words. [LEGACY] in
+[legacy-compatibility](../../legacy-compatibility.md), "a form editor or fill page newer than its
+server's priced grids".
+
+**An empty send on a once-only form is that person's answer.** A send with every grid optional and
+empty is stored `free` at 0, and `answerHoldingWhere` counts `free`: on a form with
+`allowMultipleSubmissions` off, that person's later real order is refused `409 ALREADY_ANSWERED`,
+exactly as a once-only form sent without an article always was. Adding a grid turns "plusieurs
+reponses" on in the editor, so a manager reaches this only by turning it back off.
+`product-grid.integration.spec.ts` pins it.
 
 ### One contract, copied byte for byte
 
@@ -2025,7 +2140,7 @@ The definition is nested under `item.productGrid` (not flat on the item as the a
 DTO's `rows?: string[]` already belongs to the survey grids and cannot also hold objects.
 
 ```ts
-item = { id, type: 'product_grid', label, required: true, showIf?, productGrid: {
+item = { id, type: 'product_grid', label, required, showIf?, productGrid: {   // required: the switch
   rows: [{ id, label }], columns: [{ id, label }],     // ids /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/
   maxPerCell: 1..99,                                    // 1 = a checkbox, more = a stepper
   closedCells: ['rowId:colId'],                         // "no Creme in XS": cannot be ordered
@@ -2041,7 +2156,7 @@ answer = { 'rowId:colId': quantity }                    // zero cells omitted wh
 ### The save (`FormsService.create`/`update` -> `normaliseProductGridItems`, `forms/product-grid.ts`)
 
 Each refusal is a 400 `{ code, message, itemId }`: `PRODUCT_GRID_DEFINITION_MISSING`,
-`_NOT_REQUIRED`, `_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
+`_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
 anonymous grid form impossible), `_AXIS_INVALID` (1..40 rows, 1..15 columns), `_ID_INVALID`,
 `_DUPLICATE_ID`, `_LABEL_INVALID` (empty or over 100), `_DUPLICATE_LABEL` (per axis, trimmed and
 case-folded - the survey grids' row rule should match it), `_MAX_PER_CELL_INVALID`,
@@ -2051,7 +2166,8 @@ sell, a promo that is no year - or two categories that can hold one person, or a
 personal form), `_GUEST_PRICE_MISSING` (a public form without the price a guest pays, named before
 the rest of completeness), `_PRICES_INCOMPLETE` (exactly one price per category x axis key),
 `_PRICE_INVALID` (integer cents, 0..1 000 000). The grid is STORED normalised: known fields only,
-labels trimmed, the tier criterion as the parser returned it. An edit that only opens the link or
+labels trimmed, the tier criterion as the parser returned it, `required` as
+`productGridRequiredOnSave` decides (above). An edit that only opens the link or
 switches payment off is judged against the stored grids. A `productGrid` sent on another type is
 dropped. The prices enter `priceFingerprint`, so a list moving a grid price meets
 `assertKindMayPrice` like any other price.
@@ -2071,9 +2187,9 @@ judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (a non-object - a string, 
 cannot draw the type, which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`,
 `_QUANTITY_INVALID` (not an integer in 0..maxPerCell), `_CELL_CLOSED` - then prices it at the
 viewer's category. An ABSENT answer, `{}` or all zeros is an untouched grid: 0 units, no line, and
-nothing stored under its id (a `{}` sent is dropped from the stored answers). After the loop, visible
-grids holding 0 units between them refuse the whole submit `PRODUCT_GRID_EMPTY` with `itemId: null`
-(`productGridOrderEmpty`), before any row is written - member and guest alike. The stored answer is
+nothing stored under its id (a `{}` sent is dropped from the stored answers). A grid switched
+"Obligatoire" holding 0 units refuses the submit `FORM_ANSWER_MISSING` with ITS `itemId`
+(`productGridOrdered`), before any row is written - member and guest alike. The stored answer is
 the judged one; the lines' sum joins `totalCents` with the base price
 (or the price grid's cell) and the choice supplements. A grid order whose total exceeds
 `PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
@@ -2116,8 +2232,8 @@ drawn with the app's tokens.
 - **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
   (`productGridFill.ts` `withCellQuantity`: clamped to 0..`maxPerCell`, a cell at 0 dropped, a new
   object per write so `bind:value` sees it), sent through the unchanged submit path.
-  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit
-  (`kind: 'order'`). The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
+  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit of a
+  REQUIRED grid (`kind: 'grid'`). The card draws the asterisk of a required grid. The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
   `product_grid` (`questionTypes.test.ts` asserts the fill page draws every canonical type).
 - **The total.** `fillPriceState` takes `productGridPrices` and returns `gridLines` (every visible
   grid's lines, `productGridOrderLines` -> the contract's `parseProductGridAnswer` +
@@ -2135,15 +2251,14 @@ drawn with the app's tokens.
   (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
   `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
   absent when no visible grid prices by category.
-- **Refusals.** A send with no article in ANY visible grid is held by ONE sentence for the form,
-  beside the send button ("Commandez au moins un article", `MissingAnswer` `{ itemId: null, kind:
-  'order' }`, checked after every required question); no grid card is marked, and an untouched
-  grid next to an ordered one is no fault. A required question of another type is still held on
-  its own card (`MissingAnswer` carries its `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
-  (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
-  offered"; `_EMPTY`), reached through the ONE entry point both pages call,
-  `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
-  any code that is not a form's own. An empty order is also left out of the answer sent
+- **Refusals.** A REQUIRED grid with no unit holds the send on its own card ("Commandez au moins un
+  article de ...", `MissingAnswer` `{ itemId, kind: 'grid' }`), scrolled into view like any required
+  question; an optional grid is never a fault, and nothing is said for the form as a whole. The
+  server's four answer codes are worded by `productGridRefusalMessage` (`PRODUCT_GRID_ANSWER_MISSING`
+  -> reload or update; the three cell codes -> "an item is no longer offered"), reached through the
+  ONE entry point both pages call, `formSubmitRefusalMessage` (`answerBounds.ts`), whose
+  `formCodeMessage` falls through to it for any code that is not a form's own; a required grid the
+  server finds empty is its `FORM_ANSWER_MISSING`. An untouched grid is left out of the answer sent
   (`visibleAnswers`).
 
 Tests: `productGridFill.test.ts` (clamping, lines and total across two grids, a hidden grid, missing
@@ -2246,10 +2361,11 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
   (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
   a blank price absent) - so the preview cannot draw a grid the fill page would not.
-- **No required switch**: adding a grid (or turning a question into one) sets the stored
-  `required` (see "The ORDER is required, never one grid" above), and the card draws neither the
-  switch nor the asterisk; `productGridItemProblem` judges the grid as sent, `required: true`, so
-  the editor never flags a grid for it. Adding a grid also calls the page's `onPricedGridAdded`, which switches
+- **The "Obligatoire" switch**, the card's asterisk button like every question's (owner,
+  2026-11-13): a new grid (or a question turned into one) starts OFF; the folded row of a required
+  grid wears the asterisk. `toFormItemsPayload` sends the flag as the card holds it, and every
+  payload carries `gridRequiredSwitch: true` (see "Each grid has its own Obligatoire switch" above).
+  `productGridItemProblem` never flags a grid for its flag. Adding a grid also calls the page's `onPricedGridAdded`, which switches
   `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
   turn it off. **It goes back off only if the editor turned it on**: the page keeps
   `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /

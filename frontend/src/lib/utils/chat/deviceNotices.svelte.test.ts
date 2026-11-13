@@ -10,6 +10,7 @@ import {
 import {
   deliverDeviceEvents,
   dismissDeviceNotice,
+  dropNoticesOfRevokedDevices,
   forgetDeviceNotices,
   loadDeviceNotices,
   noteRefusedOwnDevices,
@@ -347,6 +348,80 @@ describe('deliverDeviceEvents - the owner alert', () => {
     expect(pendingDeviceNotices()).toHaveLength(1);
     expect(error).toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe('dropNoticesOfRevokedDevices - an alert goes with its revoked device', () => {
+  const alert = (deviceId: string, fp: string) =>
+    event({ identity: `alice:${deviceId}`, keyFingerprint: fp, addedBy: 'bob:phone-1' });
+
+  async function twoAlerts() {
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([alert('laptop-9', 'cc'), alert('tablet-3', 'dd')], ctx);
+    expect(pendingDeviceNotices()).toHaveLength(2);
+  }
+
+  it('drops the alert of a revoked device, and only it, durably', async () => {
+    await twoAlerts();
+    const asked: string[] = [];
+    const dropped = await dropNoticesOfRevokedDevices('alice', async (id) => {
+      asked.push(id);
+      return id === 'laptop-9';
+    });
+    expect(dropped).toBe(1);
+    expect(asked.sort()).toEqual(['laptop-9', 'tablet-3']);
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['tablet-3']);
+
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['tablet-3']);
+  });
+
+  it('keeps every alert when the server cannot be asked: a failure is not a revocation', async () => {
+    await twoAlerts();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dropped = await dropNoticesOfRevokedDevices('alice', async () => {
+      throw new Error('offline');
+    });
+    expect(dropped).toBe(0);
+    expect(pendingDeviceNotices()).toHaveLength(2);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('asks nothing and drops nothing for another account than the bound one', async () => {
+    await twoAlerts();
+    const isRevoked = vi.fn(async () => true);
+    expect(await dropNoticesOfRevokedDevices('mallory', isRevoked)).toBe(0);
+    expect(isRevoked).not.toHaveBeenCalled();
+    expect(pendingDeviceNotices()).toHaveLength(2);
+  });
+
+  it("never writes another account's alerts under this one when the account switches mid-read", async () => {
+    // bob's own alert names a device id alice's answer will call revoked.
+    forgetDeviceNotices();
+    loadDeviceNotices('bob');
+    const bobs = makeCtx({ ownUserId: 'bob', ownDeviceId: 'phone-b' });
+    await deliverDeviceEvents(
+      [event({ identity: 'bob:laptop-9', keyFingerprint: 'ee', addedBy: 'carol:p' })],
+      bobs.ctx
+    );
+    expect(pendingDeviceNotices()).toHaveLength(1);
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    await twoAlerts();
+
+    const dropped = await dropNoticesOfRevokedDevices('alice', async () => {
+      forgetDeviceNotices();
+      loadDeviceNotices('bob');
+      return true;
+    });
+
+    expect(dropped).toBe(0);
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['laptop-9']);
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    expect(pendingDeviceNotices()).toHaveLength(2);
   });
 });
 

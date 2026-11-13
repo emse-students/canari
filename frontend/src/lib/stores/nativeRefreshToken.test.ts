@@ -22,7 +22,11 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => isTauriRuntime
 const coreUrl = vi.fn(() => 'https://canari-emse.fr');
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => coreUrl() }));
 
-const { usesBodyRefreshTransport } = await import('$lib/stores/nativeRefreshToken');
+const deviceOs = vi.fn(() => 'ios');
+vi.mock('$lib/mls-client/mlsPlatform', () => ({ detectRuntimeDeviceOs: () => deviceOs() }));
+
+const { onlyCarriedCredentialCanExist, usesBodyRefreshTransport } =
+  await import('$lib/stores/nativeRefreshToken');
 
 /** Puts the document on a scheme, the way each platform's WebView serves the app. */
 function servedOver(protocol: string) {
@@ -41,6 +45,7 @@ function apiAt(origin: string) {
 afterEach(() => {
   isTauriRuntime.mockReturnValue(true);
   apiAt('https://canari-emse.fr');
+  deviceOs.mockReturnValue('ios');
 });
 
 describe('usesBodyRefreshTransport', () => {
@@ -85,5 +90,42 @@ describe('usesBodyRefreshTransport', () => {
     apiAt('http://localhost:8081');
     servedOver('http:');
     expect(usesBodyRefreshTransport()).toBe(false);
+  });
+});
+
+describe('onlyCarriedCredentialCanExist - where an empty store proves there is no session', () => {
+  it('is true on iOS, whatever the estate: WKWebView keeps no third-party cookie there', () => {
+    servedOver('tauri:');
+    deviceOs.mockReturnValue('ios');
+    expect(onlyCarriedCredentialCanExist()).toBe(true);
+    apiAt('http://localhost:8081');
+    expect(onlyCarriedCredentialCanExist()).toBe(true);
+  });
+
+  it('is FALSE on macOS and Linux: the same scheme, but their cookie was never measured', () => {
+    servedOver('tauri:');
+    deviceOs.mockReturnValue('macos');
+    expect(onlyCarriedCredentialCanExist()).toBe(false);
+    deviceOs.mockReturnValue('linux');
+    expect(onlyCarriedCredentialCanExist()).toBe(false);
+  });
+
+  it('is FALSE on Android and Windows against an HTTPS API, where the cookie is the credential', () => {
+    servedOver('http:');
+    deviceOs.mockReturnValue('android');
+    expect(onlyCarriedCredentialCanExist()).toBe(false);
+  });
+
+  it('is true on Android and Windows against a PLAIN-HTTP API, where no cookie can be set', () => {
+    servedOver('http:');
+    deviceOs.mockReturnValue('android');
+    apiAt('http://localhost:8081');
+    expect(onlyCarriedCredentialCanExist()).toBe(true);
+  });
+
+  it('is false on the web', () => {
+    isTauriRuntime.mockReturnValue(false);
+    servedOver('tauri:');
+    expect(onlyCarriedCredentialCanExist()).toBe(false);
   });
 });

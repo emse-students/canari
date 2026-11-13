@@ -89,6 +89,7 @@
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
+- [Forms capability audit, 2026-11-06](forms-capability-audit-2026-11-06.md) — what associations need and forms cannot do: the defects (a grid question cannot be submitted), the decided priced grid (`product_grid`: quantity steppers, prices per row/column per category, WP-G0..G5), and the other gaps ranked
 - [Calls revival plan](frontend/modules/calls-revival-plan.md) - draft 2026-10-15: decisive tests first, the endpoint x network x call-kind matrix, the App Review video, a server-side switch, WP-C0..C13
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments

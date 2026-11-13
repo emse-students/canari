@@ -1,3 +1,3 @@
-version: 1.6.11
+version: 1.6.12
 
-Les vidéos en paysage se regardent en plein écran : le téléphone tourne avec elles. Vidéos et vocaux jouent à un volume proche. On peut modifier la légende d'une photo ou vidéo envoyée et mentionner quelqu'un par son nom. Les publications programmées s'affichent en haut du fil pour ceux qui peuvent les modifier. Sur une connexion lente, l'app s'ouvre plus vite. Corrigé : des conversations en double, un appel qui raccrochait, l'export Excel de certains formulaires.
+Après un paiement Lydia, l'app indique où il en est dès qu'on y revient. Les photos des articles s'affichent dans les formulaires sur téléphone, et un post montre l'aperçu de chacun de ses liens. On peut modifier sa réponse à un formulaire tant qu'il est ouvert, et chaque grille d'articles choisit si elle est obligatoire. Dans une conversation, la visionneuse passe d'une photo ou vidéo à la suivante. Les formulaires d'une association se gèrent depuis une seule liste.

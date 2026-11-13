@@ -138,6 +138,17 @@ pub fn is_retired_frame(msg_type: &str) -> bool {
     RETIRED_FRAMES.contains(&msg_type)
 }
 
+/// Frames a client sends many times a minute that mean nothing a minute later: their per-frame
+/// receive and routing lines are written at DEBUG, because at INFO they were ~everything the
+/// gateway logged (three lines per keystroke burst). Every other frame keeps INFO, one line per
+/// message being the trace of a delivery.
+pub const EPHEMERAL_FRAMES: &[&str] = &["typing"];
+
+/// True when `msg_type` names a frame in [`EPHEMERAL_FRAMES`].
+pub fn is_ephemeral_frame(msg_type: &str) -> bool {
+    EPHEMERAL_FRAMES.contains(&msg_type)
+}
+
 /// Repeats of one sender's retired frame - a client still speaking the old protocol keeps doing it.
 static RETIRED_FRAME_REPEATS: LazyLock<RepeatCounter> = LazyLock::new(|| RepeatCounter::new(5000));
 
@@ -266,12 +277,15 @@ fn typing_audience<'m>(members: &'m [String], sender_user: &str) -> Option<Vec<&
 
 #[cfg(test)]
 mod tests {
-    use super::{is_retired_frame, typing_audience};
+    use super::{is_ephemeral_frame, is_retired_frame, typing_audience};
 
     #[test]
     fn a_welcome_request_frame_is_retired_and_typing_is_not() {
         assert!(is_retired_frame("welcome_request"));
         assert!(!is_retired_frame("typing"));
+        assert!(is_ephemeral_frame("typing"));
+        assert!(!is_ephemeral_frame("message"));
+        assert!(!is_ephemeral_frame("welcome_request"));
         assert!(!is_retired_frame("disconnect"));
     }
 
