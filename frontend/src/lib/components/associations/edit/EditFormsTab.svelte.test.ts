@@ -15,8 +15,9 @@ const state = vi.hoisted(() => ({ forms: [] as unknown[] }));
 vi.mock('$app/state', () => ({
   page: { url: new URL('https://canari.test/associations/club/edit/formulaires'), state: {} },
 }));
-vi.mock('$lib/forms/associationForms', () => ({
-  loadAssociationForms: vi.fn(() => Promise.resolve(state.forms)),
+vi.mock('$lib/associations/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/associations/api')>()),
+  listAssociationForms: vi.fn(() => Promise.resolve(state.forms)),
 }));
 vi.mock('$lib/forms/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/forms/api')>()),
@@ -24,7 +25,7 @@ vi.mock('$lib/forms/api', async (importOriginal) => ({
 }));
 
 import EditFormsTab from './EditFormsTab.svelte';
-import { loadAssociationForms } from '$lib/forms/associationForms';
+import { listAssociationForms } from '$lib/associations/api';
 
 const asso = { id: 'asso-1', slug: 'club', type: 'association' } as unknown as Association;
 
@@ -61,7 +62,7 @@ describe('EditFormsTab', () => {
   it("reads this association's forms and omits the association name on each row", async () => {
     state.forms = [paid];
     const target = await render();
-    expect(loadAssociationForms).toHaveBeenCalledWith('asso-1');
+    expect(listAssociationForms).toHaveBeenCalledWith('asso-1');
     expect(target.querySelector('#form-form-1')).not.toBeNull();
     expect(target.textContent).not.toContain(
       m.form_list_association_badge({ association: 'Club' })

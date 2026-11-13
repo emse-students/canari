@@ -54,8 +54,11 @@
   interface Props {
     /** Reads the forms to list; the list owns the loading state and the error line. */
     load: () => Promise<Form[]>;
-    /** Where the empty state's "create" button goes (the page draws its own header's button). */
-    createHref: string;
+    /**
+     * Where the empty state's "create" button goes. Absent when the screen already draws one (the
+     * tab's header has "Nouveau formulaire"): the empty state then draws none, never a second.
+     */
+    createHref?: string;
     /**
      * One association's list (its tab): the association name is implied, so rows omit it. Without
      * it a row says whose form it is, by NAME - the list covers every association the caller
@@ -92,6 +95,8 @@
   let loading = $state(true);
   let loadError = $state(false);
   let deletingId = $state<string | null>(null);
+  /** The form whose export is in flight: a second tap starts no second export. */
+  let exportingId = $state<string | null>(null);
   let deletingSubmissionId = $state<string | null>(null);
   /** The form whose QR code is open, or null. */
   let qrForm = $state<Form | null>(null);
@@ -110,7 +115,10 @@
   onMount(async () => {
     try {
       setForms(await load());
-      void loadPendingCash(forms.filter((f) => f.allowCashPayment));
+      // The cash strip is the tab's: one association's forms, a handful of reads. `/forms` spans
+      // every association the caller manages, so it would fire one read per cash form on EVERY
+      // open; there, cash is validated in the responses accordion, which holds the same actions.
+      if (scoped) void loadPendingCash(forms.filter((f) => f.allowCashPayment));
     } catch (e) {
       Log.w('FormsManagerList', `loading the forms failed: ${e}`);
       loadError = true;
@@ -126,7 +134,7 @@
         try {
           return [f.id, await listPendingCashSubmissions(f.id)] as const;
         } catch (e) {
-          console.error(`[FORMS] pending cash of form ${f.id.slice(0, 8)} failed:`, e);
+          Log.w('FormsManagerList', `pending cash of form ${f.id.slice(0, 8)} failed: ${e}`);
           return [f.id, []] as const;
         }
       })
@@ -138,14 +146,19 @@
     form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : m.asso_forms_price_free();
 
   async function handleDelete(form: Form) {
+    // Guarded from the moment the confirmation OPENS: two quick selections would otherwise queue
+    // two confirmations, and the second delete would 404 on a form already gone.
+    if (deletingId === form.id) return;
+    deletingId = form.id;
     if (
       !(await showConfirm(m.form_list_delete_confirm({ title: form.title }), {
         danger: true,
         confirmLabel: m.common_delete_button(),
       }))
-    )
+    ) {
+      deletingId = null;
       return;
-    deletingId = form.id;
+    }
     try {
       await deleteForm(form.id);
       setForms(forms.filter((f) => f.id !== form.id));
@@ -168,7 +181,7 @@
       console.error(`[FORMS] re-reading the answers of form ${form.id.slice(0, 8)} failed:`, e);
       showToast(m.form_list_responses_error());
     }
-    if (form.allowCashPayment) await loadPendingCash([form]);
+    if (scoped && form.allowCashPayment) await loadPendingCash([form]);
   }
 
   /** Toggles the responses accordion; loads data on first open. */
@@ -284,8 +297,14 @@
     window.open(formViewHref(form, !!form.hasUnpublishedChanges), '_blank', 'noopener');
   }
 
-  function exportForm(form: Form, format: SubmissionsExportFormat) {
-    void downloadFormExport(form.id, form.title, format);
+  async function exportForm(form: Form, format: SubmissionsExportFormat) {
+    if (exportingId === form.id) return;
+    exportingId = form.id;
+    try {
+      await downloadFormExport(form.id, form.title, format);
+    } finally {
+      exportingId = null;
+    }
   }
 </script>
 
@@ -316,10 +335,12 @@
       </div>
       <p class="text-text-muted mb-1 font-medium">{m.form_list_empty_title()}</p>
       <p class="text-text-muted/60 mb-4 text-sm">{m.form_list_empty_desc()}</p>
-      <Button href={createHref}>
-        <Plus size={16} />
-        {m.form_list_create_button()}
-      </Button>
+      {#if createHref}
+        <Button href={createHref}>
+          <Plus size={16} />
+          {m.form_list_create_button()}
+        </Button>
+      {/if}
     </div>
   {:else}
     <ul class="space-y-3">
@@ -427,16 +448,17 @@
                 isDraft={draft}
                 hasProductGrid={productGridQuestions(form.items ?? []).length > 0}
                 deleting={deletingId === form.id}
+                exporting={exportingId === form.id}
                 onView={() => openView(form)}
                 onCopyLink={() => copyFormLink(form)}
                 onQr={() => (qrForm = form)}
-                onExport={(format) => exportForm(form, format)}
+                onExport={(format) => void exportForm(form, format)}
                 onDelete={() => void handleDelete(form)}
               />
             </div>
           </div>
 
-          {#if pendingCash[form.id]?.length}
+          {#if scoped && pendingCash[form.id]?.length}
             <div class="border-cn-border space-y-2 border-t-2 px-4 py-3 @md:px-5">
               <p class="text-amber-warn-text flex items-center gap-1.5 text-xs font-bold">
                 <TriangleAlert size={13} />
@@ -477,7 +499,7 @@
                 {/each}
               </ul>
             </div>
-          {:else if form.allowCashPayment && pendingCash[form.id]}
+          {:else if scoped && form.allowCashPayment && pendingCash[form.id]}
             <p class="text-text-muted border-cn-border border-t-2 px-4 py-3 text-xs @md:px-5">
               {m.asso_forms_no_pending_cash()}
             </p>

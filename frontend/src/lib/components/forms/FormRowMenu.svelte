@@ -27,6 +27,8 @@
     hasProductGrid: boolean;
     /** The form is being deleted: a second delete is not started. */
     deleting?: boolean;
+    /** An export of this form is in flight: the trigger shows it and starts no second one. */
+    exporting?: boolean;
     onView: () => void;
     onCopyLink: () => void;
     onQr: () => void;
@@ -38,6 +40,7 @@
     isDraft,
     hasProductGrid,
     deleting = false,
+    exporting = false,
     onView,
     onCopyLink,
     onQr,
@@ -90,6 +93,7 @@
     variant="secondary"
     icon
     onclick={() => menu.toggle()}
+    loading={exporting}
     aria-label={m.form_row_more_actions()}
     title={m.form_row_more_actions()}
     aria-haspopup="menu"

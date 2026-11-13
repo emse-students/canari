@@ -1429,20 +1429,21 @@ price line, the cash strip and the payments banner. **Both now draw `FormsManage
 
 | | `/forms` | the tab (`EditFormsTab`) |
 |---|---|---|
-| Source (`load`) | `getForms()`: forms the caller owns, plus those of associations where they hold `MANAGE_FORMS` | `loadAssociationForms(asso.id)` (`forms/associationForms.ts`) |
+| Source (`load`) | `getForms()`: forms the caller owns, plus those of associations where they hold `MANAGE_FORMS` | `listAssociationForms(asso.id)`: `GET /associations/:id/forms` |
 | `scoped` | no: each row names its association, or says "Personnel" | yes: the association is implied, the name is omitted |
 | Header and "Nouveau formulaire" | the page's `PageHeader`, `/forms/create` | the tab's header, `/forms/create?association=<id>&returnTo=<this tab>` |
 | `paymentsReady` | absent (rows span associations): no warning | the association's: a PAID row carries "Paiements non configurees" |
 | `notice` snippet | none | the paid-forms banner (it is about the association, so it stays the tab's) |
 | Row heading | `h2` (an `h1` above) | `h3` (an `h2` above) |
 
-**The tab's source is the association's route AND `GET /forms`, on purpose.** `GET
+**The tab's source is the association's route, which returns the WHOLE form.** `GET
 /associations/:id/forms` is the authority on which forms belong to it - it also admits a global
-admin or a super-admin holding no `MANAGE_FORMS` flag, who are in no `GET /forms` list - but its
-row is thin (no questions, no association name, no unpublished-changes flag). The list needs the
-whole form for the export menu and the accordion, so `loadAssociationForms` takes the full row from
-`GET /forms` when the caller's list holds it (the ordinary case) and reads a form that list lacks
-by id (`getForm`).
+admin or a super-admin holding no `MANAGE_FORMS` flag, who are in no `GET /forms` list - and
+`listFormsByAssociation` returns the same row `FormsService.list` does (every column, plus
+`associationName` and `hasUnpublishedChanges`, archived forms excluded). One read, no per-form
+follow-up: a first version read each missing form by id, which was an N+1 where one deleted form
+sank the tab, and whose rows lacked the unpublished flag (so a global admin saw no badge and "view"
+opened the published page instead of the preview).
 
 **What a row is, everywhere.** The name has the whole width (two lines, `min-w-0`). Under it, the
 price ("Gratuit" or the amount, "Paiement sur place accepte") and the states, which read the same in
@@ -1468,10 +1469,19 @@ capability one tap away. The export menu is no longer a second dropdown: its ent
 in `forms/exportEntries.ts`, workbook plus the two grid CSVs on a priced-grid form) are a section
 of the same menu, and `downloadFormExport` is the one place that writes the file.
 
-**Cash awaiting validation is on the row in both places** (the tab used to be the only one):
-validate or cancel a payment from the strip, with the same guest naming (`submitterName`) as the
-responses screen. A form that takes no cash is never asked. Validating from the strip re-reads an
-open accordion, and the accordion's own payment actions re-read the strip (`reloadResponses`).
+**Cash awaiting validation: a strip on the tab's rows, the accordion everywhere.** The strip
+(validate or cancel a payment, with the same guest naming, `submitterName`, as the responses
+screen) is the tab's: one association's forms, a handful of reads. `/forms` spans every association
+the caller manages, so a strip there would fire one `pending-cash` read per cash form on every open;
+it validates cash in the responses accordion, which holds the same actions (no capability lost).
+Validating from the strip re-reads an open accordion, and the accordion's payment actions re-read
+the strip (`reloadResponses`).
+
+**Two in-flight guards.** A delete is guarded from the moment its confirmation OPENS (two quick
+selections would queue two confirmations and the second delete would 404), and an export disables
+the row's "..." with a spinner until the file is written, so a second tap starts no second export.
+The empty state draws a create button only when the screen has none of its own (`createHref`): the
+tab's header has one.
 
 **A failed read says so** (`common_load_error`) in both places; `/forms` used to render an empty
 list for a failed `GET /forms`, which read as "you have no forms".
@@ -1687,7 +1697,7 @@ Building and configuring a form happens in the two admin routes above.
 `MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (both
 sources, dedup, ordering, naming). The unified list is tested in `FormsManagerList.svelte.test.ts`
 (the row, both scopes, the menu, the responses link, cash), `EditFormsTab.svelte.test.ts` (what is
-the tab's own) and `forms/associationForms.test.ts` (its source). The forms module had no test at all before 2026-08-23.
+the tab's own) and `associations.service.list-forms.spec.ts` (its source). The forms module had no test at all before 2026-08-23.
 
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s

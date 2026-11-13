@@ -202,6 +202,19 @@ describe('FormsManagerList - the two scopes', () => {
     expect(target.querySelector('a')!.getAttribute('href')).toBe('/forms/create?association=a1');
   });
 
+  it('empty and scoped with no create address: draws no second create button', async () => {
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(FormsManagerList, {
+      target,
+      props: { load: async () => [], scoped: true },
+    });
+    mounted.push(() => unmount(instance));
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="forms-empty"]')).not.toBeNull()
+    );
+    expect(target.querySelector('a')).toBeNull();
+  });
+
   it('a failed read says so instead of showing an empty list', async () => {
     const target = document.body.appendChild(document.createElement('div'));
     const instance = mount(FormsManagerList, {
@@ -303,6 +316,35 @@ describe('FormsManagerList - the menu', () => {
     expect(target.querySelector('#form-f2')).not.toBeNull();
   });
 
+  it('starts one confirmation for a delete selected twice, never two', async () => {
+    let release: (v: boolean) => void = () => {};
+    confirm.showConfirm.mockImplementationOnce(() => new Promise<boolean>((r) => (release = r)));
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('delete')!.click();
+    await menuClosed();
+    await openMenu(target, 'f1');
+    entry('delete')!.click();
+    expect(confirm.showConfirm).toHaveBeenCalledTimes(1);
+    release(true);
+    await vi.waitFor(() => expect(api.deleteForm).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows an export in flight on the trigger and starts no second one', async () => {
+    let finish: (b: Blob) => void = () => {};
+    api.exportSubmissions.mockImplementationOnce(() => new Promise<Blob>((r) => (finish = r)));
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('export:xlsx')!.click();
+    const trigger = target.querySelector<HTMLButtonElement>(
+      '#form-f1 [data-testid="form-row-menu"]'
+    )!;
+    await vi.waitFor(() => expect(trigger.disabled).toBe(true));
+    expect(api.exportSubmissions).toHaveBeenCalledTimes(1);
+    finish(new Blob(['x']));
+    await vi.waitFor(() => expect(trigger.disabled).toBe(false));
+  });
+
   it('deletes nothing when the confirmation is refused', async () => {
     confirm.showConfirm.mockResolvedValueOnce(false);
     const target = await render([form({})]);
@@ -367,7 +409,7 @@ describe('FormsManagerList - cash awaiting validation', () => {
 
   it('names a guest with no name by the reference they were given', async () => {
     api.listPendingCashSubmissions.mockResolvedValueOnce([pendingRow({ reference: '003A-5F0A' })]);
-    const target = await render([cashForm()]);
+    const target = await render([cashForm()], { scoped: true });
     await vi.waitFor(() =>
       expect(target.textContent).toContain(
         m.form_submitter_guest_reference({ reference: '003A-5F0A' })
@@ -379,7 +421,7 @@ describe('FormsManagerList - cash awaiting validation', () => {
     api.listPendingCashSubmissions.mockResolvedValueOnce([
       pendingRow({ reference: '003A-5F0A', guestFirstName: 'Ada', guestLastName: 'Test' }),
     ]);
-    const target = await render([cashForm()]);
+    const target = await render([cashForm()], { scoped: true });
     await vi.waitFor(() =>
       expect(target.textContent).toContain(
         `Ada Test (${m.form_submitter_guest_reference({ reference: '003A-5F0A' })})`
@@ -389,7 +431,7 @@ describe('FormsManagerList - cash awaiting validation', () => {
 
   it('validates a payment and drops its row; a form that takes no cash is never asked', async () => {
     api.listPendingCashSubmissions.mockResolvedValueOnce([pendingRow({ reference: 'R1' })]);
-    const target = await render([cashForm(), form({ id: 'f2' })]);
+    const target = await render([cashForm(), form({ id: 'f2' })], { scoped: true });
     await vi.waitFor(() => expect(target.textContent).toContain(m.common_validate_button()));
     expect(api.listPendingCashSubmissions).toHaveBeenCalledTimes(1);
     expect(api.listPendingCashSubmissions).toHaveBeenCalledWith('f1');
@@ -400,8 +442,13 @@ describe('FormsManagerList - cash awaiting validation', () => {
     await vi.waitFor(() => expect(target.textContent).not.toContain(m.common_validate_button()));
   });
 
+  it('on the global list reads no pending cash at all: the accordion holds those actions', async () => {
+    await render([cashForm(), form({ id: 'f2', allowCashPayment: true })]);
+    expect(api.listPendingCashSubmissions).not.toHaveBeenCalled();
+  });
+
   it('says there is nothing to validate on a form that takes cash and has none waiting', async () => {
-    const target = await render([cashForm()]);
+    const target = await render([cashForm()], { scoped: true });
     await vi.waitFor(() => expect(target.textContent).toContain(m.asso_forms_no_pending_cash()));
   });
 });

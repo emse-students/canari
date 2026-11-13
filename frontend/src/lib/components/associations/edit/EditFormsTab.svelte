@@ -1,7 +1,6 @@
 <script lang="ts">
   import { ClipboardList, TriangleAlert, Plus } from '@lucide/svelte';
-  import type { Association } from '$lib/associations/api';
-  import { loadAssociationForms } from '$lib/forms/associationForms';
+  import { listAssociationForms, type Association } from '$lib/associations/api';
   import type { Form } from '$lib/forms/api';
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
@@ -60,8 +59,7 @@
   </div>
 
   <FormsManagerList
-    load={() => loadAssociationForms(asso.id)}
-    {createHref}
+    load={() => listAssociationForms(asso.id)}
     scoped
     inset
     paymentsReady={onlinePaymentsReady}
