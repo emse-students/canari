@@ -70,6 +70,7 @@ import {
 import type { CreateBlockDto, CreateBookingDto, EditBookingDto } from './dto/booking.dto';
 import { localDate } from './zoned-time';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
+import { spaceContact } from './booking-contact';
 
 /** Who is asking: the account nginx authenticated, and whether it is a global admin. */
 export interface Actor {
@@ -357,9 +358,16 @@ export class BookingsService {
     const hiddenItemIds = items.some((i) => normaliseCondition(i))
       ? profileHiddenItemIds(items, await this.factsFor(space, actor.userId))
       : [];
+    const contact = await spaceContact(
+      (sql, params) => this.spaces.manager.query(sql, params),
+      space,
+      actor.userId
+    );
     return {
       id: space.id,
       hiddenItemIds,
+      // Who to write to about the room, or null (the screen then shows nobody).
+      contact,
       associationId: space.associationId,
       name: space.name,
       description: space.description,

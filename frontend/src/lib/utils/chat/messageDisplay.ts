@@ -102,21 +102,29 @@ export function isAngleBracketAutolink(text: string, urlStart: number, urlEnd: n
   return urlStart > 0 && text[urlStart - 1] === '<' && urlEnd < text.length && text[urlEnd] === '>';
 }
 
-/** Extracts the first HTTP/HTTPS URL eligible for a link preview (skips `<url>` autolinks). */
-export function extractFirstUrl(text: string): string | null {
+/**
+ * Every distinct HTTP/HTTPS URL eligible for a link preview, in the order of the text (skips
+ * `<url>` autolinks). A post names each of its links once, so a repeated link is previewed once.
+ */
+export function extractPreviewUrls(text: string): string[] {
   const re = new RegExp(HTTP_URL_RE.source, HTTP_URL_RE.flags);
+  const urls: string[] = [];
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(text)) !== null) {
     const raw = match[0];
-    const url = trimUrlTrailingPunctuation(raw);
     const start = match.index;
-    const end = start + raw.length;
-    if (isAngleBracketAutolink(text, start, end)) continue;
-    return url;
+    if (isAngleBracketAutolink(text, start, start + raw.length)) continue;
+    const url = trimUrlTrailingPunctuation(raw);
+    if (!urls.includes(url)) urls.push(url);
   }
 
-  return null;
+  return urls;
+}
+
+/** Extracts the first HTTP/HTTPS URL eligible for a link preview (skips `<url>` autolinks). */
+export function extractFirstUrl(text: string): string | null {
+  return extractPreviewUrls(text)[0] ?? null;
 }
 
 /** Returns true if the URL points to an animated GIF (tenor, giphy, or .gif extension). */

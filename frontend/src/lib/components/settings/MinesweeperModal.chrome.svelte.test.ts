@@ -2,28 +2,24 @@
 /**
  * MINESWEEPER FULL-SCREEN CHROME (user, 2026-10-07): the board fills the screen and the only
  * visible control besides the HUD is a floating leaderboard button. Pinned: no tab bar, the
- * leaderboard is a sheet that opens and closes over the game, the mode button flips and persists
- * what a short press does, and the close button reaches the host.
+ * trophy closes the game and goes to the Games page (the one leaderboard, 2026-11-13), the mode
+ * button flips and persists what a short press does, and the close button reaches the host.
  */
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 const startChallenge = vi.hoisted(() => vi.fn());
+const nav = vi.hoisted(() => ({ goto: vi.fn() }));
+
+vi.mock('$app/navigation', () => ({ goto: nav.goto }));
 
 vi.mock('$lib/minesweeper/api', () => ({
-  fetchMinesweeperLeaderboard: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
-  fetchMinesweeperStats: vi.fn(),
-  fetchMinesweeperBans: vi.fn().mockResolvedValue([]),
-  removeMinesweeperScore: vi.fn(),
-  banMinesweeperUser: vi.fn(),
-  unbanMinesweeperUser: vi.fn(),
   startMinesweeperChallenge: startChallenge,
   submitMinesweeperChallenge: vi.fn(),
   formatDurationMs: (ms: number) => `${ms}ms`,
   MinesweeperBannedError: class extends Error {},
 }));
-vi.mock('$lib/stores/userState.svelte', () => ({ globalAdminState: () => false }));
 
 import MinesweeperModal from './MinesweeperModal.svelte';
 import { flushMacrotask } from '../../../test/flush';
@@ -36,6 +32,7 @@ const onClose = vi.fn();
 beforeEach(() => {
   localStorage.clear();
   onClose.mockReset();
+  nav.goto.mockReset();
   startChallenge.mockReset().mockRejectedValue(new Error('no server in this test'));
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
@@ -68,16 +65,15 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(byLabel('Classement')).toBeDefined();
   });
 
-  it('opens the leaderboard as a sheet over the game and goes back to it', async () => {
+  it('sends the trophy to the Games page, the one leaderboard, closing the game first', async () => {
     await open();
     byLabel('Classement')!.click();
     flushSync();
-    expect(document.querySelector('h2')?.textContent).toContain('Classement');
-    expect(document.querySelectorAll('[data-cell]')).toHaveLength(18 * 32);
-    byLabel('Retour à la partie')!.click();
-    flushSync();
-    // The sheet fades out before it leaves the DOM.
-    await vi.waitFor(() => expect(document.querySelector('h2')).toBeNull(), { timeout: 2000 });
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(nav.goto).toHaveBeenCalledOnce();
+    expect(String(nav.goto.mock.calls[0][0])).toContain('/games');
+    // No sheet of its own any more: no heading, the board is still the only screen.
+    expect(document.querySelector('h2')).toBeNull();
   });
 
   it('flips what a short press does from the mode button, and remembers it', async () => {
