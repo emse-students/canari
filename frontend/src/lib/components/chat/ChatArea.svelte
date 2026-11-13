@@ -53,7 +53,12 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadBelow, countingReadPoint, seenByAnchors } from '$lib/utils/chat/readState';
+  import {
+    countUnreadBelow,
+    countingReadPoint,
+    dmReadAnchorId,
+    seenByAnchors,
+  } from '$lib/utils/chat/readState';
   import {
     lastRowAbove,
     resolveAnchor,
@@ -1089,6 +1094,20 @@
         )
       : undefined
   );
+  /**
+   * A DM: the one own message that carries the "Lu" marker, under the newest message the peer has
+   * read (owner, 2026-11-13), computed over every row like `seenBy`, never the render window.
+   */
+  let dmReadAnchor = $derived(
+    chatView?.isDirect
+      ? dmReadAnchorId(
+          messageRows,
+          chatView.conversation.readWatermarks,
+          currentUserId,
+          chatView.conversation.serverReadWatermarks
+        )
+      : null
+  );
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
   /**
@@ -2080,6 +2099,7 @@
             readWatermarks={conversation?.readWatermarks}
             serverReadWatermarks={conversation?.serverReadWatermarks}
             {seenBy}
+            {dmReadAnchor}
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}
