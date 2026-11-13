@@ -841,7 +841,8 @@ jobs:
   # 100-secret cap, and they are write-only), so only a job that declares the environment can read
   # them - and a fifth visible workflow needs a reason beyond "another topic". It is a question
   # asked by hand, so it has no cron, and like `dev-reset` it is NOT part of `all`, which re-runs the
-  # reports. `deployment: false`: it reads the environment's secrets without drawing a deployment.
+  # reports. The dev app's pair is `DEV_CLOUDFLARE_SFU_APP_ID` / `_SECRET` in `development` (the name
+  # `serve-dev.yml`'s `render-env.sh` indirection reads), mapped here onto the bare names the probe reads.
   #
   # `development`, NEVER `production`: the probe creates sessions on the DEV app only.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -850,9 +851,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.job == 'sfu-probe'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment:
-      name: development
-      deployment: false
+    environment: development
     permissions:
       contents: read
     steps:
@@ -866,6 +865,6 @@ jobs:
       # from its environment only, never prints them, and redacts them from Cloudflare's answers.
       - name: Push E2E frames through Cloudflare's SFU and prove they open
         env:
-          CLOUDFLARE_SFU_APP_ID: ${{ secrets.CLOUDFLARE_SFU_APP_ID }}
-          CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.CLOUDFLARE_SFU_APP_SECRET }}
+          CLOUDFLARE_SFU_APP_ID: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_ID }}
+          CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_SECRET }}
         run: bun tools/sfu-e2ee-probe/probe.mjs

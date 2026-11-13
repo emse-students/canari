@@ -499,7 +499,8 @@ What this changes:
   client leg needs no change to the frame format or the worker - the same transforms, assigned the
   same way, on a session's push and pull transceivers. Re-run the probe after any change to the
   worker's wire format: `gh workflow run scheduled.yml -f job=sfu-probe` (the job declares the
-  `development` environment, whose `CLOUDFLARE_SFU_APP_*` pair it reads, never production's).
+  `development` environment and maps its `DEV_CLOUDFLARE_SFU_APP_*` pair onto the bare names the
+  probe reads, never production's).
 - **The production TURN key has never carried a byte** (30 days) - consistent with calls being held
   off, and a WP-C4 Cloudflare SFU would be a NEW app.
 - **Owed, and what blocks each**: the relay over mobile data and campus Wi-Fi; the iPhone needs a

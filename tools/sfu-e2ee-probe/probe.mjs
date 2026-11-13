@@ -58,7 +58,7 @@ import {
   launchChrome,
   serveDirectory,
 } from '../headless-chrome/chrome.mjs';
-import { brief, compareDigests, failureOf, provenOf } from './lib.mjs';
+import { brief, compareDigests, failureOf, frameCount, provenOf } from './lib.mjs';
 
 const HERE = import.meta.dir;
 const args = process.argv.slice(2);
@@ -67,8 +67,8 @@ const opt = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const OPTS = {
-  frames: Number(opt('frames', '250')),
-  videoFrames: Number(opt('video-frames', '150')),
+  frames: frameCount('frames', opt('frames', '250')),
+  videoFrames: frameCount('video-frames', opt('video-frames', '150')),
   video: !args.includes('--audio-only'),
 };
 const CHROME = opt('chrome', defaultChrome());
@@ -288,8 +288,11 @@ async function main() {
     }
 
     // ---- Byte identity, measured on what the two taps saw ----
-    const pubD = await ask('publisher', 'probe.digests()');
+    // The SUBSCRIBER first: frames keep flowing while the two reads cross, so a publisher read
+    // first would miss frames sent after it that the subscriber has already received - each
+    // counted 'unmatched', a false FAIL. Read in this order, `sent` is always a superset.
     const subD = await ask('subscriber', 'probe.digests()');
+    const pubD = await ask('publisher', 'probe.digests()');
     if (!pubD || !subD) throw new Error('a worker died before handing its digests over');
     const kinds = OPTS.video ? ['audio', 'video'] : ['audio'];
     const cmp = Object.fromEntries(

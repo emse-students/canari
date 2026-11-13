@@ -87,8 +87,8 @@ Each is one pull request or more; none is built by the D3 change.
    `job=sfu-probe`); ~~the owner's one-off (a Realtime SFU app and its two secrets)~~ **done
    2026-11-13**: `CLOUDFLARE_SFU_APP_ID` / `CLOUDFLARE_SFU_APP_SECRET` in the `production` and
    `development` environments, wired OPTIONAL into chat-delivery-service by the probe's PR (dev's
-   deploy reads `DEV_CLOUDFLARE_SFU_*`, to be set in `development` too until the secret-name
-   unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). Left: the
+   deploy and the probe read `DEV_CLOUDFLARE_SFU_*`, the ONLY pair `development` keeps - the owner
+   provisions it, rotating the dev app's secret - until the secret-name unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). Left: the
    backend proxy of the sessions/tracks API in chat-delivery-service (its rows go `warn` the day it
    reads them), and the client's SFU leg on it.
 4. **WP-GC4 - the relay setting (D2)**: one server-side setting (`cloudflare` | `call-service`)

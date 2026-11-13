@@ -8,6 +8,22 @@
  * never a duration (CLAUDE.md, "termination from a proof").
  */
 
+/**
+ * A `--frames` / `--video-frames` value as a positive whole count. 0 would make the proof vacuous (a
+ * count of zero is reached before a single frame crosses) and NaN would make it unreachable, so
+ * either is refused before anything is opened.
+ * @param {string} name the option, for the error
+ * @param {string | undefined} raw its text
+ * @returns {number}
+ */
+export function frameCount(name, raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`--${name} must be a whole number of frames, at least 1 (got ${JSON.stringify(raw)})`);
+  }
+  return n;
+}
+
 /** How many times the audio proof's frame count the subscriber may receive with no video packet. */
 export const VIDEO_ABSENT_AFTER_AUDIO_MULTIPLE = 4;
 

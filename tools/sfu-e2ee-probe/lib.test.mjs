@@ -2,12 +2,22 @@ import { describe, expect, test } from 'bun:test';
 import {
   compareDigests,
   failureOf,
+  frameCount,
   provenOf,
   sizeSummary,
   VIDEO_ABSENT_AFTER_AUDIO_MULTIPLE,
 } from './lib.mjs';
 
 const opts = { frames: 10, videoFrames: 5, video: true };
+
+describe('frameCount', () => {
+  test('a positive whole count is taken', () => {
+    expect(frameCount('frames', '250')).toBe(250);
+  });
+  test.each(['0', '-3', 'abc', '2.5', '', undefined])('%p is refused', (raw) => {
+    expect(() => frameCount('frames', raw)).toThrow('--frames must be a whole number of frames');
+  });
+});
 
 /** A pair of page states in which every proof holds. */
 function proven() {
