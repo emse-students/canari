@@ -1,38 +1,48 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Gamepad2 } from '@lucide/svelte';
+  import { Ban, Gamepad2, Trash2, Undo2 } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import MinesweeperStats from '$lib/components/games/MinesweeperStats.svelte';
   import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
+    banMinesweeperUser,
+    fetchMinesweeperBans,
     fetchMinesweeperLeaderboard,
     fetchMinesweeperMe,
     fetchMinesweeperPromos,
     formatDurationMs,
+    removeMinesweeperScore,
+    unbanMinesweeperUser,
     type LeaderboardEntry,
+    type MinesweeperBan,
     type MinesweeperPromo,
     type MinesweeperStanding,
   } from '$lib/minesweeper/api';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
+  import { exactDate } from '$lib/utils/time';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { globalAdminState } from '$lib/stores/userState.svelte';
 
   /**
    * THE GAMES PAGE (owner, 2026-11-10; docs/wiki/frontend/modules/minesweeper.md): "Jouer", the
-   * reader's own record, and the Minesweeper ranking - overall, or one promo's. Open to every
-   * signed-in account; the 5 taps on the settings title still open the game itself.
+   * reader's own record, and the Minesweeper ranking - overall, one promo's, or the reader's own
+   * Stats. Open to every signed-in account; the 5 taps on the settings title still open the game.
+   * THE ONE LEADERBOARD (owner, 2026-11-13): the game's own sheet is gone, so the date of each
+   * record and the moderation (a global admin removes a score or bans a player) live here.
    *
    * A promo ranking holds only accounts WITH a cursus (the server joins `users.promo`), and the page
-   * opens its promo tab on the reader's own promo. The moderation of scores stays in the game's own
-   * sheet: this page only reads.
+   * opens its promo tab on the reader's own promo.
    */
   const PAGE = 25;
 
-  type Tab = 'general' | 'promo';
+  type Tab = 'general' | 'promo' | 'stats';
 
   let playing = $state(false);
   let tab = $state<Tab>('general');
@@ -49,6 +59,11 @@
   let generation = 0;
 
   const me = $derived(currentUserId());
+  /** The buttons are drawn for a global admin only - the 403 behind them is the real gate. */
+  const isAdmin = $derived(globalAdminState());
+  let bans = $state<MinesweeperBan[]>([]);
+  /** An admin action failed - said on the tab, never swallowed. */
+  let moderationFailed = $state(false);
   const promoOptions = $derived<PickerOption[]>(
     promos.map((p) => ({
       value: String(p.promo),
@@ -56,8 +71,63 @@
     }))
   );
 
+  /** The visible date of a record; nothing for a date the server did not send. */
+  function dateOf(iso: string): string {
+    return Number.isNaN(new Date(iso).getTime()) ? '' : exactDate(iso);
+  }
+
+  async function loadBans() {
+    try {
+      bans = await fetchMinesweeperBans();
+    } catch (e) {
+      Log.d('games', `could not load the bans: ${String(e)}`);
+      bans = [];
+    }
+  }
+
+  /** Runs one admin action, then reads the board and the bans again; a failure is logged and shown. */
+  async function moderate(action: () => Promise<void>) {
+    moderationFailed = false;
+    try {
+      await action();
+    } catch (e) {
+      Log.d('games', `moderation action failed: ${String(e)}`);
+      moderationFailed = true;
+    }
+    await loadBoard();
+  }
+
+  async function removeScore(entry: LeaderboardEntry) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_remove({
+        name: entry.displayName,
+        time: formatDurationMs(entry.durationMs),
+      }),
+      { danger: true, confirmLabel: m.minesweeper_admin_confirm_remove_label() }
+    );
+    if (confirmed) await moderate(() => removeMinesweeperScore(entry.scoreId));
+  }
+
+  async function banPlayer(entry: LeaderboardEntry) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_ban({ name: entry.displayName }),
+      { danger: true, confirmLabel: m.minesweeper_admin_confirm_ban_label() }
+    );
+    if (confirmed) await moderate(() => banMinesweeperUser(entry.userId));
+  }
+
+  async function unbanPlayer(ban: MinesweeperBan) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_unban({ name: ban.displayName }),
+      { confirmLabel: m.minesweeper_admin_unban() }
+    );
+    if (confirmed) await moderate(() => unbanMinesweeperUser(ban.userId));
+  }
+
   /** Loads the first page of the board the reader is looking at. */
   async function loadBoard() {
+    if (tab === 'stats') return;
+    if (isAdmin) void loadBans();
     const mine = ++generation;
     loading = true;
     failed = false;
@@ -169,6 +239,7 @@
         items={[
           { key: 'general', label: m.games_tab_general() },
           { key: 'promo', label: m.games_tab_promo() },
+          { key: 'stats', label: m.minesweeper_tab_stats() },
         ]}
         value={tab}
         onSelect={selectTab}
@@ -184,7 +255,9 @@
         />
       {/if}
 
-      {#if loading}
+      {#if tab === 'stats'}
+        <MinesweeperStats />
+      {:else if loading}
         <p class="text-text-muted text-sm">…</p>
       {:else if failed}
         <p class="text-red-err text-sm" role="alert">{m.games_load_error()}</p>
@@ -207,12 +280,41 @@
                 <span class="text-text-muted w-8 shrink-0 font-mono text-sm font-bold">
                   #{entry.rank}
                 </span>
-                <span class="text-text-main truncate text-sm font-semibold">
-                  {entry.displayName}
+                <span class="min-w-0">
+                  <span class="text-text-main block truncate text-sm font-semibold">
+                    {entry.displayName}
+                  </span>
+                  {#if dateOf(entry.verifiedAt)}
+                    <span class="text-text-muted block truncate text-xs" data-testid="games-date">
+                      {dateOf(entry.verifiedAt)}
+                    </span>
+                  {/if}
                 </span>
               </span>
-              <span class="text-text-main shrink-0 font-mono text-sm font-semibold">
-                {formatDurationMs(entry.durationMs)}
+              <span class="flex shrink-0 items-center gap-1">
+                <span class="text-text-main font-mono text-sm font-semibold">
+                  {formatDurationMs(entry.durationMs)}
+                </span>
+                {#if isAdmin}
+                  <button
+                    type="button"
+                    class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
+                    aria-label={m.minesweeper_admin_remove_score()}
+                    title={m.minesweeper_admin_remove_score()}
+                    onclick={() => void removeScore(entry)}
+                  >
+                    <Trash2 size={14} strokeWidth={2.25} />
+                  </button>
+                  <button
+                    type="button"
+                    class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
+                    aria-label={m.minesweeper_admin_ban()}
+                    title={m.minesweeper_admin_ban()}
+                    onclick={() => void banPlayer(entry)}
+                  >
+                    <Ban size={14} strokeWidth={2.25} />
+                  </button>
+                {/if}
               </span>
             </li>
           {/each}
@@ -223,6 +325,44 @@
               {m.minesweeper_load_more()}
             </Button>
           </div>
+        {/if}
+      {/if}
+
+      {#if isAdmin && tab !== 'stats'}
+        {#if moderationFailed}
+          <p class="text-red-err text-xs font-semibold" role="alert">
+            {m.minesweeper_admin_failed()}
+          </p>
+        {/if}
+        {#if bans.length > 0}
+          <h3 class="text-text-muted text-2xs mt-4 font-bold">
+            {m.minesweeper_admin_bans_title()}
+          </h3>
+          <ul class="space-y-1.5">
+            {#each bans as ban (ban.userId)}
+              <li
+                class="border-cn-border bg-cn-surface flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+              >
+                <span class="min-w-0">
+                  <span class="text-text-main block truncate text-sm font-semibold">
+                    {ban.displayName}
+                  </span>
+                  {#if ban.reason}
+                    <span class="text-text-muted block truncate text-xs">{ban.reason}</span>
+                  {/if}
+                </span>
+                <button
+                  type="button"
+                  class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
+                  aria-label={m.minesweeper_admin_unban()}
+                  title={m.minesweeper_admin_unban()}
+                  onclick={() => void unbanPlayer(ban)}
+                >
+                  <Undo2 size={14} strokeWidth={2.25} />
+                </button>
+              </li>
+            {/each}
+          </ul>
         {/if}
       {/if}
     </section>
