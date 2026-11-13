@@ -197,7 +197,7 @@
 <!-- NO TRAILING SPACE HERE: the clearance above the composer belongs to the thread's LAST row, which
      is the typing indicator's permanent wrapper in ChatArea, not this block (chatTypingBubble.test). -->
 <div class="flex flex-col gap-1">
-  {#each visibleMessageGroups as group, index (group?.type === 'message' ? group.message?.id : `${group?.type ?? ''}-${index}`)}
+  {#each visibleMessageGroups as group, index (group?.type === 'message' ? (group.message?.renderKey ?? group.message?.id) : `${group?.type ?? ''}-${index}`)}
     <!-- Svelte 5 teardown race: group can be null when the {#key} parent destroys this component
          while the {#each} key expression is still being evaluated. All accesses use ?. -->
     <!-- Date and hour separators: ONE plain muted style, as Messenger draws them (design audit Q6). -->

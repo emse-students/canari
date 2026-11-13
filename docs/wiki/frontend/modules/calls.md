@@ -1930,9 +1930,62 @@ SFU mid-call, transforms in the path throughout (D1); both relays are kept - Clo
 serves now, the Rust `call-service` is kept working for the day the School opens UDP, one
 server-side setting picks (D2); `call-service` is proven by an encrypted end-to-end call in CI (D3,
 [built](../../services/call-service.md#the-end-to-end-call-in-ci)); direct peer to peer keeps no IP
-masking (D4). Per-sender keys and the TURN volume of a relayed mesh stay open, and the work
+masking (D4). Per-sender keys are built ([below](#one-key-per-sender-wp-gc1-2026-11-13)); the TURN
+volume of a relayed mesh stays open, and the work
 packages that follow are listed in order:
 [backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
+
+### One key per sender (WP-GC1, 2026-11-13)
+
+A mesh carries N senders, so the 1:1 call's per-DIRECTION keys (`<callId>|caller`,
+`<callId>|callee`) cannot name them. A group call exports ONE key per participant from the
+conversation's MLS group, under its own label `mls-webrtc-media-group-v1`, with the sender's user id
+as context: `<callId>|<userId lowercased>` (`utils/callKeys.ts`, `deriveGroupCallKeys`,
+`deriveSenderKey`). Every participant derives the same N keys; each device encrypts with its own and
+holds one receive key per other participant.
+
+- **The worker** (`workers/encryption.worker.ts`) holds one send key and a MAP of receive keys:
+  `setGroupKeys` replaces all of them at once (`keyReady`), `addReceiveKey` adds one participant
+  (`peerKeyReady`, awaited before that participant's peer connection is made, so the rule "key the
+  worker before the first track" holds per peer), `dropReceiveKey` removes one. Each RECEIVER
+  transform is told whose frames it carries (`CallTransformOptions.peer`); the key is looked up per
+  frame, and a frame of a participant the worker holds no key for is dropped and counted
+  (`droppedNoKey` with its side and participant), never forwarded. A receive key equal to the send
+  key is refused, in a set or an add, as two equal 1:1 keys already were.
+- **The 1:1 call is NOT the N=2 case, on purpose.** It keeps the v2 label and the role contexts, and
+  its worker command `setKeys` is unchanged (one receive key in the worker's 1:1 slot, used by a
+  receiver transform that names no participant). So a 1:1 call between a client of before 1.7.0 and
+  a client of after derives the same two keys, and no shim is needed - nothing enters
+  [legacy-compatibility](../../legacy-compatibility.md). A group call is offered only to clients that
+  carry the group label (the server's `group_calls_mode`, WP-GC2). The two labels never meet: a key of
+  one is never a key of the other (`callKeys.test.ts`).
+- **What it does not prove.** Every member can export every member's key - the exporter secret is
+  the group's - so a frame that opens under Bob's key was sealed by A MEMBER, not necessarily by Bob.
+  The 1:1 roles were the same; the screen's claim stays "end-to-end encrypted", meaning nobody
+  outside the conversation, never "this exact member" (the SFrame-over-MLS designs share this).
+- **The epoch.** Each participant derives at its own moment, so an epoch move between two joins
+  gives them different keys - the 1:1 call's known class, wider in a group because more members can
+  commit. The worker's `undecryptable` report now names the participant whose frames never opened.
+
+- **Key commands apply in the order posted.** The worker's handler awaits (digests, imports), so
+  it runs every command on one promise chain: a `setGroupKeys` followed at once by an
+  `addReceiveKey` can no longer finish after it and wipe it, and a `dropReceiveKey` can no longer run
+  inside an add's import and be undone (review of #3489). Every participant id is lowercased in the
+  worker as in the derivation, a drop without a participant is a `keyError`, and two participants
+  posted one receive key are refused like a receive key equal to the send key.
+- **One device per user in a group call (decided 2026-11-13, reversible).** Keys are per USER, so
+  two devices of one person would seal under one key and one nonce space and could not be told
+  apart. A user holds ONE seat: the second device's join REPLACES the first - call-service already
+  evicts a sibling device in p2p mode, and the group client treats the replaced device as left.
+  ([open-questions](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible),
+  [backlog](../../backlog.d/group-calls-one-device-per-user.md).)
+
+Pinned by `utils/callKeys.test.ts` (four participants agree on every sender key, the contexts and
+label on the wire, the lowercasing, a late participant, the 1:1 keys never coincide with a group
+key, every exporter buffer zeroed) and `workers/encryption.worker.test.ts` (each sender opened with
+its key and refused on another's transform, its OWN sealed frame refused on every receiver, a
+participant keyed late, a dropped key, the equal-key and duplicate-key refusals, all-or-nothing sets,
+the 1:1 slot, lowercased ids, and commands posted back to back applied in order).
 
 ## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
 

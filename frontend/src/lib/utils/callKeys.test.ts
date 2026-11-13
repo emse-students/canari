@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CALL_GROUP_MEDIA_EXPORT_LABEL,
   CALL_MEDIA_EXPORT_LABEL,
   deriveCallKeys,
+  deriveGroupCallKeys,
+  deriveSenderKey,
   directionContext,
   keyFingerprint,
+  senderContext,
   type ExportSecret,
 } from './callKeys';
 
@@ -77,6 +81,89 @@ describe('deriveCallKeys', () => {
     for (const buffer of returned) expect(buffer.every((b) => b === 0)).toBe(true);
     expect(keys.send.some((b) => b !== 0)).toBe(true);
     expect(keys.receive.some((b) => b !== 0)).toBe(true);
+  });
+});
+
+describe('deriveGroupCallKeys - one key per sender (WP-GC1)', () => {
+  const users = ['alice', 'bob', 'carol', 'dave'];
+
+  it('gives every participant the same key for each sender: what one sends with, every other opens with', async () => {
+    const keys = await Promise.all(
+      users.map((u) =>
+        deriveGroupCallKeys(
+          exporter,
+          'g',
+          'room-1',
+          u,
+          users.filter((p) => p !== u)
+        )
+      )
+    );
+    for (const [i, sender] of users.entries()) {
+      for (const j of users.keys()) {
+        if (i === j) continue;
+        expect(keys[j].receive.get(sender)).toEqual(keys[i].send);
+      }
+      expect(keys[i].receive.has(sender)).toBe(false);
+      expect(keys[i].receive.size).toBe(users.length - 1);
+    }
+    // N distinct keys: no two senders share a nonce space.
+    expect(new Set(keys.map((k) => Array.from(k.send).join(','))).size).toBe(users.length);
+  });
+
+  it('exports with the group label and `<callId>|<userId>` - never the 1:1 label or a role context', async () => {
+    const seen: string[] = [];
+    const spy: ExportSecret = async (g, label, context, len) => {
+      seen.push(`${label}:${new TextDecoder().decode(context)}:${len}`);
+      return exporter(g, label, context, len);
+    };
+    await deriveGroupCallKeys(spy, 'g', 'room-1', 'alice', ['bob', 'carol']);
+    expect(CALL_GROUP_MEDIA_EXPORT_LABEL).toBe('mls-webrtc-media-group-v1');
+    expect(CALL_GROUP_MEDIA_EXPORT_LABEL).not.toBe(CALL_MEDIA_EXPORT_LABEL);
+    expect(seen).toEqual([
+      'mls-webrtc-media-group-v1:room-1|alice:32',
+      'mls-webrtc-media-group-v1:room-1|bob:32',
+      'mls-webrtc-media-group-v1:room-1|carol:32',
+    ]);
+  });
+
+  it('lowercases the user id, and skips this user and a duplicate in the peer list', async () => {
+    const keys = await deriveGroupCallKeys(exporter, 'g', 'room-1', 'Alice', [
+      'BOB',
+      'bob',
+      'alice',
+    ]);
+    expect([...keys.receive.keys()]).toEqual(['bob']);
+    expect(Array.from(senderContext('r1', 'BoB'))).toEqual(
+      Array.from(new TextEncoder().encode('r1|bob'))
+    );
+  });
+
+  it('a late participant key from deriveSenderKey is the one the others derived up front', async () => {
+    const alice = await deriveGroupCallKeys(exporter, 'g', 'room-1', 'alice', ['bob']);
+    const dave = await deriveSenderKey(exporter, 'g', 'room-1', 'dave');
+    const daveOwn = await deriveGroupCallKeys(exporter, 'g', 'room-1', 'dave', ['alice']);
+    expect(dave).toEqual(daveOwn.send);
+    expect(daveOwn.receive.get('alice')).toEqual(alice.send);
+  });
+
+  it('a 1:1 role key and a group sender key never coincide - the 1:1 wire is unchanged', async () => {
+    const direct = await deriveCallKeys(exporter, 'g', 'room-1', 'caller');
+    const group = await deriveSenderKey(exporter, 'g', 'room-1', 'caller');
+    expect(group).not.toEqual(direct.send);
+    expect(group).not.toEqual(direct.receive);
+  });
+
+  it('zeroes every buffer the exporter returned', async () => {
+    const returned: Uint8Array[] = [];
+    const tracking: ExportSecret = async (g, label, context, len) => {
+      const out = await exporter(g, label, context, len);
+      returned.push(out);
+      return out;
+    };
+    await deriveGroupCallKeys(tracking, 'g', 'room-1', 'alice', ['bob', 'carol']);
+    expect(returned).toHaveLength(3);
+    for (const buffer of returned) expect(buffer.every((b) => b === 0)).toBe(true);
   });
 });
 
