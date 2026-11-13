@@ -443,10 +443,13 @@ static void CanariHandKeyboardFallToPage(WKWebView *webView, CGRect target, NSNo
 }
 
 /// The navigation fact that ends a rise in flight: the WebView's `URL` changes when a navigation
-/// commits (and on a same-document one), and the page that was asked for the target is then not the
-/// page that would answer. wry owns the WebView's navigation delegate, so the commit is read by KVO,
-/// as `loading` already is for the safe area. The rise's frame is set at once; the new page lays itself
-/// out on its own resize.
+/// commits, and the page that was asked for the target is then not the page that would answer. wry
+/// owns the WebView's navigation delegate, so the commit is read by KVO, as `loading` already is for
+/// the safe area. The rise's frame is set at once; the new page lays itself out on its own resize.
+/// It ALSO fires on a same-document navigation - SvelteKit's `pushState` on every route change - where
+/// the page that answers is the one that was asked: ending the rise there is intended. A route change
+/// while the keyboard rises re-lays the page out anyway, so the proof would vouch for a stale picture;
+/// the early snap costs at most the trailing frames this hand-off removes, and only on that rare overlap.
 @interface CanariKeyboardNavigationObserver : NSObject
 @end
 @implementation CanariKeyboardNavigationObserver

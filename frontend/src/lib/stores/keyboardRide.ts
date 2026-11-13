@@ -229,18 +229,25 @@ export function followKeyboardRides(
 ): { onRide: (finished: Promise<unknown>) => void; stop: () => void } {
   let latest = 0;
   let running = false;
+  // One frame queued at most: a ride that starts while an ended loop's frame is still queued (a
+  // stop() or a settle in the same frame) reuses that frame instead of starting a second loop.
+  let queued = false;
+  const queue = () => {
+    if (queued) return;
+    queued = true;
+    raf(frame);
+  };
   const frame = () => {
+    queued = false;
     if (!running) return;
     onFrame();
-    raf(frame);
+    queue();
   };
   return {
     onRide(finished) {
       const mine = ++latest;
-      if (!running) {
-        running = true;
-        raf(frame);
-      }
+      running = true;
+      queue();
       void finished.then(() => {
         if (mine !== latest) return;
         running = false;

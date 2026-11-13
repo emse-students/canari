@@ -220,6 +220,30 @@ describe('keyboardRide - following rides frame by frame', () => {
     expect(f.pending()).toBe(0);
   });
 
+  it('a ride started while an ended loop still has a frame queued runs ONE loop, not two', async () => {
+    const f = frames();
+    const onFrame = vi.fn();
+    const follow = followKeyboardRides(onFrame, f.raf);
+    follow.onRide(new Promise(() => {}));
+    follow.stop();
+    follow.onRide(new Promise(() => {}));
+    expect(f.pending()).toBe(1);
+    f.step();
+    expect(onFrame).toHaveBeenCalledTimes(1);
+    expect(f.pending()).toBe(1);
+
+    const g = frames();
+    const onFrame2 = vi.fn();
+    const follow2 = followKeyboardRides(onFrame2, g.raf);
+    let land!: () => void;
+    follow2.onRide(new Promise<void>((r) => (land = r)));
+    land();
+    await Promise.resolve();
+    await Promise.resolve();
+    follow2.onRide(new Promise(() => {}));
+    expect(g.pending()).toBe(1);
+  });
+
   it('stop() ends the loop and ignores a later settle', async () => {
     const f = frames();
     const onFrame = vi.fn();
