@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FormItem } from '$lib/forms/api';
   import { formatAmount } from '$lib/forms/fillAnswers';
+  import { associationLogoSrc } from '$lib/associations/api';
   import {
     cellQuantity,
     cellUnitCents,
@@ -63,6 +64,9 @@
     error = null,
     layout = 'responsive',
   }: Props = $props();
+
+  /** The product photo, resolved to the media base: a relative path loads only on the web. */
+  const productImageSrc = $derived(associationLogoSrc(item.imageUrl));
 
   /** The classes that show or hide each drawing, by `layout`. */
   const desktopShown = $derived(
@@ -280,9 +284,12 @@
     ? 'border-red-err border-2'
     : 'border-cn-border border'}"
 >
-  {#if item.imageUrl}
+  <!-- The stored value is a server path (`/api/media/public/...`): only the web, served from the
+       API's own origin, could load it as is. The native app resolves it against the media base,
+       as every other form image does. -->
+  {#if productImageSrc}
     <img
-      src={item.imageUrl}
+      src={productImageSrc}
       alt=""
       class="bg-cn-bg h-auto max-h-96 w-full object-contain"
       loading="lazy"
