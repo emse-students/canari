@@ -822,7 +822,7 @@ box no longer defines anything.
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
-| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31) | built |
+| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31); **the people directory is a dashboard row and a page for every signed-in member since 2026-11-13** (it was linked to staff only, the server always answered any member; the row shows the same fields as a public profile, no per-field privacy setting exists in core-service to honour; the review-cohort rule still applies; it does NOT hide blocked accounts, see [backlog.d](backlog.d/the-directory-does-not-hide-blocked-accounts.md)) | built |
 | Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 | Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 

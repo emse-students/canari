@@ -1,22 +1,35 @@
 <script lang="ts">
+  /**
+   * THE MEMBER DIRECTORY, OPEN TO EVERY SIGNED-IN MEMBER (owner, 2026-11-13).
+   *
+   * One search field, the filters behind a "Filtres" sheet and echoed as removable chips, clean rows,
+   * and before any search the reader's own class (the same query anyone may make). The server's
+   * answer does not depend on who asks beyond the review-cohort rule it already applies; this page
+   * only draws it (docs/wiki/profiles-and-access.md, D18).
+   *
+   * NO TIMER DRIVES A SEARCH: it runs on submit (Enter, the phone's search key) and when the sheet
+   * applies, and a response that is not the LAST one asked for is dropped by a sequence number, so
+   * the order the network answers in never decides what is shown.
+   */
   import { resolve } from '$app/paths';
+  import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
+  import { Search, SlidersHorizontal, X } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import Modal from '$lib/components/shared/Modal.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import DirectoryRow from '$lib/components/directory/DirectoryRow.svelte';
   import { Log } from '$lib/utils/Log';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
-  import { goto } from '$app/navigation';
   import { searchDirectory, type DirectoryUserRow } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import FollowChip from '$lib/components/follows/FollowChip.svelte';
-  import { Search, Users, GraduationCap, LoaderCircle } from '@lucide/svelte';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import { currentUserId } from '$lib/stores/user';
+  import { currentUserId, fetchMyProfile } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
-  import Picker from '$lib/components/ui/Picker.svelte';
-  import type { PickerOption } from '$lib/components/ui/picker';
   import {
     CAMPUSES,
     POSTS,
@@ -25,13 +38,39 @@
     type Campus,
     type Post,
   } from '$lib/profile/miconnectProfile';
+  import {
+    activeChips,
+    emptyFilters,
+    hasCriteria,
+    promoOf,
+    withoutFilter,
+    type DirectoryFilters,
+    type FilterKey,
+  } from '$lib/directory/filters';
 
-  let query = $state('');
-  let promoFilter = $state<number | ''>('');
-  let formationFilter = $state('');
-  let associationFilter = $state('');
-  let campusFilter = $state<Campus | ''>('');
-  let postFilter = $state<Post | ''>('');
+  const PAGE_SIZE = 30;
+  const SUGGESTION_SIZE = 12;
+
+  /** What the last submitted search used; the chips and "load more" follow it, not the draft. */
+  let filters = $state<DirectoryFilters>(emptyFilters());
+  /** The sheet's working copy, committed by "Afficher les résultats". */
+  let draft = $state<DirectoryFilters>(emptyFilters());
+  let sheetOpen = $state(false);
+
+  let associations = $state<Association[]>([]);
+  let results = $state<DirectoryUserRow[]>([]);
+  let total = $state(0);
+  let loading = $state(false);
+  let loadingMore = $state(false);
+  let error = $state('');
+  let searched = $state(false);
+  let suggestions = $state<DirectoryUserRow[]>([]);
+  let seq = 0;
+
+  const associationOptions = $derived<PickerOption[]>([
+    { value: '', label: m.directory_filter_any() },
+    ...associations.map((a) => ({ value: a.id, label: a.name })),
+  ]);
   const campusOptions = $derived<PickerOption[]>([
     { value: '', label: m.directory_filter_any() },
     ...CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) })),
@@ -40,242 +79,300 @@
     { value: '', label: m.directory_filter_any() },
     ...POSTS.map((p) => ({ value: p, label: postLabel(p) })),
   ]);
-  let associations = $state<Association[]>([]);
-  const associationOptions = $derived<PickerOption[]>([
-    { value: '', label: m.directory_asso_all() },
-    ...associations.map((a) => ({ value: a.id, label: a.name })),
-  ]);
-
-  let results = $state<DirectoryUserRow[]>([]);
-  let total = $state(0);
-  let loading = $state(false);
-  let error = $state('');
-  let searched = $state(false);
+  const chips = $derived(
+    activeChips(filters, (id) => associations.find((a) => a.id === id)?.name ?? null)
+  );
 
   onMount(async () => {
-    if (!currentUserId()) {
+    const me = currentUserId();
+    if (!me) {
       await goto(resolve('/login?returnTo=/directory'), { replace: true });
       return;
     }
-    try {
-      associations = await listAssociations();
-    } catch {
-      associations = [];
-    }
+    void loadAssociations();
+    void loadSuggestions(me);
   });
 
-  async function handleSearch(e?: Event) {
-    e?.preventDefault();
-    loading = true;
+  async function loadAssociations() {
+    try {
+      associations = await listAssociations();
+    } catch (err) {
+      Log.d('[directory] association list failed, the filter offers none', err);
+    }
+  }
+
+  /** The reader's own class (first cursus entry, else the profile promo): a cheap, allowed query. */
+  async function loadSuggestions(me: string) {
+    try {
+      const profile = await fetchMyProfile();
+      const entry = profile.cursus?.[0];
+      const promo = entry?.promo ?? profile.promo ?? undefined;
+      if (promo == null) return;
+      const res = await searchDirectory({
+        promo,
+        formation: entry?.formation,
+        limit: SUGGESTION_SIZE + 1,
+      });
+      suggestions = res.users.filter((u) => u.id !== me).slice(0, SUGGESTION_SIZE);
+      Log.d('[directory] class suggestions', { promo, n: suggestions.length });
+    } catch (err) {
+      Log.d('[directory] class suggestions unavailable', err);
+    }
+  }
+
+  function paramsOf(f: DirectoryFilters) {
+    return {
+      q: f.query.trim() || undefined,
+      promo: promoOf(f),
+      formation: f.formation.trim() || undefined,
+      campus: f.campus || undefined,
+      post: f.post || undefined,
+      associationId: f.associationId || undefined,
+    };
+  }
+
+  /** Runs `next` as the current search, replacing the results. */
+  async function runSearch(next: DirectoryFilters) {
+    filters = next;
+    const mine = ++seq;
     error = '';
+    if (!hasCriteria(next)) {
+      searched = false;
+      results = [];
+      total = 0;
+      loading = false;
+      return;
+    }
+    loading = true;
     searched = true;
     try {
-      const res = await searchDirectory({
-        q: query.trim() || undefined,
-        promo: promoFilter !== '' ? Number(promoFilter) : undefined,
-        formation: formationFilter.trim() || undefined,
-        campus: campusFilter || undefined,
-        post: postFilter || undefined,
-        associationId: associationFilter || undefined,
-        limit: 30,
-      });
+      const res = await searchDirectory({ ...paramsOf(next), limit: PAGE_SIZE });
+      if (mine !== seq) return;
       results = res.users;
       total = res.total;
     } catch (err) {
-      Log.d('directory search failed', err);
+      if (mine !== seq) return;
+      Log.d('[directory] search failed', err);
       error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
       results = [];
       total = 0;
     } finally {
-      loading = false;
+      if (mine === seq) loading = false;
     }
   }
 
-  function displayName(user: DirectoryUserRow): string {
-    return user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '…');
+  async function loadMore() {
+    if (loadingMore || loading) return;
+    const mine = seq;
+    loadingMore = true;
+    try {
+      const res = await searchDirectory({
+        ...paramsOf(filters),
+        limit: PAGE_SIZE,
+        offset: results.length,
+      });
+      if (mine !== seq) return;
+      const known = new Set(results.map((u) => u.id));
+      results = [...results, ...res.users.filter((u) => !known.has(u.id))];
+      total = res.total;
+    } catch (err) {
+      Log.d('[directory] load more failed', err);
+      error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
+    } finally {
+      loadingMore = false;
+    }
+  }
+
+  function submit(e: Event) {
+    e.preventDefault();
+    void runSearch({ ...filters });
+  }
+
+  function openSheet() {
+    draft = { ...filters };
+    sheetOpen = true;
+  }
+
+  function applySheet() {
+    sheetOpen = false;
+    void runSearch({ ...draft, query: filters.query });
+  }
+
+  function removeChip(key: FilterKey) {
+    void runSearch(withoutFilter(filters, key));
   }
 </script>
 
 <PageContainer>
   <PageHeader title={m.directory_heading()} subtitle={m.directory_subtitle()} />
 
-  <div class="space-y-6">
-    <form
-      class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-5 shadow-sm"
-      onsubmit={(e) => void handleSearch(e)}
-    >
-      <div>
-        <label for="dir-q" class="text-text-muted mb-1 block text-xs font-semibold"
-          >{m.directory_label_name()}</label
-        >
-        <div class="relative">
-          <Search size={18} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
-          <input
-            id="dir-q"
-            type="search"
-            bind:value={query}
-            placeholder={m.directory_name_placeholder()}
-            class="border-cn-border w-full rounded-xl border bg-transparent py-2.5 pr-3 pl-10 text-sm"
-          />
-        </div>
+  <div class="space-y-4">
+    <form class="flex items-center gap-2" role="search" onsubmit={submit}>
+      <div class="relative min-w-0 flex-1">
+        <Search
+          size={18}
+          class="text-text-muted pointer-events-none absolute top-1/2 left-3 z-10 -translate-y-1/2"
+        />
+        <Input
+          type="search"
+          enterkeyhint="search"
+          autocomplete="off"
+          aria-label={m.directory_search_aria()}
+          placeholder={m.directory_name_placeholder()}
+          bind:value={filters.query}
+          class="[&_input]:pl-10"
+        />
       </div>
-
-      <div class="grid gap-3 sm:grid-cols-3">
-        <div>
-          <label for="dir-promo" class="text-text-muted mb-1 block text-xs font-semibold"
-            >{m.directory_label_promo()}</label
-          >
-          <input
-            id="dir-promo"
-            type="number"
-            min="1816"
-            bind:value={promoFilter}
-            placeholder="2024"
-            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"
-          />
-        </div>
-        <div>
-          <label for="dir-formation" class="text-text-muted mb-1 block text-xs font-semibold"
-            >{m.directory_label_formation()}</label
-          >
-          <input
-            id="dir-formation"
-            type="text"
-            bind:value={formationFilter}
-            placeholder="ICM, GC…"
-            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"
-          />
-        </div>
-        <div>
-          <label for="dir-asso" class="text-text-muted mb-1 block text-xs font-semibold"
-            >{m.directory_label_association()}</label
-          >
-          <Picker
-            id="dir-asso"
-            value={associationFilter}
-            options={associationOptions}
-            label={m.directory_label_association()}
-            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
-            onValueChange={(v) => (associationFilter = v)}
-          />
-        </div>
-      </div>
-
-      <div class="grid gap-3 sm:grid-cols-3">
-        <div>
-          <label for="dir-campus" class="text-text-muted mb-1 block text-xs font-semibold"
-            >{m.directory_label_campus()}</label
-          >
-          <Picker
-            id="dir-campus"
-            value={campusFilter}
-            options={campusOptions}
-            label={m.directory_label_campus()}
-            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
-            onValueChange={(v) => (campusFilter = v as Campus | '')}
-          />
-        </div>
-        <div>
-          <label for="dir-post" class="text-text-muted mb-1 block text-xs font-semibold"
-            >{m.directory_label_post()}</label
-          >
-          <Picker
-            id="dir-post"
-            value={postFilter}
-            options={postOptions}
-            label={m.directory_label_post()}
-            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
-            onValueChange={(v) => (postFilter = v as Post | '')}
-          />
-        </div>
-      </div>
-
-      <button
-        type="submit"
-        disabled={loading}
-        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50 sm:w-auto"
+      <Button
+        icon
+        variant="secondary"
+        aria-label={m.directory_filters_btn()}
+        onclick={openSheet}
+        data-directory-filters
       >
-        {#if loading}
-          <LoaderCircle size={16} class="animate-spin" />
-        {:else}
-          <Search size={16} />
-        {/if}
-        {m.directory_search_btn()}
-      </button>
+        <SlidersHorizontal size={18} />
+      </Button>
     </form>
 
+    {#if chips.length > 0}
+      <ul class="flex flex-wrap gap-2" aria-label={m.directory_filters_title()}>
+        {#each chips as chip (chip.key)}
+          <li>
+            <button
+              type="button"
+              class="bg-cn-surface-alt text-text-main inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
+              aria-label={m.directory_chip_remove({ label: chip.label })}
+              data-directory-chip={chip.key}
+              onclick={() => removeChip(chip.key)}
+            >
+              {chip.label}
+              <X size={14} />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
     {#if error}
-      <p class="text-red-err text-sm">{error}</p>
-    {:else if searched && !loading}
-      <p class="text-text-muted text-sm">
+      <p class="text-red-err text-sm" role="alert">{error}</p>
+    {:else if loading}
+      <ul class="space-y-1" aria-busy="true" aria-label={m.directory_loading_label()}>
+        {#each [0, 1, 2, 3, 4] as i (i)}
+          <li class="flex items-center gap-3 px-2 py-2.5" data-directory-skeleton>
+            <div class="bg-cn-surface-alt h-12 w-12 shrink-0 animate-pulse rounded-full"></div>
+            <div class="flex-1 space-y-2">
+              <div class="bg-cn-surface-alt h-3.5 w-1/3 animate-pulse rounded-full"></div>
+              <div class="bg-cn-surface-alt h-3 w-1/2 animate-pulse rounded-full"></div>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {:else if searched}
+      <p class="text-text-muted text-xs">
         {total !== 1
           ? m.directory_results_count_many({ count: total })
           : m.directory_results_count_one({ count: total })}
-        {#if total > results.length}
-          {m.directory_results_truncated({ count: results.length })}
-        {/if}
       </p>
-
       {#if results.length === 0}
-        <div
-          class="border-cn-border text-text-muted rounded-2xl border border-dashed px-4 py-10 text-center text-sm"
-        >
+        <div class="text-text-muted px-4 py-12 text-center text-sm">
           {m.directory_empty_result()}
         </div>
       {:else}
-        <ul class="space-y-2">
+        <ul class="space-y-0.5">
           {#each results as user (user.id)}
-            <!--
-              The row is a STRETCHED link (the name's anchor paints an `after` layer over the card) so
-              "Suivre" can be a quiet text link on the meta line, as a sibling of that anchor and above
-              its layer (`relative z-10`): a button inside a link is invalid (owner, 2026-11-10).
-            -->
-            <li
-              class="border-cn-border hover:border-accent/40 bg-cn-surface relative flex min-w-0 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
-            >
-              <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
-                <Avatar userId={user.id} fill shape="circle" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-text-main truncate text-sm font-bold">
-                  <a
-                    href="/profile/{encodeURIComponent(user.id)}"
-                    class="after:absolute after:inset-0 after:content-['']">{displayName(user)}</a
-                  >
-                </p>
-                <p
-                  class="text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
-                >
-                  {#each user.cursus as entry (entry.formation + entry.promo)}
-                    <span class="inline-flex items-center gap-1">
-                      <GraduationCap size={12} />
-                      {entry.formation}
-                      {m.directory_user_promo({ year: entry.promo })}
-                    </span>
-                  {/each}
-                  {#each user.posts as post (post)}
-                    <span>{postLabel(post)}</span>
-                  {/each}
-                  {#if user.campus}
-                    <span>{campusLabel(user.campus)}</span>
-                  {/if}
-                  <span class="relative z-10 flex items-center gap-x-2 empty:hidden">
-                    <FollowChip
-                      kind="user"
-                      targetId={user.id}
-                      name={displayName(user)}
-                      dotted={user.cursus.length > 0 || user.posts.length > 0 || !!user.campus}
-                    />
-                  </span>
-                </p>
-                {#if user.bio?.trim()}
-                  <p class="text-text-muted mt-1 line-clamp-1 text-xs">{user.bio}</p>
-                {/if}
-              </div>
-            </li>
+            <DirectoryRow {user} />
           {/each}
         </ul>
+        {#if total > results.length}
+          <div class="flex justify-center pt-2">
+            <Button variant="secondary" loading={loadingMore} onclick={() => void loadMore()}>
+              {m.directory_load_more()}
+            </Button>
+          </div>
+        {/if}
       {/if}
+    {:else if suggestions.length > 0}
+      <section aria-labelledby="dir-suggest">
+        <h2 id="dir-suggest" class="text-text-muted mb-1 px-2 text-xs font-semibold">
+          {m.directory_suggest_heading()}
+        </h2>
+        <ul class="space-y-0.5">
+          {#each suggestions as user (user.id)}
+            <DirectoryRow {user} />
+          {/each}
+        </ul>
+      </section>
+    {:else}
+      <p class="text-text-muted px-4 py-12 text-center text-sm">{m.directory_hint()}</p>
     {/if}
   </div>
 </PageContainer>
+
+<Modal
+  open={sheetOpen}
+  title={m.directory_filters_title()}
+  onClose={() => (sheetOpen = false)}
+  footerEdge
+>
+  <div class="space-y-4" data-directory-sheet>
+    <div class="grid grid-cols-2 gap-3">
+      <Input
+        type="number"
+        min="1816"
+        label={m.directory_label_promo()}
+        placeholder="2024"
+        bind:value={draft.promo as string | number}
+      />
+      <Input
+        type="text"
+        label={m.directory_label_formation()}
+        placeholder="ICM, GC…"
+        bind:value={draft.formation}
+      />
+    </div>
+    <div>
+      <span class="text-text-muted mb-1 block text-xs font-semibold"
+        >{m.directory_label_association()}</span
+      >
+      <Picker
+        value={draft.associationId}
+        options={associationOptions}
+        label={m.directory_label_association()}
+        triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+        onValueChange={(v) => (draft.associationId = v)}
+      />
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <span class="text-text-muted mb-1 block text-xs font-semibold"
+          >{m.directory_label_campus()}</span
+        >
+        <Picker
+          value={draft.campus}
+          options={campusOptions}
+          label={m.directory_label_campus()}
+          triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+          onValueChange={(v) => (draft.campus = v as Campus | '')}
+        />
+      </div>
+      <div>
+        <span class="text-text-muted mb-1 block text-xs font-semibold"
+          >{m.directory_label_post()}</span
+        >
+        <Picker
+          value={draft.post}
+          options={postOptions}
+          label={m.directory_label_post()}
+          triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+          onValueChange={(v) => (draft.post = v as Post | '')}
+        />
+      </div>
+    </div>
+  </div>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (draft = { ...emptyFilters(), query: filters.query })}>
+      {m.directory_filters_reset()}
+    </Button>
+    <Button variant="primary" onclick={applySheet}>{m.directory_filters_apply()}</Button>
+  {/snippet}
+</Modal>
