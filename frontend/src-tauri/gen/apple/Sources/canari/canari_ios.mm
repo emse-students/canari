@@ -264,13 +264,15 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
 /// the overlap is zero. The one thing remembered is `g_keyboardChangeSeq`, so a rise's late answer
 /// can tell a newer keyboard change has superseded it.
 ///
-/// A RISE FROM NO KEYBOARD IS HANDED TO THE PAGE FIRST (`CanariHandKeyboardRiseToPage`); a fall and
-/// a height change while open still ride the keyboard's own curve. Measured on the iPhone 12 (iOS
-/// 27.0.1, `1.6.11`, 2026-11-13, docs/wiki/frontend/keyboard-and-send-motion.md): animating the
-/// frame on a rise drew the page one keyboard overlap LOWER on the keyboard's first frame and slid it
-/// up BEHIND the keyboard, so the web composer was hidden for four frames (~150 ms) while the native
-/// "+" already stood at its final place. Messenger, on the same phone, has its composer above the
-/// keyboard from the first frame.
+/// A RISE FROM NO KEYBOARD IS HANDED TO THE PAGE FIRST (`CanariHandKeyboardRiseToPage`), A FALL IS
+/// RIDDEN BY THE PAGE (`CanariHandKeyboardFallToPage`); a height change while open still animates the
+/// frame on the keyboard's own curve. Measured on the iPhone 12 (iOS 27.0.1, `1.6.11`, 2026-11-13,
+/// docs/wiki/frontend/keyboard-and-send-motion.md): animating the frame on a rise drew the page one
+/// keyboard overlap LOWER on the keyboard's first frame and slid it up BEHIND the keyboard, so the web
+/// composer was hidden for four frames (~150 ms) while the native "+" already stood at its final place;
+/// on a fall the page was full height at once and the keyboard slid off over the composer. Messenger,
+/// on the same phone, has its composer above the keyboard on every frame of a rise and riding down on
+/// the keys on a fall.
 static NSUInteger g_keyboardChangeSeq = 0;
 
 /// Whether a rise is waiting for the page's answer: a fall that lands meanwhile finds the frame
@@ -285,56 +287,109 @@ static void CanariKeyboardLayoutSettled(WKWebView *webView) {
   CanariReportSettledKeyboardGeometry(webView);
 }
 
+/// Sets the WebView's frame with no animation: the page has already drawn, or animates itself out of,
+/// the picture this frame produces, so there is nothing for UIKit to interpolate.
+static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
+  [UIView performWithoutAnimation:^{
+    webView.frame = target;
+  }];
+  CanariKeyboardLayoutSettled(webView);
+}
+
 /// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME - the iOS half of the hand-off Android
 /// takes in `MainActivity.handOffIme` (keyboard-and-send-motion.md), on the same page contract.
 ///
-/// The page is told the keyboard's height (`window.canariImeTarget`, `keyboardViewport.svelte.ts` +
-/// `imeTarget.ts`; a WKWebView CSS px is a point) and lays itself out for it inside the still
-/// full-size WebView, so its composer stands above the keyboard from the keyboard's first frames.
-/// The script then waits for two animation frames before answering. That is an ORDER, not a delay:
-/// the layer tree the first frame committed travels to this process on the same connection as the
-/// answer sent from the second one, so when the answer arrives the page's keyboard layout has
-/// reached this process ahead of it (WebKit's ordering, to be confirmed by the reading owed in the
-/// wiki). Only then is the frame set - without animation, because the page already IS that picture
-/// and the resize changes nothing on screen (the strip it uncovers is the window's ground, the page's
-/// own `--cn-bg`, and the keyboard is sliding over it).
+/// 1. The page is told the keyboard's height (`window.canariImeTarget`, `keyboardViewport.svelte.ts`
+///    + `imeTarget.ts`; a WKWebView CSS px is a point) and lays itself out for it, synchronously,
+///    inside the still full-size WebView - so its composer stands above the keyboard.
+/// 2. `takeSnapshotWithConfiguration:` with `afterScreenUpdates` (a 1 pt rect, the image is dropped)
+///    is the PROOF that this layout is on screen: WebKit takes it "after incorporating any pending
+///    screen updates", and the page's change is pending once the script has returned. It is the
+///    public form of Android's `postVisualStateCallback`; `_doAfterNextPresentationUpdate` is the
+///    private one, never used in a store build.
+/// 3. Only then is the frame set, without animation: the page already IS that picture, so the resize
+///    changes nothing on screen (the strip it uncovers is the window's ground, the page's own
+///    `--cn-bg`, and the keyboard is sliding over it).
 ///
-/// A newer keyboard change bumps `g_keyboardChangeSeq` and a superseded answer does nothing. A page
-/// that does not take the target (not hydrated yet, an older bundle) missed the contract: that is
-/// logged as a defect and the frame is set at once.
+/// The time from 1 to 3 is logged per rise: it says whether the proof costs frames in which the keys
+/// are seen arriving under a composer that has not moved yet. A newer keyboard change bumps
+/// `g_keyboardChangeSeq` and a superseded answer does nothing. A page that does not take the target
+/// (not hydrated yet, an older bundle) missed the contract: an ERROR line, and the frame is set at once.
 static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFloat overlap) {
   NSUInteger seq = ++g_keyboardChangeSeq;
   g_keyboardRisePending = YES;
   CFTimeInterval asked = CACurrentMediaTime();
-  NSString *script = @"if (window.canariImeTarget?.(px) !== true) return false;"
-                      "await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));"
-                      "return true;";
-  [webView callAsyncJavaScript:script
-                     arguments:@{@"px" : @(overlap)}
-                       inFrame:nil
-                inContentWorld:WKContentWorld.pageWorld
-             completionHandler:^(id result, NSError *error) {
-               if (seq != g_keyboardChangeSeq) {
-                 // The change that superseded it already said so and set its own frame.
-                 return;
-               }
-               g_keyboardRisePending = NO;
-               BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
-               if (taken) {
-                 NSLog(@"[CanariIOS] keyboard rise #%lu: the page drew its keyboard layout in %.0f ms "
-                       @"- webview height %.0f",
-                       (unsigned long)seq, (CACurrentMediaTime() - asked) * 1000.0,
-                       target.size.height);
-               } else {
-                 NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target "
-                       @"(%@) - resizing now, its old frame may show cropped",
-                       (unsigned long)seq, error ?: result);
-               }
-               [UIView performWithoutAnimation:^{
-                 webView.frame = target;
-               }];
-               CanariKeyboardLayoutSettled(webView);
-             }];
+  NSString *js = [NSString stringWithFormat:@"window.canariImeTarget?.(%.2f) === true", overlap];
+  [webView evaluateJavaScript:js
+            completionHandler:^(id result, NSError *error) {
+              if (seq != g_keyboardChangeSeq) {
+                // The change that superseded it already said so and set its own frame.
+                return;
+              }
+              BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
+              if (!taken) {
+                g_keyboardRisePending = NO;
+                NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target "
+                      @"(%@) - resizing now, its old frame may show cropped",
+                      (unsigned long)seq, error ?: result);
+                CanariSnapKeyboardFrame(webView, target);
+                return;
+              }
+              WKSnapshotConfiguration *proof = [WKSnapshotConfiguration new];
+              proof.rect = CGRectMake(0, 0, 1, 1);
+              proof.snapshotWidth = @1;
+              proof.afterScreenUpdates = YES;
+              [webView
+                  takeSnapshotWithConfiguration:proof
+                              completionHandler:^(__unused UIImage *image, NSError *snapError) {
+                                if (seq != g_keyboardChangeSeq) {
+                                  return;
+                                }
+                                g_keyboardRisePending = NO;
+                                if (snapError != nil) {
+                                  NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the screen-update "
+                                        @"proof failed (%@) - resizing anyway",
+                                        (unsigned long)seq, snapError);
+                                } else {
+                                  NSLog(@"[CanariIOS] keyboard rise #%lu: the page's keyboard layout "
+                                        @"is on screen after %.0f ms - webview height %.0f",
+                                        (unsigned long)seq,
+                                        (CACurrentMediaTime() - asked) * 1000.0,
+                                        target.size.height);
+                                }
+                                CanariSnapKeyboardFrame(webView, target);
+                              }];
+            }];
+}
+
+/// A KEYBOARD FALL, RIDDEN BY THE PAGE - Messenger iOS's close, where the composer and the thread go
+/// down WITH the keys instead of the keys sliding off a page that is already full height.
+///
+/// The page is told first (`window.canariKeyboardFall`, `keyboardRide.ts`): it records where its
+/// riding pieces stand, then the frame is set without animation. On the resize the page lays itself
+/// out full height as before, and starts each piece from where it stood, translated back, to its new
+/// place - over the KEYBOARD'S OWN duration and curve, read here from the notification. The script
+/// reaches the web process before the resize because both travel on the same connection in that
+/// order; the page checks it all the same (a capture that already sees the full height is refused
+/// and said). A page that does not take it (another screen, reduced motion) is simply resized.
+static void CanariHandKeyboardFallToPage(WKWebView *webView, CGRect target, NSNotification *note) {
+  double durationMs = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue] * 1000.0;
+  unsigned long curve = [note.userInfo[UIKeyboardAnimationCurveUserInfoKey] unsignedLongValue];
+  NSString *js =
+      [NSString stringWithFormat:@"window.canariKeyboardFall?.({durationMs:%.0f,curve:%lu}) === true",
+                                 durationMs, curve];
+  [webView evaluateJavaScript:js
+            completionHandler:^(id result, NSError *error) {
+              BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
+              if (taken) {
+                NSLog(@"[CanariIOS] keyboard fall (%.0f ms, curve %lu): the page rides it", durationMs,
+                      curve);
+              } else {
+                NSLog(@"[CanariIOS] keyboard fall (%.0f ms, curve %lu): no ride (%@)", durationMs,
+                      curve, error ?: result);
+              }
+            }];
+  CanariSnapKeyboardFrame(webView, target);
 }
 
 static void CanariApplyKeyboardLayout(NSNotification *note) {
@@ -377,10 +432,14 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
     return;
   }
   NSLog(@"[CanariIOS] keyboard overlap=%.0f -> webview height %.0f", overlap, target.size.height);
+  if (overlap == 0) {
+    CanariHandKeyboardFallToPage(webView, target, note);
+    return;
+  }
   NSNumber *duration = note.userInfo[UIKeyboardAnimationDurationUserInfoKey];
   NSNumber *curve = note.userInfo[UIKeyboardAnimationCurveUserInfoKey];
-  // Ride the keyboard's own curve rather than a guessed one: on a fall the page is laid out full
-  // height at once and the keyboard slides off over the composer, as Messenger's Android does.
+  // A height change while open (the emoji keyboard, the predictive bar): the frame rides the
+  // keyboard's own curve, as before - not yet measured against Messenger.
   [UIView animateWithDuration:duration.doubleValue
                         delay:0
                       options:(UIViewAnimationOptions)(curve.unsignedIntegerValue << 16)

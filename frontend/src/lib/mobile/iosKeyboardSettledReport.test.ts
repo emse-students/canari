@@ -19,13 +19,11 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
     const report = body.indexOf('CanariReportSettledKeyboardGeometry(webView)');
     expect(clamp).toBeGreaterThan(-1);
     expect(report).toBeGreaterThan(clamp);
-    // Both ways a keyboard layout lands: the animated fall or height change, and the rise's snap.
+    // Both ways a keyboard layout lands: an animated height change, and the snap of a rise or a fall.
     const completion = native.slice(native.indexOf('completion:^(__unused BOOL finished)'));
     expect(completion.slice(0, 200)).toContain('CanariKeyboardLayoutSettled(webView)');
-    const handOff = native.slice(native.indexOf('static void CanariHandKeyboardRiseToPage('));
-    expect(handOff.slice(0, handOff.indexOf('\n}\n'))).toContain(
-      'CanariKeyboardLayoutSettled(webView)'
-    );
+    const snap = native.slice(native.indexOf('static void CanariSnapKeyboardFrame('));
+    expect(snap.slice(0, snap.indexOf('\n}\n'))).toContain('CanariKeyboardLayoutSettled(webView)');
   });
 
   it('reads both halves: UIKit offset and range, and the page scroll, viewport and composer', () => {

@@ -2402,8 +2402,10 @@ on its edge, and leaves a drag, its deceleration and its bounce to UIKit.
 **A rise from no keyboard is handed to the page first (2026-11-13).** Animating the frame on a rise
 drew the page one keyboard overlap lower and slid it up behind the keyboard, the composer hidden for
 ~150 ms on the iPhone 12; the page now lays itself out for the keyboard (`window.canariImeTarget`, the
-contract Android uses) and the frame is set without animation once it has. Falls and height changes
-still ride the keyboard's curve ([keyboard-and-send-motion](keyboard-and-send-motion.md#5-ios-measured-on-the-iphone-12-2026-11-13)).
+contract Android uses) and the frame is set without animation once a screen-update proof says it is
+drawn. A fall is announced first with the keyboard's own duration and curve, the frame snaps, and the
+page rides its composer and thread down with the keys; height changes while open still animate the
+frame ([keyboard-and-send-motion](keyboard-and-send-motion.md#5-ios-measured-on-the-iphone-12-2026-11-13)).
 
 The target is recomputed from the superview's bounds on every event, so there is no remembered frame
 to restore and nothing that can drift; the only state is the sequence that lets a late answer to a

@@ -11,6 +11,7 @@ import type { GlassMenuItem } from '$lib/components/shared/GlassMenuButton.svelt
 import { screenCover } from '$lib/actions/coversScreen.svelte';
 import { renderedAvatarPng } from '$lib/mobile/avatarBitmap';
 import { classColorHex, lucideIconPng } from '$lib/mobile/nativeTabIcons';
+import { KEYBOARD_RIDE_EVENT } from '$lib/stores/keyboardRide';
 import { themeStore } from '$lib/stores/themeStore.svelte';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
@@ -353,6 +354,28 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
     attributeFilter: ['style', 'class'],
   });
 
+  // A KEYBOARD RIDE MOVES A PIECE BY A TRANSFORM, which no observer above sees (`keyboardRide.ts`):
+  // the composer band rides down with a falling keyboard and the "+" twin must ride with it, so the
+  // piece is re-read on every frame of the ride, and the loop ends when the ride's animations settle -
+  // their own end, not a duration counted here.
+  let riding = false;
+  const onRide = (e: Event) => {
+    const finished = (e as CustomEvent<{ finished: Promise<unknown> }>).detail?.finished;
+    if (!finished || riding) return;
+    riding = true;
+    const frame = () => {
+      if (!riding) return;
+      remeasure();
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    void finished.then(() => {
+      riding = false;
+      remeasure();
+    });
+  };
+  window.addEventListener(KEYBOARD_RIDE_EVENT, onRide);
+
   // A photo that loads, an initial or a presence dot that changes: the pill's picture is redrawn.
   // The whole node is watched, since the avatar itself is swapped when the conversation's kind
   // changes - but not the node's OWN attributes, which this action writes (`visibility`).
@@ -375,6 +398,8 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       stopEffects();
       resizes.disconnect();
       rootChanges.disconnect();
+      riding = false;
+      window.removeEventListener(KEYBOARD_RIDE_EVENT, onRide);
       avatarChanges.disconnect();
       node.removeEventListener('load', onAvatarLoad, true);
       window.removeEventListener('resize', remeasure);

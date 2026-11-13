@@ -7,6 +7,13 @@ import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { rememberKeyboardHeight } from './keyboardHeightMemory';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget } from './imeTarget';
+import {
+  captureKeyboardRide,
+  parseKeyboardFall,
+  startKeyboardRide,
+  uikitCurveEasing,
+  type KeyboardRideCapture,
+} from './keyboardRide';
 import { Log } from '$lib/utils/Log';
 
 export type KeyboardViewportSnapshot = {
@@ -473,15 +480,30 @@ export function initKeyboardViewport(): () => void {
   baselineHeight = window.innerHeight;
 
   let keyboardWasOpen = false;
+  /** A fall the iOS shell announced, captured before its resize (`keyboardRide.ts`), or null. */
+  let pendingRide: KeyboardRideCapture | null = null;
 
   const update = () => {
     const announced = imeTargetPx !== null;
     const m = measureViewport();
     const next = readSnapshot(m);
     const openedNow = next.isOpen && !keyboardWasOpen;
+    const closedNow = !next.isOpen && keyboardWasOpen;
     snapshot = next;
     applyCssVars(next, m, baselineHeight);
     if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
+
+    if (closedNow && pendingRide) {
+      const ride = pendingRide;
+      pendingRide = null;
+      const distance = startKeyboardRide(ride);
+      Log.d(
+        'keyboardViewport',
+        distance === null
+          ? 'keyboard fall: the composer did not move - nothing to ride'
+          : `keyboard fall ridden: ${Math.round(distance)}px over ${ride.durationMs} ms, ${ride.riders.length} piece(s)`
+      );
+    }
 
     const reveal = keyboardRevealOnUpdate({
       isOpen: next.isOpen,
@@ -532,8 +554,9 @@ export function initKeyboardViewport(): () => void {
 
   /**
    * `window.canariImeTarget`: the native shell's announcement of a keyboard (Android's
-   * `MainActivity.handOffIme`, iOS's `CanariHandKeyboardRiseToPage`). The layout is applied HERE, synchronously, so the frame the shell waits for
-   * before resizing the WebView already holds it; `true` tells the shell it was taken.
+   * `MainActivity.handOffIme`, iOS's `CanariHandKeyboardRiseToPage`). The layout is applied HERE,
+   * synchronously, so the frame the shell waits for before resizing the WebView already holds it;
+   * `true` tells the shell it was taken.
    */
   const takeImeTarget = (value: unknown): boolean => {
     const px = parseImeTarget(value);
@@ -544,6 +567,8 @@ export function initKeyboardViewport(): () => void {
     Log.d('keyboardViewport', `keyboard target ${px} announced ahead of the resize`);
     if (px > 0) postGroundToNative();
     imeTargetPx = px;
+    // A rise ends any fall still waiting for its resize.
+    if (px > 0) pendingRide = null;
     update();
     return true;
   };
@@ -552,6 +577,38 @@ export function initKeyboardViewport(): () => void {
   // A new document is up: a hand-off the shell asked of the previous one ends, and the keyboard's
   // current inset is handed to this one (`MainActivity.ImeBridge`). Absent outside Android.
   (window as unknown as { canariIme?: { pageReady?: () => void } }).canariIme?.pageReady?.();
+
+  /**
+   * `window.canariKeyboardFall`: the iOS shell's announcement of a keyboard fall, with the keyboard's
+   * own duration and curve, made BEFORE it resizes the WebView (`CanariHandKeyboardFallToPage`). The
+   * riding pieces are captured here, where they still stand; the ride starts in `update` when the
+   * resize lands. `true` tells the shell the page rides it.
+   */
+  const takeKeyboardFall = (value: unknown): boolean => {
+    const spec = parseKeyboardFall(value);
+    if (spec === null) {
+      Log.w('keyboardViewport', `keyboard fall refused: ${JSON.stringify(value)}`);
+      return false;
+    }
+    const easing = uikitCurveEasing(spec.curve);
+    if (easing === null) {
+      Log.w('keyboardViewport', `keyboard fall: UIKit curve ${spec.curve} has no easing - no ride`);
+      return false;
+    }
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false;
+    if (!snapshot.isOpen) {
+      // The shell sends this before its resize; a page already full height means the order broke.
+      Log.w(
+        'keyboardViewport',
+        'keyboard fall announced after the page went full height - no ride'
+      );
+      return false;
+    }
+    pendingRide = captureKeyboardRide(document, spec, easing);
+    return pendingRide !== null;
+  };
+  (window as unknown as { canariKeyboardFall?: (v: unknown) => boolean }).canariKeyboardFall =
+    takeKeyboardFall;
 
   update();
   window.addEventListener('resize', update);
@@ -569,7 +626,9 @@ export function initKeyboardViewport(): () => void {
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
+    delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     imeTargetPx = null;
+    pendingRide = null;
     pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
