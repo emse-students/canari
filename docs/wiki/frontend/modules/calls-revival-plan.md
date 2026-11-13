@@ -483,7 +483,7 @@ probed separately.
 | Q3 - the same mesh with the **Mi 9T as sender** | Each peer 1.2-1.9 Mbit/s but fps **dips to 18-23** every few seconds; encode 19-24 ms/frame **per receiver**; Chrome ~110 % of 800 % in `top`. Two receivers already strain a 2019 phone |
 | Q4 - Cloudflare Realtime on the account | Read 2026-10-16 with the account-scoped stored token (the admin one still answers `10000`): **one TURN key, `canari-calls` (created 2026-05-26), with 0 bytes of usage in 30 days; NO SFU app; no SFU usage.** The only TURN usage in the window is the probe's own (~0.5 GB each way) |
 | Q4 - SFU pricing (developers.cloudflare.com, page dated 2026-09-22) | $0.05/GB egress, first 1 000 GB/month free **shared** by SFU and TURN, ingress free, TURN<->SFU traffic "not charged twice" |
-| Q4 - E2EE through the Cloudflare SFU | Only the RealtimeKit guide describes frame encryption (insertable streams / `RTCRtpScriptTransform`); nothing read states the raw SFU forwards transformed frames - **unverified**, the first thing WP-C4 must test |
+| Q4 - E2EE through the Cloudflare SFU | ~~unverified~~ **ANSWERED 2026-11-13: YES, intact.** The probe ([sfu-e2ee-probe](../../../../tools/sfu-e2ee-probe/README.md), run [43521609635](https://github.com/emse-students/canari/actions/runs/43521609635), the DEV Realtime app, a GitHub runner, Chrome headless) pushed an Opus and a VP8 track, each through the app's own `encryption.worker.ts` sender transform, to one Cloudflare session and pulled them into a second one: the subscriber's receiver transform **decrypted 252 audio + 151 VP8 frames, 0 failed, 1 key frame, 150 frames decoded**, its transform handed 403 frames (no bypass), 0 audio packets lost; **252/252 audio and 151/151 video frames byte-identical** to frames the sender transform wrote (sizes 31-213 B audio, 2356-5686 B video). The VP8 clear header bound as AAD (`utils/callFrameAad.ts`) survives Cloudflare's repacketisation. Selected pair prflx/udp -> Cloudflare host on both sessions |
 
 What this changes:
 
@@ -495,6 +495,11 @@ What this changes:
   encode. A desktop barely notices two; the Mi 9T already drops frames at two. A phone-hosted live
   past one or two viewers needs an SFU (one upload, one encode), which is the group question of
   WP-C4.
+- **Cloudflare's raw SFU forwards E2E-transformed frames untouched** (Q4, 2026-11-13): the WP-GC3
+  client leg needs no change to the frame format or the worker - the same transforms, assigned the
+  same way, on a session's push and pull transceivers. Re-run the probe after any change to the
+  worker's wire format: `gh workflow run scheduled.yml -f job=sfu-probe` (the job declares the
+  `development` environment, whose `CLOUDFLARE_SFU_APP_*` pair it reads, never production's).
 - **The production TURN key has never carried a byte** (30 days) - consistent with calls being held
   off, and a WP-C4 Cloudflare SFU would be a NEW app.
 - **Owed, and what blocks each**: the relay over mobile data and campus Wi-Fi; the iPhone needs a

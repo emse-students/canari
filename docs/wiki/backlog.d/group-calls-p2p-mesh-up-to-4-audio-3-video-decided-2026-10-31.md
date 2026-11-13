@@ -55,10 +55,11 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
 ### Open design points
 
 1. ~~**The mesh-to-SFU switch.**~~ **Decided, D1 above.**
-2. ~~**Which SFU** (WP-C4).~~ **Decided, D2 above: both, one setting.** What D2 still owes is the
-   fact Q4 left unverified - whether Cloudflare's raw SFU forwards transformed frames
-   ([calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)) -
-   and it is the first step of WP-GC3 below, before any code is written against it.
+2. ~~**Which SFU** (WP-C4).~~ **Decided, D2 above: both, one setting.** The fact Q4 left
+   unverified - whether Cloudflare's raw SFU forwards transformed frames - is **answered YES on
+   2026-11-13** (run [43521609635](https://github.com/emse-students/canari/actions/runs/43521609635):
+   252 audio + 151 VP8 frames decrypted through two Cloudflare sessions, 0 failed, every one
+   byte-identical; [calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)).
 3. **Keys in a mesh.** Today's media keys are per DIRECTION of a 1:1 call (`utils/callKeys.ts`,
    `<callId>|<role>`); a mesh needs one key per sender, derived the same way from the group's MLS
    exporter. The SFU leg needs the same per-sender keys, so this is settled once for both.
@@ -76,9 +77,15 @@ Each is one pull request or more; none is built by the D3 change.
 2. **WP-GC2 - the mesh**: `call-service`'s peer-to-peer room grows from two seats to the cap (4 in
    audio, 3 in video) with addressed signalling (`to`/`from` per frame), and the client holds one
    peer connection per other participant, each armed as the 1:1 one is.
-3. **WP-GC3 - the Cloudflare Realtime SFU leg**: first the Q4 probe (do transformed frames cross
-   the raw SFU), then the owner's one-off (a Realtime SFU app and its two secrets), then the backend
-   proxy of the sessions/tracks API and the client's SFU leg on it.
+3. **WP-GC3 - the Cloudflare Realtime SFU leg**: ~~the Q4 probe~~ **done 2026-11-13, PASS**
+   ([sfu-e2ee-probe](../../../tools/sfu-e2ee-probe/README.md), dispatch `scheduled.yml` with
+   `job=sfu-probe`); ~~the owner's one-off (a Realtime SFU app and its two secrets)~~ **done
+   2026-11-13**: `CLOUDFLARE_SFU_APP_ID` / `CLOUDFLARE_SFU_APP_SECRET` in the `production` and
+   `development` environments, wired OPTIONAL into chat-delivery-service by the probe's PR (dev's
+   deploy reads `DEV_CLOUDFLARE_SFU_*`, to be set in `development` too until the secret-name
+   unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). Left: the
+   backend proxy of the sessions/tracks API in chat-delivery-service (its rows go `warn` the day it
+   reads them), and the client's SFU leg on it.
 4. **WP-GC4 - the relay setting (D2)**: one server-side setting (`cloudflare` | `call-service`)
    read where the call starts, and the client's SFU leg against `call-service`'s protocol too - the
    one `apps/call-service/e2e/page.ts` already speaks. A new platform setting is a migration, so it
