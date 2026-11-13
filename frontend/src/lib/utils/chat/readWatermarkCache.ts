@@ -16,7 +16,7 @@
 import type { Conversation } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { countUnreadForUser, mergeReadWatermark, readPointFor } from './readState';
+import { derivedUnreadCount, mergeReadWatermark } from './readState';
 
 /**
  * One line of `read_watermarks.ndjson`, written by `appendReadWatermark`
@@ -96,11 +96,9 @@ export function applyNativeReadWatermarks(
       ...(stamped ? { readWatermarks: stamped } : {}),
       ...(server ? { serverReadWatermarks: server } : {}),
     };
-    const mine = readPointFor(next, meNorm);
-    conversations.set(key, {
-      ...next,
-      unreadCount: countUnreadForUser(convo.messages, mine.stamped, mine.server),
-    });
+    // At the COUNTING read point (`countingReadPoint`), the seed included: a shade mark below the
+    // upgrade's seed must not un-hide what the seed covers, which raised the badge on a "read".
+    conversations.set(key, { ...next, unreadCount: derivedUnreadCount(next, meNorm) });
     changed.push(key);
     appendLog(
       `[READ_WATERMARK] ${convo.id.slice(0, 8)} read up to ${new Date(mark.at).toISOString()}${mark.serverAt > 0 ? ` (server ${new Date(mark.serverAt).toISOString()})` : ' (no server time on the line)'}`

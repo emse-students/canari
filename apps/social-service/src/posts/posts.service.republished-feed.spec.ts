@@ -163,7 +163,7 @@ describe('PostsService feeds of what associations republish', () => {
     const { sql } = feed();
     expect(sql).toContain(`AND ${postVisibleToViewerSql('posts', '$3')}`);
     expect(sql).not.toContain(postVisibleToViewerSql('posts', '$3', { followers: false }));
-    expect(sql).toContain(`AND posts.kind = 'reel'`);
+    expect(sql).toContain(`AND posts.kind IN ('reel', 'replay')`);
     expect(sql).toContain('ORDER BY posts."publishedAt" DESC, posts.id DESC');
   });
 });

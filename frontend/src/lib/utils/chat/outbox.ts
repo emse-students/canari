@@ -5,6 +5,7 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import type { StoredMessagePatch } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { editSupersedes } from './editPrecedence';
 import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
@@ -27,6 +28,7 @@ import {
 } from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ReleaseAnswer } from './uploadReleaseMarks';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
 import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
@@ -36,13 +38,21 @@ import {
   encodeAppMessage,
   mediaEncodingProtoField,
   mediaReelProtoFields,
+  mediaLoudnessProtoField,
   mediaKindToType,
   mediaPlaceholderProtoField,
   mkMedia,
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import {
+  applyEditToBody,
+  envelopeBodyText,
+  serializeEnvelope,
+  mkMediaEnvelope,
+  mkTextEnvelope,
+  parseEnvelope,
+} from '$lib/envelope';
 import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -63,8 +73,15 @@ import {
   SendEdgeRefusedError,
   SenderNotActiveError,
   SendServerError,
+  SendUnavailableError,
   type SentFrame,
 } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  backoffFor,
+  MAX_RETRY_AFTER_MS,
+  MAX_UNAVAILABLE_ANSWERS,
+  unavailableHoldMs,
+} from './retryLadder';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -76,8 +93,10 @@ import {
 } from '$lib/utils/uploadXhr';
 import {
   clearAllUploads,
+  clearTextWait,
   clearUpload as clearUploadView,
   patchUpload as patchUploadView,
+  setTextWait,
   setUnsentReason,
   setUploadRetry,
   type UnsentReason,
@@ -88,6 +107,7 @@ import {
   getTabLeadership,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -107,12 +127,6 @@ import { noteServerTime } from './serverClock';
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
 
 /**
- * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
- * Indexed by attempt count, clamped to the last value.
- */
-const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
-
-/**
  * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
  * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
  * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever
@@ -129,8 +143,25 @@ export const MAX_UNEXPECTED_ATTEMPTS = 8;
  * reload keeps the run; any other ANSWER, a success or the member's retry resets it, and a transport
  * failure - nobody answered - neither counts nor resets. Attachments and controls (reactions, edits,
  * deletes, pins, read marks) are not bounded by it.
+ *
+ * **A "NOT NOW" ANSWER IS NOT COUNTED (2026-11-09, roadmap R05).** `502`, `503` and `504`
+ * (`SendUnavailableError`, `unavailableAnswer.ts`) say the service is not serving right now - a
+ * deploy rotating a container answers them for its few seconds - and none of them refuses the
+ * message. They are held on the plain ladder like a transport failure, resumed by a reconnect,
+ * shown as waiting for the server, and neither count nor reset this run: only a 5xx that says the
+ * service itself failed (`500`, `501`...) does. They have their own bound,
+ * {@link MAX_UNAVAILABLE_ANSWERS}.
  */
 export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
+
+/**
+ * The bound on "not now" answers, shared with the salon send (`retryLadder.ts`). For a text the park
+ * writes {@link MAX_CONSECUTIVE_SERVER_ERRORS} into `serverErrors`, so the one terminal predicate
+ * ({@link isServerFailureTerminal}), the one Retry and every reader stay as they are; the count itself
+ * (`OutboxEntry.unavailableAnswers`) is never set back below a multiple of it (`unavailableRunStart`):
+ * it is also what tells a withdrawal the frame may have been stored.
+ */
+export { MAX_UNAVAILABLE_ANSWERS };
 
 /**
  * The SHORTEST hold after a counted 5xx: the ladder's top step. On the plain ladder five 5xx land at
@@ -139,8 +170,8 @@ export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
  */
 export const SERVER_ERROR_HOLD_MS = 60_000;
 
-/** The longest a server's `Retry-After` may hold a text: a header is not a reason to wait for ever. */
-export const MAX_RETRY_AFTER_MS = 10 * 60_000;
+/** The longest a server's `Retry-After` may hold a text - one value for both send paths (`retryLadder.ts`). */
+export { MAX_RETRY_AFTER_MS };
 
 /**
  * The hold after the `attempts`-th attempt failed with a COUNTED 5xx: the ladder's own step, raised
@@ -155,9 +186,24 @@ export function serverErrorHoldMs(attempts: number, retryAfterMs: number | null)
   );
 }
 
+/** A message the member TYPED (a text or a reply): its own row, with no file to upload. */
+function isTypedEntry(entry: OutboxEntry): boolean {
+  return entry.kind === 'text' || entry.kind === 'reply';
+}
+
 /** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
 function boundedOnServerErrors(entry: OutboxEntry): boolean {
-  return entry.kind === 'text' || entry.kind === 'reply';
+  return isTypedEntry(entry);
+}
+
+/**
+ * Where a "not now" count stands after the member's Retry: rounded UP to the next multiple of
+ * {@link MAX_UNAVAILABLE_ANSWERS}, so the next park comes after exactly that many fresh answers,
+ * and never down to 0 - a count above 0 is the durable evidence a withdrawal reads that the frame
+ * may have been stored.
+ */
+export function unavailableRunStart(count: number): number {
+  return Math.ceil(count / MAX_UNAVAILABLE_ANSWERS) * MAX_UNAVAILABLE_ANSWERS;
 }
 
 /**
@@ -231,6 +277,8 @@ export interface PreparedOutboxMedia {
   width?: number;
   height?: number;
   durationMs?: number;
+  /** The video's or voice note's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /**
@@ -308,6 +356,35 @@ interface StoredProofs {
 }
 
 /**
+ * The body a sent message is stored with: the copy on screen, unless the STORED row holds a later
+ * edit, whose text then goes onto the sent body (`applyEditToBody`, so the attachment reference and
+ * the quote are the send's).
+ *
+ * WHY THE STORED ROW DECIDES (owner, 2026-11-11; review of #3368). The copy on screen is the
+ * flushing tab's: a leader flushing a follower's queued photo holds the caption typed at the tap,
+ * while the follower's edit is at rest, and writing the screen's body put the old caption back
+ * under a "modifie" mark that a reload then showed. The same holds for a text edited in a follower
+ * tab. Decided by `editSupersedes`, so a later edit held only in memory still wins.
+ */
+export function sentRowContent(
+  shown: { content: string; isEdited?: boolean; editedAt?: Date | number | null },
+  stored: Pick<StoredMessage, 'content' | 'isEdited' | 'editedAt'>
+): string {
+  if (!stored.isEdited) return shown.content;
+  const storedEdit = { editedAt: stored.editedAt ?? null, content: stored.content };
+  // An undated edit on screen has no clock to defend, so the stored one keeps it (editSupersedes).
+  const shownAt = shown.editedAt instanceof Date ? shown.editedAt.getTime() : shown.editedAt;
+  if (
+    shown.isEdited &&
+    typeof shownAt === 'number' &&
+    editSupersedes({ editedAt: shownAt, content: shown.content }, storedEdit)
+  ) {
+    return shown.content;
+  }
+  return applyEditToBody(shown.content, envelopeBodyText(stored.content));
+}
+
+/**
  * True when `entry` cannot go out while any of `ids` is unsent: a reply quoting one of them, or a
  * control event (reaction, edit, delete, pin) whose pre-encoded proto carries one of the ids as a
  * string - the protobuf carries a message id as its UTF-8 bytes, so a byte search is exact for a
@@ -315,6 +392,9 @@ interface StoredProofs {
  */
 function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
   if (ids.size === 0) return false;
+  // ONLY A TEXT REPLY: its quote is a clear-readable payload at the queue read. A queued FILE's
+  // payload is NOT decoded there (media rows come back as scheduling columns), so its quote is
+  // checked in `flushOne` once the full row is loaded, against the same held-back set.
   if (entry.kind === 'reply' && entry.replyTo && ids.has(entry.replyTo.id)) return true;
   if (entry.kind !== 'control' || !entry.controlProto) return false;
   const proto = entry.controlProto;
@@ -326,11 +406,6 @@ function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
     }
   }
   return false;
-}
-
-/** Returns the backoff delay for the given (post-increment) attempt count. */
-function backoffFor(attempts: number): number {
-  return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)];
 }
 
 /**
@@ -718,7 +793,8 @@ export const UPLOAD_STALL_HINT_MS = 10_000;
 export function buildMediaMessage(
   entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
   media: NonNullable<OutboxEntry['media']>,
-  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>,
+  replyTo?: OutboxEntry['replyTo']
 ): { proto: Uint8Array; content: string } {
   // What the sender declared (a reel message's intent, length and expiry hint): empty for an
   // ordinary attachment, which therefore encodes exactly as before.
@@ -741,6 +817,7 @@ export function buildMediaMessage(
     ...(media.voiceNote ? { voiceNote: true } : {}),
     ...(ref.encoding ? { encoding: ref.encoding } : {}),
     ...declaration,
+    ...(media.loudness ? { loudness: media.loudness } : {}),
   };
   const proto = encodeAppMessage({
     ...mkMedia({
@@ -757,11 +834,28 @@ export function buildMediaMessage(
       ...mediaPlaceholderProtoField(media.placeholder),
       ...mediaEncodingProtoField(ref.encoding),
       ...mediaReelProtoFields(declaration),
+      ...mediaLoudnessProtoField(media.loudness),
+      // THE MESSAGE THIS FILE ANSWERS, the same reference a text reply carries (a reply that gets
+      // a photo attached stays a reply on both sides). Absent for an ordinary attachment.
+      ...(replyTo
+        ? { replyTo: { id: replyTo.id, senderId: replyTo.senderId, preview: replyTo.preview } }
+        : {}),
     }),
     messageId: entry.id,
     sentAt: entry.sentAt,
   });
-  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+  return {
+    proto,
+    content: serializeEnvelope(
+      mkMediaEnvelope(
+        fullRef,
+        media.caption,
+        replyTo
+          ? { id: replyTo.id, senderId: replyTo.senderId, content: replyTo.preview }
+          : undefined
+      )
+    ),
+  };
 }
 
 /**
@@ -801,7 +895,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * just proven itself alive is no longer that. A refusal (`sender-not-active`, a group not yet
    * sendable) is a fact about the GROUP and no reconnect changes it, so those keep their clock.
    * In memory only, on purpose: after a reload the ladder is at most 60 s and the boot flush is
-   * the trigger.
+   * the trigger. An entry answered "not now" (502/503/504, `SendUnavailableError`) is held here too:
+   * the server was not serving, and a reconnect is the best event there is that it serves again.
    */
   const transportHeld = new Set<string>();
   /**
@@ -1095,9 +1190,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // for any retry. Nothing here waits for a timer to expire.
     for (const id of transportHeld) {
       resuming.add(id);
-      // The link is back: the stale "waiting for the connection" is false from now on, the entry is
-      // simply next in line until its attempt starts and says `preparing`.
+      // The link is back: the stale "waiting for the connection" (or, on a text, "for the server",
+      // an entry answered "not now", held here too) is false from now on, the entry is simply next
+      // in line until its attempt starts and says `preparing`.
       if (viewOfUpload(id)?.phase === 'waiting') patchUpload(id, { phase: 'queued' });
+      clearTextWait(id);
     }
     transportHeld.clear();
     runFlush();
@@ -1409,7 +1506,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         [messageId],
         (current) =>
           mergeStoredMessage(current, {
-            ...(current.isDeleted ? {} : { content: m.content }),
+            ...(current.isDeleted ? {} : { content: sentRowContent(m, current) }),
             ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
             ...own_,
             ...(reactionSigned ? { reactions: reactionSigned(current.reactions) } : {}),
@@ -1453,12 +1550,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
 
-  /** Replace a message's rendered content in memory (queued media -> real attachment on send). */
+  /**
+   * Replace a message's rendered content in memory (queued media -> real attachment on send).
+   *
+   * A CAPTION EDITED WHILE THE FILE WAS QUEUED IS KEPT (owner, 2026-11-11): the real envelope is
+   * built from the queue entry, which holds the caption typed at the tap, and writing it whole put
+   * the old caption back on the author's screen. This is the SCREEN's half; what is written at rest
+   * is decided from the stored row in `persistSent` (`sentRowContent`), which also covers an edit
+   * made in another tab. The peers are not concerned: the edit's control frame names this message, so it waits behind it in the queue
+   * (`dependsOnAny`) and reaches them after it.
+   */
   function updateMessageContent(messageId: string, content: string): void {
     const found = findMessage(messageId);
     if (!found) return;
+    const held = found.convo.messages[found.idx];
+    // A tombstone is final: the attachment it replaced must not come back under it.
+    if (held.isDeleted) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… is deleted - its uploaded envelope is not shown`);
+      return;
+    }
+    const kept = held.isEdited ? applyEditToBody(content, envelopeBodyText(held.content)) : content;
+    if (kept !== content) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… keeps the caption edited while it was queued`);
+    }
     const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], content };
+    messages[found.idx] = { ...held, content: kept };
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -1500,7 +1616,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     entry: OutboxEntry
   ): Promise<{ entry: OutboxEntry; commit: () => Promise<void> }> {
     const kept = { entry, commit: async () => {} };
-    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return kept;
+    // A reply is a text reply OR a file sent as one (a `media` entry carrying its quote).
+    if ((entry.kind !== 'reply' && entry.kind !== 'media') || !entry.replyTo?.preview) return kept;
     const quoted = await quotedCopy(entry.replyTo.id);
     let entitled: boolean;
     try {
@@ -1538,7 +1655,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const content =
         env.kind === 'text' && env.replyTo
           ? serializeEnvelope(mkTextEnvelope(env.text, { ...env.replyTo, content: '' }))
-          : echo.content;
+          : env.kind === 'media' && env.replyTo
+            ? serializeEnvelope(
+                mkMediaEnvelope(env.media, env.caption, { ...env.replyTo, content: '' })
+              )
+            : echo.content;
       const messages = [...found.convo.messages];
       messages[found.idx] = {
         ...echo,
@@ -1942,6 +2063,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(prepared.width ? { width: prepared.width } : {}),
       ...(prepared.height ? { height: prepared.height } : {}),
       ...(prepared.durationMs ? { durationMs: prepared.durationMs } : {}),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
     if (storage) {
       const { blob: _blob, ...withBytes } = next;
@@ -2157,11 +2279,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     describe: (attempts: number) => string,
     opts: {
       transport?: boolean;
+      /**
+       * Answered "not now" (`SendUnavailableError`): held like a transport failure (`transport` is
+       * passed with it, so a reconnect resumes it), and the bubble says it waits for the SERVER.
+       */
+      unavailable?: boolean;
       repair?: boolean;
       local?: boolean;
       quiet?: boolean;
       /** The run of consecutive 5xx to record with the backoff (the 5xx arm only). */
       serverErrors?: number;
+      /** The count of "not now" answers to record with the backoff (the "not now" arm only). */
+      unavailableAnswers?: number;
       /** The hold, when it is not the plain ladder's (`serverErrorHoldMs`, the 5xx arm only). */
       delayMs?: number;
     } = {}
@@ -2176,14 +2305,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // An attachment still to upload shows that its next attempt is queued (and starts from zero -
     // except a chat reel's resumable session, which resumes at the parts the server lacks).
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
+    // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
+    // network, only a "not now" answer the server; a group repair and any other failure each say
+    // what they are.
+    // An attachment's "not now" is its MLS post, made after the upload (`uploadedRef` is set), so
+    // no upload view is written for it: `unavailable` only ever names a TEXT's wait.
+    const phase = opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying';
     if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
-      // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
-      // network; a group repair and any other failure each say what they are.
-      patchUpload(entry.id, {
-        phase: opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying',
-        loaded: 0,
-        attempt: entry.attempts + 1,
-      });
+      patchUpload(entry.id, { phase, loaded: 0, attempt: entry.attempts + 1 });
+    } else if (isTypedEntry(entry)) {
+      // A TYPED MESSAGE has no upload, so it says only what it waits for, and only when that is
+      // the link or the server (R05, 2026-11-09): "en attente" alone read the same during a deploy
+      // as during a group repair. Any other hold takes a stale one away.
+      if (opts.unavailable) setTextWait(entry.id, 'server');
+      else if (opts.transport) setTextWait(entry.id, 'network');
+      else clearTextWait(entry.id);
     }
     const attempts = entry.attempts + 1;
     await storage
@@ -2195,6 +2331,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           lastAttemptAt: Date.now(),
           nextAttemptAt: Date.now() + (opts.delayMs ?? backoffFor(attempts)),
           ...(opts.serverErrors !== undefined ? { serverErrors: opts.serverErrors } : {}),
+          ...(opts.unavailableAnswers !== undefined
+            ? { unavailableAnswers: opts.unavailableAnswers }
+            : {}),
         },
         deviceKey()
       )
@@ -2338,7 +2477,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     clearUpload(messageId);
     patchStatus(messageId, 'pending');
     await storage
-      .updateOutboxEntry(messageId, { serverErrors: 0, nextAttemptAt: 0 }, deviceKey())
+      .updateOutboxEntry(
+        messageId,
+        {
+          serverErrors: 0,
+          nextAttemptAt: 0,
+          unavailableAnswers: unavailableRunStart(stored.unavailableAnswers ?? 0),
+        },
+        deviceKey()
+      )
       .catch((err: unknown) =>
         log(`[OUTBOX] ${messageId.slice(0, 8)}… 5xx count reset not persisted: ${String(err)}`)
       );
@@ -2384,7 +2531,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
-  async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
+  async function flushOne(
+    entry: OutboxEntry,
+    heldBack: ReadonlySet<string> = new Set()
+  ): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
     // is the only thing standing between a message the user deleted and the wire.
     // THE MARK IS NOT CONSUMED HERE. The withdrawal's delete may still be pending, and a second
@@ -2423,7 +2573,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       unexpected.delete(entry.id);
       // THE MEMBER'S RETRY of a text failed on 5xx: the retry wrote the count back to 0, and this
       // snapshot may predate that write. A reconnect's resume never reaches here (not `serverFailed`).
-      if (serverFailed.delete(entry.id)) entry = { ...entry, serverErrors: 0 };
+      if (serverFailed.delete(entry.id)) {
+        entry = {
+          ...entry,
+          serverErrors: 0,
+          unavailableAnswers: unavailableRunStart(entry.unavailableAnswers ?? 0),
+        };
+      }
     }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
@@ -2526,6 +2682,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       entry = resolved;
     }
     if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
+    // A FILE SENT AS A REPLY WAITS FOR WHAT IT QUOTES, like a text reply (`dependsOnAny`). Decided
+    // HERE because its quote lives in the encrypted payload, which the lane's queue read leaves
+    // undecoded for a media row: only the full row, loaded above, names it.
+    if (entry.kind === 'media' && entry.replyTo && heldBack.has(entry.replyTo.id)) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… waits: the file quotes ${entry.replyTo.id.slice(0, 8)}…, which is not sent yet`
+      );
+      return 'uploading';
+    }
 
     const terminalId = entry.conversationId;
     // THE SEAL BARRIER COMES BEFORE THE GATES, FOR AN UPLOADED FILE. The flush's own barrier is an
@@ -2538,7 +2703,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // notice just before the Welcome. Taken here, the health and membership gates read the drained
     // state and the send follows them with no await between. Free when the queue is idle, which is
     // the steady state.
+    // THE QUOTE IS DECIDED BEFORE THE BARRIER, never after the gates: `decideQuote` is a store read and
+    // a network round trip, and the promise below is NO AWAIT from the gates to the send.
+    let decidedMediaQuote: Awaited<ReturnType<typeof decideQuote>> | undefined;
     if (entry.kind === 'media' && entry.media?.uploadedRef) {
+      // A FAILED READ THROWS ON PURPOSE (a reply is never blanked on a failure): it is an ordinary
+      // transient failure, settled like the send's own - an attempt, a backoff - and never allowed
+      // to escape the flush, which would skip the settle and stop the whole lane.
+      try {
+        decidedMediaQuote = await decideQuote(entry);
+      } catch (e) {
+        return settleFailure(entry, terminalId, e);
+      }
       await mlsService
         .waitForMessageQueueIdle('outbox media seal', null)
         .catch((e) =>
@@ -2640,7 +2816,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       let proto: Uint8Array;
       let mediaContent: string | undefined;
       // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
-      let commitQuote: () => Promise<void> = async () => {};
+      let commitQuote: () => Promise<void>;
       if (entry.kind === 'media') {
         const media = entry.media;
         if (!media) throw new LocalAttachmentError('the queued attachment has no payload');
@@ -2658,7 +2834,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         // NO AWAIT FROM THE GATES ABOVE TO THE SEND BELOW: the inbound-queue barrier this entry owes
         // is taken BEFORE the gates (THE SEAL BARRIER above), so they read the post-drain state.
-        const prepared = buildMediaMessage(entry, media, media.uploadedRef);
+        // A file sent as a reply quotes under the SAME exclusion-window rule as a text reply, decided
+        // before the barrier (above) so nothing is awaited here.
+        const decided = decidedMediaQuote ?? { entry, commit: async () => {} };
+        commitQuote = decided.commit;
+        const prepared = buildMediaMessage(entry, media, media.uploadedRef, decided.entry.replyTo);
         proto = prepared.proto;
         mediaContent = prepared.content;
         // The upload has completed, so the blob is readable before MLS acknowledges the message.
@@ -2956,6 +3136,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       console.error(line);
       log(line);
       patchStatus(entry.id, 'pending');
+      // A view an earlier hold drew ("waiting for the server" after a 502) is not what this entry
+      // waits for now: it waits for a sign-in, which no label here claims.
+      clearUpload(entry.id);
       return 'skip';
     }
     if (kind === 'evicted') {
@@ -2963,6 +3146,41 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
       );
       return failPermanently(entry, terminalId, 'evicted-late');
+    }
+    // "NOT NOW" IS NOT A REFUSAL (R05, 2026-11-09): a 502, 503 or 504, typed at the throw
+    // (`SendUnavailableError`), is a service that is not serving - a deploy rotating a container
+    // answers them for its few seconds. Every kind is held on the PLAIN ladder (no one-minute
+    // floor), resumed by a reconnect, shown as waiting for the server, and the 5xx run below is
+    // neither counted nor reset: it was what failed every text sent during a long deploy. What
+    // ends the wait is an answer - the send, or a refusal - never a count of these.
+    //
+    // BOUNDED BY ANSWERS, NOT BY A CLOCK (review of #3189): a text answered "not now"
+    // {@link MAX_UNAVAILABLE_ANSWERS} times with no 2xx between leaves the waiting state for the
+    // failed one. The count is written on every kind - it is also what a withdrawal reads.
+    if (e instanceof SendUnavailableError) {
+      const answers = (entry.unavailableAnswers ?? 0) + 1;
+      if (boundedOnServerErrors(entry) && answers % MAX_UNAVAILABLE_ANSWERS === 0) {
+        await storage
+          ?.updateOutboxEntry(
+            entry.id,
+            { unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+            deviceKey()
+          )
+          .catch((err: unknown) =>
+            log(`[OUTBOX] ${entry.id.slice(0, 8)}… "not now" park not persisted: ${String(err)}`)
+          );
+        return parkServerFailure(
+          { ...entry, unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+          `the server answered "not now" (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… ${MAX_UNAVAILABLE_ANSWERS} times with no success between - the route is not coming back by itself`
+        );
+      }
+      const delayMs = unavailableHoldMs(entry.attempts + 1, e.retryAfterMs);
+      return holdForRetry(
+        entry,
+        (attempts) =>
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: the server is not serving (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… - not a refusal, "not now" ${answers}${boundedOnServerErrors(entry) ? `/${MAX_UNAVAILABLE_ANSWERS}` : ''} (attempt ${attempts}), next in ${delayMs} ms or at the reconnect${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
+        { transport: true, unavailable: true, delayMs, unavailableAnswers: answers }
+      );
     }
     // A 5xx ON A TEXT IS COUNTED, read from the TYPE (`SendServerError`, typed at the throw): the
     // Nth in a row parks it as failed (user, 2026-10-18). The count is written BEFORE the park, so a
@@ -3075,7 +3293,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // (WP-MULTITAB-1). Leadership already gated the WebSocket and `initializeConnection`; this is
     // the write path it never covered - the follower was observed flushing the LEADER's entry.
     // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
-    if (!getIsTabLeader()) {
+    //
+    // THE GATE IS THE STATE'S, NOT THE ELECTION'S (review of #3371): a leader promoted in place
+    // leads on a copy it loaded as a follower, and sends nothing until its promotion reload - the
+    // queue waits for the reloaded page, whose own first flush drains it. Asking "the leader" from
+    // there would ask this very tab.
+    if (refusesCommitsHere()) {
+      if (promotedSinceLoad()) {
+        log(
+          '[OUTBOX] Flush skipped - this tab has just become the leader and reloads; the reloaded page drains the shared queue.'
+        );
+        return;
+      }
       log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
       requestLeaderOutboxFlush();
       return;
@@ -3204,7 +3433,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… waits: it depends on a parked message`);
           continue;
         }
-        const outcome = await withSendSlot(() => flushOne(entry));
+        const outcome = await withSendSlot(() => flushOne(entry, heldBack));
         settle(entry.id, settlementOf(outcome));
         // An attachment whose upload runs or is owed is unsent like a parked one: a reply quoting it
         // waits, an independent text goes (WP-OFF-9).
@@ -3999,7 +4228,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       takesRerun = true;
       return;
     }
-    const { mimeType, size, fileName, width, height, durationMs, ...ref } = adopted;
+    const { mimeType, size, fileName, width, height, durationMs, loudness, ...ref } = adopted;
     const media: NonNullable<OutboxEntry['media']> = {
       ...take.media!,
       mimeType,
@@ -4008,6 +4237,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       width,
       height,
       durationMs,
+      loudness,
       uploadedRef: ref,
       adoptedRef: undefined,
       prepare: undefined,
@@ -4083,6 +4313,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         width: file.width,
         height: file.height,
         ...(file.durationMs ? { durationMs: file.durationMs } : {}),
+        ...(file.loudness ? { loudness: file.loudness } : {}),
         uploadedRef: file.uploadedRef,
       },
     };
@@ -4181,6 +4412,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(ref.width ? { width: ref.width } : {}),
       ...(ref.height ? { height: ref.height } : {}),
       durationMs,
+      ...(ref.loudness ? { loudness: ref.loudness } : {}),
     };
     const written = await writeTakeRow(takeId, (take) => {
       if (!take.take || take.take.state || takeWithdrawn.has(takeId)) {
@@ -4291,7 +4523,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // A 5xx IS NOT PROOF THAT NOTHING WAS STORED: a gateway may answer 502 after the delivery service
     // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
     // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
-    const maybeStored = (queued.serverErrors ?? 0) > 0;
+    // AND SO IS A "NOT NOW": a 502 after an upstream reset, or a 504, may come after the frame was
+    // queued. Read from the DURABLE row (`unavailableAnswers`, review of #3189), so a reload and a
+    // follower tab that never sent it decide the same.
+    const maybeStored = (queued.serverErrors ?? 0) > 0 || (queued.unavailableAnswers ?? 0) > 0;
     // READ BEFORE THE ROW GOES: the reel's open upload session, which nothing could name afterwards.
     // An entry waiting in backoff, parked as failed, or not restarted since a relaunch has no
     // transfer running to abort - the row is the only thing that knows its session.
@@ -4349,10 +4584,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return { withdrawn: false, rowDeleted };
     }
     if (maybeStored) {
+      const unavailableNote =
+        (queued.unavailableAnswers ?? 0) > 0
+          ? ` and ${queued.unavailableAnswers} "not now" (502/503/504)`
+          : '';
       log(
         reason === 'exit'
-          ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the members may have it`
-          : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
+          ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors ?? 0} counted 5xx answer(s)${unavailableNote} - a gateway may have stored it, so the members may have it`
+          : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors ?? 0} counted 5xx answer(s)${unavailableNote} - a gateway may have stored it, so the delete travels as an event too`
       );
       return { withdrawn: false, rowDeleted };
     }

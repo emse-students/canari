@@ -772,6 +772,14 @@ export async function listAggregatedCalendarFeed(opts: {
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
 
+/**
+ * The spaces (formation x campus) the signed-in reader's agenda reaches: the options of the agenda's
+ * space filter. A reading aid for a view setting - it grants and refuses nothing.
+ */
+export async function listAgendaReachedSpaces(): Promise<{ formation: string; campus: string }[]> {
+  return request<{ formation: string; campus: string }[]>('/api/associations/calendar/spaces');
+}
+
 /** The selection a subscription URL is signed for: a side left empty is "any". */
 export interface AgendaFeedSelection {
   campus?: Campus | '' | null;

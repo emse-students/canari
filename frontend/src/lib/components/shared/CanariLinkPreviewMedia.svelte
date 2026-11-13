@@ -41,7 +41,7 @@
     />
   {:else}
     <div
-      class="from-cn-ink absolute inset-0 bg-gradient-to-br via-[#1e2848] to-amber-700/70"
+      class="from-cn-ink to-accent/70 via-cn-ink-soft absolute inset-0 bg-gradient-to-br"
       aria-hidden="true"
     ></div>
     <img

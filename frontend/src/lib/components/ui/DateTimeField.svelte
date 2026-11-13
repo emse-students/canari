@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { opensAsSheet } from './floatingSurface';
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
@@ -19,7 +20,6 @@
   } from './dateTimeField';
   import { monthGridDays, localizedWeekdays } from '$lib/calendar/monthGrid';
   import { Log } from '$lib/utils/Log';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -94,7 +94,7 @@
   let draft = $state<LocalDateTime>(fromDate(new Date()));
   let view = $state({ year: 0, month: 0 });
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
 
   const formatted = $derived.by(() => {
     const dt = parseLocalDateTime(asDateTime(value));
@@ -176,7 +176,7 @@
   }
 
   const INLINE_TRIGGER =
-    'text-text-main flex max-w-full items-center gap-1.5 truncate rounded-lg px-1 py-1 text-sm font-semibold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 disabled:opacity-60 dark:hover:bg-white/10';
+    'text-text-main flex max-w-full items-center gap-1.5 truncate rounded-lg px-1 py-1 text-sm font-semibold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 dark:hover:bg-white/10';
 
   const resolvedTriggerClass = $derived(
     triggerClass ||
@@ -187,7 +187,7 @@
 
   const COLUMN = 'flex h-40 w-16 flex-col gap-0.5 overflow-y-auto overscroll-contain';
   const CELL =
-    'shrink-0 rounded-lg py-1.5 text-center text-sm font-semibold tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50';
+    'shrink-0 rounded-lg py-1.5 text-center text-sm font-semibold tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50';
 </script>
 
 <button
@@ -235,7 +235,7 @@
       </div>
       <div class="grid grid-cols-7 gap-0.5 text-center">
         {#each weekdays as name (name)}
-          <span class="text-text-muted text-2xs py-1 font-bold uppercase">{name}</span>
+          <span class="text-text-muted text-2xs py-1 font-bold">{name}</span>
         {/each}
         {#each cells as day, i (i)}
           {#if day === null}
@@ -251,10 +251,10 @@
               type="button"
               aria-pressed={selected}
               disabled={!!min && dayBeforeMin(view.year, view.month, day, min)}
-              class="mx-auto flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 disabled:opacity-30 {selected
-                ? 'bg-amber-400 text-black'
+              class="focus-visible:ring-accent/50 mx-auto flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums transition-colors outline-none focus-visible:ring-2 disabled:opacity-30 {selected
+                ? 'bg-accent text-on-accent'
                 : isToday
-                  ? 'text-text-main ring-1 ring-amber-500/60 hover:bg-black/5 dark:hover:bg-white/10'
+                  ? 'text-text-main ring-accent/60 ring-1 hover:bg-black/5 dark:hover:bg-white/10'
                   : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
               onclick={() => pickDay(day)}
             >
@@ -273,7 +273,7 @@
               type="button"
               aria-pressed={draft.hour === h}
               class="{CELL} {draft.hour === h
-                ? 'bg-amber-400 text-black'
+                ? 'bg-accent text-on-accent'
                 : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
               onclick={() => (draft = { ...draft, hour: h })}
             >
@@ -288,7 +288,7 @@
               type="button"
               aria-pressed={draft.minute === mi}
               class="{CELL} {draft.minute === mi
-                ? 'bg-amber-400 text-black'
+                ? 'bg-accent text-on-accent'
                 : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
               onclick={() => (draft = { ...draft, minute: mi })}
             >

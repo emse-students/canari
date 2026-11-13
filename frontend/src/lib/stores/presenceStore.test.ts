@@ -7,9 +7,11 @@ import {
   presenceChunks,
   presenceMap,
   resetPresenceForTests,
+  unwatchUsers,
   watchUsers,
   whenAnyComesOnline,
 } from './presenceStore';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /** What `/api/version` said about `POST /api/presence`: `null` is "no answer yet". */
 const capability = vi.hoisted(() => ({ presencePost: true as boolean | null }));
@@ -61,6 +63,26 @@ function idsOfCall(call: unknown[]): string[] {
   return new URL(url).searchParams.get('users')?.split(',') ?? [];
 }
 afterEach(() => resetPresenceForTests());
+
+describe('a poll that gets no answer', () => {
+  it('logs a transport failure as one line, an unknown failure as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    fetchMock.mockImplementation(() => Promise.reject(new TransportFailureError('offline')));
+    watchUsers(['user-a']);
+    await checkPresenceNow();
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no answer'));
+
+    resetPresenceForTests();
+    fetchMock.mockImplementation(() => Promise.reject(new RangeError('a defect')));
+    watchUsers(['user-a']);
+    await checkPresenceNow();
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+    log.mockRestore();
+  });
+});
 
 describe('not stacking polls', () => {
   it('coalesces concurrent callers onto the request already in flight', async () => {
@@ -340,5 +362,28 @@ describe('the ids travel in a POST body, never in the URL (2026-10-28)', () => {
     expect(url).toBe(`https://gw.test/api/presence?users=${ID(1)},${ID(2)}`);
     expect(get(presenceMap)).toEqual({ [ID(1)]: true });
     debug.mockRestore();
+  });
+});
+
+describe('the watch list counts its holders (review of #2618, 2026-10-27)', () => {
+  it('keeps polling a peer while another holder still watches it', async () => {
+    await startWatching(['user-a'], { 'user-a': true });
+    watchUsers(['user-a']); // a second holder: the DM header beside its sidebar tile
+    unwatchUsers(['user-a']); // the DM is left
+
+    fetchMock.mockClear();
+    await checkPresenceNow();
+    expect(fetchMock.mock.calls.flatMap(idsOfCall)).toEqual(['user-a']);
+  });
+
+  it('stops polling once the last holder releases it', async () => {
+    await startWatching(['user-a'], { 'user-a': true });
+    watchUsers(['user-a']);
+    unwatchUsers(['user-a']);
+    unwatchUsers(['user-a']);
+
+    fetchMock.mockClear();
+    await checkPresenceNow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

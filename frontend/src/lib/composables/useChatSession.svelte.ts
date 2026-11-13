@@ -66,8 +66,14 @@ import {
   setDelegationReadiness,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
-import { publishLeaderLink, startLeaderLink } from '$lib/mls-client/tabLeaderLink.svelte';
+import {
+  leadershipChanged,
+  publishLeaderLink,
+  startLeaderLink,
+} from '$lib/mls-client/tabLeaderLink.svelte';
 import { rememberSelectionForReload } from '$lib/utils/chat/selectionAcrossReload';
+import { installJoinPush } from '$lib/utils/chat/joinPush';
+import { appendLog } from '$lib/utils/sessionLog';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
 export function useChatSession() {
@@ -94,7 +100,17 @@ export function useChatSession() {
   const mlsHolder = createMlsHolder(
     () => {
       if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-      return createMlsService();
+      const svc = createMlsService();
+      // INSTALLED WITH THE SERVICE, so no Welcome it delivers - an Add, or the owed-Welcome drain of
+      // a resume or the first connection - can precede it (`joinPush.ts`). The session is read at
+      // each delivery's announcement, and a delivery of a client the holder let go of (a sign-out,
+      // an account switch) pushes nothing.
+      installJoinPush(svc, {
+        session: () => ({ account: userId, storage, deviceKeyB64 }),
+        isCurrent: () => mlsHolder.current() === svc,
+        log: appendLog,
+      });
+      return svc;
     },
     // A sign-out and an account switch keep `mls.bin` for the account's next sign-in.
     (reason) => endNativeMlsSession(reason, { sweepState: false })
@@ -319,6 +335,7 @@ export function useChatSession() {
   // (`promotedSinceLoad`) right before going live and takes {@link reloadForPromotion} itself, so
   // no copy loaded as a follower ever goes live as the leader.
   setTabLeaderPromotedHandler(() => {
+    leadershipChanged();
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
@@ -330,6 +347,7 @@ export function useChatSession() {
   // WebSocket and restart in follower mode (MLS ratchet must never advance in two
   // tabs simultaneously).
   setTabLeaderDemotedHandler(() => {
+    leadershipChanged();
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);

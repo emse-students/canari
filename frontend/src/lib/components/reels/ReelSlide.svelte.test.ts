@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { clearanceAboveSeekLineRem } from '$lib/components/ui/player/seekLineGeometry';
 import { m } from '$lib/paraglide/messages';
 import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
 
@@ -267,7 +268,9 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   // A frame that does not reach the screen bottom (here: unmeasured) owes no safe-area inset; when
   // it does is `frameReachesBottom`'s, tested on its own (`reelFrame.test.ts`).
   expect(block.getAttribute('data-reel-caption-inset')).toBe('none');
-  expect(block.classList).toContain('pb-4');
+  // No inset, and the room the seek line's touch zone owes the "Voir plus" toggle above it.
+  expect(block.style.paddingBottom).not.toContain('safe-area');
+  expect(block.style.paddingBottom).toContain(`${clearanceAboveSeekLineRem(1)}rem`);
   expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
   expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');
   // The tap-outside layer spans the whole slide, letterbox bands included, under the caption.
@@ -331,7 +334,7 @@ it('a neighbour draws the publisher first-frame ThumbHash, not a play glyph', ()
   expect(q('[data-video-first-frame-poster]')!.getAttribute('src')).toBe(
     'data:image/png;thumbhash,HASH'
   );
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it('the sharp first frame this device decoded wins over the ThumbHash', () => {
@@ -347,10 +350,80 @@ it('the reel on screen hands its first frame to the player while it loads', () =
   );
 });
 
+/**
+ * A PHOTO PAGE WAS BLACK, A SPINNER, UNTIL ITS FILE CAME (owner, 2026-11-11): it now draws its
+ * ThumbHash from the first paint - handed to `PostMedia` on screen, drawn by itself off screen - and
+ * a carousel's media do the same, each its own.
+ */
+const photo = (placeholder?: string) => ({
+  type: 'image' as const,
+  mediaId: 'm-p1',
+  key: 'k',
+  iv: 'i',
+  mimeType: 'image/webp',
+  size: 1,
+  ...(placeholder ? { placeholder } : {}),
+});
+
+it('a photo page on screen hands its ThumbHash to the picture while it loads', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo('PHASH')] }), true);
+  expect(q('[data-post-media-stub]')!.getAttribute('data-poster')).toBe(
+    'data:image/png;thumbhash,PHASH'
+  );
+});
+
+it('a photo page off screen draws its ThumbHash', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo('PHASH')] }), false);
+  expect(q('img[aria-hidden="true"][src^="data:image/png;thumbhash"]')!.getAttribute('src')).toBe(
+    'data:image/png;thumbhash,PHASH'
+  );
+});
+
+it('an old photo with no ThumbHash hands no poster - nothing is invented', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo()] }), true);
+  expect(q('[data-post-media-stub]')!.hasAttribute('data-poster')).toBe(false);
+});
+
+it('a carousel page draws each media its own best picture: sharp frame, ThumbHash, ThumbHash', () => {
+  devicePosters.set('m-v2', 'blob:frame-v2');
+  const post = reel({
+    kind: 'post',
+    media: [
+      photo('PHASH'),
+      {
+        type: 'video',
+        mediaId: 'm-v2',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 1,
+        placeholder: 'VHASH',
+      },
+      {
+        type: 'video',
+        mediaId: 'm-v3',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 1,
+        placeholder: 'V3HASH',
+      },
+    ],
+  });
+  // On screen, on its second media: the photo before it and the video after it are drawn pictures.
+  const { target, q } = render(post, true, { mediaIndex: 1 });
+  const panes = [...target.querySelectorAll('[data-reel-media]')];
+  expect(panes[0].querySelector('img')!.getAttribute('src')).toBe('data:image/png;thumbhash,PHASH');
+  expect(q('[data-post-media-stub]')!.getAttribute('data-poster')).toBe('blob:frame-v2');
+  expect(panes[2].querySelector('img')!.getAttribute('src')).toBe(
+    'data:image/png;thumbhash,V3HASH'
+  );
+});
+
 it('an old reel with no picture of its frame draws the black frame, not a play glyph', () => {
   const { q } = render(reel(), false);
   expect(q('[data-video-first-frame-poster]')).toBeNull();
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it("tells the opener its file is GONE on a 410 only - a conversation's reel records it (RC-6)", () => {
@@ -362,4 +435,51 @@ it("tells the opener its file is GONE on a 410 only - a conversation's reel reco
   expect(onMediaGone).not.toHaveBeenCalled();
   stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'expired' }));
   expect(onMediaGone).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * EVERY VIEW OF A REEL ENDS IN ONE INFO LINE (owner, 2026-11-09: a week of in-app log held nothing
+ * about reels that "did not load"). The line is written when the reel leaves the screen - here the
+ * viewer closing - and says whether the first frame came, or where the load stopped.
+ */
+function reelViewLines(spy: { mock: { calls: unknown[][] } }): string[] {
+  return spy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[reel-view]'));
+}
+
+it('a reel that showed its first frame says so, once, when it leaves the screen', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { q } = render(reel());
+  const video = q<HTMLElement>('[data-post-media-stub]')!.appendChild(
+    document.createElement('video')
+  );
+  for (const type of ['loadstart', 'loadedmetadata', 'loadeddata', 'playing']) {
+    video.dispatchEvent(new Event(type));
+  }
+  expect(reelViewLines(info)).toEqual([]);
+  mounted.pop()!();
+  const lines = reelViewLines(info);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^\[reel-view\] post r1 media m-r1: first frame in \d+ ms/);
+  expect(lines[0]).toContain('whole (single-block)');
+  info.mockRestore();
+});
+
+it('a reel that never loaded names where it stopped when the reader leaves it', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  render(reel());
+  mounted.pop()!();
+  const lines = reelViewLines(info);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain('NO first frame');
+  expect(lines[0]).toContain('stopped at: downloading the whole file');
+  expect(lines[0]).toContain('media gate 0 running 0 queued');
+  info.mockRestore();
+});
+
+it('a neighbour reel, never on screen, writes no view line', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  render(reel(), false);
+  mounted.pop()!();
+  expect(reelViewLines(info)).toEqual([]);
+  info.mockRestore();
 });

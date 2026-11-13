@@ -126,13 +126,16 @@ jobs:
       # track and the estate cannot disagree.
       - name: Read the release under way
         id: release_tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           {
-            echo "version=${{ inputs.version }}"
-            echo "prerelease=${{ inputs.prerelease }}"
+            echo "version=${INPUT_VERSION}"
+            echo "prerelease=${INPUT_PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
+          echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
       # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
       # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles
@@ -154,6 +157,21 @@ jobs:
           set -euo pipefail
           plutil -lint frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
           xcodebuild -list -project frontend/src-tauri/gen/apple/canari.xcodeproj
+
+      # THE SWIFT PACKAGE DOWNLOADS ARE RESTORED, NEVER WRITTEN, and the key is the one
+      # `compile-ios-app` (ci.yml) saves from `main` - the iOS twin of the Gradle restore in
+      # `android.yml`. Read-only for the same reason: a cache belongs to the ref that wrote it, a
+      # release runs on a tag ref no later release reads, and a pull request's cache is unreadable
+      # from here, so what is restored is only what reviewed code on `main` fetched. SwiftPM still
+      # resolves from the committed `Package.resolved`; the cache only spares the download. A miss
+      # fetches exactly as before.
+      # docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09
+      - name: Restore Swift packages (written by main)
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/apple/canari.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'frontend/src-tauri/**/ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -232,7 +250,6 @@ jobs:
           APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -250,7 +267,6 @@ jobs:
             APPLE_PROVISIONING_PROFILE_SHARE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
-            JWT_SECRET
             BASE_URL
             AUTHENTIK_URL
             AUTHENTIK_CLIENT_ID

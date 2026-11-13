@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * REPORTING ONE LINE OF A LIVE CHAT (WP-L8b, client half), the posts' flow: the same
-   * `ReportReasonDialog` (one reason list), raised on the `critical` layer because the viewer sits
-   * above a plain modal. The line's author is read by the SERVER from its own row; the client hands
+   * `ReportReasonDialog` (one reason list), opened over the viewer (the last opened is on top,
+   * `utils/overlayStack.ts`). The line's author is read by the SERVER from its own row; the client hands
    * over the plaintext it sees, the one thing a moderator cannot otherwise read (the live key goes
    * with the live). Outcomes are typed, never read from a message: `409 ALREADY_REPORTED`,
    * `404 LIVE_NOT_FOUND`, anything else keeps the dialog open to try again.
@@ -77,7 +77,6 @@
 
 <ReportReasonDialog
   open={line !== null}
-  layer="critical"
   title={m.live_chat_report_dialog_title()}
   targetPreview={line?.text ?? ''}
   {submitting}

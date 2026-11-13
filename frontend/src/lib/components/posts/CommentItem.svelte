@@ -183,7 +183,7 @@
   {:else if authorHref}
     <a
       href={authorHref}
-      class="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="focus-visible:ring-accent-icon mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2"
     >
       {@render avatar()}
     </a>
@@ -202,7 +202,7 @@
     {:else if editing}
       <!-- Inline edit mode. -->
       <div
-        class="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-amber-500/40 bg-black/5 px-3.5 py-2.5 dark:bg-white/5"
+        class="border-accent/40 flex items-center gap-2 rounded-2xl rounded-tl-sm border bg-black/5 px-3.5 py-2.5 dark:bg-white/5"
       >
         <input
           type="text"
@@ -215,7 +215,7 @@
         <button
           type="button"
           onclick={submitEdit}
-          class="ui-icon-button ui-icon-button--sm shrink-0 text-amber-500 outline-none hover:text-amber-400"
+          class="ui-icon-button ui-icon-button--sm text-accent-text hover:text-accent-text shrink-0 outline-none"
           aria-label={m.common_validate_button()}
         >
           <Send size={15} strokeWidth={2.5} />
@@ -234,13 +234,13 @@
            a focused comment does not mark the replies drawn under it. -->
       <div
         class="w-fit max-w-full rounded-3xl bg-black/5 px-3.5 py-2 dark:bg-white/10 {isFocused
-          ? 'ring-2 ring-amber-500/60'
+          ? 'ring-accent/60 ring-2'
           : ''}"
       >
         {#if authorHref}
           <a
             href={authorHref}
-            class="text-text-main mb-0.5 block text-xs font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
+            class="text-text-main hover:text-accent-text mb-0.5 block text-xs font-bold transition-colors outline-none focus-visible:underline"
           >
             <EmojiText text={authorName} />
           </a>
@@ -325,7 +325,7 @@
             <button
               type="button"
               onclick={startEdit}
-              class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
+              class="tap-target text-text-muted text-2xs hover:text-accent-text font-bold transition-colors outline-none"
               aria-label={m.common_edit_label()}
             >
               <Pencil size={12} strokeWidth={2.5} />

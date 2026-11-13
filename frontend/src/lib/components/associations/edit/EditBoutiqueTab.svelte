@@ -288,7 +288,7 @@
 <div class="border-cn-border bg-cn-surface space-y-6 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <ShoppingBag size={20} />
         {m.asso_boutique_title()}
       </h2>
@@ -310,7 +310,7 @@
 
   {#if !onlinePaymentsReady}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text rounded-xl border px-4 py-3 text-sm"
     >
       {#if delegationHref}
         {m.list_delegate_required_banner()}
@@ -426,7 +426,7 @@
       />
 
       <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
-        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+        <p class="text-text-main text-xs font-bold">
           {m.asso_boutique_cotisant_pricing_title()}
         </p>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
@@ -451,7 +451,7 @@
       </div>
 
       <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
-        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+        <p class="text-text-main text-xs font-bold">
           {m.asso_boutique_limits_title()}
         </p>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
@@ -513,7 +513,7 @@
   {#if productsLoading}
     <div class="flex justify-center py-6">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if otherProducts.length === 0}
@@ -543,7 +543,7 @@
                   </span>
                   {#if product.membersOnly}
                     <span
-                      class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                      class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       {m.asso_boutique_members_only_label()}
                     </span>
@@ -575,7 +575,7 @@
                   does - the badge above cannot carry that, so the line below does.
                 -->
                 {#if !product.isActive && product.activationWithheld}
-                  <p class="text-amber-warn mt-1 text-xs font-semibold">
+                  <p class="text-amber-warn-text mt-1 text-xs font-semibold">
                     {m.asso_boutique_product_withheld_hint()}
                   </p>
                 {/if}

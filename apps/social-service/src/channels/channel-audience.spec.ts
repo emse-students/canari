@@ -251,7 +251,24 @@ describe('channel audience', () => {
 
       await service.getChannelAccess('ch-staff', INSIDER);
 
-      expect(roleRepo.find).not.toHaveBeenCalled();
+      // The community's roles ARE read once, by workspace, for the panel's "who qualifies" line;
+      // what must not happen is resolving THIS member's roles (a lookup by id) to judge the read.
+      const byId = roleRepo.find.mock.calls.filter(
+        ([q]) => (q as { where?: { id?: unknown } } | undefined)?.where?.id !== undefined
+      );
+      expect(byId).toEqual([]);
+    });
+
+    it('names the roles each restricted write policy admits, by what they grant', async () => {
+      const { service } = makeService(privateChannel);
+
+      const panel = (await service.getChannelAccess('ch-staff', INSIDER)) as {
+        writerRoles: Record<string, Array<{ id: string }>>;
+      };
+
+      // `r-member` holds `member.invite` only: it qualifies for neither, whatever it is called.
+      expect(panel.writerRoles.admins_moderators.map((r) => r.id)).toEqual(['r-admin']);
+      expect(panel.writerRoles.admins.map((r) => r.id)).toEqual(['r-admin']);
     });
 
     it('serves them to a manager who is NOT on the allowlist, because it already lets them write', async () => {

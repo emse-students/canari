@@ -43,11 +43,13 @@ describe('a change of tab leadership never leaves a stale ratchet sending', () =
 });
 
 describe('only the leader tab encrypts', () => {
-  it('gates the outbox flush on leadership before it can reach mlsService.sendMessage', () => {
+  it('gates the outbox flush on the state authority before it can reach mlsService.sendMessage', () => {
     const start = outbox.indexOf('async function runFlush');
     expect(start).toBeGreaterThan(-1);
     const body = outbox.slice(start);
-    const gateAt = body.indexOf('if (!getIsTabLeader())');
+    // `refusesCommitsHere`, not the election: a leader promoted in place, its reload owed, flushes
+    // nothing either (review of #3371).
+    const gateAt = body.indexOf('if (refusesCommitsHere())');
     expect(gateAt).toBeGreaterThan(-1);
     // The gate has to precede every reason a flush could be attempted, offline checks included.
     expect(gateAt).toBeLessThan(body.indexOf('connectivity.isOffline'));

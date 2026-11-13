@@ -35,6 +35,23 @@ export interface StoredObject {
   lastModifiedMs: number | null;
 }
 
+/**
+ * The key prefix of every live segment, and the one prefix this store REFUSES to write: the sealed
+ * segments of lives live in `LiveSegmentStore` (the `live_segments` volume) because this store is
+ * backed up and they must never be (live replays WP-R3, docs/wiki/live-replays.md, D2). Declared
+ * here, the module both live files import, so the three uses are one value.
+ */
+export const LIVE_KEY_PREFIX = 'live/';
+
+/** Throws when a key belongs to the store that is never backed up - a write that would put it in a backup. */
+function assertBackedUpKey(objectId: string): void {
+  if (objectId.startsWith(LIVE_KEY_PREFIX)) {
+    throw new Error(
+      `${objectId} is a live segment key: it belongs to the live segment store, never to the backed-up object store`
+    );
+  }
+}
+
 /** S3 multipart part size; 5 MiB is the smallest minio-js accepts (the S3 minimum too). */
 export const STORE_PART_BYTES = 5 * 1024 * 1024;
 
@@ -89,6 +106,7 @@ export class StorageService implements OnModuleInit {
    * @param size      Size in bytes (required by MinIO client).
    */
   async put(objectId: string, data: Buffer, size: number): Promise<void> {
+    assertBackedUpKey(objectId);
     const stream = Readable.from(data);
     await this.client.putObject(this.bucket, objectId, stream, size, {
       'Content-Type': 'application/octet-stream',
@@ -103,6 +121,7 @@ export class StorageService implements OnModuleInit {
    * the original error is rethrown.
    */
   async putFileStream(objectId: string, filePath: string, size: number): Promise<void> {
+    assertBackedUpKey(objectId);
     const source = fs.createReadStream(filePath);
     try {
       await this.streamClient.putObject(this.bucket, objectId, source, size, {
@@ -175,8 +194,8 @@ export class StorageService implements OnModuleInit {
    * Acceptable at this bucket's current scale (low hundreds of objects); past that it would need
    * the server-side data-usage API, and the panel would lose the per-object breakdown with it.
    *
-   * `prefix` narrows the listing to the keys that start with it - the segments of one live,
-   * `live/<liveId>/` - so a purge lists its own objects and never the bucket.
+   * `prefix` narrows the listing to the keys that start with it - `live/`, for the boot drain of
+   * the segments a release before WP-R3 stored here ({@link LiveSegmentsService.drainObjectStore}).
    */
   async listObjects(prefix = ''): Promise<StoredObject[]> {
     return new Promise((resolve, reject) => {
@@ -191,22 +210,6 @@ export class StorageService implements OnModuleInit {
         });
       });
       stream.on('end', () => resolve(objects));
-      stream.on('error', reject);
-    });
-  }
-
-  /**
-   * The "folders" one level under `prefix` (`live/` -> `live/<liveId>/`, ...), listed with a
-   * delimiter so the store answers one entry per folder rather than every object inside them.
-   */
-  async listPrefixes(prefix: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      const prefixes: string[] = [];
-      const stream = this.client.listObjectsV2(this.bucket, prefix, false);
-      stream.on('data', (obj) => {
-        if (obj.prefix) prefixes.push(obj.prefix);
-      });
-      stream.on('end', () => resolve(prefixes));
       stream.on('error', reject);
     });
   }

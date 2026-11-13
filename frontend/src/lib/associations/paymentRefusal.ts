@@ -62,7 +62,6 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
-    // In the reader's locale: `formatPriceCents` is pinned to fr-FR, so English read '0,50 EUR'.
     const min = formatAmount(minCents);
     return maxCents === null
       ? m.shop_payment_amount_min({ min })
@@ -220,6 +219,21 @@ export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION'
 export function membersOnlySaveRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === MEMBERS_ONLY_WITHOUT_COTISATION) {
     return m.admin_members_only_without_cotisation();
+  }
+  return null;
+}
+
+/**
+ * The body `code` of social-service's 409 when an association clears its cotisation mode while an
+ * active product or partnership card is still reserved to cotisants (`members-only-gate.ts`): the
+ * rows must be unticked first. The body also lists them, for API clients.
+ */
+export const COTISATION_MODE_IN_USE = 'COTISATION_MODE_IN_USE';
+
+/** The sentence for a clear of the cotisation mode refused for a members-only row, or `null`. */
+export function cotisationModeInUseMessage(err: unknown): string | null {
+  if (err instanceof SocialApiError && err.code === COTISATION_MODE_IN_USE) {
+    return m.admin_cotisation_mode_in_use();
   }
   return null;
 }

@@ -5,6 +5,7 @@ import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
+import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 
 /**
  * Merges FCM-cached messages into the in-memory conversation map.
@@ -99,9 +100,17 @@ export function mergeFcmMessagesIntoConversations(
     const chatMsg = mapStoredMessagesToChatMessages([{ ...msg, isFcmPreview: true }], userId)[0];
     chatMsg.isFcmPreview = true;
     const messages = [...convo.messages, chatMsg].sort(compareMessageOrder);
-    // Mirrors isUnreadForUser's exclusion: a system notice is never unread, including one this
-    // user's own action produced (e.g. an invite), and it never carries the inviter's own id.
-    const shouldMarkUnread = !chatMsg.isOwn && !chatMsg.isSystem;
+    // THE SAME QUESTION THE LOAD ASKS (`derivedUnreadCount`), so the `+1` here is exactly what the
+    // next cold start re-derives: own and system rows never count, and neither does a message the
+    // read point already covers - one the shade's "Marquer comme lu" or another device marked read
+    // before this merge ran.
+    const point = countingReadPoint(convo, userId.toLowerCase());
+    const shouldMarkUnread = isUnreadForUser(chatMsg, point.stamped, point.server);
+    if (!shouldMarkUnread && !chatMsg.isOwn && !chatMsg.isSystem) {
+      console.log(
+        `[FCM_CACHE] message ${msg.id.slice(0, 8)} is already covered by the read point - no badge`
+      );
+    }
     conversations.set(convoId, {
       ...convo,
       messages,

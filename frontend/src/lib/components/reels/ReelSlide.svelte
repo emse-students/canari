@@ -36,11 +36,15 @@
    * A POST OF SEVERAL PICTURES AND VIDEOS IS A CAROUSEL PAGE (owner, 2026-11-06, as on Instagram):
    * its media sit side by side in a STRIP inside the one frame, the viewer says which is visible
    * (`mediaIndex`) and where a held horizontal drag has taken the strip (`mediaDragX`), and dots
-   * under the top bar say the position. Each media is a `ReelMediaPane`, which owns its download,
+   * on the media's bottom edge, above the author line, say the position. Each media is a `ReelMediaPane`, which owns its download,
    * player and settle; `carouselMediaRole` says which pane is active, drawn and fetched ahead. The
    * caption, the rail, the reactions and the comments belong to the POST, never to a media: they
    * do not move with the strip. The rail's save and sound follow the VISIBLE media - a video has
    * them, a picture has neither (no picture save exists; a photo page has none either).
+   *
+   * A LIVE REPLAY IS A PAGE TOO (owner, 2026-11-09): no strip, no media - `ReplayPane` plays the
+   * live's own segments in the shared player, and the rail's save is the replay's (segment by
+   * segment). It has NO repost anywhere (the rail never had one: its "Envoyer a..." sends a link).
    */
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -55,6 +59,7 @@
   import { republishedByText } from '$lib/posts/republication';
   import RevealedAuthorLine from '$lib/components/posts/RevealedAuthorLine.svelte';
   import StudentsOnlyChip from '$lib/components/posts/StudentsOnlyChip.svelte';
+  import InstitutionReachChip from '$lib/components/posts/InstitutionReachChip.svelte';
   import { ChevronLeft, ChevronRight, Repeat2 } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
@@ -62,8 +67,14 @@
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import ReelFrame from './ReelFrame.svelte';
+  import {
+    orientationCanBeForced,
+    viewportOrientation,
+  } from '$lib/mobile/screenOrientation.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
   import ReelMediaPane from './ReelMediaPane.svelte';
+  import ReplayPane from './ReplayPane.svelte';
+  import { saveReplayFlow } from '$lib/live/replaySaveFlow';
   import DoubleTapHeart from '$lib/components/posts/DoubleTapHeart.svelte';
   import { doubleTapLike } from '$lib/actions/doubleTapLike';
   import type { Point } from '$lib/utils/viewerGestures';
@@ -78,6 +89,10 @@
   import { GESTURE } from '$lib/utils/viewerGestures';
   import { reactionTotal, type ReelRailActions } from '$lib/reels/reelRail';
   import { commentCountOf } from '$lib/posts/commentChange';
+  import { clearanceAboveSeekLineRem } from '$lib/components/ui/player/seekLineGeometry';
+
+  /** The "Voir plus" toggle's visible line height, in rem (`text-xs`, one line). */
+  const CAPTION_TOGGLE_LINE_REM = 1;
 
   interface Props {
     post: PostEntity;
@@ -108,6 +123,8 @@
     onMediaGone?: () => void;
     /** On a carousel page: the visible media (the viewer's, kept per post). 0 elsewhere. */
     mediaIndex?: number;
+    /** The viewer's verdict: this slide is on show and its visible media is a landscape video. */
+    turnedOverVideo?: boolean;
     /** Where a held horizontal drag has taken the carousel's strip, in px; 0 at rest. */
     mediaDragX?: number;
     /** A drag holds the strip: it follows the finger with no transition. */
@@ -126,6 +143,7 @@
     onReady,
     onMediaGone,
     mediaIndex = 0,
+    turnedOverVideo: turnedOverVideoOnShow = false,
     mediaDragX = 0,
     mediaDragging = false,
     onMediaStep,
@@ -204,19 +222,29 @@
   let textEl = $state<HTMLDivElement | undefined>();
   /** Whether the folded text hides lines - measured, so a short caption shows no "Voir plus". */
   let overflows = $state(false);
+  /**
+   * A LANDSCAPE VIDEO is on show and the phone is turned (owner, 2026-11-12, #3407): the frame fills the
+   * screen and the caption and the rail make room for the picture and the notch's side. Scoped to
+   * this AND the native app (`orientationCanBeForced`): a desktop window is always wider than tall and
+   * never turns, and the bare `landscape:` variant would match it too.
+   */
+  const turnedOverVideo = $derived(
+    turnedOverVideoOnShow && viewportOrientation.landscape && orientationCanBeForced()
+  );
   /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
   let frameReachesBottom = $state(true);
 
   /**
    * The room under the caption and the rail: the bottom safe-area inset when the frame reaches the
-   * screen bottom, plus a rem that clears the player's progress line (a reel's is 32 px of touch
-   * target, 2 px drawn, on that edge - no bar to leave room for since 2026-10-23).
+   * screen bottom, plus the clearance the seek line's touch zone owes a control above it - DERIVED
+   * from the line's own height and the toggle's enlarged target (`seekLineGeometry`). A hand-picked
+   * 1rem let a tap on "Voir plus" grab the seek line (owner, 2026-11-10 and 2026-11-11).
    */
   const bottomPad = $derived(
-    frameReachesBottom ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+1rem)]' : 'pb-4'
+    `padding-bottom: calc(${frameReachesBottom ? 'var(--safe-area-inset-bottom, 0px) + ' : ''}${clearanceAboveSeekLineRem(CAPTION_TOGGLE_LINE_REM)}rem)`
   );
   /** The rail carries a reel's tools (save, sound) even when it carries no social action. */
-  const showRail = $derived(!!rail || page === 'reel' || visibleIsVideo);
+  const showRail = $derived(!!rail || page === 'reel' || page === 'replay' || visibleIsVideo);
 
   function setExpanded(next: boolean) {
     console.debug(`[reel-viewer] caption ${next ? 'expanded' : 'folded'} on ${post.id}`);
@@ -269,7 +297,11 @@
      saves what the viewer holds - the ref with its key that the player itself decrypts - so nothing
      here asks the server who owns the reel. -->
 {#snippet railTools()}
-  <ReelSaveButton reel={saveable} rail />
+  {#if page === 'replay'}
+    <ReelSaveButton reel={saveable} rail save={() => saveReplayFlow(post)} />
+  {:else}
+    <ReelSaveButton reel={saveable} rail />
+  {/if}
 {/snippet}
 
 <!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
@@ -292,7 +324,9 @@
          one that never moves. The transition is the viewer's snap; reduced motion makes it instant
          (the global rule in app.css), and nothing waits on its end. -->
     <div class="h-full w-full overflow-hidden" data-reel-page={page}>
-      {#if panes.length > 0}
+      {#if page === 'replay'}
+        <ReplayPane {post} {active} playerSafeBottom={frameReachesBottom} {onReady} />
+      {:else if panes.length > 0}
         <div
           class="flex h-full w-full"
           style:transform={panes.length > 1
@@ -317,6 +351,7 @@
             <div
               class="h-full w-full shrink-0"
               data-reel-pane={i}
+              data-media-id={pane.ref.mediaId}
               data-backdrop-ignore={i === visibleIndex ? undefined : ''}
             >
               <ReelMediaPane
@@ -328,6 +363,7 @@
                 preload={role.preload}
                 show={role.show}
                 playerSafeBottom={frameReachesBottom}
+                durationMs={page === 'reel' ? post.durationMs : null}
                 onReady={() => onPaneReady(i)}
                 {onMediaGone}
               />
@@ -350,12 +386,45 @@
          letterboxed frame sits well above the home indicator, and the inset there would leave the
          caption about one line. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent pl-4 text-white {showRail
-        ? 'pr-16'
-        : 'pr-4'} {expanded ? 'pt-4' : 'pt-16'} {bottomPad}"
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {turnedOverVideo
+        ? 'pl-[calc(var(--safe-area-inset-left,env(safe-area-inset-left,0px))+1rem)] ' +
+          (showRail
+            ? 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+4rem)]'
+            : 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+1rem)]')
+        : showRail
+          ? 'pr-16 pl-4'
+          : 'pr-4 pl-4'} {expanded ? 'pt-4' : turnedOverVideo ? 'pt-6' : 'pt-16'}"
+      data-reel-turned={turnedOverVideo ? '' : undefined}
+      style={bottomPad}
       data-reel-caption
       data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
     >
+      {#if page === 'carousel' && panes.length > 1}
+        <!-- WHERE THE READER IS IN THE CAROUSEL (owner, 2026-11-11, as Instagram's under the photo):
+             one dot per media, the visible one lit, named "2 of 5". THE FIRST ROW OF THE CAPTION
+             BLOCK, so it sits on the media's bottom edge directly above the author line, rises with
+             the block when "Voir plus" unfolds it (the text is the part that shrinks, never this
+             row) and clears the player's line by the block's own bottom padding. The negative
+             margins undo the block's side padding so the row is centred on the MEDIA, not on the
+             room the rail leaves; the dots are far narrower than that room. Pointer-transparent. -->
+        <div
+          class="pointer-events-none mb-2 -ml-4 flex shrink-0 justify-center gap-1 self-stretch {showRail
+            ? '-mr-16'
+            : '-mr-4'}"
+          role="img"
+          aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
+          data-reel-carousel-dots
+        >
+          {#each panes as _pane, i (i)}
+            <span
+              class="size-1.5 rounded-full drop-shadow-sm {i === visibleIndex
+                ? 'bg-white'
+                : 'bg-white/40'}"
+              data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
+            ></span>
+          {/each}
+        </div>
+      {/if}
       <div class="flex min-w-0 shrink-0 items-center gap-2">
         {#if authorHref}
           <!-- ONE NAME AND ONE BOX FOR ASSISTIVE TECH: the link is named by its `aria-label` and its
@@ -365,7 +434,7 @@
                around a 20 pt picture and a 23 pt name). -->
           <a
             href={authorHref}
-            class="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2"
             aria-label={postAuthorLinkLabel(post)}
             data-reel-author
           >
@@ -390,6 +459,9 @@
           >
           {#if post.studentsOnly}
             <StudentsOnlyChip onMedia />
+          {/if}
+          {#if post.reach}
+            <InstitutionReachChip reach={post.reach} onMedia />
           {/if}
           {#if republished}
             <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
@@ -434,7 +506,9 @@
             bind:element={textEl}
             class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_button]:pointer-events-auto {expanded
               ? ''
-              : 'line-clamp-2'}"
+              : turnedOverVideo
+                ? 'line-clamp-1'
+                : 'line-clamp-2'}"
           />
         </div>
         {#if overflows || expanded}
@@ -456,7 +530,12 @@
            the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
            (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
            and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
-      <div class="pointer-events-none absolute right-1 bottom-0 z-30 {bottomPad}">
+      <div
+        class="pointer-events-none absolute bottom-0 z-30 {turnedOverVideo
+          ? 'right-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+0.25rem)]'
+          : 'right-1'}"
+        style={bottomPad}
+      >
         <ReelActionRail
           {readerReaction}
           reactionCount={reactionTotal(post.reactions, post.otherReactionCounts)}
@@ -465,8 +544,8 @@
           onReact={rail?.onReact}
           onComments={post.canSeeComments === false ? undefined : rail?.onComments}
           onSend={rail?.onSend}
-          tools={page === 'reel' || visibleIsVideo ? railTools : undefined}
-          sound={page === 'reel' || visibleIsVideo}
+          tools={page === 'reel' || page === 'replay' || visibleIsVideo ? railTools : undefined}
+          sound={page === 'reel' || page === 'replay' || visibleIsVideo}
           bind:drawerOpen={railDrawerOpen}
         />
       </div>
@@ -474,21 +553,6 @@
   </ReelFrame>
 
   {#if page === 'carousel' && panes.length > 1}
-    <!-- WHERE THE READER IS IN THE CAROUSEL: one dot per media under the top bar, the visible one
-         lit (Instagram's), named for assistive tech as "2 of 5". Pointer-transparent. -->
-    <div
-      class="pointer-events-none absolute inset-x-0 top-[calc(var(--safe-area-inset-top,0px)+1.25rem)] z-30 flex justify-center gap-1"
-      role="img"
-      aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
-      data-reel-carousel-dots
-    >
-      {#each panes as _pane, i (i)}
-        <span
-          class="size-1.5 rounded-full shadow-sm {i === visibleIndex ? 'bg-white' : 'bg-white/40'}"
-          data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
-        ></span>
-      {/each}
-    </div>
     {#if active && onMediaStep}
       <!-- A pointer has no swipe: the previous and next media are buttons on a wide screen, as the
            posts' are in the viewer's column. Buttons, so neither the swipe nor the double tap takes
@@ -496,7 +560,7 @@
       {#if visibleIndex > 0}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_prev()}
           title={m.reels_carousel_prev()}
           onclick={() => onMediaStep('media-prev')}
@@ -508,7 +572,7 @@
       {#if visibleIndex < panes.length - 1}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_next()}
           title={m.reels_carousel_next()}
           onclick={() => onMediaStep('media-next')}

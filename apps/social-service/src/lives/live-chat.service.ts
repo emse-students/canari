@@ -12,8 +12,11 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource, EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { ModerationService } from '../moderation/moderation.service';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   LIVE_CHAT_BACKLOG,
+  LIVE_CHAT_MENTION_WINDOW_MS,
+  LIVE_CHAT_MENTIONS_DECLARED_MAX,
   LIVE_CHAT_MESSAGES_PER_WINDOW,
   LIVE_CHAT_PAGE,
   LIVE_CHAT_RATE_WINDOW_MS,
@@ -29,6 +32,7 @@ import {
 } from './live.constants';
 import { LivesService, liveEnded } from './lives.service';
 import { short } from './live-log';
+import { liveMentionRecipientsSql, parseChatMentions } from './live-mention';
 
 /** A message as the poll serves it: ciphertext under the live key, base64 (C12). */
 export interface LiveChatMessageView {
@@ -229,7 +233,8 @@ export class LiveChatService {
   constructor(
     @InjectDataSource() private readonly db: DataSource,
     private readonly moderation: ModerationService,
-    private readonly lives: LivesService
+    private readonly lives: LivesService,
+    private readonly notifications: PostNotificationsService
   ) {}
 
   /**
@@ -239,12 +244,16 @@ export class LiveChatService {
   async post(
     authorId: string,
     liveId: string,
-    body: { clientId?: unknown; sealed?: unknown }
+    body: { clientId?: unknown; sealed?: unknown; mentions?: unknown }
   ): Promise<LiveChatMessageView | LiveChatTombstone> {
     const input = parseChatMessageInput(body);
+    const candidates = parseChatMentions(body.mentions, authorId);
     this.logger.debug(`[LIVE_CHAT] message ${input.clientId} on ${liveId} by ${short(authorId)}`);
     await this.assertNotMuted(authorId, liveId);
-    return this.db.transaction(async (tx) => {
+    // Who this line told of a mention: set ONLY by the insert below, so a repeat of a send that
+    // already landed (or one refused) notifies nobody - the fan-out runs once per row.
+    let addressed: string[] = [];
+    const view = await this.db.transaction(async (tx) => {
       await this.lockOpen(tx, liveId, authorId);
       const prior: MessageRow[] = await tx.query(
         `SELECT id, seq, "authorId", "clientId", sealed, "createdAt" FROM live_chat_messages
@@ -288,16 +297,91 @@ export class LiveChatService {
           HttpStatus.TOO_MANY_REQUESTS
         );
       }
+      // THE AUDIENCE IS THE DATABASE'S, NEVER THE CLIENT'S: the declared ids are narrowed here, under
+      // the live's lock, to people who may see this live (not removed, no block either way, not told
+      // by this author in the last minute). The line is stored with exactly who it addresses.
+      if (candidates.length > 0) {
+        const kept: { id: string }[] = await tx.query(liveMentionRecipientsSql('send'), [
+          authorId,
+          liveId,
+          candidates,
+          LIVE_CHAT_MENTION_WINDOW_MS,
+        ]);
+        addressed = kept.map((r) => r.id);
+        this.logger.debug(
+          `[LIVE_CHAT] mentions on ${liveId} by ${short(authorId)}: ${addressed.length} of ${candidates.length} addressed`
+        );
+      }
       const seq = await this.nextSeq(tx, liveId, 'chatSeq');
       const rows: MessageRow[] = await tx.query(
-        `INSERT INTO live_chat_messages ("liveId", seq, "authorId", "clientId", sealed)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO live_chat_messages ("liveId", seq, "authorId", "clientId", sealed, "mentionedUserIds")
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, seq, "authorId", "clientId", sealed, "createdAt"`,
-        [liveId, seq, authorId, input.clientId, input.sealed]
+        [liveId, seq, authorId, input.clientId, input.sealed, addressed]
       );
       this.logger.debug(`[LIVE_CHAT] message ${rows[0].id} on ${liveId} is seq ${seq}`);
       return toMessageView(rows[0]);
     });
+    if (addressed.length > 0) await this.notifyMentions(authorId, liveId, addressed);
+    return view;
+  }
+
+  /**
+   * Which of the candidate accounts the composer may SUGGEST for an `@` in this live's chat: the
+   * live's audience with no block either way with the author (`liveMentionRecipientsSql('suggest')`),
+   * so a suggestion is never someone who cannot see the live. It asks nothing about third parties (a
+   * removal, a block with the broadcaster): its answer is an oracle for ids the caller picks.
+   * Read-only; the caller has already let the author chat.
+   */
+  async mentionAudience(authorId: string, liveId: string, raw: unknown): Promise<string[]> {
+    const candidates = parseChatMentions(raw, authorId, LIVE_CHAT_MENTIONS_DECLARED_MAX);
+    if (candidates.length === 0) return [];
+    const rows: { id: string }[] = await this.db.query(liveMentionRecipientsSql('suggest'), [
+      authorId,
+      liveId,
+      candidates,
+    ]);
+    this.logger.debug(
+      `[LIVE_CHAT] mention audience on ${liveId}: ${rows.length} of ${candidates.length} may be suggested`
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Tells the people a chat line mentions - ONE push each, after the line committed (the trade the
+   * announcer documents: a crash between the two loses a notice, where the other order could repeat
+   * one). No bell row: a live is deleted when it ends (L3), so a row naming it would be a dead link
+   * for ever. Never throws - the line is posted; a failure is logged and the line stands.
+   */
+  private async notifyMentions(authorId: string, liveId: string, recipientIds: string[]) {
+    try {
+      const [live]: { title: string | null }[] = await this.db.query(
+        `SELECT title FROM lives WHERE id = $1`,
+        [liveId]
+      );
+      const actorName = await this.notifications.resolveDisplayName(authorId);
+      if (!actorName) {
+        // Not the raw id: a lock screen reading "<64 hex> vous a mentionne" is a fault.
+        this.logger.warn(
+          `[LIVE_MENTION] ${liveId}: ${short(authorId)} has no display name, ${recipientIds.length} mention(s) NOT pushed`
+        );
+        return;
+      }
+      const addressed = await this.notifications.pushNotice({
+        recipientIds,
+        type: 'live_mention',
+        actorId: authorId,
+        actorName,
+        text: live?.title ?? '',
+        // The key's client floor travels with it (`PushService.notifyContent`).
+        pushData: { liveId },
+      });
+      this.logger.log(`[LIVE_MENTION] ${liveId} by ${short(authorId)}: ${addressed} notified`);
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_MENTION] ${liveId}: ${recipientIds.length} mention(s) NOT pushed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 
   /**

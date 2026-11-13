@@ -1,8 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HelpSeen } from './entities/help-seen.entity';
+import { User } from '../users/entities/user.entity';
 import { HELP_IDS, type HelpId } from './help-ids';
+import {
+  PROFILE_PHOTO_PROMPT_SPACES_ENV,
+  isPromptEligible,
+  parsePromptSpaces,
+} from './profile-photo-prompt-spaces';
 
 /**
  * Which first-time helps an account has seen (docs/wiki/frontend/guided-help.md).
@@ -12,13 +18,57 @@ import { HELP_IDS, type HelpId } from './help-ids';
  * every device, and again after a lost answer, at no cost.
  */
 @Injectable()
-export class HelpSeenService {
+export class HelpSeenService implements OnModuleInit {
   private readonly logger = new Logger(HelpSeenService.name);
+  /** The profile-photo prompt's eligible spaces, read from the environment once (TEMPORARY). */
+  private readonly promptSpaces = parsePromptSpaces(process.env[PROFILE_PHOTO_PROMPT_SPACES_ENV]);
 
   constructor(
     @InjectRepository(HelpSeen)
-    private readonly repo: Repository<HelpSeen>
+    private readonly repo: Repository<HelpSeen>,
+    @InjectRepository(User)
+    private readonly users: Repository<User>
   ) {}
+
+  /** Says once what the prompt's variable resolved to; a value that does not parse is an error. */
+  onModuleInit(): void {
+    const { spaces, invalid } = this.promptSpaces;
+    if (invalid.length > 0) {
+      this.logger.error(
+        `[PROFILE_PHOTO_PROMPT] ${PROFILE_PHOTO_PROMPT_SPACES_ENV} does not parse (refused: ${invalid.join(' | ')}) - nobody is prompted; expected FORMATION:campus, comma-separated`
+      );
+      return;
+    }
+    this.logger.log(
+      `[PROFILE_PHOTO_PROMPT] ${PROFILE_PHOTO_PROMPT_SPACES_ENV} = ${
+        spaces.length === 0
+          ? '(unset) - nobody is prompted'
+          : spaces.map((s) => `${s.formation}:${s.campus}`).join(',')
+      }`
+    );
+  }
+
+  /**
+   * Whether this account is offered the profile-photo prompt: its space is one of the variable's.
+   * Decided here, from the profile the server holds, so the client never guesses it and widening the
+   * set needs no release. TEMPORARY, see `profile-photo-prompt-spaces.ts`.
+   */
+  async profilePhotoPromptEligible(userId: string): Promise<boolean> {
+    if (this.promptSpaces.spaces.length === 0) return false;
+    try {
+      const user = await this.users.findOne({
+        where: { id: userId },
+        select: { id: true, campus: true, cursus: true },
+      });
+      return isPromptEligible(user, this.promptSpaces.spaces);
+    } catch (e) {
+      // ISOLATED: a temporary prompt must never fail the seen-help read every guided help depends on.
+      this.logger.warn(
+        `[PROFILE_PHOTO_PROMPT] the profile read failed - not offered this time: ${e instanceof Error ? e.message : 'unknown error'}`
+      );
+      return false;
+    }
+  }
 
   /**
    * The help ids this account has seen, restricted to the CURRENT allowlist, with how long ago each

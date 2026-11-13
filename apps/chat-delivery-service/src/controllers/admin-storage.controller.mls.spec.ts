@@ -61,6 +61,13 @@ function router(overrides: Partial<Record<string, unknown>> = {}): QueryHandler 
     if (sql.includes("FROM posts WHERE kind = 'reel'")) {
       return overrides.reels ?? [{ live: '12', overdue: '0', oldest: null }];
     }
+    if (sql.includes('FROM live_replay_cap_evictions')) {
+      return (
+        overrides.replays ?? [
+          { live: '2', bytes: '900', evictions: '0', lastEvictedAt: null, lastCapBytes: null },
+        ]
+      );
+    }
     throw new Error(`unrouted query: ${sql.slice(0, 40)}`);
   };
 }
@@ -188,6 +195,53 @@ describe('the MLS half of the storage panel', () => {
     );
     const usage = await controller.getStorageUsage('true');
     expect(usage.reels).toEqual({ live: 3, overdue: 2, oldestOverdueMs: 7200000 });
+  });
+
+  it('reports the live replays and shows a zero eviction count (docs/wiki/live-replays.md)', async () => {
+    const usage = await makeController(router()).getStorageUsage('true');
+    expect(usage.replays).toEqual({
+      live: 2,
+      bytes: 900,
+      evictions: 0,
+      lastEvictedAt: null,
+      lastCapBytes: null,
+    });
+  });
+
+  it('names the latest cap eviction and the cap it was judged against', async () => {
+    const at = new Date('2026-11-09T10:00:00.000Z');
+    const usage = await makeController(
+      router({
+        replays: [
+          {
+            live: '5',
+            bytes: '19000000000',
+            evictions: '3',
+            lastEvictedAt: at,
+            lastCapBytes: '20000000000',
+          },
+        ],
+      })
+    ).getStorageUsage('true');
+    expect(usage.replays).toEqual({
+      live: 5,
+      bytes: 19000000000,
+      evictions: 3,
+      lastEvictedAt: at.toISOString(),
+      lastCapBytes: 20000000000,
+    });
+  });
+
+  it('keeps the rest of the panel when the replay measurement throws', async () => {
+    const base = router();
+    const controller = makeController(async (sql, params) => {
+      if (sql.includes('FROM live_replay_cap_evictions'))
+        throw new Error('relation does not exist');
+      return base(sql, params);
+    });
+    const usage = await controller.getStorageUsage('true');
+    expect(usage.replays).toBeNull();
+    expect(usage.reels).not.toBeNull();
   });
 
   it('keeps the rest of the panel when the reel measurement throws', async () => {

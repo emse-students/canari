@@ -8,12 +8,21 @@ import {
   ConflictException,
   GoneException,
   HttpException,
+  HttpStatus,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, And, LessThan, MoreThanOrEqual, type EntityManager } from 'typeorm';
+import {
+  Repository,
+  In,
+  And,
+  LessThan,
+  MoreThan,
+  MoreThanOrEqual,
+  type EntityManager,
+} from 'typeorm';
 import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -69,7 +78,11 @@ import {
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
+  rolesQualifyingFor,
+  standingOfPermissions,
   writePolicyAllows,
+  writeRefusalCode,
+  writeVerdicts,
 } from './permissions';
 import { narrowAdmissionVoucher } from './admission-voucher';
 import { ChatReelMediaClient } from './chat-reel-media.client';
@@ -90,6 +103,8 @@ import {
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 import { hasInvisibleCharacter } from './visible-text';
+import { validateCommunityName, validateCommunitySlug, validateDisplayName } from './display-name';
+import { COMMUNITY_CREATIONS_PER_HOUR, communityOwnedMax } from './community-limits';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -280,15 +295,7 @@ export const MAX_CHANNEL_NAME_LENGTH = 80;
  * the sidebar is refused: nothing once trimmed, too long, or a control character.
  */
 export function validateChannelName(raw: unknown): string {
-  const name = typeof raw === 'string' ? raw.trim() : '';
-  if (!name) throw new BadRequestException('Channel name cannot be empty');
-  if (Array.from(name).length > MAX_CHANNEL_NAME_LENGTH)
-    throw new BadRequestException(
-      `Channel name too long (max ${MAX_CHANNEL_NAME_LENGTH} characters)`
-    );
-  if (/\p{Cc}/u.test(name))
-    throw new BadRequestException('Channel name cannot contain control characters');
-  return name;
+  return validateDisplayName(raw, MAX_CHANNEL_NAME_LENGTH, 'Channel');
 }
 
 /** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
@@ -380,6 +387,9 @@ export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
+  /** Read once, at construction: a `COMMUNITY_OWNED_MAX` that is not a number stops the boot. */
+  private readonly communityOwnedMax = communityOwnedMax();
+
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
   private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
     const normalized = String(name || '')
@@ -450,7 +460,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * That fallback went with the per-salon distribution group (see the rule's own header), which
    * makes this both stricter and cheaper: no database at all.
    *
-   * Reading/joining is independent of who may write (see canWriteToChannel).
+   * Reading/joining is independent of who may write (see writeStandingIn).
    */
   private canAccessChannel(channel: Channel, _member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
@@ -483,35 +493,73 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * Whether `userId` may post in `channel`, per its writePolicy:
+   * Whether `member` may post in `channel`, per its writePolicy:
    *  - `everyone` (default) → any member (access is checked separately);
    *  - `admins_moderators` → roles carrying channel.moderate or workspace.manage;
    *  - `admins` → roles carrying workspace.manage.
+   *
+   * Returns the verdict WITH what it was decided from (the roles held, and whether any of them
+   * grants moderation or management), so a refusal can log its cause: until 2026-11-10 a refused
+   * post logged nothing, and a moderator whose role had been emptied read a generic 403 that no line
+   * on the server explained.
    */
-  private async canWriteToChannel(channel: Channel, userId: string): Promise<boolean> {
+  private async writeStandingIn(
+    channel: Channel,
+    member: ChannelMember
+  ): Promise<{
+    allowed: boolean;
+    policy: ChannelWritePolicy;
+    roleIds: string[];
+    canModerate: boolean;
+    canManage: boolean;
+  }> {
     const policy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
-    if (policy === 'everyone') return true;
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member?.roleIds?.length) return false;
-    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    if (policy === 'everyone') {
+      return { allowed: true, policy, roleIds: [], canModerate: false, canManage: false };
+    }
+    const roleIds = member.roleIds ?? [];
+    if (roleIds.length === 0) {
+      return { allowed: false, policy, roleIds, canModerate: false, canManage: false };
+    }
+    const roles = await this.roleRepo.find({ where: { id: In(roleIds) } });
     // THE RULE IS IN `writePolicyAllows` AND NOWHERE ELSE - the listing decides the same thing for
     // the same viewer and must reach the same answer. What is resolved here is only who the viewer
     // IS, which is the part that costs a query.
     //
-    // `roleGrantsModeration` rather than a second list of keys: this branch used to check
-    // `channel.moderate` and `workspace.manage` and to omit `channel.manage`, which the listing's
-    // own `viewerCanModerate` has always counted - so a role holding only `channel.manage` was a
-    // moderator everywhere except here.
-    return writePolicyAllows(policy, {
-      canManage: roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)),
-      canModerate: roles.some((r) => roleGrantsModeration(r.permissions)),
-    });
+    // `standingOfPermissions` (so `roleGrantsModeration`) rather than a second list of keys: this
+    // branch used to check `channel.moderate` and `workspace.manage` and to omit `channel.manage`,
+    // which the listing's own `viewerCanModerate` has always counted - so a role holding only
+    // `channel.manage` was a moderator everywhere except here.
+    const standing = standingOfPermissions(roles.flatMap((r) => r.permissions));
+    return { allowed: writePolicyAllows(policy, standing), policy, roleIds, ...standing };
   }
 
   /**
-   * Who, among `userIds`, may write in `channel` - the same decision {@link canWriteToChannel}
+   * THE ONE `channel.member.joined` PUBLISH. A device that hears of a salon live draws its row from
+   * this event, so the event carries what the listing would have: the salon's `writePolicy` and the
+   * recipient's own `viewerCanWrite` - split by the answer, like `channel.updated`, since one payload
+   * cannot carry a per-viewer verdict (one publish under `everyone`, two at most otherwise). Without
+   * them a live-added row knew no policy, and a later role change could not judge its composer.
+   */
+  private async announceSalonJoined(
+    channel: Channel,
+    data: Record<string, unknown>,
+    audience: string[]
+  ): Promise<void> {
+    const decisions = await this.writeDecisionsFor(channel, audience);
+    for (const mayWrite of [true, false]) {
+      const half = audience.filter((u) => (decisions.get(u) ?? true) === mayWrite);
+      if (half.length === 0) continue;
+      await this.redis.publishChannelEvent(
+        'channel.member.joined',
+        { ...data, writePolicy: channel.writePolicy ?? 'everyone', viewerCanWrite: mayWrite },
+        half
+      );
+    }
+  }
+
+  /**
+   * Who, among `userIds`, may write in `channel` - the same decision {@link writeStandingIn}
    * enforces and the workspace listing answers, computed for a whole audience at once.
    *
    * TWO QUERIES WHATEVER THE AUDIENCE'S SIZE, because the roles are a property of the workspace and
@@ -1080,8 +1128,8 @@ export class ChannelService implements OnApplicationBootstrap {
   private async announceChannelAccessGranted(channel: Channel, userIds: string[]): Promise<void> {
     if (userIds.length === 0) return;
     const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      channel,
       {
         channelId: channel.id,
         channelName: channel.name,
@@ -2031,8 +2079,8 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (repChannel) {
       const memberIds = await this.getWorkspaceMemberIds(ws.id);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
+      await this.announceSalonJoined(
+        repChannel,
         {
           channelId: repChannel.id,
           channelName: repChannel.name,
@@ -2118,10 +2166,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
-  private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
-    const base = requested.trim();
-    if (!base) throw new BadRequestException('Slug de communaute invalide.');
-
+  private async ensureUniqueWorkspaceSlug(base: string): Promise<string> {
     let candidate = base;
     for (let suffix = 2; ; suffix++) {
       const existing = await this.workspaceRepo.findOne({ where: { slug: candidate } });
@@ -2130,13 +2175,54 @@ export class ChannelService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Refuses a creation past what one account may create in an hour or hold in all. Both are
+   * COUNTED FROM THE TABLE, so the answer is the same on every replica and after a deploy.
+   *
+   * @throws HttpException 429 `COMMUNITY_CREATION_RATE`, or ForbiddenException
+   *   `COMMUNITY_OWNED_LIMIT`
+   */
+  private async assertMayCreateCommunity(userId: string): Promise<void> {
+    const by = userId.slice(0, 8);
+    const lastHour = await this.workspaceRepo.count({
+      where: { createdBy: userId, createdAt: MoreThan(new Date(Date.now() - 60 * 60_000)) },
+    });
+    if (lastHour >= COMMUNITY_CREATIONS_PER_HOUR) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - ${lastHour} created in the last hour`
+      );
+      throw new HttpException(
+        {
+          code: 'COMMUNITY_CREATION_RATE',
+          message: 'Too many communities created in the last hour',
+        },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+    const owned = await this.workspaceRepo.count({ where: { createdBy: userId } });
+    if (owned >= this.communityOwnedMax) {
+      this.logger.warn(
+        `[WORKSPACE] create REFUSED by=${by} - holds ${owned} of ${this.communityOwnedMax} communities`
+      );
+      throw new ForbiddenException({
+        code: 'COMMUNITY_OWNED_LIMIT',
+        message: `An account may hold ${this.communityOwnedMax} communities at most`,
+      });
+    }
+  }
+
   async createWorkspace(input: CreateWorkspaceDto) {
-    const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
+    // Both are judged before anything is read or written, and it is the judged values that are
+    // logged and stored.
+    const name = validateCommunityName(input.name);
+    const askedSlug = validateCommunitySlug(input.slug);
+    await this.assertMayCreateCommunity(input.createdBy);
+    const slug = await this.ensureUniqueWorkspaceSlug(askedSlug);
     this.logger.log(
-      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
+      `[WORKSPACE] create name=${JSON.stringify(name)} slug="${slug}" by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
-      name: input.name,
+      name,
       slug,
       createdBy: input.createdBy,
     });
@@ -2407,6 +2493,60 @@ export class ChannelService implements OnApplicationBootstrap {
       `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
+  }
+
+  /**
+   * The salon listing ({@link listChannelsForUser}) of SEVERAL communities in ONE answer, the first
+   * of the three per-community reads of a boot.
+   *
+   * ONLY THE SALON LISTING, and that is a decision: it is database reads and nothing else. The key
+   * group's reference (`getDistributionGroupForMember`) carries a roster of this user's devices
+   * that decides whether the device forgets its tree and external-joins, and it must be read where
+   * it always was - after MLS is ready and the startup drain has run - or an owed Welcome landing
+   * during boot is forgotten against a stale roster (the GRP-4 duplicate-leaf pattern). The roster
+   * of the community is not batched either: it is read after the device's own tree.
+   *
+   * EACH ITEM IS ITS OWN VERDICT. The answer comes from the very method the per-community route
+   * calls, so authorization and shape are its, and a refusal on one community (a 403 on a community
+   * just left) is carried as `{ status, code, message }` on that item and never fails the others -
+   * the client rethrows it as the refusal the single route would have given. Ids beyond
+   * {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller chunks), a repeated id is
+   * answered once, and at most {@link COMMUNITY_BOOT_READS_CONCURRENCY} communities are read at a
+   * time so one request never holds the whole connection pool.
+   */
+  async listCommunityBootReads(
+    userId: string,
+    workspaceIds: readonly string[]
+  ): Promise<{ items: CommunityBootReadItem[] }> {
+    const ids = [...new Set(workspaceIds)].slice(0, COMMUNITY_BOOT_READS_MAX);
+    this.logger.log(
+      `[BOOT_READS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
+    );
+    const items: CommunityBootReadItem[] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_CONCURRENCY) {
+      const slice = ids.slice(i, i + COMMUNITY_BOOT_READS_CONCURRENCY);
+      items.push(
+        ...(await Promise.all(
+          slice.map(async (workspaceId): Promise<CommunityBootReadItem> => {
+            try {
+              const channels = await this.listChannelsForUser(workspaceId, userId);
+              return { workspaceId, channels, channelsRefusal: null };
+            } catch (e) {
+              const refusal = bootReadRefusal(e);
+              // The detail stays here: an unclassified failure is a generic 500 to the client.
+              this.logger.warn(
+                `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${refusal.status}` +
+                  (e instanceof HttpException
+                    ? ''
+                    : ` ${e instanceof Error ? e.message : String(e)}`)
+              );
+              return { workspaceId, channels: null, channelsRefusal: refusal };
+            }
+          })
+        ))
+      );
+    }
+    return { items };
   }
 
   /**
@@ -2697,8 +2837,8 @@ export class ChannelService implements OnApplicationBootstrap {
     channel.accessRevision = granted.channel.accessRevision;
 
     const audience = await this.channelAudience(channel);
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      channel,
       {
         channelId,
         channelName: channel.name,
@@ -3114,8 +3254,8 @@ export class ChannelService implements OnApplicationBootstrap {
     // creator alone, on every device they hold) and a public one reaches the whole community.
     const workspace = await this.workspaceRepo.findOne({ where: { id: savedChannel.workspaceId } });
     const audience = await this.channelAudience(savedChannel);
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      savedChannel,
       {
         channelId: savedChannel.id,
         channelName: savedChannel.name,
@@ -3128,11 +3268,15 @@ export class ChannelService implements OnApplicationBootstrap {
       audience
     );
 
+    // The creator's row carries what a listing would: the policy and their own verdict on it.
+    const creatorWrites = await this.writeDecisionsFor(savedChannel, [input.actorUserId]);
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
       name: savedChannel.name,
       visibility: savedChannel.isPrivate ? 'private' : 'public',
+      writePolicy: savedChannel.writePolicy ?? 'everyone',
+      viewerCanWrite: creatorWrites.get(input.actorUserId) === true,
     };
   }
 
@@ -3412,11 +3556,27 @@ export class ChannelService implements OnApplicationBootstrap {
       // The recovery path, and the only line that says it was taken. Rare by construction: a manager
       // who is on the allowlist is `readable` and never spends the permission query.
       this.logger.log(
-        `[CHANNEL_ACCESS] settings served to manager ${actorUserId} outside the allowlist of ${channelId}`
+        `[CHANNEL_ACCESS] settings served to manager ${actorUserId.slice(0, 8)} outside the allowlist of ${channelId}`
       );
     }
 
-    return channelAccessState(channel);
+    // WHICH ROLES EACH RESTRICTED POLICY LETS WRITE, by what they grant and never by their name: the
+    // access panel shows them under its write-policy select. "Admins and moderators" read as if the
+    // role CALLED Moderateur counted, and a community whose Moderateur role had been emptied had no
+    // way to see that its moderators could no longer write.
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const named = (r: ChannelRole) => ({
+      id: r.id,
+      name: r.name,
+      displayLabel: r.displayLabel ?? null,
+    });
+    return {
+      ...channelAccessState(channel),
+      writerRoles: {
+        admins_moderators: rolesQualifyingFor('admins_moderators', roles).map(named),
+        admins: rolesQualifyingFor('admins', roles).map(named),
+      },
+    };
   }
 
   /**
@@ -3470,13 +3630,12 @@ export class ChannelService implements OnApplicationBootstrap {
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
     // list - and an empty private salon is one nobody can open, its maker included, which is the
     // state `chat_no_allowed_members_warning` names. COMM-23 granted the owner by hand for this.
+    // The line narrating it is written AFTER the save (`grantedMaker`): the removal bound below may
+    // still refuse the flip, and a line stating an outcome before it is decided is false whenever
+    // the write is refused (RM-6, 2026-10-26).
     const actorNormalised = actorUserId.trim().toLowerCase();
-    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised)) {
-      this.logger.log(
-        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId}`
-      );
-      nextAllowed.push(actorNormalised);
-    }
+    const grantedMaker = isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised);
+    if (grantedMaker) nextAllowed.push(actorNormalised);
     // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
     // and that retirement supersedes every per-user cut - evicting people who are about to regain
     // access as ordinary community members would be work with no reader.
@@ -3587,6 +3746,11 @@ export class ChannelService implements OnApplicationBootstrap {
     if (writePolicy) {
       channel.writePolicy = writePolicy;
     }
+    if (grantedMaker) {
+      this.logger.log(
+        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId} revision=${channel.accessRevision}`
+      );
+    }
 
     // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
     // roster nothing consults - inert if it survives, and refusing the change over it would be
@@ -3636,6 +3800,9 @@ export class ChannelService implements OnApplicationBootstrap {
           channelId,
           workspaceId: channel.workspaceId,
           isPrivate: channel.isPrivate,
+          // The policy travels WITH the verdict so the client's row keeps it current: a later
+          // `workspace.role.changed` redraws the composer from it (`canWriteByPolicy`).
+          writePolicy: channel.writePolicy ?? 'everyone',
           viewerCanWrite: mayWrite,
         },
         half
@@ -3845,7 +4012,16 @@ export class ChannelService implements OnApplicationBootstrap {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const viewerCanManage = await this.memberHasWorkspaceManage(member);
+    // THE VIEWER'S STANDING, resolved once for every salon. This is the SIDEBAR's listing, and until
+    // 2026-11-10 it carried neither `writePolicy` nor `viewerCanWrite` - only `getWorkspaceBySlug`
+    // did - so every load drew a composer in every restricted salon, and only a live
+    // `channel.updated` ever took one away (production: a moderator whose role granted nothing typed
+    // into an "admins and moderators" salon and collected a 403).
+    const heldRoles = member.roleIds?.length
+      ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
+      : [];
+    const standing = standingOfPermissions(heldRoles.flatMap((r) => r.permissions));
+    const viewerCanManage = standing.canManage;
     const channels = sortChannels(await this.channelRepo.find({ where: { workspaceId } }));
     const visible: Array<{
       id: string;
@@ -3853,16 +4029,21 @@ export class ChannelService implements OnApplicationBootstrap {
       name: string;
       visibility: 'public' | 'private';
       viewerHasAccess: boolean;
+      writePolicy: ChannelWritePolicy;
+      viewerCanWrite: boolean;
     }> = [];
     for (const channel of channels) {
       const hasAccess = this.canAccessChannel(channel, member, userId);
       if (!hasAccess && !viewerCanManage) continue;
+      const writePolicy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
       visible.push({
         id: channel.id,
         workspaceId: channel.workspaceId,
         name: channel.name,
         visibility: channel.isPrivate ? 'private' : 'public',
         viewerHasAccess: hasAccess,
+        writePolicy,
+        viewerCanWrite: writePolicyAllows(writePolicy, standing),
       });
     }
     return visible;
@@ -3921,12 +4102,20 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
-    // "Membre" is how every client up to the current stable names the ordinary invitation, so it
-    // means the base role even in a community whose lowest role is called something else. Matching
-    // a role literally named Membre first waits for `minClientVersion` (see backlog).
-    if (wanted === 'Membre' || wanted === base?.name) return base;
+    if (wanted === base?.name) return base;
     const role = roles.find((r) => r.name === wanted) ?? null;
-    if (!role || role.id === base?.id) return role;
+    // A role is matched by its own name first, so a community that calls a higher role "Membre"
+    // can grant it by invitation. Only where no role carries that name does "Membre" (or "member")
+    // mean the base role: no client above the floor sends it for an ordinary invitation (#2277
+    // sends no role at all), and a caller naming the generic word still gets the base role.
+    if (!role) {
+      if (wanted !== 'Membre') return null;
+      this.logger.debug(
+        `[INVITE] "Membre" read as the base role=${base?.name ?? 'none'} workspace=${workspaceId}`
+      );
+      return base;
+    }
+    if (role.id === base?.id) return role;
 
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
     if (actorMayGrantRole(actorPermissions, role.permissions)) {
@@ -4100,8 +4289,8 @@ export class ChannelService implements OnApplicationBootstrap {
 
       // Publish event to notify the invited user and connected clients
       const audience = await this.channelAudience(channel);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
+      await this.announceSalonJoined(
+        channel,
         {
           channelId,
           channelName: channel.name,
@@ -4658,6 +4847,9 @@ export class ChannelService implements OnApplicationBootstrap {
           canManage: written.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
           canManageChannels: roleGrantsChannelManagement(written.permissions),
           canModerate: roleGrantsModeration(written.permissions),
+          // The write verdict for EVERY policy, so the client redraws each salon's composer from
+          // that salon's policy - the rule stays here, the client only looks the policy up.
+          canWriteByPolicy: writeVerdicts(standingOfPermissions(written.permissions)),
           changedBy: actorUserId,
         },
         [targetUserId]
@@ -4921,14 +5113,36 @@ export class ChannelService implements OnApplicationBootstrap {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
-    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    // EVERY REFUSAL BELOW LOGS ITS CAUSE AT WARN. Until 2026-11-10 none did: a moderator refused by
+    // the write policy (their role had been emptied of every permission) read a generic 403, and
+    // the server had nothing to say about why.
+    const sender = input.senderId.slice(0, 8);
+    if (!member) {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: not a member of the community`
+      );
+      throw new ForbiddenException('Not a member of this workspace');
+    }
     if (!this.canAccessChannel(channel, member, input.senderId)) {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: no access to this private salon`
+      );
       throw new ForbiddenException('Not allowed to access this channel');
     }
     // Read access is not enough: the channel's writePolicy may restrict posting
     // (e.g. an announcements channel where only admins/moderators can write).
-    if (!(await this.canWriteToChannel(channel, input.senderId))) {
-      throw new ForbiddenException('Not allowed to post in this channel');
+    const write = await this.writeStandingIn(channel, member);
+    if (!write.allowed && write.policy !== 'everyone') {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: write policy ${write.policy} ` +
+          `roles=[${write.roleIds.map((id) => id.slice(0, 8)).join(',')}] ` +
+          `grantsModeration=${write.canModerate} grantsManage=${write.canManage}`
+      );
+      // TYPED, so the client says who may write here instead of a generic "no permission".
+      throw new ForbiddenException({
+        code: writeRefusalCode(write.policy),
+        message: 'Not allowed to post in this channel',
+      });
     }
     // A message names the Graine session that opens it, and which key of that session. The server
     // holds no seed and can supply neither, so a message missing one is a message NOBODY can ever
@@ -6812,6 +7026,7 @@ export class ChannelService implements OnApplicationBootstrap {
             canManage,
             canManageChannels,
             canModerate,
+            canWriteByPolicy: writeVerdicts({ canManage, canModerate }),
           },
           to
         );
@@ -7009,6 +7224,43 @@ class ErasedAccountLeftAlone extends Error {
     super(`erased account is the last member of workspace ${workspaceId}`);
     this.name = 'ErasedAccountLeftAlone';
   }
+}
+
+/** The most communities one {@link ChannelService.listCommunityBootReads} answers; the client chunks. */
+export const COMMUNITY_BOOT_READS_MAX = 50;
+
+/** A refusal carried on one item of a batched read, the shape the single route's error body has. */
+export interface BootReadRefusal {
+  status: number;
+  code: string | null;
+  message: string;
+}
+
+/** How many communities one batched read lists at a time (database reads, so a small bound). */
+export const COMMUNITY_BOOT_READS_CONCURRENCY = 10;
+
+/** One community's part of the batched boot read: its salon listing or its refusal. */
+export interface CommunityBootReadItem {
+  workspaceId: string;
+  channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
+  channelsRefusal: BootReadRefusal | null;
+}
+
+/**
+ * A failure of a batched read, as the refusal the single route would have answered: an HTTP
+ * exception keeps its status, `code` and message; anything else is a GENERIC 500 - its message can
+ * name a table or a host, so it is logged by the caller and never sent.
+ */
+export function bootReadRefusal(err: unknown): BootReadRefusal {
+  if (err instanceof HttpException) {
+    const body = err.getResponse();
+    const code =
+      body && typeof body === 'object' && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    return { status: err.getStatus(), code, message: err.message };
+  }
+  return { status: 500, code: null, message: 'Internal error' };
 }
 
 /**

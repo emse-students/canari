@@ -46,8 +46,9 @@
   muted underneath - which the feed, the shop, the agenda and twenty others already used. The two
   outliers were notifications at `text-xl` and the legal pages at `text-3xl`.
 
-  `font-brand` is NOT set here on purpose: `app.css` already gives every `h1..h6` the brand face, so
-  the class the feed carried was a no-op that made one page look deliberate and the rest accidental.
+  `font-display` is NOT set here on purpose: `app.css` already gives every `h1` the display face
+  (and, since 2026-11-09, ONLY `h1`: `h2..h6` are body), so the class the feed carried was a no-op
+  that made one page look deliberate and the rest accidental.
 -->
 <header class="mb-6">
   {#if crumbs && crumbs.length > 1}
@@ -80,7 +81,7 @@
   -->
   <div class="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div class="min-w-0">
-      <h1 class="text-text-main text-2xl font-bold tracking-tight break-words">{title}</h1>
+      <h1 class="text-text-main text-2xl font-bold break-words">{title}</h1>
       {#if subtitle}
         <p class="text-text-muted mt-0.5 text-sm">{subtitle}</p>
       {/if}

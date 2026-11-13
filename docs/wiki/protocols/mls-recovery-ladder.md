@@ -280,6 +280,33 @@ the answer says `selfJoin: false` and the device waits for a member as before, w
 keyed on what it was decided on: which sessions were withheld and why. Pinned by `recovery.test.ts`,
 `decisionLog.test.ts`, `actions.admission.test.ts` and `frameHandler.test.ts`.
 
+### A group joined in the background before its row existed (PK2, 2026-10-14)
+
+A Pixel 6a log of production `1.2.7` (2026-10-14, cold start): a group the user's own other device
+created had been joined by the native push service while the app was killed, with no conversation
+row; 47 of its 150 queued frames were lost past their epoch. Moved here from the backlog entry when it
+closed into [the verification table](../backlog.md#owed-a-verification-and-nothing-else) (2026-11-11),
+which holds the Mi 9T reading still owed.
+
+**What the log shows, for group `513411dc` (a group the user's own other device created):**
+
+1. The native push service joined it in the background (epoch 1) and cached 21 plaintexts; it wrote no conversation row.
+2. 17:55:55.136: the server redelivers the Welcome. The handler finds the group held, takes the "already held - redelivered Welcome ignored" path, which promotes an EXISTING row and creates none. 150 frames parked behind it are re-queued.
+3. They are refused `absent-conversation` twice: at 17:55:55.4 (before the restore seeded rows) and at 17:55:57.0 (the "conversation rows seeded" re-fetch; storage holds no row for it either). That is 306 of the 314 `Message for absent conversation` lines and the 306 matching `messageCallback -> false`; 149 frames were handled 3 times. The other 8 refusals are 3 groups whose frames arrived before the restore seeded rows, read 1.7 s later.
+4. 17:55:58.3: the FCM-cache merge creates the row in memory (`mergeFcmMessagesIntoConversations`) and does NOT call `notifyConversationAvailable`, so nothing re-fetches the waiting frames.
+5. 17:55:58.661: a live frame for the group finds the row, is at epoch 18, and the gap healer replays 17 commits from the archive (epoch 1 -> 18) without the application frames between them.
+6. 17:55:59.883: the "conversations restored" re-fetch finally delivers the 150 frames; **47 are `LOST frame ... past epoch application frame`** and history reconciliation is asked to repair them (a 2-message bundle at 17:56:03, three more asks by 17:56:40).
+
+The other high-count lines of that window are per event: 114 `read_watermark` frames each advanced a watermark (one dispatch line and one `[READ]` line each, 97 of them this group's backlog), and `[QUEUE] Processing` is one per frame, tripled for this group by the refusals above.
+
+**Cost**: the frames arrive 6.5 s after cold start instead of ~1.5 s; two refusal passes take ~600 ms of drain on the main thread during the restore and first paint; 47 messages depend on a peer's history answer.
+
+**The fix, as built (PK2, #1999, `v1.3.0`):**
+
+- The "already held" Welcome branch writes the row when none exists and announces it - from storage when storage holds one the restore has not seeded yet, else the install path's derivation. The restore's prune keeps a row written after its storage read. **Residual, named:** on SQLite a row whose save was issued just BEFORE the restore's read is not proven visible to that read; it would be pruned and re-created by the push-cache merge or discovery - later, not lost (the gap hold below covers the loss).
+- The FCM-cache merge on resume announces each row it creates. The login merge in `sessionAuth.ts` still calls the unannounced one (PK1/PK8 own that file); the restore's re-fetch covers it there.
+- The gap healer holds a live frame while the group has refused frames still queued.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |

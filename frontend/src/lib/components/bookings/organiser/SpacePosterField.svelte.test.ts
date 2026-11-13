@@ -43,7 +43,7 @@ describe('SpacePosterField - the drop zone', () => {
   it('keeps the drop highlight while the pointer crosses onto a child, ends it on a real leave', () => {
     open();
     const zone = document.querySelector('[data-poster-zone]') as HTMLElement;
-    const lit = () => zone.className.includes('bg-cn-yellow/15');
+    const lit = () => zone.className.includes('bg-accent/15');
     zone.parentElement!.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
     flushSync();
     expect(lit()).toBe(true);

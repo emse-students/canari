@@ -1,13 +1,15 @@
 /**
  * Lightweight structured logger for the Canari frontend.
  *
- * Produces timestamped console.debug entries prefixed with a tag so
+ * Produces console.debug entries prefixed with a tag so
  * developers can filter traces in the browser DevTools by [tag].
  *
  * WHY: The project convention requires Log.d() at function entry points,
  * key decisions, and error branches. Centralizing the call site avoids
  * scattered console.debug / console.log calls and makes log format
- * consistent across the codebase.
+ * consistent across the codebase. NO TIMESTAMP IS WRITTEN HERE: DevTools and the in-app log stamp
+ * every line themselves, and a second one printed a doubled time (`[19:32:05.470]
+ * [2026-11-09T19:32:05.470Z] [seenHelps]`, 1.6.8 console, 2026-11-09).
  */
 
 /**
@@ -71,19 +73,18 @@ export function renderLogPayload(payload: unknown): string {
 /** Logs a debug-level entry with an optional payload. */
 function d(tag: string, payload?: unknown): void {
   if (typeof window === 'undefined') return;
-  const ts = new Date().toISOString();
   if (payload === undefined) {
-    console.debug(`[${ts}] [${tag}]`);
+    console.debug(`[${tag}]`);
     return;
   }
   // THE OBJECT IS PASSED AS WELL FOR AN ERROR ALONE, because the stack is the one thing the text
   // cannot carry and the one thing a developer opens an error for. Everything else is rendered and
   // not repeated: a payload printed twice is a line twice as wide for no second reader.
   if (payload instanceof Error) {
-    console.debug(`[${ts}] [${tag}] ${renderLogPayload(payload)}`, payload);
+    console.debug(`[${tag}] ${renderLogPayload(payload)}`, payload);
     return;
   }
-  console.debug(`[${ts}] [${tag}] ${renderLogPayload(payload)}`);
+  console.debug(`[${tag}] ${renderLogPayload(payload)}`);
 }
 
 /**
@@ -100,4 +101,17 @@ function i(tag: string, payload?: unknown): void {
   console.info(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
 }
 
-export const Log = { d, i } as const;
+/**
+ * Logs a WARNING: a path that should not have been taken, or a recovery from one, which a reader of
+ * the in-app log must see (it records warnings). One line per occurrence, never per function entry.
+ */
+function w(tag: string, payload?: unknown): void {
+  if (typeof window === 'undefined') return;
+  if (payload === undefined) {
+    console.warn(`[${tag}]`);
+    return;
+  }
+  console.warn(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
+}
+
+export const Log = { d, i, w } as const;

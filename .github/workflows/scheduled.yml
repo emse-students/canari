@@ -56,8 +56,11 @@ on:
     - cron: '0 4 * * 1'
     # Every 15 minutes, as a request GitHub may delay or drop, and ONE job reads it: do the public
     # names the estate depends on answer? The deliberate exception to "a daily floor" - see the
-    # header and the `upstream` job.
-    - cron: '*/15 * * * *'
+    # header and the `upstream` job. OFF the hour on purpose (2026-11-09): GitHub's own advice is
+    # that the start of every hour is when slots are delayed and dropped, and `*/15` asked for
+    # `:00` four times an hour. Measured as `*/15`: 13 runs of ~240 slots (2026-11-06..09). What
+    # reports it if delivery stays that thin is NOT this file - see `upstream-monitor-freshness`.
+    - cron: '4,19,34,49 * * * *'
   workflow_dispatch:
     inputs:
       job:
@@ -243,12 +246,16 @@ jobs:
   # downtime. An issue reaches everyone watching the repository, once; a red run reaches only whoever
   # last edited the cron line, once per slot. So the RUN IS GREEN while an outage is recorded, and
   # red only when this reporter cannot report (a refused gh call, a missing reading).
+  # A reading the EDGE refused (`edge-refused`: a bot or challenge rule against this runner) is the
+  # monitor being blind, and opens "Upstream monitor cannot read <name>" - never "is down", never
+  # silence (2026-11-09: three such names had held "is down" issues open for three days). And this
+  # job cannot report its own absence: `upstream-monitor-freshness` in `ci.yml` does, on every push.
   # docs/wiki/infrastructure/upstream-reachability.md.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   upstream:
     name: Public names answer
     if: >
-      github.event.schedule == '*/15 * * * *' ||
+      github.event.schedule == '4,19,34,49 * * * *' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "upstream"]'), inputs.job))
     runs-on: ubuntu-latest
@@ -446,7 +453,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      # THE SAME EIGHT NAMES `build.yml` PUSHES TO, HARDCODED THE SAME WAY IT HARDCODES THEM - an
+      # THE SAME NAMES `build.yml` PUSHES TO, HARDCODED THE SAME WAY IT HARDCODES THEM - an
       # allowlist of exactly what this destructive step may touch, never a wildcard over the org's
       # packages, and never derived from a listing that could grow to include something else.
       - name: Delete versions beyond the rollback margin, oldest first
@@ -464,12 +471,24 @@ jobs:
             frontend
             frontend-ssr
             media-service
+            adminer
           )
           KEEP=30
 
           for service in "${SERVICES[@]}"; do
             package="canari%2F${service}"
             echo "=== ${service} ==="
+            # A NAME NO RELEASE HAS PUSHED YET (`adminer`, added 2026-11-13, exists from the first
+            # release that builds it) is a package that does not exist. The package's own route
+            # answers that with its status: 404 is "not published", 200 goes on, and anything else
+            # stops the job. (The org listing is no witness: it answered `[]` to a token that reads
+            # every one of these packages, measured 2026-11-13.)
+            status="$(gh api --include "orgs/emse-students/packages/container/${package}" 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+            case "$status" in
+              200) ;;
+              404) echo "  not published to GHCR yet - nothing to prune"; continue ;;
+              *) echo "::error::GHCR answered '${status:-nothing}' for ${service}"; exit 1 ;;
+            esac
 
             # created_at first so a lexicographic sort is a chronological one (ISO 8601), newest
             # first - never trusted from the API's own order, which is not a documented contract.
@@ -550,9 +569,11 @@ jobs:
 
       - name: Empty dev and load the fictional seed
         working-directory: ${{ steps.checkout.outputs.path }}
+        env:
+          RESET_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$RESET_DRY_RUN" = "true" ]; then
             bash infrastructure/dev/reset-dev-to-seed.sh --dry-run
           else
             bash infrastructure/dev/reset-dev-to-seed.sh

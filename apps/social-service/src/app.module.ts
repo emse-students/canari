@@ -16,6 +16,7 @@ import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
 import { createDataSource } from './common/synchronize-prerequisites';
+import { PG_SESSION_OPTIONS } from './common/pg-session-options';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
 import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { BookingsModule } from './bookings/bookings.module';
@@ -51,7 +52,8 @@ import { typeormSynchronize } from './typeorm-synchronize';
         // cannot get one in 10 s fails alone, instead of the whole service hanging for good once
         // the pool (10) is held by transactions each waiting for a second connection
         // (docs/wiki/cotisations.md, "One lock per buyer per association").
-        extra: { connectionTimeoutMillis: 10_000 },
+        // `options`: the session settings of every connection (`PG_SESSION_OPTIONS` says why).
+        extra: { connectionTimeoutMillis: 10_000, options: PG_SESSION_OPTIONS },
       }),
       // Creates the extensions an entity's DDL needs before `synchronize` runs (btree_gist for
       // the bookings exclusion); production, unsynchronised, gets them from migration 087.

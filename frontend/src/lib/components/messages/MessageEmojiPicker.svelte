@@ -17,6 +17,7 @@
   import { getRecentEmojis, persistRecentEmoji } from './emojiPickerShared';
   import EmojiGrid from './EmojiGrid.svelte';
   import EmojiText from '../shared/EmojiText.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /**
@@ -43,6 +44,9 @@
     existingReactionEmojis = [],
     onEmojiSelect,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => origin !== null, 'MessageEmojiPicker');
 
   const reactionsAtLimit = $derived(
     existingReactionEmojis.length >= MAX_DISTINCT_MESSAGE_REACTIONS
@@ -138,7 +142,8 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl"
+    style:z-index={layer.z}
+    class="glass-chrome border-cn-border fixed flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!--
@@ -149,9 +154,7 @@
       message cannot take another distinct reaction - is below, and it says something.
     -->
     {#if reactionsAtLimit}
-      <p
-        class="text-2xs border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400"
-      >
+      <p class="text-2xs border-accent/20 bg-accent/10 text-accent-text border-b px-4 py-2">
         {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
     {/if}
@@ -161,7 +164,7 @@
       <div
         class="flex flex-wrap items-center gap-1.5 border-b border-black/5 bg-white/20 px-3 py-2 dark:border-white/10 dark:bg-black/10"
       >
-        <span class="text-text-muted/80 text-2xs mr-2 font-bold tracking-widest uppercase">
+        <span class="text-text-muted/80 text-2xs mr-2 font-bold">
           {m.msg_recent_reactions_label()}
         </span>
         {#each recentEmojis as emoji (emoji)}

@@ -700,7 +700,7 @@
   {#if loading}
     <div class="flex justify-center py-24">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !form}
@@ -728,7 +728,7 @@
       <div class="mb-5 flex items-center gap-3">
         <div class="bg-cn-border/60 h-2 flex-1 overflow-hidden rounded-full">
           <div
-            class="bg-cn-yellow h-full rounded-full transition-all duration-500"
+            class="bg-accent h-full rounded-full transition-all duration-500"
             style="width:{progressPct}%"
           ></div>
         </div>
@@ -747,13 +747,13 @@
             ? `associations/${encodeURIComponent(agendaAssociationSlug)}`
             : 'associations'
         )}
-        class="border-cn-yellow/35 bg-cn-yellow/10 hover:bg-cn-yellow/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
+        class="border-accent/35 bg-accent/10 hover:bg-accent/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
-        <div class="bg-cn-yellow/25 text-cn-dark shrink-0 rounded-xl p-2">
+        <div class="bg-accent/25 text-cn-dark shrink-0 rounded-xl p-2">
           <CalendarDays size={18} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
+          <p class="text-text-muted text-xs font-bold">
             {m.form_view_event_linked()}
           </p>
           <p class="text-text-main truncate text-sm font-semibold">{linkedAgendaEvent.title}</p>
@@ -765,9 +765,9 @@
     <!-- ── Not open yet ── -->
     {#if isNotOpenYet && form.opensAt}
       <div
-        class="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-amber-300/60 bg-amber-50/80 px-4 py-4 dark:bg-amber-950/20"
+        class="border-accent/40 bg-accent/20 mb-4 flex items-center justify-between gap-4 rounded-2xl border px-4 py-4"
       >
-        <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
+        <p class="text-accent-text text-sm font-semibold">
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>
         {#if reminder.loaded}
@@ -776,8 +776,8 @@
             onclick={reminder.toggle}
             disabled={reminder.toggling}
             class="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-colors {reminder.subscribed
-              ? 'text-cn-ink bg-amber-600 hover:bg-amber-700'
-              : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
+              ? 'text-on-accent bg-accent hover:bg-accent-hover'
+              : 'bg-amber-warn/20 text-amber-warn-text hover:bg-amber-warn/30'}"
           >
             {#if reminder.subscribed}
               <BellOff size={13} />{m.form_view_reminder_active()}
@@ -876,7 +876,7 @@
     <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
     {#if onlinePaymentPaused && !submitted}
       <div
-        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn mt-4 rounded-2xl border px-4 py-3 text-sm"
+        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text mt-4 rounded-2xl border px-4 py-3 text-sm"
         role="status"
       >
         <p class="font-semibold">{m.form_view_payments_paused_title()}</p>
@@ -982,11 +982,11 @@
     {/if}
 
     {#if paymentPending}
-      <p class="text-amber-warn mt-2 text-center text-sm font-medium">
+      <p class="text-amber-warn-text mt-2 text-center text-sm font-medium">
         {m.form_view_payment_pending_note()}
       </p>
     {:else if paymentRetry && !submitted}
-      <p class="text-amber-warn mt-2 text-center text-sm font-medium" role="status">
+      <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
         {paymentRetry === 'declined'
           ? m.form_view_payment_declined_note()
           : m.form_view_payment_ended_note()}

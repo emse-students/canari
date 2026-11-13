@@ -4,6 +4,8 @@
 #import "KeyboardMediaBridge.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
+#import <CoreMotion/CoreMotion.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
@@ -388,6 +390,354 @@ static void CanariObserveTheme(void) {
   NSLog(@"[CanariIOS] listening for the app theme");
 }
 
+/// WHICH WAY THE APP MAY TURN (owner, 2026-11-09; docs/wiki/frontend/screen-orientation.md). The
+/// iPhone is portrait everywhere except the video and camera screens, which ask through
+/// `webkit.messageHandlers.canariOrientation` (`screenOrientation.svelte.ts`):
+///
+/// - `portrait`: upright only - the boot's value, and what every page load posts.
+/// - `auto`: portrait and both landscapes. iOS rotates by the accelerometer and ALREADY honours the
+///   rotation lock for that, so nothing here reads the lock.
+/// - `landscape`: both landscapes, and a geometry request that turns the scene NOW - which iOS honours
+///   with the lock on (an app-requested orientation is not an auto-rotation).
+/// - `locked`: the scene's orientation NOW and no other, on an iPad too - a take or a live on air,
+///   recorded at one frame size. No geometry request: it is already there.
+///
+/// THE GATE IS tao's ROOT VIEW CONTROLLER. Info.plist lists the three orientations, so the scene may
+/// turn; what it actually allows is `TaoUIViewController -supportedInterfaceOrientations`, replaced
+/// below by the mask of the requested mode. The app delegate's `supportedInterfaceOrientationsForWindow:`
+/// is NOT used: tao's `AppDelegate` does not implement it, and UIKit reads which selectors a delegate
+/// answers when it is set - before any hook here could add one.
+///
+/// An iPad keeps tao's own mask (every orientation) for `portrait` and `auto`: it is a PC here, as an
+/// Android tablet is; only `landscape` and `locked` force it.
+static NSString *g_canariOrientationMode = @"portrait";
+static UIInterfaceOrientationMask g_canariOrientationMask = UIInterfaceOrientationMaskPortrait;
+/// Whether the mask binds an iPad too (`landscape`, `locked`).
+static BOOL g_canariOrientationForcedOnIpad = NO;
+
+typedef UIInterfaceOrientationMask (*CanariSupportedOrientationsIMP)(id, SEL);
+static CanariSupportedOrientationsIMP CanariOrigSupportedOrientations = NULL;
+
+static BOOL CanariIsPhone(void) {
+  return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+}
+
+static UIInterfaceOrientationMask CanariSupportedOrientations(id self, SEL _cmd) {
+  if (!CanariIsPhone() && !g_canariOrientationForcedOnIpad) {
+    return CanariOrigSupportedOrientations(self, _cmd);
+  }
+  return g_canariOrientationMask;
+}
+
+/// Replaces one method of tao's `TaoUIViewController` once, and returns the implementation it replaced
+/// (NULL while the class is not declared yet). tao declares the class when it builds the first window,
+/// inside `didFinishLaunching`, so the hooks are installed at the launch notification and retried at
+/// the scene's connection and at the first request. `class_addMethod` first, so a tao that stopped
+/// declaring the method itself gets ours ADDED rather than UIViewController's swizzled for every
+/// controller in the process; the replaced implementation is then UIViewController's, which is what a
+/// call to `super` would have run.
+static IMP CanariHookTaoController(SEL sel, IMP ours, NSString *what, NSString *where) {
+  Class cls = NSClassFromString(@"TaoUIViewController");
+  Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
+  if (method == NULL) {
+    NSLog(@"[CanariOrientation] TaoUIViewController not declared yet at %@ - %@ hook waits", where, what);
+    return NULL;
+  }
+  IMP replaced = class_addMethod(cls, sel, ours, method_getTypeEncoding(method))
+                     ? method_getImplementation(method)
+                     : method_setImplementation(method, ours);
+  NSLog(@"[CanariOrientation] %@ hook installed on TaoUIViewController at %@", what, where);
+  return replaced;
+}
+
+/// THE SIDES' SAFE AREA IS REPUBLISHED WHEN UIKIT SAYS IT CHANGED, AND THEN ONLY. In landscape the notch
+/// is on a SIDE, and WebKit reports every `env(safe-area-inset-*)` as 0 in this WebView, so the page
+/// learns the sides from `CanariPublishSafeAreaInsets` alone. `viewSafeAreaInsetsDidChange` on tao's
+/// root controller is called by UIKit's layout pass once the turned bounds and the new insets are in
+/// place - synchronously, with the values final, where a scene-geometry observer fires before the
+/// layout and needed a hop to the next run-loop turn that proved nothing about ordering.
+typedef void (*CanariSafeAreaDidChangeIMP)(id, SEL);
+static CanariSafeAreaDidChangeIMP CanariOrigSafeAreaDidChange = NULL;
+
+static void CanariSafeAreaDidChange(id self, SEL _cmd) {
+  CanariOrigSafeAreaDidChange(self, _cmd);
+  UIEdgeInsets insets = ((UIViewController *)self).view.safeAreaInsets;
+  NSLog(@"[CanariOrientation] safe area changed: top %.0f pt, left %.0f pt, bottom %.0f pt, right %.0f pt - republished",
+        insets.top, insets.left, insets.bottom, insets.right);
+  CanariPublishSafeAreaInsets();
+}
+
+/// Installs both hooks on tao's controller, each once: the orientation mask and the safe-area change.
+static void CanariInstallOrientationHook(NSString *where) {
+  if (CanariOrigSupportedOrientations == NULL) {
+    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)CanariHookTaoController(
+        @selector(supportedInterfaceOrientations), (IMP)CanariSupportedOrientations,
+        @"supported-orientations", where);
+  }
+  if (CanariOrigSafeAreaDidChange == NULL) {
+    CanariOrigSafeAreaDidChange = (CanariSafeAreaDidChangeIMP)CanariHookTaoController(
+        @selector(viewSafeAreaInsetsDidChange), (IMP)CanariSafeAreaDidChange, @"safe-area", where);
+  }
+}
+
+/// Applies a mode the page asked for. One line per change; an unknown value is logged and ignored.
+static void CanariApplyOrientation(NSString *mode) {
+  UIInterfaceOrientationMask mask;
+  if ([mode isEqualToString:@"portrait"]) {
+    mask = UIInterfaceOrientationMaskPortrait;
+  } else if ([mode isEqualToString:@"auto"]) {
+    mask = UIInterfaceOrientationMaskAllButUpsideDown;
+  } else if ([mode isEqualToString:@"landscape"]) {
+    mask = UIInterfaceOrientationMaskLandscape;
+  } else if ([mode isEqualToString:@"locked"]) {
+    // The mask of the ONE orientation on screen (`UIInterfaceOrientationMask` is `1 << orientation`).
+    UIInterfaceOrientation now = CanariFindWebView().window.windowScene.effectiveGeometry.interfaceOrientation;
+    if (now == UIInterfaceOrientationUnknown) {
+      NSLog(@"[CanariOrientation] ERROR locked asked but the scene's orientation is unknown - %@ kept",
+            g_canariOrientationMode);
+      return;
+    }
+    mask = (UIInterfaceOrientationMask)(1 << now);
+  } else {
+    NSLog(@"[CanariOrientation] unknown mode ignored: %@", mode);
+    return;
+  }
+  CanariInstallOrientationHook(@"a request");
+  if ([mode isEqualToString:g_canariOrientationMode]) return;
+  if (CanariOrigSupportedOrientations == NULL) {
+    NSLog(@"[CanariOrientation] ERROR %@ asked but the hook is not installed - the app stays portrait", mode);
+    return;
+  }
+  NSLog(@"[CanariOrientation] %@ -> %@", g_canariOrientationMode, mode);
+  g_canariOrientationMode = mode;
+  g_canariOrientationMask = mask;
+  g_canariOrientationForcedOnIpad = [mode isEqualToString:@"landscape"] || [mode isEqualToString:@"locked"];
+  UIWindow *window = CanariFindWebView().window;
+  [window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+  // `auto` asks for no geometry: the accelerometer, under the lock, decides from here. `locked` is
+  // already where it stays. The two forced modes turn the scene now - with the lock on too.
+  if ([mode isEqualToString:@"auto"] || [mode isEqualToString:@"locked"]) return;
+  UIWindowScene *scene = window.windowScene;
+  if (scene == nil) {
+    NSLog(@"[CanariOrientation] no window scene - %@ waits for the next rotation", mode);
+    return;
+  }
+  UIWindowSceneGeometryPreferencesIOS *preferences =
+      [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+  [scene requestGeometryUpdateWithPreferences:preferences
+                                 errorHandler:^(NSError *error) {
+                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, error);
+                                 }];
+}
+
+@interface CanariOrientationHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariOrientationHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  CanariApplyOrientation([message.body isKindOfClass:[NSString class]] ? message.body : @"");
+}
+@end
+
+static void CanariObserveOrientation(void) {
+  static CanariOrientationHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariOrientationHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler
+                                                                  name:@"canariOrientation"];
+  CanariInstallOrientationHook(@"activation");
+  NSLog(@"[CanariOrientation] listening for the page's orientation (safe-area hook: %@)",
+        CanariOrigSafeAreaDidChange != NULL ? @"yes" : @"NO - the sides follow the next activation only");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE CAMERA IN FRONT - the volume buttons as its shutter, the phone's angle for its glyphs
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Owner, 2026-11-11 (docs/wiki/frontend/screen-orientation.md, "The camera keeps its layout"). The
+// page's camera posts `on` through `webkit.messageHandlers.canariCamera` while its live preview is in
+// front, `off` at its teardown and at every page load (`cameraHardware.svelte.ts`); the app leaving
+// the screen disarms it here too (`didEnterBackground`), so no stale flag survives. While armed:
+//
+// - THE VOLUME BUTTONS ARE THE SHUTTER through Apple's public API for camera apps,
+//   `AVCaptureEventInteraction` (AVKit, iOS 17.2+), added to the WebView: a press is `began`, the
+//   release `ended`, a system interruption `cancelled`, each sent to the page as
+//   `canari:camera-key`. The system does not change the volume while an enabled interaction receives
+//   the buttons. Before iOS 17.2 nothing is installed and the buttons stay the system's. Apple
+//   delivers these events only to an app that is using the camera; this app's camera is WebKit's
+//   (`getUserMedia`), so whether WebKit's capture counts is a reading owed on the iPhone 12.
+// - THE PHONE'S ANGLE comes from the accelerometer (`CMMotionManager`), which ignores the rotation
+//   lock as a camera must - `UIDevice.orientation` stops at the lock. Sent as `canari:device-angle`
+//   (`{degrees}`, clockwise from upright) when it moved by `kCanariCameraAngleStep` or more; the
+//   page turns it into a quarter turn with its own hysteresis.
+
+static BOOL g_canariCameraArmed = NO;
+static CMMotionManager *g_canariMotion = nil;
+/// The angle last sent, -1 until the first reading of this arming.
+static NSInteger g_canariCameraAngleSent = -1;
+/// The `AVCaptureEventInteraction` while armed on iOS 17.2+, nil otherwise.
+static id<UIInteraction> g_canariCaptureInteraction = nil;
+static const NSInteger kCanariCameraAngleStep = 10;
+
+static void CanariPushCameraEvent(NSString *name, NSString *detail) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariCamera] %@ with no WebView - dropped", name);
+    return;
+  }
+  NSString *js = [NSString
+      stringWithFormat:@"window.dispatchEvent(new CustomEvent('%@',{detail:%@}));", name, detail];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, error);
+              }
+            }];
+}
+
+/// The phone's clockwise angle from upright, 0-359, from the accelerometer's gravity (x to the right
+/// edge, y to the top edge; upright reads y = -1). -1 when the phone lies flat: no angle to read.
+static NSInteger CanariDeviceAngleFromGravity(double x, double y) {
+  if (sqrt(x * x + y * y) < 0.5) return -1;
+  NSInteger angle = (NSInteger)lround(atan2(x, -y) * 180.0 / M_PI);
+  return ((angle % 360) + 360) % 360;
+}
+
+/// Whether `now` moved enough from `last` (-1: nothing sent yet) to be told; the twin of Android's
+/// `angleWorthSending` (CameraHardware.kt).
+static BOOL CanariCameraAngleWorthSending(NSInteger last, NSInteger now) {
+  if (now < 0) return NO;
+  if (last < 0) return YES;
+  NSInteger d = ((now - last) % 360 + 360) % 360;
+  return MIN(d, 360 - d) >= kCanariCameraAngleStep;
+}
+
+/// Installs the volume buttons' interaction. NO only when it SHOULD be installed and could not be
+/// (no WebView yet): the caller then stays disarmed, so the page's next `on` tries again. YES once
+/// installed, and on iOS before 17.2, where there is nothing to install.
+static BOOL CanariInstallCaptureInteraction(void) {
+  if (@available(iOS 17.2, *)) {
+    WKWebView *webView = CanariFindWebView();
+    if (webView == nil) {
+      NSLog(@"[CanariCamera] ERROR asked to arm with no WebView: stays disarmed, the volume buttons stay the system's");
+      return NO;
+    }
+    AVCaptureEventInteraction *interaction =
+        [[AVCaptureEventInteraction alloc] initWithEventHandler:^(AVCaptureEvent *event) {
+          NSString *phase = nil;
+          switch (event.phase) {
+            case AVCaptureEventPhaseBegan:
+              phase = @"down";
+              break;
+            case AVCaptureEventPhaseEnded:
+              phase = @"up";
+              break;
+            case AVCaptureEventPhaseCancelled:
+              phase = @"cancel";
+              break;
+          }
+          if (phase == nil) {
+            NSLog(@"[CanariCamera] capture event of unknown phase %ld - ignored", (long)event.phase);
+            return;
+          }
+          NSLog(@"[CanariCamera] volume button %@: the camera's shutter", phase);
+          CanariPushCameraEvent(@"canari:camera-key",
+                                [NSString stringWithFormat:@"{phase:'%@'}", phase]);
+        }];
+    [webView addInteraction:interaction];
+    g_canariCaptureInteraction = interaction;
+    NSLog(@"[CanariCamera] AVCaptureEventInteraction installed on the WebView");
+    return YES;
+  } else {
+    NSLog(@"[CanariCamera] iOS before 17.2: no AVCaptureEventInteraction, the volume buttons stay the system's");
+    return YES;
+  }
+}
+
+static void CanariRemoveCaptureInteraction(void) {
+  if (g_canariCaptureInteraction == nil) return;
+  UIView *view = g_canariCaptureInteraction.view;
+  [view removeInteraction:g_canariCaptureInteraction];
+  g_canariCaptureInteraction = nil;
+  NSLog(@"[CanariCamera] AVCaptureEventInteraction removed");
+}
+
+static void CanariStartCameraAngle(void) {
+  if (g_canariMotion == nil) g_canariMotion = [CMMotionManager new];
+  if (!g_canariMotion.accelerometerAvailable) {
+    NSLog(@"[CanariCamera] no accelerometer: the glyphs stay upright");
+    return;
+  }
+  g_canariCameraAngleSent = -1;
+  // A sampling rate, not a correctness clock: what is sent is decided by the angle alone.
+  g_canariMotion.accelerometerUpdateInterval = 0.1;
+  [g_canariMotion
+      startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue]
+                           withHandler:^(CMAccelerometerData *data, NSError *error) {
+                             if (error != nil) {
+                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", error);
+                               return;
+                             }
+                             if (!g_canariCameraArmed || data == nil) return;
+                             NSInteger angle = CanariDeviceAngleFromGravity(data.acceleration.x,
+                                                                           data.acceleration.y);
+                             if (!CanariCameraAngleWorthSending(g_canariCameraAngleSent, angle)) return;
+                             g_canariCameraAngleSent = angle;
+                             CanariPushCameraEvent(@"canari:device-angle",
+                                                   [NSString stringWithFormat:@"{degrees:%ld}", (long)angle]);
+                           }];
+}
+
+/// Arms or disarms the volume shutter and the angle together; one line per change. Main thread.
+static void CanariApplyCameraArmed(BOOL on, NSString *why) {
+  if (on == g_canariCameraArmed) return;
+  if (on) {
+    // ARMED ONLY ONCE THE INTERACTION IS IN PLACE: a flag set without it would claim the buttons
+    // while the system still owns them, and refuse the page's next `on` as a repeat.
+    if (!CanariInstallCaptureInteraction()) return;
+    g_canariCameraArmed = YES;
+    NSLog(@"[CanariCamera] armed by %@", why);
+    CanariStartCameraAngle();
+  } else {
+    g_canariCameraArmed = NO;
+    NSLog(@"[CanariCamera] disarmed by %@", why);
+    CanariRemoveCaptureInteraction();
+    [g_canariMotion stopAccelerometerUpdates];
+  }
+}
+
+@interface CanariCameraHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariCameraHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  NSString *state = [message.body isKindOfClass:[NSString class]] ? message.body : @"";
+  if ([state isEqualToString:@"on"]) {
+    CanariApplyCameraArmed(YES, @"the page");
+  } else if ([state isEqualToString:@"off"]) {
+    CanariApplyCameraArmed(NO, @"the page");
+  } else {
+    NSLog(@"[CanariCamera] unknown state '%@' ignored", state);
+  }
+}
+@end
+
+static void CanariObserveCamera(void) {
+  static CanariCameraHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariCameraHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariCamera"];
+  NSLog(@"[CanariCamera] listening for the page's camera");
+  // A page that posted before this registration was heard by nobody: it says again what it holds.
+  CanariPushCameraEvent(@"canari:camera-bridge", @"null");
+}
+
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
 /// near the face only while `UIDevice.proximityMonitoringEnabled` is set, and a WebView never sets it.
 /// The page posts a boolean through `webkit.messageHandlers.canariProximity` (`iosCallProximity.ts`):
@@ -565,8 +915,10 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 /// The inset is the window's bottom safe area MINUS the part of it the WebView no longer reaches,
 /// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
-/// Re-read at every activation (a reload of the page loses the property) and after every keyboard
-/// resize; portrait only on iPhone, so there is no rotation to follow.
+/// Re-read at every activation (a reload of the page loses the property), after every keyboard
+/// resize, and at every change of the root controller's safe area (`CanariSafeAreaDidChange`: the video
+/// and camera screens rotate since 2026-11-09, and then the notch's side is published as
+/// `--safe-area-inset-left/right`).
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
 /// end of the initial load - syslog showed 34 pt published and the page still read 0).
@@ -588,6 +940,8 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 
 static void CanariPublishSafeAreaInsets(void) {
   static CGFloat published = -1;
+  static CGFloat publishedLeft = -1;
+  static CGFloat publishedRight = -1;
   static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
   UIWindow *window = webView.window;
@@ -605,11 +959,18 @@ static void CanariPublishSafeAreaInsets(void) {
   // starts below. With the page edge to edge (CanariApplyEdgeToEdge) the frame starts at the screen's
   // top, so that is the status bar's whole height.
   CGFloat top = MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)));
+  // The SIDES, for the video and camera screens that turn (screen-orientation.md): in landscape the
+  // notch is on the left or the right, and 0 in portrait. Same rule - the part the frame reaches.
+  CGFloat left = MAX(0.0, window.safeAreaInsets.left - MAX(0.0, CGRectGetMinX(inWindow)));
+  CGFloat right = MAX(0.0, window.safeAreaInsets.right -
+                               MAX(0.0, CGRectGetWidth(window.bounds) - CGRectGetMaxX(inWindow)));
   NSString *js = [NSString
       stringWithFormat:@"document.documentElement.style.setProperty('--safe-area-inset-bottom', '%.0fpx');"
                         "document.documentElement.style.setProperty('--safe-area-inset-top', '%.0fpx');"
+                        "document.documentElement.style.setProperty('--safe-area-inset-left', '%.0fpx');"
+                        "document.documentElement.style.setProperty('--safe-area-inset-right', '%.0fpx');"
                         "(document.documentElement.dataset.theme || '')",
-                       inset, top];
+                       inset, top, left, right];
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
               // The same round trip reads the theme the page started with: a page that loads after
@@ -618,9 +979,12 @@ static void CanariPublishSafeAreaInsets(void) {
                 CanariApplyTheme(result);
               }
             }];
-  if (inset != published) {
+  if (inset != published || left != publishedLeft || right != publishedRight) {
     published = inset;
-    NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
+    publishedLeft = left;
+    publishedRight = right;
+    NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt, left %.0f pt, right %.0f pt",
+          inset, top, left, right);
   }
 }
 
@@ -1001,6 +1365,8 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
+  CanariObserveOrientation();
+  CanariObserveCamera();
   CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
@@ -1077,6 +1443,7 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  CanariInstallOrientationHook(@"scene connection");
   // The scene now holds its window, on a background launch too; whether the WebView is in it yet
   // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
   CanariRegisterCallPageHandlers(@"scene connection");
@@ -1132,6 +1499,7 @@ void canari_ios_bootstrap(void) {
                    queue:nil
               usingBlock:^(__unused NSNotification *note) {
                 CanariInstallSceneLaunchUrlHook();
+                CanariInstallOrientationHook(@"launch");
               }];
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
                   object:nil
@@ -1160,6 +1528,9 @@ void canari_ios_bootstrap(void) {
                 g_isOnScreen = false;
                 g_resumePending = false;
                 g_resumeOpening = nil;
+                // No stale camera flag survives the background: the page re-arms it on its return
+                // if its camera is still live (`cameraHardware.svelte.ts`).
+                CanariApplyCameraArmed(NO, @"didEnterBackground");
                 CanariPublishForeground(nil);
               }];
   // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped

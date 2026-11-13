@@ -81,18 +81,13 @@ describe('one overlay for every modal', () => {
     expect(centresAPanel('<div class="fixed inset-0 z-(--z-nav-scrim) bg-black/10">')).toBe(false);
   });
 
-  it('names its layer instead of picking a number, and the names are rungs of the real ladder', () => {
+  it('names no rung: its z-index comes from the overlay stack, never a class', () => {
     const overlay = code(OVERLAY);
-    const css = readFileSync(join(dir, 'app.css'), 'utf8');
 
-    // Tailwind scans source TEXT, so `z-(--z-${layer})` would compile to nothing and the modal
-    // would sit at `auto`. The three literals being present is what lets the caller be dynamic.
-    for (const token of ['--z-sheet', '--z-modal', '--z-critical']) {
-      expect(overlay, `${token} must be spelled out for Tailwind to emit it`).toContain(
-        `z-(${token})`
-      );
-      expect(css, `${token} must be a real rung, not an invented name`).toContain(`${token}:`);
-    }
+    // REGISTERED, NOT RUNG-NAMED (2026-11-13): the modal takes its depth from the open order.
+    expect(overlay).toContain('useOverlayLayer');
+    expect(overlay).toContain('style:z-index={layer.z}');
+    expect(overlay).not.toMatch(/z-\(--z-/);
     // AND NO RAW NUMBER. `z-50` is how the agenda's dialog ended up under a toast.
     expect(overlay).not.toMatch(/class="[^"]*\bz-\d+\b/);
   });

@@ -8,6 +8,14 @@ let pageHideHandler: (() => void) | null = null;
 let foregroundUnsubscribe: (() => void) | null = null;
 
 /**
+ * A lifecycle flush is fire-and-forget, so its rejection stops here: the persister has already said
+ * it (`startFlight`), and a refusal - the version guard's, or a follower tab's, which never writes
+ * the MLS state - is said once where it is decided. Left uncaught, every backgrounding of a follower
+ * tab raised an unhandled rejection.
+ */
+function swallowLoggedFlushFailure(): void {}
+
+/**
  * Installs backgrounding hooks that flush an encrypted MLS checkpoint.
  * `visibilitychange` covers tab hide; `pagehide` covers navigation / bfcache on mobile.
  *
@@ -31,11 +39,11 @@ export function installMlsStatePersisterLifecycle(persister: MlsStatePersister):
 
   visibilityHandler = () => {
     if (document.visibilityState === 'hidden') {
-      void persister.flushEncrypted();
+      void persister.flushEncrypted().catch(swallowLoggedFlushFailure);
     }
   };
   pageHideHandler = () => {
-    void persister.flushEncrypted();
+    void persister.flushEncrypted().catch(swallowLoggedFlushFailure);
   };
 
   document.addEventListener('visibilitychange', visibilityHandler, { passive: true });
@@ -43,7 +51,7 @@ export function installMlsStatePersisterLifecycle(persister: MlsStatePersister):
   foregroundUnsubscribe = onAppForegroundChange((foreground) => {
     if (foreground) return;
     console.debug('[MLS] app sent to the background - flushing the encrypted checkpoint');
-    void persister.flushEncrypted();
+    void persister.flushEncrypted().catch(swallowLoggedFlushFailure);
   });
 }
 

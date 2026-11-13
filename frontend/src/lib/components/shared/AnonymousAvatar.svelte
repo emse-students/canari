@@ -28,7 +28,7 @@
 </script>
 
 <div
-  class="{shapeClasses} bg-cn-ink text-cn-yellow flex shrink-0 items-center justify-center shadow-sm select-none {sizeClasses}"
+  class="{shapeClasses} bg-cn-ink text-accent flex shrink-0 items-center justify-center shadow-sm select-none {sizeClasses}"
   title={m.post_anonymous_label()}
   aria-label={m.post_view_anonymous_label()}
 >

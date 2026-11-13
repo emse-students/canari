@@ -81,6 +81,14 @@ export type NativeMessageNotification = {
    * whichever arrives first (`ChannelBannerAuthor`, 2026-11-01).
    */
   authorProven: boolean;
+  /**
+   * WHETHER THE CONVERSATION IS A GROUP OR A SALON, from its type - the fact the push carries as
+   * `isGroup`. The name cannot answer it: a third of groups have none, and a group may be named
+   * like one of its members. The native builder draws a group's notification as a group and a
+   * direct message as one conversation with its sender (`ConversationShape`, 2026-11-11). `null`
+   * when the row carries no type, which the builder reads as "not said" (`notificationIsGroup`).
+   */
+  isGroup: boolean | null;
 };
 
 /**
@@ -109,6 +117,7 @@ export async function postNativeMessageNotification(
       serverAt: notification.serverAt,
       covers: notification.covers,
       authorProven: notification.authorProven,
+      isGroup: notification.isGroup,
     });
   } catch (e) {
     // NOT a fallback to the plain builder: reaching here means the one path failed, and the fix
@@ -143,4 +152,17 @@ export function notificationGroupName(
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
   return contactName || name;
+}
+
+/**
+ * Whether the conversation is a group, for the native builder - the push payload's `isGroup`, read
+ * from the row's type. A salon is a group. `null` when the row carries no type (a row written before
+ * the field existed): unknown, exactly as the push's absent `isGroup`, and the builder then falls back
+ * to the name rule rather than inventing an answer.
+ */
+export function notificationIsGroup(
+  conversationType: 'direct' | 'group' | 'channel' | undefined
+): boolean | null {
+  if (conversationType === undefined) return null;
+  return conversationType !== 'direct';
 }

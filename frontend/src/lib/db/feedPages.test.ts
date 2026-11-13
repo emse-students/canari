@@ -73,6 +73,19 @@ describe.each(backends)('%s stored feed pages', (_name, open) => {
     expect(await storage.getFeedPage('feed:all', KEY)).toBeNull();
     expect(await storage.deleteFeedPages()).toBe(0);
   });
+
+  it('deletes only the pages under a key prefix, leaving the device copies', async () => {
+    const storage = await open();
+    await storage.saveFeedPage('feed:all', { posts: [] }, KEY);
+    await storage.saveFeedPage('feed:foryou', { posts: [] }, KEY);
+    await storage.saveFeedPage('copy:bell', { items: [] }, KEY);
+    await storage.saveFeedPage('peer-names', { names: {} }, KEY);
+
+    expect(await storage.deleteFeedPages('feed:')).toBe(2);
+    expect(await storage.getFeedPage('feed:all', KEY)).toBeNull();
+    expect(await storage.getFeedPage('copy:bell', KEY)).not.toBeNull();
+    expect(await storage.getFeedPage('peer-names', KEY)).not.toBeNull();
+  });
 });
 
 describe('the sealed page holds no readable post text', () => {

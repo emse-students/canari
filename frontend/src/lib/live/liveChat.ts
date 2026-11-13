@@ -33,6 +33,7 @@
 import { m } from '$lib/paraglide/messages';
 import { Log } from '$lib/utils/Log';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { extractMentionUserIds } from '$lib/utils/mentions';
 import {
   LiveRefusalError,
   fetchLiveManifest,
@@ -482,7 +483,15 @@ export class LiveChatSession {
 
   private async deliver(clientId: string, sealed: string): Promise<LiveChatSendFailure | null> {
     try {
-      const stored = await this.deps.postMessage(this.liveId, clientId, sealed);
+      // The mentions travel in the clear beside the sealed text (the server cannot read it): they are
+      // read from the line I drew, so a retry names the same people as the first send.
+      const text = this.lines.find((l) => l.mine && l.clientId === clientId)?.text ?? '';
+      const stored = await this.deps.postMessage(
+        this.liveId,
+        clientId,
+        sealed,
+        extractMentionUserIds(text)
+      );
       this.sealedByClientId.delete(clientId);
       if (isTombstone(stored)) {
         // Hidden before my retry reached it: the line goes.

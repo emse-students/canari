@@ -88,7 +88,7 @@ describe('the post a publisher gets back carries the rights they actually hold',
       {} as FollowsService,
       associations as unknown as AssociationsService,
       { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
-      { release: jest.fn() } as unknown as PostMediaRetentionService
+      { release: jest.fn(), assertOwnMedia: jest.fn() } as unknown as PostMediaRetentionService
     );
     return { service, associations };
   }

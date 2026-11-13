@@ -152,7 +152,7 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if events.length === 0}
@@ -186,7 +186,7 @@
             <span class="relative z-10 leading-none">{new Date(ev.startsAt).getDate()}</span>
           </div>
           <div class="min-w-0 flex-1 space-y-1">
-            <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
+            <p class="text-cn-dark/80 text-xs font-semibold">
               <!-- A moderator sees who files a neutral event AND that readers see "Campus". -->
               {#if isNeutralEvent(ev)}
                 <span data-event-neutral>{m.calendar_neutral_label()}</span>
@@ -214,7 +214,7 @@
             <button
               type="button"
               onclick={() => (previewEvent = ev)}
-              class="text-text-main hover:text-cn-yellow block text-left font-bold transition-colors"
+              class="text-text-main hover:text-accent-text block text-left font-bold transition-colors"
             >
               {ev.title}
             </button>
@@ -301,7 +301,7 @@
       {m.admin_agenda_reject_modal_desc()}
     </p>
     <div class="space-y-1.5">
-      <span class="text-text-muted text-xs font-semibold tracking-wide uppercase"
+      <span class="text-text-muted text-xs font-semibold"
         >{m.admin_agenda_reject_reason_label()}</span
       >
       <Textarea

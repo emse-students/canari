@@ -7,10 +7,14 @@
  * being watched (`followVideoSound`).
  *
  * HAND-OVER AT THE SWIPE. `stop()` releases the preload's HOLD on the shared load
- * (`mediaBlobCache.ts`), it does not cancel bytes already on the wire: a request that has left the
- * gate's queue stays joinable, so the player's whole-blob read of the same reel joins it and loses
- * nothing. A STREAMED segmented video opens its own fetch (`openSegmentedStream`) instead, so the
- * preload's partial bytes are dropped there. A preload that has finished has its hold given back;
+ * (`mediaBlobCache.ts`). The pane that becomes current mounts its player in the SAME turn, and the
+ * player's whole-blob read of the same reel joins the load before its abandonment is decided, so it
+ * loses nothing. A reel the reader wheels PAST has no player joining: its last holder has left and
+ * the load is stopped on the wire (lead decision, 2026-11-11). A STREAMED segmented video opens its
+ * own fetch (`openSegmentedStream`) instead, so the preload's partial bytes are dropped there - but
+ * its HEAD, fetched ahead by the viewer
+ * (`reelAhead.ts`), is joined by both: this preload asks only for the rest of the file, and the
+ * stream reads its first segments from it. A preload that has finished has its hold given back;
  * the player retained the same cached URL first, and the pool keeps an unheld URL for minutes anyway.
  */
 import {
@@ -45,6 +49,13 @@ export function worthPreloading(ref: Pick<MediaRef, 'encoding' | 'size'>): boole
   return ref.encoding === 'segmented-v1' || ref.size <= REEL_PRELOAD_MAX_BYTES;
 }
 
+/**
+ * Where a preload had got when it was last looked at - read by the reel's outcome line when the
+ * reel becomes current (`reelViewOutcome.ts`): `ready` means the player takes the warm path,
+ * `in-flight` that it joins (whole read) or races (stream) a download already running.
+ */
+export type ReelPreloadState = 'in-flight' | 'ready' | 'failed';
+
 /** One reel's preload: started at once, ended by {@link ReelPreload.stop}. */
 export class ReelPreload {
   readonly #ref: MediaRef;
@@ -52,6 +63,8 @@ export class ReelPreload {
   readonly #abort = new AbortController();
   #held = false;
   #stopped = false;
+  /** Set before a stop only: a stop freezes it, so it answers "how far had it got when handed over". */
+  #state: ReelPreloadState = 'in-flight';
 
   /**
    * @param onReady called with the decrypted URL once the video is in the cache - the slide decodes
@@ -74,6 +87,7 @@ export class ReelPreload {
           return;
         }
         this.#held = true;
+        this.#state = 'ready';
         console.debug(`[reel-preload] ${ref.mediaId}: ready`);
         onReady?.(url);
       })
@@ -82,9 +96,15 @@ export class ReelPreload {
           console.debug(`[reel-preload] ${ref.mediaId}: aborted`);
           return;
         }
+        if (!this.#stopped) this.#state = 'failed';
         // The player will try again for itself and show the failure; this only loses the head start.
         console.warn(`[reel-preload] ${ref.mediaId}: failed`, err);
       });
+  }
+
+  /** How far the preload had got - frozen at {@link stop}. */
+  get state(): ReelPreloadState {
+    return this.#state;
   }
 
   /** Whether the video is in the cache, decrypted. */

@@ -59,7 +59,7 @@ describe('PostsService: a post write stores its mentions and tells nobody', () =
       {} as FollowsService,
       associations as unknown as AssociationsService,
       notifications as unknown as PostNotificationsService,
-      { release: jest.fn() } as unknown as PostMediaRetentionService
+      { release: jest.fn(), assertOwnMedia: jest.fn() } as unknown as PostMediaRetentionService
     );
     return { service, notifications, saved };
   }
