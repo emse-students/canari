@@ -926,7 +926,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
   signed-in session (set by the foreground load, cleared only when the native session ends -
   `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
-  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  Welcome; its rate is owed a measurement ([backlog](../backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -1033,7 +1033,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its
   own work package
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+  ([backlog](../backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A key-group frame is stored once (migration 034, 2026-10-22)
@@ -1536,7 +1536,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 `auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
 and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
 guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
-Lydia payment errors ([WP-LYDIA-1](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)), and anything in social-service, account
+Lydia payment errors ([WP-LYDIA-1](../backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)), and anything in social-service, account
 erasure, lives or reels.
 
 ## No platform-admin bypass on conversation data (owner, 2026-11-02)
@@ -1916,6 +1916,15 @@ returns a typed `PushRegistrationOutcome` rather than a boolean, and only the ex
 reports. Tests: `push.controller.unavailable.spec.ts` (server, including that it writes nothing) and
 `PushNotificationService.unavailable.test.ts` (client - in its own file, because `pushAttempted` is
 module state that latches).
+
+**A status the registration gets is an answer, and the ladder obeys it** (2026-11-13). Each attempt
+reads the session's CURRENT token (`PushAuth`, built once as `sessionPushAuth`), never one captured
+when the service started - the ladder lasts minutes and outlives an access token. A `401` is renewed
+once and sent again through the one 401 rule (`renewOn401.ts`); a `401` on the renewed token, or a
+session with no token left to renew, ends the ladder as `unauthorized` and sends NO report (it would
+be refused with the same bearer). Any other `4xx` ends it as `refused`, reported. Only a `5xx`, a
+transport failure or a renewal that got no verdict is retried. Tests:
+`PushNotificationService.refusal.test.ts`.
 
 #### Transport — single gateway (FCM)
 

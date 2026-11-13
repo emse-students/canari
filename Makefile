@@ -379,6 +379,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/backlog-fragments.test.mjs
+	@bun .github/scripts/tests/backlog-plan.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs

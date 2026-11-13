@@ -108,7 +108,7 @@ facts changed is **to be re-assessed by the owner**.
 ## 6. OPEN measures
 
 Ordered by the risk they lower. Each is a backlog line
-([backlog](../backlog.md#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16)).
+([backlog](../backlog.d/p2-gdpr-compliance-the-open-items-of-the-register-2026-10-16.md)).
 
 1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller); DEPLOYED in
    `v2.18.0` on 2026-11-01, as a stored-template design** (lots A1-A9; the A7 seed ran on

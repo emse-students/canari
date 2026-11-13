@@ -1,4 +1,6 @@
-## P2 - orphan devices refill the queue: the daily count is the watch, the hand procedure the cleanup
+## Reading owed - the orphan-device regrowth rate from two weeks of `[ORPHAN_DEVICES]`
+
+target: 1.7.0
 
 A device with queued rows, no session row, no push token, no ban and no life in 7 days drains
 nothing and keeps collecting fan-out while it holds seats. Four hand passes revoked 43, 118, 109 and

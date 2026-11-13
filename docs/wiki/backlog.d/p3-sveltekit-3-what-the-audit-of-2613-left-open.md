@@ -1,5 +1,7 @@
 ## P3 - SvelteKit 3: what the audit of #2613 left open (2026-10-28)
 
+target: 1.10.0
+
 An audit of the SvelteKit 3 upgrade (#2613) read kit 3.1.0 against 2.70.3. Its two P2s are fixed (a page crash: #2656; a `goto` to a path with no route: [architecture](../frontend/architecture.md#a-path-no-route-matches---apppath-for-code-gotoapppath-for-the-rest)). What it found and nothing has fixed, each with what would close it:
 
 1. **`version.pollInterval: 0` does not stop Kit 3's version check** (read in `client.js`: a `visibilitychange` to visible and every window `focus` call `updated.check()`, outside the poll). So every resume of a tab or of the app fetches `/_app/version.json` once; the comment in `kit.config.js` claimed the opposite and was corrected. Not a defect while the fetch is cheap - but it IS a second owner of the stale-build question `staleBuild.ts` answers. **Closes** when `staleBuild` reads `updated.current` (one owner) or the fetch is measured and accepted here.

@@ -1,4 +1,6 @@
-## P2 - the camera keeps its layout and the volume keys are its shutter (owner, 2026-11-11): built, compiled, readings owed
+## Reading owed - the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)
+
+target: 1.7.0
 
 The owner's two asks about the in-app camera (the reel tab and both composers' cameras,
 `CameraScreen` under `ReelCapture`), and how they were built:

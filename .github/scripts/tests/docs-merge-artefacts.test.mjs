@@ -11,7 +11,7 @@
  * 2. **A shipped backlog entry came back, then doubled** (#563-#565): git is right to resolve
  *    "they deleted entry A, we deleted entry B" as a union, which is why the answer is a gate.
  *
- * A duplicated heading in `backlog.md` is the mechanical signature of a merge having disagreed, and
+ * A duplicated entry title in `docs/wiki/backlog.d/` is the mechanical signature of a merge having disagreed, and
  * `CHANGELOG.md` has its own shape (`[Unreleased]` on top and EMPTY, every version once, descending,
  * every `changelog.d/` fragment opening with `### `).
  *
@@ -76,24 +76,27 @@ check(
 
 console.log('the backlog holds what is LEFT, and a duplicate heading says a merge disagreed:');
 
-const backlogHeadings = read('docs/wiki/backlog.md')
-  .split('\n')
-  .map((line, i) => ({ text: line.trim(), n: i + 1 }))
-  .filter(({ text }) => /^#{2,4} /.test(text));
+// Since 2026-11-13 the backlog is one file per entry (`docs/wiki/backlog.d/`), so a merge that kept
+// both sides of a deletion no longer doubles a heading inside one file: it leaves two FILES with one
+// title (an entry re-created under another name). The title is what is policed, across the files.
+const FRAGMENTS = 'docs/wiki/backlog.d';
+const backlogHeadings = readdirSync(join(ROOT, FRAGMENTS))
+  .filter((f) => f.endsWith('.md') && f !== 'README.md')
+  .map((f) => ({ text: read(`${FRAGMENTS}/${f}`).split('\n')[0].trim(), n: f }));
 
 assert('finds the headings it is meant to police', backlogHeadings.length > 50);
 
 {
-  // An entry is written once, by hand, and deleted the day it ships. Two identical headings is
+  // An entry is written once, by hand, and deleted the day it ships. Two identical titles is
   // never a choice somebody made - it is a resolution that kept both sides of a deletion.
   const seen = new Map();
   const duplicates = [];
   for (const { text, n } of backlogHeadings) {
     const first = seen.get(text);
-    if (first !== undefined) duplicates.push(`backlog.md:${n} repeats the heading from :${first}`);
+    if (first !== undefined) duplicates.push(`backlog.d/${n} repeats the title of backlog.d/${first}`);
     else seen.set(text, n);
   }
-  check('no heading twice in docs/wiki/backlog.md', duplicates);
+  check('no two backlog entries share a title', duplicates);
 }
 
 console.log('the changelog files work under the version that shipped it:');

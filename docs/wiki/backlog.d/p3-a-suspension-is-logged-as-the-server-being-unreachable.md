@@ -1,5 +1,7 @@
 ## P3 - On Android, work cut by the OS suspension is logged as the server being unreachable (1.6.8 logs, 2026-11-09)
 
+target: 1.10.0
+
 About 5 s after `App in background - connection paused`, requests still in flight are cut by the OS
 suspension and fail in transport. Each is then reported as if the server had been the problem, in one
 log: `[CONNECTIVITY] server unreachable` (33), `[PENDING] ... UNDRAINED` (28), `[SYNC] user group list

@@ -5,7 +5,7 @@ Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 
 (shown once, "Ajouter mon anniversaire" opening the section, gone after "Passer" and a cold
 restart); the settings PARTIAL (the "counts from tomorrow" note and no ring on the day of the save
 seen, the locked state not, since a same-day correction is accepted by design). The readings still
-owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else); the GDPR row is C26 of the
+owed are an entry of [the readings owed](plan.md#readings-owed); the GDPR row is C26 of the
 [register](compliance/register-of-processing.md), whose public face is `/legal/privacy`.
 
 ## The four decisions

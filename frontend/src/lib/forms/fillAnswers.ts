@@ -283,6 +283,23 @@ export function visibleAnswers(visible: FormItem[], selections: Selections): Sel
 }
 
 /**
+ * What a CHANGED answer sends (forms.md, "A respondent changes their own answer"): the visible
+ * answers less the LOCKED questions, the ones that set the price. The server keeps those from the
+ * stored answer whatever is sent, and refuses one sent changed - so they are left out rather than
+ * re-sent through a read-back that could spell them differently.
+ */
+export function editedAnswers(
+  visible: FormItem[],
+  selections: Selections,
+  lockedItemIds: readonly string[]
+): Selections {
+  const locked = new Set(lockedItemIds);
+  return Object.fromEntries(
+    Object.entries(visibleAnswers(visible, selections)).filter(([id]) => !locked.has(id))
+  );
+}
+
+/**
  * The selections to show for an answer read back from the server: its values over the empty shape
  * each question starts from. A stored grid holds only its answered rows (`visibleAnswers`), and a
  * row's input binds to its key, so the missing rows are seeded again here.

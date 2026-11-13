@@ -111,6 +111,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       // Payments are routed and ready: what is under test is the rank, not the routing.
       pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
       activePaymentProvider: () => Promise.resolve('lydia'),
+      // No bridge here: the proof of an issued request is a no-op.
+      associationsService: { noteLydiaRequestIssued: () => Promise.resolve() },
       routeWith: () =>
         Promise.resolve({
           ready: true,

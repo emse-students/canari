@@ -15,7 +15,13 @@ export type EventWriteSide = 'organiser' | 'partner';
 export const CALENDAR_PARTNER_ORGANISER_ONLY = 'CALENDAR_PARTNER_ORGANISER_ONLY';
 
 /** What a partner asked for that only the organiser may do - named in the log, never in the reply. */
-export type PartnerRefusedAction = 'date' | 'coOwnerIds' | 'delete' | 'linkedForm' | 'presentation';
+export type PartnerRefusedAction =
+  | 'date'
+  | 'coOwnerIds'
+  | 'delete'
+  | 'linkedForm'
+  | 'presentation'
+  | 'reach';
 
 /**
  * The side a caller writes from. A platform admin and a governing validator (`crossTier`) keep the
@@ -39,6 +45,7 @@ const PARTNER_REFUSED_WHAT: Record<PartnerRefusedAction, string> = {
   delete: 'it by deleting it',
   linkedForm: 'its linked form',
   presentation: 'how it is presented',
+  reach: 'its reach',
 };
 
 /** The ONE refusal of a partner doing what only the organiser may (403, typed at the throw). */

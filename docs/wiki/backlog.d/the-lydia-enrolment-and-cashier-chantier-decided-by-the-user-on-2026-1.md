@@ -1,5 +1,7 @@
 ## The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30
 
+target: 1.10.0
+
 **Context:** every Business is created by Canari's onboarding ([payments](../frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the first production enrolments (2026-10-23) left the manager with no next step, and the user asked for a step-by-step path nobody has to explain (2026-10-26). The 2026-10-30 homologation measurements (encoded signatures, `permissions` as an array, `api_token_id` = the Business private token, [lydia-api](../lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)) lift the "stays OFF until a sandbox probe passes" condition.
 
 **Enrolment, in steps:** (1) association details -> `business/create`; Canari keeps `api_token_id` as the Business private key (encrypted as today) and passes a webhook URL. (2) The Responsable - the person enrolling by default, changeable to another member - is added by `addcashier` with all rights, Lydia's SMS on. (3) "Activate at Lydia": install Lydia Pro with that number and upload the documents, explained on screen. (4) Waiting for validation: the UNSIGNED `BUSINESS_VALIDATED` webhook marks the Business ready (risk accepted by the owner: error 5 / 2701 on the first `request/do` reverts it), `BUSINESS_UNVALIDATED` changes nothing and notifies nobody (a WARN line), and the admin "Valider l'onboarding" stays as the backup - the same writer ([payments](../frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).

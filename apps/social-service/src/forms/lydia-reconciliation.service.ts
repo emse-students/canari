@@ -9,6 +9,7 @@ import { requestAccountOf } from './request-account';
 import { ProductCheckout } from '../associations/entities/product-checkout.entity';
 import { ProductsService } from '../associations/products.service';
 import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../associations/product-checkout';
+import { HELD_BUSINESSES_SQL } from '../associations/lydia-account-bridge';
 import {
   classifyCoreCallFailure,
   LYDIA_REFUSALS_FINAL,
@@ -618,12 +619,13 @@ export class LydiaReconciliationService {
 
   /**
    * Whether the Business an attempt was issued to (its `vendorToken` snapshot) holds a stored key -
-   * the same lookup core-service's verification makes (`lydiaCallbackKey`), asked in SQL so an
+   * the same lookup core-service's verification makes (`lydiaCallbackKey`, through
+   * `HELD_BUSINESSES_SQL`: an active Business or a bridge's standby one), asked in SQL so an
    * attempt that cannot be verified costs no call at all.
    */
   private businessKeyExists(exists: boolean): string {
-    return `${exists ? '' : 'NOT '}EXISTS (SELECT 1 FROM associations a
-      WHERE a."lydiaAccountId" = c."vendorToken" AND a."lydiaBusinessKeyCiphertext" IS NOT NULL)`;
+    return `${exists ? '' : 'NOT '}EXISTS (SELECT 1 FROM ${HELD_BUSINESSES_SQL} h
+      WHERE h."vendorToken" = c."vendorToken" AND h.sealed IS NOT NULL)`;
   }
 
   /** The read's state when its signature verified, else null and the logged reason it is not. */

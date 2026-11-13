@@ -2,6 +2,7 @@
 // Stub Tauri internals before any import so the CJS module picks them up.
 // Vitest v4 does not support vi.mock for CJS modules like @tauri-apps/api/core.
 // We therefore stub the global object that the CJS module uses internally.
+import { JWT_AUTH } from '../../test/pushAuth';
 const tauriInvokeStub = vi.fn((cmd: string) => {
   if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-123');
@@ -51,7 +52,7 @@ describe('startPushService - rotation de token FCM', () => {
       return Promise.resolve(undefined);
     });
 
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     // The Android token is tagged platform: 'android' for the FCM gateway.
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
@@ -62,7 +63,7 @@ describe('startPushService - rotation de token FCM', () => {
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).wake).toBe(true);
 
     // Re-call (foreground return) without token change -> no re-POST.
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 
     // FCM token rotated (onNewToken wrote the new one locally) -> re-call re-registers.
@@ -72,7 +73,7 @@ describe('startPushService - rotation de token FCM', () => {
       return Promise.resolve(undefined);
     });
 
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     const lastBody = JSON.parse((vi.mocked(globalThis.fetch).mock.calls[1][1] as any).body);
     expect(lastBody.token).toBe('tok-456');
@@ -87,7 +88,7 @@ describe('startPushService - rotation de token FCM', () => {
       return Promise.resolve(undefined);
     });
 
-    await startPushService('https://api', 'jwt', 'dev-ios');
+    await startPushService('https://api', JWT_AUTH, 'dev-ios');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body);
     expect(body.platform).toBe('ios');
@@ -98,7 +99,7 @@ describe('startPushService - rotation de token FCM', () => {
 
   it('desktop (ni Android ni iOS) est un noop : aucune registration', async () => {
     osPlatformStub.mockReturnValue('windows');
-    await startPushService('https://api', 'jwt', 'dev-desktop');
+    await startPushService('https://api', JWT_AUTH, 'dev-desktop');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -119,7 +120,7 @@ describe('startPushService - rotation de token FCM', () => {
       return Promise.resolve(undefined);
     });
 
-    await startPushService('https://api', 'jwt', 'dev-ipad');
+    await startPushService('https://api', JWT_AUTH, 'dev-ipad');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
       'ios'
