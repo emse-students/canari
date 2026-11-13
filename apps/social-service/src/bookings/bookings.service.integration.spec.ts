@@ -814,12 +814,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       // BOB has no right at all, CAROL holds it at position 2, DAN at position 1: DAN is first.
       await member(BOB, 0, 0);
       await member(CAROL, 1 << 11, 2);
-      expect((await service.getSpace(space.id, as(ALICE))).contact).toEqual({
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toEqual({
         userId: CAROL,
         displayName: 'Carol X',
       });
       await member(DAN, 1 << 11, 1);
-      expect((await service.getSpace(space.id, as(ALICE))).contact).toEqual({
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toEqual({
         userId: DAN,
         displayName: 'Dan X',
       });
@@ -827,9 +827,9 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
 
     it('is nobody when no row holds the right, and the owner of a personal space', async () => {
       const { space } = await setup({ name: 'contact none' });
-      expect((await service.getSpace(space.id, as(ALICE))).contact).toBeNull();
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toBeNull();
       const personal = await setup({ name: 'contact personal', associationId: null, ownerId: DAN });
-      expect((await service.getSpace(personal.space.id, as(ALICE))).contact).toEqual({
+      expect((await service.getSpace(personal.space.id, as(STRANGER))).contact).toEqual({
         userId: DAN,
         displayName: 'Dan X',
       });

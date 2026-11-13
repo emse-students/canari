@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { internalPath } from '$lib/utils/internalPath';
+  import Button from '$lib/components/ui/Button.svelte';
   import SpacePoster from '$lib/components/bookings/SpacePoster.svelte';
   import type { BookerSpace } from '$lib/bookings/api';
   import { spaceDashboardHref, spaceHref } from '$lib/bookings/routes';
@@ -90,9 +91,9 @@
           data-testid="space-contact"
         >
           <span>{m.bookings_space_contact_label({ name: contact.displayName })}</span>
-          <button type="button" class={button} onclick={writeToContact}>
+          <Button variant="secondary" size="compact" onclick={writeToContact}>
             <MessageCircle size={16} />{m.bookings_space_contact_button()}
-          </button>
+          </Button>
         </p>
       {/if}
     </div>
