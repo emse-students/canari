@@ -23,14 +23,109 @@ one `status 400` carrying `tauri://localhost/auth/callback` from a user agent ca
 
 ## Deployment
 
-**Two halves, deployed differently.** The STACK (`compose.yml`, `.env`) is deployed by hand: it runs
-from the stack's directory on the production host, and a change reaches production only when someone
-copies the file there and runs `docker compose up -d`, which recreates the containers whose
-configuration changed - sign-in is down while `server` restarts. The history, and the job
-`deploy-to-server` this section described until 2026-09-24 (it never existed), are in
-[the stack's README](../../../infrastructure/authentik/README.md). **The CONFIGURATION - flows,
-stages, prompts, policies, mappings, sources, providers, applications, the brand - is code since
-2026-09-30**, and every stable release applies it: [below](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30).
+**Three halves, deployed differently.** The VERSION - the authentik image of `server` and `worker` -
+is deployed by the release since 2026-11-13: [below](#the-release-deploys-miconnects-version-2026-11-13).
+**The CONFIGURATION - flows, stages, prompts, policies, mappings, sources, providers, applications,
+the brand - is code since 2026-09-30**, and every stable release applies it, after the version:
+[below](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30). The rest of the
+STACK (its compose file, its `.env` but for one line) is still deployed by hand: it runs from the
+stack's directory on the production host, and a change reaches production only when someone copies
+the file there and runs `docker compose up -d`. The history, and the job `deploy-to-server` this
+section described until 2026-09-24 (it never existed), are in
+[the stack's README](../../../infrastructure/authentik/README.md).
+
+## The release deploys MiConnect's version (2026-11-13)
+
+**Why** (owner, 2026-11-13: *"Pourquoi on a du authentik dans notre repo si ce n'est pour ça ?"*).
+Until that day nothing deployed the image: production's tag lived in the stack's own `.env`, while the
+image scan and `test-miconnect-blueprints` read this repository's `compose.yml`, and the two drifted -
+production ran `2026.8.0` while the repository said `2026.8.5`, so the scan judged an image production
+did not run and the blueprints were proved on a version production did not have.
+
+**The pin is a LITERAL line** in `compose.yml`, `image: ghcr.io/goauthentik/server:<version>`, the same
+on `server` and `worker` (the deploy refuses a pair that differs, or an interpolated one). It was
+`${AUTHENTIK_IMAGE:-...}:${AUTHENTIK_TAG:-...}`, which Dependabot cannot read; it reads it now, and an
+update is gated by `test-miconnect-blueprints`, which boots this file.
+
+**Two stacks on the shared host, one per release kind**, both by `infrastructure/authentik/deploy-stack.sh`:
+
+| Release | Stack (compose project) | Step |
+| --- | --- | --- |
+| pre-release (`serve-dev.yml`) | `miconnect-test`, its own instance and database on its own loopback port | "Put the test MiConnect on the pinned authentik version", before the blueprints' dry run against production; a failure keeps `dev-deployed` where it was, so the stable carrying that version is refused (gate 4) |
+| stable (`serve-prod.yml`) | `miconnect`, production | "Put MiConnect on the pinned authentik version", then "Apply MiConnect's blueprints", then "Check MiConnect after its version and its blueprints"; a failure keeps `prod-released` where it was |
+
+**What one run does, and what it decides from.** Every decision is a pure function of
+`release-lib.sh`, proved by `.github/scripts/tests/authentik-release.test.sh`, which also drives the
+script against a fake `docker`:
+
+1. **Decide from durable state, never a clock** (`ak_decide`): the images the `server` and `worker`
+   containers RUN (`.Config.Image`) and the `AUTHENTIK_TAG` line of the stack's `.env`. Both on the
+   pin and the line agreeing: nothing. Both on the pin, the line stale: the line is written, nothing
+   restarts. Anything older: an upgrade. A stack that is not running, a running tag that is not a
+   version, or a running version NEWER than the pin is REFUSED: authentik's Django migrations do not
+   run backwards, so a revert of a Dependabot bump is a database restore by hand, never a retag.
+2. **Everything that can fail without touching the stack, first**: the image is pulled, and
+   `docker compose config --images` with the new tag must name the pin - which proves the host's copy
+   of the compose file still reads `${AUTHENTIK_TAG}` and that its `.env` sets no other
+   `AUTHENTIK_IMAGE`. The migration count (`django_migrations`) is read.
+3. **A dump** of that stack's database (`pg_dump -Fc` in its postgres container), read back with
+   `pg_restore --list` before it is trusted, into the runner account's home
+   (`authentik-release-dumps/<project>/`, mode 0600, the three newest kept - the nightly backup keeps
+   history, this dump exists for THIS change's rollback).
+4. **The change**: the `.env` line rewritten IN PLACE (owner, mode and every other line kept), then
+   `docker compose up -d --no-deps server worker` - postgres keeps running. The stack's directory and
+   compose files are read from the running containers' compose labels, so no host path is configured
+   in this public repository.
+5. **The checks**: Docker's own health verdict for both containers - the image's `ak healthcheck`,
+   its start period and retries, a proof rather than a timer of ours; a restart counts as a failure,
+   because a crash loop resets the health to `starting` for ever - then both running the pin,
+   `/-/health/live/`, `/-/health/ready/` and the OIDC discovery document of the `canari` application
+   on the published loopback port. A 15-minute deadline is only a floor under the worst case, and
+   reaching it FAILS.
+6. **On a failure, an automatic rollback** (`ak_rollback_plan`): the old tag back in `.env`, and the
+   dump restored (`server` and `worker` stopped, the database dropped and recreated, `pg_restore`)
+   ONLY when the migration count moved or cannot be read - the old version cannot run on a newer
+   schema, and a restore is destructive, so it is gated on a failed check AND a moved schema, never on
+   the failure alone. The same checks then run on the old version, and the job FAILS either way
+   (exit 1: rolled back; exit 2: the rollback failed too, and the message says what to do by hand).
+
+**What it costs**: sign-in is down while `server` restarts (77 s on the test stack for
+2026.8.0 -> 2026.8.5, 2026-11-13, three migrations). A migration slower than the healthcheck's start
+period plus three intervals (~3.5 min) is judged unhealthy and rolled back: that is the image author's
+verdict, and a version that needs longer is upgraded by hand, from the same kind of dump.
+
+**The one precondition, refused by name while it is missing**: the runner account must read and write
+each stack's `.env` (compose reads the secrets there). Both files were `0600` and not the runner's on
+2026-11-13; the command is in [MIGRATION](../../../infrastructure/MIGRATION.md) and on the
+[owed table](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+
+**What it does NOT deploy, deliberately**: the compose file itself. The test stack's copy differs from
+this one by more than a tag (its project name, its public domain, and PostgreSQL 16 where production
+moved to 18 on 2026-10-31 - copying this file there would start it on an EMPTY `database_18`
+volume), and production's copy lacks the `MICONNECT_READER_TOKEN` line and the logging block (measured
+2026-11-13). Deploying the file is the next step once the test stack is on 18:
+[backlog](../backlog.d/miconnect-compose-file-is-not-deployed.md).
+
+### The daily report: does the host run what was released, and was MiConnect edited by hand?
+
+`scheduled.yml`, job `drift` (07:30 UTC, self-hosted, read-only), two reports that run independently:
+
+- **Images** (`infrastructure/deploy/image-drift-report.sh`): for `canari-prod` and `miconnect`
+  (pins from the `prod-released` tree), `canari-dev` and `miconnect-test` (from `dev-deployed`),
+  every third-party `image:` the compose file pins - PostgreSQL, Garage, Redis, nginx, authentik -
+  against `.Config.Image` of each running container, as a string (compose stores the reference as
+  written, digest included). `DRIFT` names running and pinned; a pinned service that does not run is
+  `ABSENT`. Read from the RELEASED trees, never `main`, so an update merged and not yet shipped is not
+  a drift. **First reading, 2026-11-13, before the release step existed**: everything on its pin but
+  production's `server` and `worker` (`2026.8.0` against `2026.8.5`) and the test stack's
+  `postgresql` (`16-alpine` against the 18 digest) - both real.
+- **Blueprints** (`infrastructure/authentik/blueprint-drift.sh`): the `prod-released` tree's
+  `apply-blueprints.sh dry-run` against production - one transaction, rolled back, the very call every
+  pre-release makes - red on any change. The released blueprints were applied by that stable, so a
+  change now is **an edit made by hand in the admin UI since, which the next stable will overwrite**.
+  That is the detector 2026-11-13 lacked: `1.6.11` overwrote a provider whose MinoWiki callbacks had
+  been edited by hand, and nothing had said the edit existed. Red means: write the edit into
+  `blueprints/` in a pull request, or undo it.
 
 ## The configuration is code: `infrastructure/authentik/blueprints/` (2026-09-30)
 
@@ -43,7 +138,8 @@ is mounted into or copied onto the host.
 | --- | --- | --- |
 | CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
-| a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
+| a stable release (`serve-prod.yml`, after the version step, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
+| the daily `drift` job (`scheduled.yml`) | `dry-run` of the RELEASED tree against production | a change is a hand edit the next stable would overwrite ([above](#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)) |
 
 **THE CI JOB TIMED OUT AT 25 MINUTES AND FAILED THREE PRs (2026-09-30), and the cause was the WAIT, not
 the blueprints.** The script waits for authentik's 31 OWN default blueprints before applying ours,

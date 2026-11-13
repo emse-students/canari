@@ -357,8 +357,9 @@ vulnerabilities:
     statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
 
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
-  # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
-  # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:
+  # An upstream image this repository cannot rebuild. Which one RUNS is the pin of
+  # infrastructure/authentik/compose.yml since 2026-11-13: the release deploys it (deploy-stack.sh),
+  # and the daily `drift` job reports a host that runs another. Measured on 2026.8.0, two kinds of entry:
   #   - FIXED by 2026.8.5: all 30 deleted on 2026-10-24, once the upgrade (#2315) and frontend-ssr's
   #     return to node:24-alpine left no scanned image reporting them;
   #   - still in 2026.8.5: no authentik release ships the fix yet. These remain.

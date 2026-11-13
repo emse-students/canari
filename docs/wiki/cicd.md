@@ -2172,6 +2172,35 @@ rebase had not caught up a day later. The backend block now has a `nestjs-securi
 advisory arrives as one pull request per service. A `DIRTY` Dependabot pull request is rebased by
 asking Dependabot for ONE (`@dependabot rebase` on that pull request), never by a sweep.
 
+### The release deploys MiConnect's version, and the host is asked what it runs (2026-11-13)
+
+**The owner's question was the specification**: *"Pourquoi on a du authentik dans notre repo si ce
+n'est pour ça ?"*. Nothing deployed the identity provider's image: production's tag lived in the
+stack's own `.env` on the host, the image scan read this repository's `compose.yml`, and they drifted
+(production on authentik `2026.8.0`, the repository on `2026.8.5`).
+
+| Release | What it does to MiConnect | Where |
+| --- | --- | --- |
+| pre-release | puts the TEST stack (`miconnect-test`) on the pinned version, then dry-runs the blueprints against production | `serve-dev.yml` |
+| stable | puts PRODUCTION (`miconnect`) on the pinned version, applies the blueprints, checks both | `serve-prod.yml`, before `prod-released` moves |
+
+ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container
+RUNS differs from the pin (durable state, never a clock), dumps the database first, checks Docker's
+health verdict, `/-/health/ready/` and the OIDC discovery after, and on a failure puts the old tag
+back - restoring the dump only when the schema moved - and FAILS the job. No new secret and no new
+route: the runner already lives on the host, as for `Apply MiConnect's blueprints`; what it needs
+is read and write access to each stack's `.env`, and it refuses by name without it. The mechanism,
+each decision and its test: [authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
+
+**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, two read-only reports.
+The third-party images every RELEASED compose file pins (production and MiConnect from
+`prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`) against what each
+container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
+any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
+did to a provider on 2026-11-13 with nothing to say so beforehand. No fifth visible workflow: it is
+one more job on the 07:30 slot
+([authentik](infrastructure/authentik.md#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)).
+
 ### Native and identity-provider manifests (2026-10-23)
 
 A dependency audit found three committed manifest trees nothing watched. What is declared now, and
@@ -2241,13 +2270,17 @@ does not (`ceiling_image_name`). The `dependency-ceiling` job's sparse checkout 
 ceiling reads the directory off the branch name, and one block per directory is what guarantees the
 branch carries it.
 
-**Two things this does not cover, owed a decision rather than code:**
+**The authentik server and worker images are watched since 2026-11-13**, and the decision this page
+used to leave to the operator was taken by the owner: the RELEASE deploys that image now
+([the release deploys MiConnect's version](#the-release-deploys-miconnects-version-and-the-host-is-asked-what-it-runs-2026-11-13)),
+so the repository is the truth and the `.env` override is the release's to write. The reference is
+literal (`image: ghcr.io/goauthentik/server:<version>`, Dependabot does not resolve an interpolated
+one), the docker-compose block of `infrastructure/authentik` carries a group `authentik` that keeps
+the server and worker lines in one pull request, and `test-miconnect-blueprints` gates it by booting
+the file.
 
-- **The authentik server and worker images are invisible to Dependabot.** They are written
-  `${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}` so the host's `.env`
-  can override them, and Dependabot does not resolve an interpolated reference. A literal reference
-  would be watched (and `test-miconnect-blueprints` boots it, so an update would be gated) but would
-  take the `.env` override away on a host this repository does not own. That is the operator's call.
+**One thing this does not cover, owed a decision rather than code:**
+
 - **`gen/android` may not resolve at all.** Its `settings.gradle` applies the git-ignored
   `tauri.settings.gradle`; if Dependabot's update job fails on it, the symptom is an absence of pull
   requests, exactly as for the two cargo directories below. Read the first Monday's update job.

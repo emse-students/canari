@@ -1235,8 +1235,9 @@ carries the entries, so no rebuild has been taken; the scheduled image scan name
 
 Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlisted by purl for
 `ghcr.io/goauthentik/server:2026.8.5`, the newest authentik release, which this repository does not
-build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
-default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
+build. Done when an authentik release carries 1.1.0-2+deb13u1 and the literal pin of
+`infrastructure/authentik/compose.yml` moves to it (Dependabot opens that pull request since
+2026-11-13, and the release deploys it); the image scan's purl retirement fails on that pull
 request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)). Re-read 2026-11-11: the entries are still allowlisted.
 
 **Also allowlisted on 2026-10-27 for the same image, same condition (a release that ships them):** dnspython 2.8.0 (`CVE-2026-114605`, fixed in 2.9.0), msgpack 1.2.1 (`CVE-2026-114613`, 1.2.3) and oauthlib 3.3.1 (`CVE-2026-49272`, 4.0.0). Each entry is scoped by purl and retires through the same check, so the bump pull request deletes all four together.
@@ -1419,6 +1420,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **raise `minClientVersion` (production and dev) each time both stores serve the latest update** - the one floor rule (owner, 2026-10-24); every item that waits on a floor waits on this gesture, the hardened v2 reader's writer flip (#2074) and a re-admitted member's window included | 1 setting per release | [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) |
 | **the DSI's go after it extends the shared host's root disk** - until then no new container is started there (2026-10-24) | blocked upstream | [host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24) |
 | **look at the A0 export of the Carte de la Vie Asso** once the lead has taken it (D11), and say whether the text sizes hold at print | 1 look | [the A0 row](#owed-a-verification-and-nothing-else), [carte-vie-asso](carte-vie-asso.md) |
+| **let the runner account read and write the two MiConnect `.env` files** (`miconnect` and `miconnect-test`), so the release can put each stack on the pinned authentik version: `sudo chgrp <runner account> .env && sudo chmod 0660 .env` in each stack's directory. Until then every pre-release and every stable FAILS at the MiConnect version step, naming this command. Our own stack's files: no install, no user, no group membership changes | 2 commands on the host | [MIGRATION](../../infrastructure/MIGRATION.md), [authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13) |
 | **delete MiConnect's unused "Local Docker connection"** (System > Outpost integrations, as an administrator; decided by the owner 2026-10-31) - its monitor fails every two minutes since the Docker socket left the worker | 1 click | [backlog.d](backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md) |
 
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
