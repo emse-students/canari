@@ -267,6 +267,10 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # Cloudflare Realtime's SFU app (WP-GC3): chat-delivery-service will proxy its sessions/tracks
+      # API for a group call past the mesh cap. Unset: the Cloudflare SFU leg is unavailable, no boot failure.
+      CLOUDFLARE_SFU_APP_ID: ${CLOUDFLARE_SFU_APP_ID:-}
+      CLOUDFLARE_SFU_APP_SECRET: ${CLOUDFLARE_SFU_APP_SECRET:-}
       # The iOS VoIP ring (APNs, direct): rendered from the DEV_APNS_VOIP_* secrets (env-manifest.tsv),
       # never production's names. Unset, a locked or killed iPhone is NOT rung and the service logs
       # `APNS_VOIP_* is not configured`. SANDBOX and TOPIC are deliberately NOT rendered on dev: a

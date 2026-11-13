@@ -67,7 +67,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
+        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh, sfu-probe]
       upstream_targets:
         description: "upstream only: replace the probed targets (name|url lines) - for a drill; with dry_run unchecked it really opens and closes issues"
         type: string
@@ -826,3 +826,46 @@ jobs:
           export COMMIT_NAME="${APP_SLUG}[bot]"
           export COMMIT_EMAIL="${uid}+${APP_SLUG}[bot]@users.noreply.github.com"
           bash .github/scripts/cargo-lock-refresh.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # Q4: DO E2E-ENCRYPTED CALL FRAMES CROSS CLOUDFLARE REALTIME'S RAW SFU INTACT? - ON DEMAND ONLY
+  #
+  # WP-GC3's first step (docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md):
+  # two headless Chromes running the app's own `encryption.worker.ts`, one pushing an Opus and a VP8
+  # track to a Cloudflare Realtime session, the other pulling them into a second session. PASS only
+  # on proof: frames decrypted by the receiver's transform, none undecryptable, the transforms not
+  # bypassed, and every received frame byte-identical to one the sender's transform wrote
+  # (`tools/sfu-e2ee-probe/README.md`).
+  #
+  # WHY HERE. The SFU app's id and secret are ENVIRONMENT secrets (the repository sits at GitHub's
+  # 100-secret cap, and they are write-only), so only a job that declares the environment can read
+  # them - and a fifth visible workflow needs a reason beyond "another topic". It is a question
+  # asked by hand, so it has no cron, and like `dev-reset` it is NOT part of `all`, which re-runs the
+  # reports. `deployment: false`: it reads the environment's secrets without drawing a deployment.
+  #
+  # `development`, NEVER `production`: the probe creates sessions on the DEV app only.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  sfu-probe:
+    name: Do E2E frames cross Cloudflare's SFU intact? (Q4)
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'sfu-probe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: development
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      # Both values are secrets, so the runner masks them in every log line; the probe reads them
+      # from its environment only, never prints them, and redacts them from Cloudflare's answers.
+      - name: Push E2E frames through Cloudflare's SFU and prove they open
+        env:
+          CLOUDFLARE_SFU_APP_ID: ${{ secrets.CLOUDFLARE_SFU_APP_ID }}
+          CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.CLOUDFLARE_SFU_APP_SECRET }}
+        run: bun tools/sfu-e2ee-probe/probe.mjs
