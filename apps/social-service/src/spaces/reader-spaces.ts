@@ -239,7 +239,7 @@ export function associationRulesReachSpaceMatchingSql(
  * an anonymous reader has no membership, so D21 has nothing to add. Both sides `null` is not a
  * selection and the caller must not splice it.
  *
- * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 164), read as `postReachesSpaceSql` reads a
+ * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 165), read as `postReachesSpaceSql` reads a
  * post's: the organiser's door matches only a space the event ticked
  * ({@link institutionReachHoldsSpaceSql}), and an event for STAFF only reaches no space at all - a
  * space's readers are students, whom its public refuses. An accepted co-organiser's door keeps its
@@ -496,7 +496,7 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
 }
 
 /**
- * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 162 for posts, 164 for calendar
+ * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 162 for posts, 165 for calendar
  * events - the same two columns, so `post` may be either row): post row `post` carries no
  * reach (`reachPublic` NULL: not an institution's post, or one written before the reach existed), or
  * its public is 'all', or 'students' and user row `user` is a student ({@link isStudentSql}), or
@@ -537,7 +537,7 @@ export function postPublicAdmitsViewerSql(post: string, viewer: string): string 
 
 /**
  * THE SPACES AN INSTITUTION TICKED (owner, 2026-11-10 for posts, migration 162; 2026-11-13 for
- * calendar events, migration 164): space row `space` is one that row `item` - a post or an
+ * calendar events, migration 165): space row `space` is one that row `item` - a post or an
  * `association_calendar_events` row, both carrying `"reachSpaces"` - reaches through its OWN
  * association. The item carries no reach (`reachSpaces` NULL: every space of the association's
  * audience, as before), or the space is one of its ticked pairs. Containment (`@>`) as `users.cursus`
@@ -982,7 +982,7 @@ export function sameCampusAsViewerSql(owner: string, viewer: string): string {
  * `association_calendar_event_co_owners` (it lives in `proposals`), so it adds nothing; one that
  * leaves takes its row and its audience with it, and the next read is recomputed without it.
  *
- * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 164) - the SAME two gates a post of it has,
+ * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 165) - the SAME two gates a post of it has,
  * built from the same fragments:
  * - its PUBLIC ({@link institutionReachAdmitsUserSql}) gates every door, and "students" closes the
  *   read-grant door ({@link institutionReachNotForStudentsSql}), as on a post. The organiser's

@@ -70,7 +70,7 @@ export class AssociationCalendarEvent {
   presentation: AssociationCalendarEventPresentation;
 
   /**
-   * THE REACH AN INSTITUTION CHOSE FOR THIS EVENT (owner, 2026-11-13; migration 164), the posts'
+   * THE REACH AN INSTITUTION CHOSE FOR THIS EVENT (owner, 2026-11-13; migration 165), the posts'
    * column of migration 162 in the same shape: the public in the ticked spaces - 'all', 'students'
    * or 'staff'. NULL on every event that is not an institution's, and on an institution event filed
    * before the reach existed (read as its whole audience, everyone). Set with {@link reachSpaces},
@@ -80,7 +80,7 @@ export class AssociationCalendarEvent {
   reachPublic: InstitutionReachPublic | null;
 
   /**
-   * The spaces an institution's event targets, inside the institution's audience (migration 164): a
+   * The spaces an institution's event targets, inside the institution's audience (migration 165): a
    * jsonb array of `{formation, campus}` pairs, NULL exactly when {@link reachPublic} is.
    */
   @Column({ type: 'jsonb', nullable: true, default: null })

@@ -79,6 +79,23 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
   passes the first stable carrying the reach, and this entry is then deleted.
 
+### A tolerated breakage: an institution event from a build older than the event reach (owner, 2026-11-13)
+
+The events twin of the entry above.
+
+- **What.** An institution's calendar event must carry a reach (migration 165,
+  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)):
+  the server answers a create without one `400 institution_reach_required`. A build that predates the
+  event reach sends none, so it **cannot file an event as an institution at all**; an association's
+  event is untouched, and so is an EDIT (absent leaves the stored reach alone).
+- **Who.** Native apps older than the first release carrying the event reach, for the people who
+  file an institution's events only; the web app is always current.
+- **Why accepted knowingly.** The posts' precedent: "no default" - a server that filled one in for
+  an old client would file an event to a reach nobody chose. The refusal is typed, and the old build
+  shows its generic deposit failure; an update or the web files it.
+- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
+  passes the first stable carrying the event reach, and this entry is then deleted.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its
@@ -635,6 +652,21 @@ of `LIST_POST_FEEDS`, its arm and `followedFeedSql`, the `me/suggested-posts` ro
 `PostsService.listSuggestedPosts`; the client's `RETIRED_FOLLOWED_FEED` mapping may go one floor later
 (a preference stored before 1.6.9 then falls back to the default tab).
 **Cost while it stands:** none - one arm nobody new asks, one route.
+
+### No date yet - an event form newer than its server - `eventReach` (2026-11-13)
+
+**Site:** `serverEventReach()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by
+`eventReachOffered` (`frontend/src/lib/calendar/eventReach.ts`) on the global agenda and an
+institution's page; the server half is `eventReach: true` in core-service's `GET /api/version`.
+**Why.** A stable ships both stores before production deploys, so for days a phone build that
+requires an institution event's reach talks to a social-service that answers the options route `404`
+and cannot store a reach: the picker would fail to load and "Déposer" would stay disabled - nobody
+could file an institution's event until production deployed.
+**What the client does.** It draws the reach picker, and requires a choice, only on an estate whose
+`/api/version` says `eventReach: true`; otherwise - an older server, or no answer yet - it files the
+event as before, with no picker and no reach. The `404` is never read as the signal.
+**Removal condition:** when no estate older than the release carrying `eventReach` is served (both
+estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
 
 ### No date yet - a form editor newer than its server (2026-11-08)
 

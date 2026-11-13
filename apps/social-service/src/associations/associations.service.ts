@@ -2730,26 +2730,21 @@ export class AssociationsService {
   }
 
   /**
-   * AN ANONYMOUS READ WITH NO SPACE SELECTION NEVER CARRIES A "STUDENTS" OR "STAFF" EVENT (owner,
-   * 2026-11-13): an association-only `.ics` link is signed for any signed-in reader, so it names no
-   * public, and an institution's event for students or for staff is withheld from it - as the post
-   * link preview refuses such a post. A space selection is judged by `eventReachesSpaceMatchingSql`
-   * (ticked spaces; a staff event reaches no space), a signed-in reader by their own predicate, and
-   * the one-event link (`signedEvent`, signed for that event, handed to a reader who saw it) is left
-   * whole. Spaces alone narrow an audience the way any association's does and do not withhold here.
+   * AN ANONYMOUS READ NEVER CARRIES A "STUDENTS" OR "STAFF" EVENT (owner, 2026-11-13; the lead's
+   * "same rules as posts", review of #3460): a post whose public is students or staff never reaches
+   * an anonymous reader (the link preview refuses it), and neither does an event. An association-only
+   * link and a campus/formation selection feed alike are signed over the SELECTION, not a reader, and
+   * are shareable, so neither names a public: both withhold such an event, whatever space it ticks.
+   * A signed-in reader is judged by their own predicate. The one-event link (`signedEvent`, signed
+   * for that event and handed out by a reader who saw it) is left whole, deliberately: it shares one
+   * event its holder could already read, as a forwarded invitation does.
    */
   private restrictAnonymousToPublicReach(
     qb: SelectQueryBuilder<AssociationCalendarEvent>,
-    opts: { viewer?: CalendarViewer; selection?: SpaceSelection; signedEvent?: boolean } | undefined
+    opts: { viewer?: CalendarViewer; signedEvent?: boolean } | undefined
   ): void {
     if (opts?.viewer?.userId?.trim() || opts?.viewer?.isGlobalAdmin || opts?.signedEvent) return;
-    if (
-      (opts?.selection?.campus ?? null) !== null ||
-      (opts?.selection?.formation ?? null) !== null
-    ) {
-      return;
-    }
-    this.logger.debug('[AGENDA] anonymous read without a space: events for a public withheld');
+    this.logger.debug('[AGENDA] anonymous read: events for students or staff withheld');
     qb.andWhere(`(e."reachPublic" IS NULL OR e."reachPublic" = 'all')`);
   }
 

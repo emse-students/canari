@@ -1,6 +1,6 @@
 /**
  * AN INSTITUTION'S EVENT REACH AGAINST A REAL POSTGRESQL (owner, 2026-11-13) - migrations 071, 078,
- * 132 and 164 applied, 164 on an `association_calendar_events` table that does not have the columns.
+ * 132 and 165 applied, 165 on an `association_calendar_events` table that does not have the columns.
  *
  * The rule: an institution chooses, at every event it files, the SPACES of its own audience the
  * event targets and the PUBLIC in them - everyone, the students, the staff - exactly as for its
@@ -31,6 +31,7 @@ import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import { AssociationsService } from './associations.service';
 import {
   INSTITUTION_REACH_CODES,
   institutionReachOptionsOffered,
@@ -42,6 +43,23 @@ import {
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
 } from '../spaces/reader-spaces';
+
+/** The service's own anonymous-read clause, run against a capturing query builder. */
+const restrictAnonymous = (
+  AssociationsService.prototype as unknown as {
+    restrictAnonymousToPublicReach: (
+      this: unknown,
+      qb: { andWhere: (sql: string) => void },
+      opts:
+        | {
+            viewer?: { userId?: string };
+            selection?: { campus: string | null; formation: string | null };
+            signedEvent?: boolean;
+          }
+        | undefined
+    ) => void;
+  }
+).restrictAnonymousToPublicReach;
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -98,7 +116,7 @@ const CASES: { name: string; reach: InstitutionReach | null; readers: Reader[] }
   },
 ];
 
-maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
+maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
   const schema = `institution_event_reach_it_${Math.random().toString(36).slice(2, 10)}`;
   let ds: DataSource;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
@@ -134,7 +152,7 @@ maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
-    // The events table WITHOUT the reach columns: migration 164 adds them, as on every estate.
+    // The events table WITHOUT the reach columns: migration 165 adds them, as on every estate.
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
@@ -156,7 +174,7 @@ maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
       '071_spaces.sql',
       '078_read_grants.sql',
       '132_read_grant_readers.sql',
-      '164_institution_event_reach.sql',
+      '165_institution_event_reach.sql',
     ]) {
       await q(migration(file));
     }
@@ -207,7 +225,7 @@ maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
     await ds.destroy();
   });
 
-  it('migration 164: every event starts with no reach, the CHECKs hold, a re-run is safe', async () => {
+  it('migration 165: every event starts with no reach, the CHECKs hold, a re-run is safe', async () => {
     const rows = await q(
       `SELECT count(*)::int AS n FROM association_calendar_events WHERE "reachPublic" IS NOT NULL`
     );
@@ -227,7 +245,7 @@ maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
         [E]
       )
     ).rejects.toThrow(/CHK_calendar_events_reach_spaces_shape/);
-    await q(migration('164_institution_event_reach.sql'));
+    await q(migration('165_institution_event_reach.sql'));
   });
 
   for (const c of CASES) {
@@ -291,6 +309,44 @@ maybe("an institution's event reach against PostgreSQL (migration 164)", () => {
     await setReach({ spaces: [ICM_SE], public: 'staff' });
     expect(await matches('ICM', SE)).toBe(false);
     expect(await matches(null, SE)).toBe(false);
+  });
+
+  it('a signed selection feed (anonymous) withholds a students event and a staff event, ticked space or not', async () => {
+    // THE SHIPPED COMPOSITION of an anonymous `.ics`/JSON feed per selection: the selection filter
+    // (`restrictToSelection`) AND what `restrictAnonymousToPublicReach` itself adds for this read -
+    // captured from the service's own method, so the clause run here is the one it ships.
+    const anonymousClauses = (opts: Parameters<typeof restrictAnonymous>[1]) => {
+      const added: string[] = [];
+      const qb = { andWhere: (sql: string) => added.push(sql) };
+      restrictAnonymous.call({ logger: { debug: () => undefined } }, qb, opts);
+      return added;
+    };
+    const inSelectionFeed = async (opts: Parameters<typeof restrictAnonymous>[1]) => {
+      const where = [
+        eventReachesSpaceMatchingSql('e', { formation: '$2', campus: '$3' }),
+        ...anonymousClauses(opts),
+      ].join(' AND ');
+      const rows = await q(
+        `SELECT ${where} AS v FROM association_calendar_events e WHERE e.id = $1`,
+        [E, 'ICM', SE]
+      );
+      return rows[0].v === true;
+    };
+    // The feed's own options: a signed selection, no reader.
+    const anonymous = { selection: { campus: SE, formation: 'ICM' } };
+    await setReach({ spaces: [ICM_SE], public: 'all' });
+    expect(await inSelectionFeed(anonymous)).toBe(true);
+    // Same rules as posts: a students or staff public never reaches an anonymous reader, even
+    // through the very space it ticked.
+    await setReach({ spaces: [ICM_SE], public: 'students' });
+    expect(await inSelectionFeed(anonymous)).toBe(false);
+    await setReach({ spaces: [ICM_SE], public: 'staff' });
+    expect(await inSelectionFeed(anonymous)).toBe(false);
+    // The signed ONE-event link is left whole (it shares one event its holder could read), and a
+    // signed-in reader is judged by their own predicate, not by this clause.
+    await setReach({ spaces: [ICM_SE], public: 'students' });
+    expect(anonymousClauses({ signedEvent: true })).toEqual([]);
+    expect(anonymousClauses({ viewer: { userId: 'si' } })).toEqual([]);
   });
 
   it('the event card on a post: unchanged without a reach, the event predicate with one', async () => {

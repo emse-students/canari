@@ -175,6 +175,17 @@ export function serverRankedFeeds(): boolean | null {
   return loadCachedServerInfo()?.rankedFeeds ?? null;
 }
 
+/**
+ * Whether this estate stores an institution event's reach (`eventReach`), as the last
+ * `/api/version` answer said - or `null` when no server has ever answered. The event form offers
+ * the reach only when it is `true` (docs/wiki/legacy-compatibility.md, "an event form newer than
+ * its server"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverEventReach(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.eventReach;
+  return loadCachedServerInfo()?.eventReach ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;

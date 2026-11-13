@@ -197,7 +197,7 @@ const oneOf =
   (column: string, values: string[], nullable = false) =>
   (row: Record<string, SqlValue>) =>
     nullable && !given(row[column]) ? true : values.includes(row[column] as string);
-/** An institution's ticked spaces (posts 162, events 164): absent, or a non-empty array. */
+/** An institution's ticked spaces (posts 162, events 165): absent, or a non-empty array. */
 const reachSpacesShapeHolds = (r: Record<string, SqlValue>) => {
   if (!given(r.reachSpaces)) return true;
   const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
@@ -295,7 +295,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "presentation IN ('association', 'neutral')",
     holds: oneOf('presentation', ['association', 'neutral'], true),
   },
-  // An institution event's reach (migration 164) mirrors the posts' columns; the seed writes none.
+  // An institution event's reach (migration 165) mirrors the posts' columns; the seed writes none.
   CHK_calendar_events_reach_public: {
     sql: `"reachPublic" IS NULL OR "reachPublic" IN ('all', 'students', 'staff')`,
     holds: oneOf('reachPublic', ['all', 'students', 'staff'], true),

@@ -116,6 +116,8 @@ export type ServerVersionInfo = {
   formDrafts: boolean;
   /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
   rankedFeeds: boolean;
+  /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
+  eventReach: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -171,6 +173,14 @@ export type AppVersionCheckResult = {
    * production deploys. `false` for every server older than the field.
    */
   rankedFeeds: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service stores an institution calendar event's
+   * reach and serves its options route. The event form draws the reach picker, and requires a
+   * choice, only when this is true: an older server answers the options route `404` and cannot store
+   * a reach, so requiring one there would block every institution's event - and a store build
+   * reaches phones before production deploys. `false` for every server older than the field.
+   */
+  eventReach: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -240,6 +250,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     publishQueue?: unknown;
     formDrafts?: unknown;
     rankedFeeds?: unknown;
+    eventReach?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -257,6 +268,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
     rankedFeeds: obj.rankedFeeds === true,
+    eventReach: obj.eventReach === true,
   };
 }
 
@@ -279,6 +291,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   publishQueue: boolean;
   formDrafts: boolean;
   rankedFeeds: boolean;
+  eventReach: boolean;
 } {
   return {
     version: info.version,
@@ -293,6 +306,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
     rankedFeeds: info.rankedFeeds,
+    eventReach: info.eventReach,
   };
 }
 /**
@@ -480,6 +494,7 @@ export function buildAppVersionCheckResult(
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
+    eventReach: serverInfo?.eventReach ?? false,
   };
 }
 

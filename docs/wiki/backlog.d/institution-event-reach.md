@@ -2,7 +2,7 @@
 
 The owner's decision of 2026-11-13: an institution chooses the spaces and the public of every
 calendar event it files, as it does for posts since `1.6.10`; one model, the posts' picker, refusals
-and chip. Built for `1.6.12` (migration 164, not held); the mechanism, the co-organiser decision and
+and chip. Built for `1.6.12` (migration 165, not held); the mechanism, the co-organiser decision and
 the proof are in [profiles-and-access](../profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13).
 
 ### Readings owed, on a pre-release
@@ -19,5 +19,9 @@ the proof are in [profiles-and-access](../profiles-and-access.md#an-institutions
 5. **A co-organised event**: the partner's members still see it, and the partner side shows no picker.
 6. **A post linking the event**: a reader the event's reach excludes sees the post without its event card.
 7. **The chip** on the event's detail names the public and the space, on both phones.
+8. **A signed campus `.ics`** (the agenda's subscribe link with a campus chosen) leaves out a
+   "Étudiants" and a "Personnel" event of a space it selects.
+9. **The version gate**: on an estate whose `/api/version` lacks `eventReach`, the form files an
+   institution's event with no picker (read on dev before its deploy, or by a stubbed answer).
 
-Closes when the seven are read, then this file is deleted.
+Closes when the nine are read, then this file is deleted.

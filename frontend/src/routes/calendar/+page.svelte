@@ -82,7 +82,7 @@
     FileDown,
   } from '@lucide/svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
-  import { institutionReachOffered } from '$lib/posts/institutionReach';
+  import { eventReachOffered } from '$lib/calendar/eventReach';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -464,7 +464,7 @@
     // files its events or validates them - which is what the server checks (`event-presentation.ts`).
     canSetPresentation: mayPresentNeutralOn(depositValues.targetAssociationId),
     // AN INSTITUTION'S EVENT CHOOSES ITS REACH (owner, 2026-11-13): "Au nom de" is an institution.
-    canSetReach: institutionReachOffered(reachOwner?.type),
+    canSetReach: eventReachOffered(reachOwner?.type),
   });
 
   /** Whether the viewer may file a neutral event on `associationId`: a BDE whose agenda they manage. */

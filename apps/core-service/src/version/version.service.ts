@@ -107,6 +107,16 @@ export type AppVersionResponse = {
    * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
    */
   rankedFeeds: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: an
+   * institution's calendar event carries a reach (migration 165, `GET
+   * /api/associations/:id/events/reach-options`). An older social-service answers the options route
+   * `404` and cannot store a reach, and a store build reaches phones before production deploys: the
+   * event form draws the reach picker, and requires it, only on an estate that says so. Always
+   * `true` from this release on (docs/wiki/legacy-compatibility.md, "an event form newer than its
+   * server").
+   */
+  eventReach: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -135,6 +145,7 @@ export class VersionService {
       publishQueue: true,
       formDrafts: true,
       rankedFeeds: true,
+      eventReach: true,
     };
   }
 }

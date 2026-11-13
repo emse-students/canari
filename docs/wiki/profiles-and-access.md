@@ -2840,7 +2840,7 @@ until both are chosen; the reach is editable after validation or publication, bo
 notification and does NOT send the event back to validation; and it is ONE model with posts - the
 same picker, the same refusals, the same chip, the post code factored rather than copied.
 
-**Schema - migration 164** (`164_institution_event_reach.sql`): `association_calendar_events` gains
+**Schema - migration 165** (`165_institution_event_reach.sql`): `association_calendar_events` gains
 the posts' two nullable columns, `"reachPublic"` and `"reachSpaces"`, with the same three CHECKs
 (added `NOT VALID`, then validated). NULL is every event that is not an institution's and every
 institution event filed before the migration: its whole audience, as before. No backfill. **Not
@@ -2878,12 +2878,26 @@ the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` 
    `partnerOrganiserOnlyRefusal('reach')`, and the form draws the picker on the organiser side only.
 
 **Every surface asks it**: the agenda lists and their filters, the event by id, the search, the
-`.ics` feeds (personal and signed; an anonymous association-only link withholds a `students` or
-`staff` event, a space selection follows `eventReachesSpaceMatchingSql`, a one-event signed link is
-left whole), the opening reminders (`eventOpeningSeenBySql`, asked when the followers are written AND
+`.ics` and JSON feeds (personal, judged by the reader's predicate; and the anonymous ones, see the
+policy below), the opening reminders (`eventOpeningSeenBySql`, asked when the followers are written AND
 again at the opening, so a narrowing in between drops a reader), the feed's event card and a post's
 linked event (`eventCardShownToViewerSql`: an event with a reach is shown only to a reader its own
 predicate admits; one without is unchanged).
+
+**Anonymous feeds - the same rules as posts (lead's decision, review of #3460, reversible).** A post
+whose public is `students` or `staff` never reaches an anonymous reader (the link preview refuses
+it), so neither does an event: every anonymous read - an association-only link AND a signed
+campus/formation selection feed, `.ics` or JSON - withholds an event whose public is `students` or
+`staff`, whatever space it ticks (`restrictAnonymousToPublicReach`). Those links are signed over the
+SELECTION, not a reader, and are shareable, so they cannot carry a public. A selection still narrows
+by `eventReachesSpaceMatchingSql` (the ticked spaces). **The signed ONE-event link is left whole, as
+intended**: it is minted for one event by a reader who saw it, and shares that event as a forwarded
+invitation would.
+
+**Version skew.** The event form offers the reach only on an estate that advertises `eventReach` in
+`/api/version` (`eventReachOffered`); an old app on a new server meets `400
+institution_reach_required` on an institution's create (accepted, the posts' precedent). Both are in
+[legacy-compatibility](legacy-compatibility.md).
 
 **The write**: `reach` on the event create and update routes, through `resolveInstitutionReachWrite`:
 mandatory on a create by an institution, refused on any other owner, and on an edit absent leaves
@@ -2906,13 +2920,16 @@ was touched (the posts' rule from the review of #3314). The four codes read as e
 
 `associations/institution-event-reach.integration.spec.ts` (real PostgreSQL; an institution on a
 whole campus, an association co-organising from another campus, readers of a ticked space, of an
-unticked space inside the audience, staff, members of both, an outsider): migration 164's CHECKs and
+unticked space inside the audience, staff, members of both, an outsider): migration 165's CHECKs and
 re-run; a reader of a ticked space sees the event; a reader of an unticked space inside the audience
 does not; the public gate (students, staff, all); an edit narrows at once and widens back; a space
 outside the audience opens nothing; the co-organiser door; the anonymous selection; the event card;
-the write's refusals and the options. `opening-reminders.integration.spec.ts` (11): a narrowed event's
+the write's refusals and the options; a signed selection feed withholding a `students` event (and a
+`staff` one) through the very space it ticked, the clause captured from the service's own method.
+`opening-reminders.integration.spec.ts` (11): a narrowed event's
 opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: with
 `institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
-always true, 11 of 11. The readings owed on a phone are in
+always true, 11 of 11; with the selection exemption put back in the anonymous clause, the
+selection-feed test fails. The readings owed on a phone are in
 [the backlog](backlog.d/institution-event-reach.md).
 

@@ -55,7 +55,7 @@
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
-  import { institutionReachOffered } from '$lib/posts/institutionReach';
+  import { eventReachOffered } from '$lib/calendar/eventReach';
   import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -151,7 +151,7 @@
     canSetPresentation: canPresentNeutral && formValues.targetAssociationId === associationId,
     // Only this institution's OWN events: one it co-organises is another owner's to reach.
     canSetReach:
-      institutionReachOffered(associationType) && formValues.targetAssociationId === associationId,
+      eventReachOffered(associationType) && formValues.targetAssociationId === associationId,
   });
 
   let showSubscribeModal = $state(false);
