@@ -2399,8 +2399,15 @@ runs on every change of the scroll view's offset and content size (KVO) and at t
 keyboard animation, puts an offset outside `[-inset.top, contentSize - bounds + inset.bottom]` back
 on its edge, and leaves a drag, its deceleration and its bounce to UIKit.
 
-Stateless on purpose - the target is recomputed from the superview's bounds on every event, so there is
-no remembered frame to restore and nothing that can drift. `UIKeyboardWillChangeFrame` alone covers
+**A rise from no keyboard is handed to the page first (2026-11-13).** Animating the frame on a rise
+drew the page one keyboard overlap lower and slid it up behind the keyboard, the composer hidden for
+~150 ms on the iPhone 12; the page now lays itself out for the keyboard (`window.canariImeTarget`, the
+contract Android uses) and the frame is set without animation once it has. Falls and height changes
+still ride the keyboard's curve ([keyboard-and-send-motion](keyboard-and-send-motion.md#5-ios-measured-on-the-iphone-12-2026-11-13)).
+
+The target is recomputed from the superview's bounds on every event, so there is no remembered frame
+to restore and nothing that can drift; the only state is the sequence that lets a late answer to a
+rise tell it was superseded. `UIKeyboardWillChangeFrame` alone covers
 appearing, disappearing, height changes and interactive dismissal: on the way out the end frame is
 off-screen, the intersection is empty, and the overlap is zero. One path, both directions.
 

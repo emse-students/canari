@@ -12,12 +12,20 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
   const native = readFileSync('src-tauri/gen/apple/Sources/canari/canari_ios.mm', 'utf8');
   const composer = readFileSync('src/lib/components/chat/ChatComposer.svelte', 'utf8');
 
-  it('runs in the keyboard animation completion, after the clamp', () => {
-    const completion = native.slice(native.indexOf('completion:^(__unused BOOL finished)'));
-    const clamp = completion.indexOf('CanariClampDocumentScroll(webView.scrollView)');
-    const report = completion.indexOf('CanariReportSettledKeyboardGeometry(webView)');
+  it('runs once every keyboard layout is in place, after the clamp', () => {
+    const settled = native.slice(native.indexOf('static void CanariKeyboardLayoutSettled('));
+    const body = settled.slice(0, settled.indexOf('\n}\n'));
+    const clamp = body.indexOf('CanariClampDocumentScroll(webView.scrollView)');
+    const report = body.indexOf('CanariReportSettledKeyboardGeometry(webView)');
     expect(clamp).toBeGreaterThan(-1);
     expect(report).toBeGreaterThan(clamp);
+    // Both ways a keyboard layout lands: the animated fall or height change, and the rise's snap.
+    const completion = native.slice(native.indexOf('completion:^(__unused BOOL finished)'));
+    expect(completion.slice(0, 200)).toContain('CanariKeyboardLayoutSettled(webView)');
+    const handOff = native.slice(native.indexOf('static void CanariHandKeyboardRiseToPage('));
+    expect(handOff.slice(0, handOff.indexOf('\n}\n'))).toContain(
+      'CanariKeyboardLayoutSettled(webView)'
+    );
   });
 
   it('reads both halves: UIKit offset and range, and the page scroll, viewport and composer', () => {

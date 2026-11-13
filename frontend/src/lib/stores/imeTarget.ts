@@ -1,13 +1,16 @@
 /**
- * THE KEYBOARD'S HEIGHT, TOLD BY THE ANDROID SHELL BEFORE THE WEBVIEW IS RESIZED FOR IT
- * (docs/wiki/frontend/keyboard-and-send-motion.md).
+ * THE KEYBOARD'S HEIGHT, TOLD BY THE NATIVE SHELL BEFORE THE WEBVIEW IS RESIZED FOR IT
+ * (docs/wiki/frontend/keyboard-and-send-motion.md) - Android's `MainActivity` and iOS's
+ * `canari_ios.mm` (`CanariHandKeyboardRiseToPage`), on one contract.
  *
  * Messenger lays its screen out for the keyboard on the first frame of the rise. The Android app
  * cannot by resizing: the WebView shows its last frame cropped to the new size until the page has
  * drawn again (128 ms, 8 frames on the Mi 9T, 2026-11-13), and the composer is cut off meanwhile.
  * So `MainActivity` tells the page the keyboard's height FIRST (`window.canariImeTarget`), the page
  * lays itself out for it inside the full-size WebView, and the padding lands once that frame is
- * drawn. This module is the page's half of that contract, kept pure for its tests.
+ * drawn. The iPhone shows the same defect in another shape - its WebView frame, animated with the
+ * keyboard, slid the page up BEHIND the keyboard (~150 ms, iPhone 12, 2026-11-13) - and takes the
+ * same cure. This module is the page's half of that contract, kept pure for its tests.
  */
 import type { ViewportMeasurement } from './keyboardViewport.svelte';
 

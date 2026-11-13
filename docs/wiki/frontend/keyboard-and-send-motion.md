@@ -171,9 +171,62 @@ the safe area: it is positioned in `ChatArea`'s root, inside the app shell that 
   gap` a different decision there.
 - **The fall still resizes before the page redraws** (100-117 ms measured). With the synced animation
   the keyboard now covers that band while it slides, as Messenger's covers its composer.
-- **iOS** is untouched: its native layer already resizes the WebView on every keyboard frame
-  (`CanariApplyKeyboardLayout`, [mobile](mobile.md)). The composer's dimensions and the send motion are
-  CSS and apply there too.
+- **iOS** had the rise defect in another shape and takes the same hand-off - section 5 below. Its
+  fall is left as it was. The composer's dimensions and the send motion are CSS and apply there too.
+
+## 5. iOS, measured on the iPhone 12 (2026-11-13)
+
+`1.6.11` TestFlight (dev), iOS 27.0.1, light theme, `canari-test-gamma` in a DM; Messenger in a
+test session, observe only, nothing sent. The store build's WebView is not inspectable
+(`get-task-allow` false, `webinspector` lists nothing), so the page was not sampled per frame:
+the screen was read from WDA's MJPEG stream (`mjpegScalingFactor` 25, a frame every 30-45 ms, so
+**one frame here is two to three of the display's**), the native side from `syslog live`
+(`[CanariIOS] keyboard overlap=301 -> webview height 543`). Positions are points, as the distance
+from where the thing finally rests. WDA freezes the stream while it delivers a tap, so the frames
+start with the keyboard already moving.
+
+**The keyboard opening, Canari** (`CanariApplyKeyboardLayout` animating the WebView frame on the
+keyboard's duration and curve):
+
+| frame (ms) | keyboard top still to travel | page content still to travel | web composer |
+| --- | --- | --- | --- |
+| 1251 | 240 | 275 | half covered |
+| 1288 | 148 | 269 | hidden behind the keyboard |
+| 1325 | 82 | 209 | hidden |
+| 1364 | 48 | 127 | hidden |
+| 1419 | 23 | 55 | half covered |
+| 1474 | 2 | 5 | visible, in place |
+
+On the first frame that moves, the page is ALREADY laid out for the keyboard (the video in the
+thread is already its keyboard-up size, and the native "+" twin, placed from the page's rects,
+stands at its final place) but it is DRAWN one keyboard overlap lower, then slides up 60-75 ms
+behind the keyboard. **The web composer is hidden behind the rising keyboard for four frames
+(~150 ms)** while the native "+" floats alone above it - the same shape as the reading of
+2026-10-11 on `v1.2.3-alpha.5` ([device-verification](../device-verification.md)), so it was never
+fixed. The native completion lands 478 ms after `UIKeyboardWillChangeFrame`. A second run gave the
+same picture. No band: the window's ground is `app.html`'s two literals, which are `--cn-bg` in
+both themes.
+
+**The keyboard opening, Messenger iOS**: the thread is at its final place on the first frame that
+moves, and the composer stands ABOVE the rising keyboard on every frame - 125, 87, 57, 42, then 35 pt
+between the field's centre and the keyboard's top - never covered.
+
+**The keyboard closing.** Canari: the page is drawn full height on the first frame after the
+keyboard starts down, and the keyboard slides off over the composer - Messenger Android's shape.
+Messenger iOS instead keeps its composer riding on the falling keyboard (a near-constant ~58 pt
+from the field's centre to the keyboard's top) and scrolls the thread with it. Left as it is: nothing is ever cut or hidden, and riding it would need
+the page to follow the keyboard per frame.
+
+**What changed (PR `feat/ios-keyboard-handoff`, on this branch).** A rise from no keyboard is
+handed to the page, as on Android: `CanariHandKeyboardRiseToPage` calls `window.canariImeTarget(301)`
+(the same `imeTarget.ts`), the page lays itself out for the keyboard inside the still full-size
+WebView, the script answers after two animation frames - by WebKit's ordering the layer tree the
+first frame committed reaches the app before an answer sent from the second, which is a proof of
+order, not a delay - and only then is the frame set, WITHOUT animation, since the page already is
+that picture. A newer keyboard change supersedes a pending rise (`g_keyboardChangeSeq`); a fall
+withdraws the target with `canariImeTarget(0)`; a page that does not take it is an `ERROR` line and
+the frame is set at once. Falls and height changes while open keep the animated frame.
+`iosKeyboardRiseHandoff.test.ts` reads the contract on both sides.
 
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
@@ -193,5 +246,19 @@ On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the 
    scroll under it. A pull-to-refresh reload with the keyboard up: the composer still lifts
    (`IME hand-off to <px> ended: the page started a new document`).
 
-And on the iPhone 12: the composer's dimensions and the send motion, which apply there unchanged, and
-the composer in landscape clear of the notch.
+And on the iPhone 12, a pre-release carrying both PRs (the store build cannot be inspected, so the
+MJPEG stream and the syslog are the instruments, as in section 5):
+
+5. Keyboard open in a DM, five times: syslog `keyboard overlap=301 -> webview height 543, handed to
+   the page first` then `keyboard rise #n: the page drew its keyboard layout in N ms`, and never the
+   `ERROR` line. In the frames, the web composer above the keyboard on every frame from the first one
+   that moves (no frame where it is hidden or the page is drawn lower), the native "+" beside its web
+   twin, no band, no cropped frame. N is the hand-off's cost: if it runs past the keyboard's first
+   ~50 ms the composer stands still while the keys arrive, which is the reading that decides whether
+   the two-frame wait is right.
+6. Keyboard close: as before - page full height at once, keyboard sliding off.
+7. Open, then switch to the emoji keyboard and back (a height change while open), then close before
+   the rise lands (tap the field and the thread at once): the frame always ends at the keyboard's
+   edge, `rise withdrawn` when it was overtaken.
+8. The composer's dimensions and the send motion, which apply there unchanged, and the composer in
+   landscape clear of the notch.

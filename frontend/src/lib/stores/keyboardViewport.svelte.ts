@@ -240,7 +240,7 @@ export function hasVirtualKeyboard(os: string): boolean {
 
 /**
  * Reads the viewport now. A desktop OS has no on-screen keyboard, so its visual viewport is read as
- * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`). While the Android
+ * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`). While the native
  * shell has announced a keyboard the WebView has not been resized for yet, the measurement is the
  * one that resize will produce (`resolveImeTarget`).
  */
@@ -267,7 +267,7 @@ function measureViewport(): ViewportMeasurement {
   return measurement;
 }
 
-/** The keyboard height the Android shell announced ahead of its resize (`imeTarget.ts`), or null. */
+/** The keyboard height the native shell announced ahead of its resize (`imeTarget.ts`), or null. */
 let imeTargetPx: number | null = null;
 
 /** Tallest the layout viewport has been with no keyboard - owned by `initKeyboardViewport`. */
@@ -531,8 +531,8 @@ export function initKeyboardViewport(): () => void {
   };
 
   /**
-   * `window.canariImeTarget`: the Android shell's announcement of a keyboard (`MainActivity`,
-   * `handOffIme`). The layout is applied HERE, synchronously, so the frame the shell waits for
+   * `window.canariImeTarget`: the native shell's announcement of a keyboard (Android's
+   * `MainActivity.handOffIme`, iOS's `CanariHandKeyboardRiseToPage`). The layout is applied HERE, synchronously, so the frame the shell waits for
    * before resizing the WebView already holds it; `true` tells the shell it was taken.
    */
   const takeImeTarget = (value: unknown): boolean => {
