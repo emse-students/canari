@@ -3494,7 +3494,7 @@ rows until those age out of the 365-day window, and the v1 reader goes with the 
 ([legacy-compatibility](../legacy-compatibility.md)). **The verified MLS sender is MEASURED before it
 refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
 legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
-the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
+the [backlog](../backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md).
 
 ### 21.1 The verified sender, measured then refused (WP-G2-1, G2-1b)
 
@@ -3520,7 +3520,7 @@ evidence is the INDIRECT reading - zero `[SENDER_MISMATCH]` of any kind on chat-
 2026-10-10 to 2026-10-24, the `live` path comparing the same envelope field throughout. The order is
 alpha, `path=distribution` read on dev (weak: a fictional seed plus testers), the stable, then the
 same line read on production AFTER it, a nonzero count triaged as the
-[backlog](../backlog.md#p3---the-distribution-paths-device-check-read-dev-on-the-alpha-production-after-the-stable) says. Three kinds:
+[backlog](../backlog.d/p3-the-distribution-path-s-device-check-read-dev-on-the-alpha-production-after.md) says. Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them

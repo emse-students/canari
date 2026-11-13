@@ -111,7 +111,7 @@ services:
     # drifting. The automatic refusal in `.github/scripts/lib/ceiling.sh` stays: what made this safe
     # was a procedure and a window, never a green suite. Moving this line is a deliberate migration
     # with its own written rollback, never a dependency bump.
-    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
     # Postgres logs every checkpoint by default (several lines an hour, 2026-11-13) and a checkpoint is
     # routine, not an event: `log_checkpoints=off`. Changing a datastore's command recreates it at the
     # next ordinary deploy (docs/wiki/infrastructure/logging.md).

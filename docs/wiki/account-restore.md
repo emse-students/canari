@@ -137,7 +137,7 @@ life, and the key's copy in the Google backup with it - clearing the key on the 
 reach a backup already taken. This is the SAME residual the refresh row already has (the session
 is alive, only this phone forgot it); the restore makes it reachable from a restored phone. Closing
 it needs a durable sign-out (a revocation retried until answered), which is filed in the
-[backlog](backlog.md#p3---a-sign-out-that-never-reached-the-server-leaves-a-restore-key-alive-in-the-google-backup)
+[backlog](backlog.d/p3-a-sign-out-that-never-reached-the-server-leaves-a-restore-key-alive-in-the.md)
 rather than built here.
 
 **Server-side theft.** The tables hold public keys and session ids. A database leak yields nothing

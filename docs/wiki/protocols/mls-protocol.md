@@ -2146,7 +2146,7 @@ leaves the base to a holder's repair, which is the one way that base could itsel
 social-service, and chat-delivery's base route refuses a key group by construction, so a check
 reading there failed every key-group removal before comparing anything. Reading it through the scope
 transport means **`diverged` now reaches key groups too**, which widens the forked-holder P2 in
-[backlog](../backlog.md#p2---a-forked-holders-republished-base-can-send-honest-members-to-rung-2-review-of-2269-2026-10-24-not-built).
+[backlog](../backlog.d/p2-a-forked-holder-s-republished-base-can-send-honest-members-to-rung-2-review.md).
 **A conversation that never published a base** has nothing to compare against: its departed-member
 removal is staged as before the check (logged), because refusing would keep the departed member's
 leaves forever - nothing publishes a base on a sweep's behalf; a key group's base is published with
@@ -2351,7 +2351,7 @@ guarantees at the one step that can do harm.
 re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
 live delivery read a moment earlier and has not acknowledged yet - a second read the client gives
 itself, which is a defect of its own, open in
-[backlog](../backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25).
+[backlog](../backlog.d/p3-a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already.md).
 What is fixed is what that second read was CALLED. MLS refuses it with `SecretReuseError`, which it
 can only reach after opening the frame's sender data under this device's copy of the epoch - so the
 frame is neither from a fork nor damaged. `messaging.rs` classifies it from the error's TYPE
@@ -2368,7 +2368,7 @@ whose adder holds no lock and has queued no Welcome leaves a seat with `admitted
 OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
 device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).
 Whether any adder path reaches that state, and what its late Welcome then meets, is a verification
-in [backlog](../backlog.md#p3---verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own-leaf-dup-2-review-2026-10-25).
+in [backlog](../backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md).
 
 ### An Add enrols its people with the accepted commit (2026-10-25)
 
@@ -2407,7 +2407,7 @@ group too (the `admitClaims` loop of `MessagingService`), and the key-group Add
 (`graine/distributionGroup.ts`) rebuilds without the named people the way `addDevicesRebuildingOnRace`
 does - it reads no `admit_refused` today, so the server half alone would stall every grant that
 races a kick. The `no_key_package` drop keeps its own reasoning (below) in both kinds of group.
-([backlog](../backlog.md#p3---key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review-2026-10-26)) **Every candidate is decided before anything
+([backlog](../backlog.d/p3-key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review.md)) **Every candidate is decided before anything
 is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
 rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
@@ -2878,7 +2878,7 @@ reads the magic as a nonce and reports the state unopenable - this very defect, 
 downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flipped
 once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 2 (PK1, 2026-10-17)**
 - `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`
-([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+([backlog](../backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)).
 **Never roll a client back past `v0.18.18`.**
 
 **What each verdict does at `init`** (both platforms, `noFreshStart` set):
@@ -2962,7 +2962,7 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
   next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+  ([backlog](../backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)).
 
 The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
 which the holder drops with its account, and the WASM module itself holds no manager or key.

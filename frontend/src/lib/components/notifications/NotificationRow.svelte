@@ -332,7 +332,11 @@
     notif.type === 'lydia_payments_active'
       ? m.notif_lydia_payments_active_text({ name: notif.text })
       : notif.type === 'lydia_payments_paused'
-        ? m.notif_lydia_payments_paused_text({ name: notif.text })
+        ? // A bridge's switch back (`meta.bridge`): payments did NOT stop, the historical account
+          // collects again - a global admin's row, worded as such.
+          notif.meta?.bridge === 'switched-back'
+          ? m.notif_lydia_bridge_switched_back_text({ name: notif.text })
+          : m.notif_lydia_payments_paused_text({ name: notif.text })
         : notif.type === 'delegation_revoked'
           ? m.notif_delegation_revoked_text({ name: notif.text })
           : notif.type === 'delegation_receiver_not_ready'

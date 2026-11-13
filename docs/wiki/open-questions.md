@@ -25,7 +25,7 @@ measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner'
 to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
 generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
 (core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
-`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
 **The switch is flipped by the lead on dev, then production, only after [the readings
 below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
 the protocol, and is deleted when those readings are read and the switch is on in production.
@@ -663,3 +663,7 @@ which would let the School address its staff in the app without naming each one?
 reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
 institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
 account with no membership, grant or follow.
+
+**The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
+has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
+so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.

@@ -7,6 +7,8 @@
  * animation was cut short could stay invisible until a re-render - the other explanation of the
  * report. The animation fills nothing and ends opaque, so once it stops the row is its own style,
  * whatever interrupted it. The gate reads the rule, since no rendering test runs an animation.
+ * A message bubble plays `motion-bubble-in` since 2026-11-13 (keyboard-and-send-motion.md), held to
+ * the same two rules.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -25,5 +27,20 @@ describe('.animate-rise-in', () => {
     const to = keyframes.match(/to \{([^}]*)\}/)?.[1] ?? '';
     expect(to).toMatch(/opacity:\s*1;/);
     expect(to).toMatch(/transform:\s*translateY\(0\);/);
+  });
+});
+
+describe('.motion-bubble-in', () => {
+  it('fills nothing either, so a bubble whose fade was cut short is visible', () => {
+    const rule = css.match(/\.motion-bubble-in \{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toMatch(/animation:\s*bubbleIn\b/);
+    expect(rule).not.toMatch(/forwards|backwards|both|animation-fill-mode/);
+  });
+
+  it('ends fully opaque, with no slide', () => {
+    const keyframes = css.match(/@keyframes bubbleIn \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const to = keyframes.match(/to \{([^}]*)\}/)?.[1] ?? '';
+    expect(to).toMatch(/opacity:\s*1;/);
+    expect(keyframes).not.toMatch(/transform/);
   });
 });

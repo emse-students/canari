@@ -28,6 +28,8 @@ function render(props: Record<string, unknown>) {
       isReadReceiptAnchor: false,
       readBy: [],
       status: 'pending',
+      // A send in transit is drawn under the bubble (keyboard-and-send-motion.md).
+      outsideBubble: true,
       ...props,
     },
   });
@@ -57,7 +59,7 @@ describe('MessageMetadata on a pending send', () => {
   });
 
   it('a real refusal is still the failure, whatever the wait was', () => {
-    const target = render({ status: 'error', waitingOn: 'server' });
+    const target = render({ status: 'error', waitingOn: 'server', outsideBubble: false });
     expect(target.textContent).toContain(m.msg_echec());
     expect(pendingText(target)).toBeUndefined();
   });

@@ -48,7 +48,7 @@ import {
   institutionReachOptions,
   resolveInstitutionReachWrite,
   type InstitutionReach,
-} from './institution-reach';
+} from '../spaces/institution-reach';
 import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,

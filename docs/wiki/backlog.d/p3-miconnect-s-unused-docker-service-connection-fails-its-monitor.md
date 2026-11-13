@@ -1,5 +1,7 @@
 ## P3 - MiConnect's unused Docker service connection fails its monitor every few minutes (owner decided 2026-10-31: delete it; one click owed)
 
+target: 1.10.0
+
 Authentik keeps a "Local Docker connection" object although the Docker socket was removed from the
 worker on 2026-09-24 ([authentik compose](../../../infrastructure/authentik/compose.yml), the comment on
 the worker's volumes). Its periodic monitor task fails each time with `DockerException` (no such

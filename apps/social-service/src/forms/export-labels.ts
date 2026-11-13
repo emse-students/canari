@@ -49,6 +49,12 @@ export interface ExportLabels {
    */
   guest?: string;
   /**
+   * Header of the "last changed" column (migration 166): when the respondent last changed their
+   * answer, blank on an answer never changed. Optional HERE, required by `exportSubmissions` when the
+   * column is written - on a form that allows changes, or holding an answer that was changed.
+   */
+  edited?: string;
+  /**
    * The words of the priced grid's two sheets (`product-grid-export.ts`). Optional HERE for the same
    * reason as `file`: only a form with a `product_grid` question needs them, and its export is refused
    * `EXPORT_LABELS_PRODUCT_GRID_MISSING` without them.
@@ -137,7 +143,7 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
     if (typeof label !== 'string')
       throw new BadRequestException(`export label for status "${status}" is not a string`);
 
-  for (const key of ['file', 'fileDeleted', 'email', 'guest'] as const)
+  for (const key of ['file', 'fileDeleted', 'email', 'guest', 'edited'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
 

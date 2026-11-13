@@ -104,6 +104,45 @@ else
   ok "no bare dc pull is left"
 fi
 
+# A PINNED image the host does not hold is pulled through it too, BEFORE the first `up`: otherwise
+# the `up` that replaces the database fetches it itself, unretried and reported as a broken change.
+missing_fn="$(sed -n '/^pinned_services_missing_image() {/,/^}/p' "$DEPLOY")"
+if [ -z "$missing_fn" ]; then
+  fail "pinned_services_missing_image() is not a function in the deploy script"
+else
+  listed="$(
+    # shellcheck disable=SC2317,SC2329 # called only from the eval'ed function
+    daemon() { [ "$3" = "held@sha256:aa" ]; }
+    # shellcheck disable=SC2034 # read by the eval'ed function
+    DOCKER_CLI=daemon
+    eval "$missing_fn"
+    pinned_services_missing_image <<'PLAN' | tr '\n' ' '
+postgres pinned no - moved@sha256:bb
+redis pinned no - held@sha256:aa
+core-service overlap no frontend:3000 built@sha256:cc
+media-service exclusive no - built@sha256:dd
+imageless pinned no - -
+PLAN
+  )"
+  if [ "$listed" = "postgres " ]; then
+    ok "only a pinned service whose image the host lacks is listed for a pull"
+  else
+    fail "expected 'postgres ', got '$listed'"
+  fi
+fi
+if grep -Eq '^[[:space:]]*with_registry_retry "pinned image pull" dc pull ' "$DEPLOY"; then
+  ok "the pinned pull goes through with_registry_retry"
+else
+  fail "the pinned pull does not go through with_registry_retry"
+fi
+pull_line="$(grep -m1 -n 'with_registry_retry "pinned image pull"' "$DEPLOY" | cut -d: -f1)"
+up_line="$(grep -m1 -nE '^[[:space:]]*dc up ' "$DEPLOY" | cut -d: -f1)"
+if [ -n "$pull_line" ] && [ -n "$up_line" ] && [ "$pull_line" -lt "$up_line" ]; then
+  ok "and it runs before the first up of the deploy"
+else
+  fail "the pinned pull (line ${pull_line:-none}) must precede the first up (line ${up_line:-none})"
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf 'all %s assertions passed\n' "$PASS"

@@ -2,7 +2,7 @@
 
 ## PostgreSQL
 
-**Image**: `postgres:18-alpine` - **PostgreSQL 18.6, crossed on 2026-09-18** on both estates.  
+**Image**: `postgres:18-alpine`, pinned by digest - **PostgreSQL 18, crossed on 2026-09-18** on both estates (18.6 then; the pin moved to an 18.7 build on 2026-11-13, a minor release that keeps the same cluster on the same volume, so no dump and restore).  
 **Port**: 5432 (container), 5433 (dev host)  
 **Database**: `auth_db`
 

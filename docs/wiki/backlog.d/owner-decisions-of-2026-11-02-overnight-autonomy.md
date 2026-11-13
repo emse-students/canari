@@ -1,5 +1,7 @@
 ## Decided - the owner's answers of 2026-11-02, for the night he left the lead agent in autonomy
 
+target: 1.7.0
+
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 
 **Carried out and pruned (batch 20, 2026-11-12):** `1.6.2` and `1.6.3` are stables (`gh release
@@ -23,7 +25,7 @@ readings are queue item 21's.
   switch; WP-F7 (register and policy) - WP-F6 was already merged (#2859, 2026-11-01), so it gets a security review after the fact instead, since its own was owed before arming and none is recorded; the content-free wake-up push,
   behind a server switch that is OFF by default
   ([entry](push-payloads-carry-nothing-for-google-and-apple.md)); one local MLS store per account
-  instead of one per install ([entry](../backlog.md#owed-a-verification-and-nothing-else)).
+  instead of one per install ([entry](../plan.md#readings-owed)).
 - **For the day of 2026-11-02**, answered in the morning:
   - read-only SELECTs on the production and dev databases are always allowed to the lead agent
     (a read-only transaction, aggregates only, no name or id ever enters the repository);

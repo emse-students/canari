@@ -703,7 +703,7 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+  ([the readings owed](../../plan.md#readings-owed)).
 - **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
   when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
   2026-10-16).
@@ -1101,6 +1101,8 @@ it an origin outside the anchor, and every click on the panel's own contents - i
 category tab, an emoji - then reads as "outside" and closes it a frame before the pick can register.
 
 ### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, FIXED 2026-10-09, reading owed)
+
+> Since 2026-11-13 the Android shell announces the keyboard to the page before resizing the WebView, and the keyboard's own animation is the synced one: [keyboard-and-send-motion](../keyboard-and-send-motion.md).
 
 Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
 via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
@@ -1615,7 +1617,7 @@ request held by a live document is waited for; a pending request whose tab close
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
 fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
-**Owed: the two-tab readings on dev**, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else).
+**Owed: the two-tab readings on dev**, an entry of [the readings owed](../../plan.md#readings-owed).
 
 ### The flusher resolves its token, and does not run while offline
 
@@ -1930,7 +1932,7 @@ on a weak one. Refusals keep their clock. The reasoning, the bounds and the numb
 
 ### A deploy's "not now" is not a send failure (R05, 2026-11-09)
 
-**The defect** ([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
+**The defect** ([backlog](../../plan.md#readings-owed)).
 A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
 its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
 read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
@@ -4740,6 +4742,51 @@ follows the bottom.
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
 portrait photo near its end.**
 
+### A picture keeps its height when the keyboard opens (2026-11-13)
+
+Reported by the owner on Android `1.6.11` (a DM ending on a tall screenshot): with the keyboard up
+the picture showed LESS of itself, cut top and bottom, and the end of the thread looked out of reach.
+**Not a scroll defect: the frame itself shrank.** A chat photo is a `MediaFrame` `fill` box,
+`max-height: var(--media-max-height)`, its `<img>` `object-cover object-center`, and the ceiling was
+`60svh` - chosen as "the stable unit" (`app.css`). It is stable in a phone browser, where the
+keyboard shrinks only the visual viewport. **In the app it is not: Android pads the WebView by the IME
+inset (`MainActivity.applyKeyboardInsets`) and iOS shrinks its frame (`CanariApplyKeyboardLayout`),
+so the LAYOUT viewport shrinks and every viewport unit with it - `svh`, `lvh`, `dvh` and `vh` alike.**
+`lvh` is therefore no answer.
+
+Measured on the Mi 9T (`1.6.11-alpha.5` release build on dev, over the WebView's DevTools socket,
+a probe element sized in each unit):
+
+| keyboard | `innerHeight` | `60svh` = `60lvh` = `60dvh` = `60vh` | a 1080x2340 screenshot in a 290 px frame |
+| --- | --- | --- | --- |
+| closed | 945 | 567.3 px | 567 px tall, 90% of the picture shown |
+| LatinIME (357 px) | 588 | 352.7 px | 353 px tall, 56% shown, cropped top and bottom |
+| ADB keyboard (90 px) | 855 | 513.5 px | - |
+
+The 214 px is the same number the [2026-10-30 anchor fix](#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30)
+measured as the photo's loss - that fix kept the reader at the bottom, but the picture still shrank.
+
+**The fix:** no CSS unit names "the screen without the keyboard", and `keyboardViewport.svelte.ts` is
+the one place that knows it (`baselineHeight`). `keyboardFreeViewportHeight` returns the baseline
+while a keyboard is open AND the layout viewport gave it room, null otherwise; the store writes it as
+`--keyboard-free-viewport-height` and removes it when null, and `app.css` reads
+`--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6)`. Absent, it is exactly
+the old `60svh`, so a phone browser, a desktop resize and a rotation are unchanged. The resize event
+that writes it runs in the same rendering step as the layout it corrects, so no frame draws the short
+ceiling. Every `fill` medium reads that ceiling - a chat photo or video, a reel tile, a feed or comment
+attachment (`mediaAspectStyle`); the event modal and `LetterboxedImage`'s documented ceiling now
+read it too instead of a second `60svh`. A GIF (`--media-inline-max-height: 16rem`) never depended on
+the viewport.
+
+Proved on the phone by applying the new rule over CDP with the keyboard up: the screenshot frame
+353 px without the held height, 567 px with it, 567 px both ways once closed. The unit test
+(`keyboardViewport.test.ts`) replays the bench's LatinIME rise (945/945, 945/588, the 588/230.3 double
+report, 588/587.9, back to 945) and holds the ceiling at 567 on every frame. **Limit:** below the
+keyboard-open threshold (160 px on Android) no keyboard is "open", so a 90 px keyboard still takes
+54 px off the ceiling - the same threshold as [the P3 note](../../backlog.d/p3-a-90-px-keyboard-leaves-the-composer-12-px-low-for-24-ms.md).
+**Owed: one reading of the built change on the Mi 9T** - a DM ending on a tall screenshot, the
+keyboard raised: the frame's height equal with the keyboard up and down.
+
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
 It used to be a strip inside `ChatComposer`, above the input. It appeared and disappeared UNDER the
@@ -5362,7 +5409,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
-`sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo IN PLACE (no remount) to the server id on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
+`sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo to the server id IN PLACE - the row keeps `renderKey` (its client id), which `ChatMessageGroups` keys by, so it is updated, not remounted, and its entrance does not replay at delivery (2026-11-13, [keyboard-and-send-motion](../keyboard-and-send-motion.md); before that the `{#each}` key was `id` and the row WAS remounted) - on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
 
 **What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete, "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and - since WP-OFF-3 - Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server dedupes on the client id since WP-OFF-3 (migration 088)**: a repeat of the same `messageId` by the same author in the same salon is answered with the stored row, which is what makes Retry safe on an unknown outcome ([offline-and-weak-network](../offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)). A transport failure that leaves the device OFFLINE is `pending` and sent again on the reconnect - once an answer has proven the server answers a repeat with its row (`salonRepeatProof.ts`); before that it is `unconfirmed` like any unknown outcome, and goes on its own when the proof arrives. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
 
@@ -5700,7 +5747,7 @@ it changes the reconciliation's wire and deserves its own review.
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
 (reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
-[verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+[readings owed](../../plan.md#readings-owed)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
@@ -5709,7 +5756,7 @@ is held to the current answer. For a newcomer every chunk is withheld, so a stor
 one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
 per-chunk read is the correctness property); it no longer delays the member's gesture.
 
-**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+**Why it does not breach step A** ([the decision](../../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)).
 Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
 device and filtered on its owner's server windows, so for a newcomer it carries no message from
 before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:

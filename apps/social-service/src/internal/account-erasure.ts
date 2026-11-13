@@ -227,6 +227,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'posts.reachSpaces': NO_ACCOUNT(
     "the formation x campus pairs an institution's post targets (migration 162)"
   ),
+  'association_calendar_events.reachSpaces': NO_ACCOUNT(
+    "the formation x campus pairs an institution's calendar event targets (migration 165)"
+  ),
   'channel_messages.attachments': NO_ACCOUNT('encrypted attachment references of a salon message'),
   'channel_members.readMarks': NO_ACCOUNT('channel id -> read time of one member'),
   'channel_members.clearedMarks': NO_ACCOUNT('channel id -> clear time of one member'),
@@ -235,6 +238,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'forms.items': NO_ACCOUNT('the questions of a form'),
   'submissions.lines': NO_ACCOUNT(
     'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
+  ),
+  'submissions.priceLockedItemIds': NO_ACCOUNT(
+    "the ids of the form's questions an answer's price depended on (migration 166)"
   ),
   'forms.guestFields': NO_ACCOUNT(
     'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'

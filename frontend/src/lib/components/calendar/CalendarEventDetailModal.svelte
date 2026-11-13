@@ -5,6 +5,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import NeutralEventMark from './NeutralEventMark.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
+  import InstitutionReachChip from '$lib/components/posts/InstitutionReachChip.svelte';
   import {
     associationLogoSrc,
     eventIcsAbsoluteUrl,
@@ -170,6 +171,13 @@
         </p>
       {/if}
 
+      <!-- Who an institution filed it for (owner, 2026-11-13): the posts' chip, same words. -->
+      {#if event.reach}
+        <div class="flex min-w-0">
+          <InstitutionReachChip reach={event.reach} />
+        </div>
+      {/if}
+
       {#if identityLinks.length > 0}
         <div class="flex flex-wrap items-center gap-1.5" data-event-organisers>
           {#each identityLinks as link (link.associationId)}
@@ -221,7 +229,7 @@
           src={associationLogoSrc(event.imageUrl) ?? ''}
           alt={m.calendar_event_poster_alt()}
           class="border-cn-border/40 rounded-xl border"
-          imgClass="max-h-[60svh]"
+          imgClass="max-h-(--media-max-height)"
         />
       {/if}
 

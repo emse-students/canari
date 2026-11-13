@@ -747,6 +747,13 @@ growing. Twelve controls carry it - the feed pills, the header's "Accueil", the 
 legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
 badge. Both rules are held by `touchTargets.test.ts`.
 
+**ONE EXCEPTION TO THE 44px FLOOR, THE OWNER'S: the chat composer's row on a phone** (2026-11-13,
+[keyboard-and-send-motion](keyboard-and-send-motion.md)). Its controls are 40px with no gap and its
+field 42px - Messenger's measured row - below 768px only; a touch tablet keeps 44px and its gaps, a
+pointer its 38px. `iconButtonScale.test.ts` holds the rule rather than the value: any icon-button box
+under 44px is under `pointer: fine`, is the hover strip's `--sm`, or is this row inside
+`(max-width: 767px)`.
+
 **A STACKED LIST NEVER TAKES `.tap-target` - its rows take `pointer-coarse:min-h-11`.** Where two
 hit boxes overlap, the later element in the DOM wins, so in a column pitched under 44px each box
 swallows the lower part of the row above it. On the Mi 9T the legal table of contents (a 21px
@@ -2420,7 +2427,7 @@ why the component takes classes rather than dimensions:
 | the caller | what it knows | what it passes |
 | --- | --- | --- |
 | a feed post | the aspect it reserved before the bytes arrive | `imgClass="h-full"` - the picture fills the reserved shape |
-| the event modal | nothing; it is a modal | `imgClass="max-h-[60svh]"` - a CEILING, and the contained picture sets its own height |
+| the event modal | nothing; it is a modal | `imgClass="max-h-(--media-max-height)"` - a CEILING (the same 60svh, held while a keyboard is up), and the contained picture sets its own height |
 | the shared-link card | a band, chosen by the card | `imgClass="h-full"` inside `h-56 sm:h-64` |
 
 The `<img>` stays in flow for the middle row alone: an absolutely positioned one collapses a box
@@ -3377,7 +3384,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+touch must be the one the gesture claims ([backlog](../plan.md#readings-owed)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.

@@ -8,6 +8,8 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
+  import InstitutionReachPicker from '$lib/components/posts/InstitutionReachPicker.svelte';
+  import { getEventReachOptions } from '$lib/associations/api';
   import Picker from '$lib/components/ui/Picker.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
@@ -15,6 +17,8 @@
   import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import {
     isNeutralForm,
+    offersReach,
+    reachBlocksSave,
     validateEventForm,
     type EventFormCapabilities,
     type EventFormValues,
@@ -72,6 +76,11 @@
      * only when the server said the viewer writes from the partner side.
      */
     onWithdraw?: (() => Promise<void>) | null;
+    /**
+     * The name of the association the event is filed in the name of - named by the reach picker's
+     * line when that association is an institution (`capabilities.canSetReach`).
+     */
+    ownerName?: string;
     onClose: () => void;
   }
 
@@ -89,6 +98,7 @@
     savingLabel,
     onSubmit,
     onWithdraw = null,
+    ownerName = '',
     onClose,
   }: Props = $props();
   const layer = useOverlayLayer(() => open, 'EventFormModal');
@@ -110,6 +120,14 @@
    * the form while it is chosen - and `toCreatePayload` / `toUpdatePayload` leave both unsent.
    */
   const neutral = $derived(isNeutralForm(values, capabilities));
+
+  /**
+   * AN INSTITUTION'S EVENT CHOOSES ITS REACH (owner, 2026-11-13): the posts' picker, drawn while
+   * "Au nom de" is an institution and the viewer writes from the organiser side; the save stays
+   * disabled until the spaces and the public are chosen.
+   */
+  const reachOffered = $derived(offersReach(values, capabilities));
+  const reachBlocks = $derived(reachBlocksSave(values, capabilities));
 
   /** Clears the refusal left by the previous attempt whenever the modal is reopened. */
   $effect(() => {
@@ -438,6 +456,19 @@
           </div>
         {/if}
 
+        {#if reachOffered && values.targetAssociationId}
+          <InstitutionReachPicker
+            bind:reach={values.reach}
+            associationId={values.targetAssociationId}
+            associationName={ownerName}
+            busy={saving}
+            required={values.reachRequired}
+            subject="event"
+            loadOptions={getEventReachOptions}
+            ontouch={() => (values.reachTouched = true)}
+          />
+        {/if}
+
         {#if error}
           <p class="text-red-err text-sm">{error}</p>
         {/if}
@@ -453,7 +484,8 @@
           <button
             type="button"
             onclick={submit}
-            disabled={saving}
+            disabled={saving || reachBlocks}
+            data-event-form-submit
             class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? savingLabel : submitLabel}

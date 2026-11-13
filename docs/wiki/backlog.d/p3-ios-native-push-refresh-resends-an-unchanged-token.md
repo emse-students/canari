@@ -1,5 +1,7 @@
 ## P3 - the iOS native push refresh re-sends an unchanged token 3-4 times per launch: 3 084 `[PUSH_REFRESH]` a day from 182 devices (production sweep, 2026-11-13)
 
+target: 1.10.0
+
 **What the sweep read.** 3 084 `[PUSH_REFRESH] user= device= fcm= voip=` lines a day
 (`controllers/push.controller.ts`) from 182 devices - about 17 per device per day, 3-4 per launch.
 The token almost never changes; each line is a `POST /api/mls/push/refresh-token` carrying the token

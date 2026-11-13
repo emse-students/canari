@@ -1,5 +1,6 @@
 import { Body, Controller, Header, Headers, HttpCode, Logger, Post } from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
+import type { HeldBusinessRole } from '../associations/lydia-account-bridge';
 import { assertInternalSecret } from './internal-secret.util';
 
 /**
@@ -19,8 +20,9 @@ export class InternalLydiaKeyController {
   constructor(private readonly associationsService: AssociationsService) {}
 
   /**
-   * `{ businessPrivateToken }`: the decrypted key of the association holding `vendorToken`, or
-   * null when none holds it with a key - the two cases answer the SAME, so even this internal
+   * `{ businessPrivateToken }`: the decrypted key of the Business `vendorToken` names - an
+   * association's active one, or a bridge's standby one (the key of the historical account a
+   * payment row names after the switch) - or null when none holds it with a key - the two cases answer the SAME, so even this internal
    * caller cannot enumerate which associations have a key without also holding the signature.
    */
   @Post('lydia-callback-key')
@@ -40,9 +42,10 @@ export class InternalLydiaKeyController {
   }
 
   /**
-   * `{ associationId, onboardingComplete }` of the association holding `vendorToken`, both null when
-   * none does - for the log line of Lydia's unsigned business webhook. A read only: no key, nothing
-   * written, and the caller decides nothing on it.
+   * `{ associationId, onboardingComplete, role }` of the association holding `vendorToken` - `role`
+   * says whether it is the ACTIVE Business or a bridge's `pending` / `retired` one
+   * (lydia-account-bridge.ts) - all null when none does: for the log line of Lydia's unsigned
+   * business webhook. A read only: no key, nothing written, and the caller decides nothing on it.
    */
   @Post('lydia-business-of-vendor-token')
   @HttpCode(200)
@@ -50,7 +53,11 @@ export class InternalLydiaKeyController {
   async lydiaBusinessOfVendorToken(
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { vendorToken?: unknown }
-  ): Promise<{ associationId: string | null; onboardingComplete: boolean | null }> {
+  ): Promise<{
+    associationId: string | null;
+    onboardingComplete: boolean | null;
+    role: HeldBusinessRole | null;
+  }> {
     assertInternalSecret(headerSecret);
     const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
     const holder = await this.associationsService.lydiaBusinessOfVendorToken(vendorToken);
@@ -60,6 +67,7 @@ export class InternalLydiaKeyController {
     return {
       associationId: holder?.associationId ?? null,
       onboardingComplete: holder?.onboardingComplete ?? null,
+      role: holder?.role ?? null,
     };
   }
 }

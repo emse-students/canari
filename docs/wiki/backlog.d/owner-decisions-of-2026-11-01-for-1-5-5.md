@@ -1,5 +1,7 @@
 ## Decided - the owner's answers of 2026-11-01, what `1.5.5` carries and what is left to build
 
+target: 1.7.0
+
 Decisions, not open questions; each is built or owed as stated, and this entry is deleted when the
 last one ships.
 

@@ -95,7 +95,7 @@ describe("PostsService feed queries carry a post's linked calendar event", () =>
 
     const [row] = await service.listPosts({ limit: 10, offset: 0, feed: 'all' });
 
-    expect(findValidatedCalendarEventSummary).toHaveBeenCalledWith('event-1');
+    expect(findValidatedCalendarEventSummary).toHaveBeenCalledWith('event-1', undefined);
     expect(row.linkedCalendarEvent).toEqual(EVENT_SUMMARY);
   });
 
