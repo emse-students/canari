@@ -12,6 +12,9 @@ import { flushMacrotask } from '../../../../test/flush';
 
 const state = vi.hoisted(() => ({ forms: [] as unknown[] }));
 
+vi.mock('$app/state', () => ({
+  page: { url: new URL('https://canari.test/associations/club/edit/formulaires'), state: {} },
+}));
 vi.mock('$lib/forms/associationForms', () => ({
   loadAssociationForms: vi.fn(() => Promise.resolve(state.forms)),
 }));
