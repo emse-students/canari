@@ -246,6 +246,9 @@ services:
       # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from
       # media-service server-to-server, gated by the shared INTERNAL_SECRET.
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
@@ -364,6 +367,9 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
       MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
@@ -456,6 +462,9 @@ services:
       # Account deletion fans out to media-service to remove the user's own uploads.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
@@ -532,6 +541,9 @@ services:
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       PAYMENT_SERVICE_URL: http://core-service:3012
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       # AND THE SAME CLASS AGAIN, MEASURED 2026-09-22: four keys production forwards to this
       # service and this file did not, `INTERNAL_SECRET` chief among them. `.env` on the dev box
       # has held a 64-character value the whole time - the compose file simply never passed it.

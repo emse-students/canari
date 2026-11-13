@@ -10,8 +10,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
-  // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
-  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
+  // what the estate lists in `ALLOW_ORIGIN` where it passes it (local and dev: the dev-server
+  // pair). The list is exact and lives, with the predicate, in `cors-origins.ts`.
+  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL, process.env.ALLOW_ORIGIN);
   app.enableCors(corsOptions(allowedOrigins, MEDIA_EXPOSED_HEADERS));
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
