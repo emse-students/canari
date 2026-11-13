@@ -547,6 +547,9 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 164)
     });
     await validator.connect();
     try {
+      const {
+        rows: [{ pid: validatorPid }],
+      } = await validator.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       await validator.query('BEGIN');
       await validator.query(`SELECT 1 FROM submissions WHERE id = $1 FOR UPDATE`, [
         sent.submissionId,
@@ -563,8 +566,10 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 164)
         const {
           rows: [{ n }],
         } = await admin.query<{ n: number }>(
+          // A session BLOCKED BY the validator: whatever SQL the ORM spelled, the edit is that one.
           `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM "submissions"%FOR UPDATE%'`
+            WHERE $1::int = ANY(pg_blocking_pids(pid))`,
+          [validatorPid]
         );
         if (n > 0) break;
         await new Promise((resolve) => setImmediate(resolve));
