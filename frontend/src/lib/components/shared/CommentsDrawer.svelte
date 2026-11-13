@@ -27,7 +27,7 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
-  import { markViewerLayer } from '$lib/utils/viewerLayer';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -53,11 +53,10 @@
     children,
   }: Props = $props();
 
-  // Over the page the drawer sits on `--z-modal`: the dialogs its thread opens (the comment box's
-  // GIF picker, on `--z-sheet`) would open UNDER it, dimmed and unreachable (iPhone, 2026-11-03).
-  // Inline, the reel viewer has already marked its subtree.
-  // svelte-ignore state_referenced_locally -- read once, as the drawer is mounted over the page or not
-  if (scrim) markViewerLayer();
+  // Over the page the drawer is a window-scale overlay: it registers on the overlay stack, so the
+  // dialogs its thread opens (the comment box's GIF picker) open later and clear it (iPhone,
+  // 2026-11-03). Inline in the reel viewer it is a child of that viewer's own overlay.
+  const layer = useOverlayLayer(() => scrim, 'CommentsDrawer');
 
   let sheet = $state<HTMLDivElement | null>(null);
   /** How far the sheet is dragged down, px. */
@@ -200,7 +199,8 @@
 
 <div
   use:overPage={scrim}
-  class="{scrim ? 'fixed z-(--z-modal)' : 'absolute'} inset-0 flex flex-col"
+  style:z-index={layer.z}
+  class="{scrim ? 'fixed' : 'absolute'} inset-0 flex flex-col"
   data-comments-drawer
 >
   <!-- WHAT IS ABOVE THE SHEET: a tap on it closes the drawer (Instagram's). A button, so a viewer's

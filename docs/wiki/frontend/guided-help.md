@@ -407,8 +407,8 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
 - Pinned by `guideAnchorFollow.test.ts` (move reported, observer re-armed), the overlay test (a shift
   with no size change moves the spotlight) and `guideAnchorSources.test.ts` (every anchor a guide
   names is marked by a control on every layout).
-- The layer is its own rung, `--z-guide` (one over `--z-modal`): a help never runs over a modal or
-  a sheet (it would not be quiet - it is suspended), and the call and a confirmation keep their rungs
+- The layer registers on the overlay stack (`utils/overlayStack.ts`; it had its own `--z-guide` rung until 2026-11-13): a help is suspended when a modal or
+  a sheet opens (it would not be quiet), and what opens after it is above it; the call keeps its rung
   above it. The accent ink is the `guide-ink` token (brand dark in light, yellow in dark).
 - **Sign-out resets the engine** (`guideEngine.reset()` beside `resetSeenHelps()` in
   `endSessionImpl`): a run suspended for account A, or a replay A asked for, never resumes for

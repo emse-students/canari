@@ -6,7 +6,7 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { m } from '$lib/paraglide/messages';
-  import { insideViewerLayer, popoverLayerClass as popoverRung } from '$lib/utils/viewerLayer';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   /**
@@ -16,7 +16,7 @@
    *
    * WHY IT EXISTS (user, 2026-09-29): native `<select>` and date inputs open the SYSTEM's dialogs on
    * Android. Replacing them means every replacement needs the same shell - portalled to the body so
-   * no transformed ancestor can trap it, stacked at `--z-modal-popover` because the ones that matter
+   * no transformed ancestor can trap it, stacked on the overlay stack (`utils/overlayStack.ts`) because the ones that matter
    * open from inside a modal, dismissed by a tap outside, Escape stopped at the panel so it never
    * reaches that modal's own window-level Escape. Written twice, those rules drift.
    *
@@ -78,8 +78,8 @@
 
   // Escape bubbles up from whatever holds focus inside the panel - an option, a day, a button -
   // so it is caught on the panel itself, in both shapes, rather than on each control.
-  /** Inside a nested dialog or a viewer, its own rung is under the dialog it belongs to. */
-  const popoverLayerClass = popoverRung(insideViewerLayer());
+  /** Registered while open: opened later than the dialog it belongs to, so it clears it (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'FloatingSurface');
 
   $effect(() => {
     if (!open || !panelEl) return;
@@ -96,7 +96,7 @@
 </script>
 
 {#if open && asSheet}
-  <div use:portal use:coversScreen class="fixed inset-0 {popoverLayerClass}">
+  <div use:portal use:coversScreen style:z-index={layer.z} class="fixed inset-0">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"
@@ -132,7 +132,8 @@
     role="group"
     aria-label={label}
     tabindex="-1"
-    class="bg-surface-elevated border-cn-border fixed {popoverLayerClass} flex flex-col overflow-hidden rounded-xl border shadow-lg {popoverWidth ===
+    style:z-index={layer.z}
+    class="bg-surface-elevated border-cn-border fixed flex flex-col overflow-hidden rounded-xl border shadow-lg {popoverWidth ===
     'content'
       ? 'w-max'
       : 'w-max max-w-[min(22rem,calc(100vw-1rem))]'}"

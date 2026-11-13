@@ -2714,13 +2714,13 @@ is set), `ended` ("Appel termine ·
 
 ### Which layer the call is on, and what it may never cover
 
-**The full screen has its own rung, `--z-call` (330), ABOVE `--z-critical` (320, a confirmation).**
+**The full screen has its own rung, `--z-call` (330), ABOVE the whole overlay stack (200-309, `utils/overlayStack.ts`), confirmations included.**
 A call that rings while a "sign out?" or "delete?" confirmation is open must still be answerable;
 the confirmation is not lost - minimise the call and it is there, unchanged. Sharing 320 with
-`ModalOverlay` would have left the winner to DOM order, which is exactly the "on or under the rest"
+`ModalOverlay` (then on a fixed rung of its own) would have left the winner to DOM order, which is exactly the "on or under the rest"
 the user reported.
 
-**The PIN lock is never covered, and it is not by a z-index.** `PinModal` sits at `--z-modal` (280),
+**The PIN lock is never covered, and it is not by a z-index.** `PinModal` is an overlay on the stack (under 310),
 below the call - so while it is up (`ChatBackgroundService` -> `callView.setLocked(showPinModal)`)
 the full screen STEPS BACK and the call is the top bar, which is in flow and covers nothing; it comes
 back when the PIN is entered. A ring on a locked app is still answerable from the bar - the device is

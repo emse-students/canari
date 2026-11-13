@@ -18,6 +18,7 @@
   import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
   import { sheetClearance, sheetRestingTop } from '$lib/utils/chat/sheetClearance';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
 
@@ -102,6 +103,9 @@
     onClose,
     canModerate = false,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => visible, 'MessageMobileActions');
 
   /** One entry of the action row; `tone` is the colour of a special action. */
   type SheetAction = {
@@ -261,11 +265,11 @@
   root context, so a sheet asking for 160 was really asking for 160-of-10, and anything the wrapper
   does not cover - the conversation header among them - stayed outside the scrim.
 
-  Moving the node to `document.body` is what makes `inset-0` mean the viewport and `--z-sheet` mean
-  the ladder, on every device rather than on the ones whose wrapper happens to fill the screen.
+  Moving the node to `document.body` is what makes `inset-0` mean the viewport and its z-index mean
+  the window, on every device rather than on the ones whose wrapper happens to fill the screen.
 -->
 {#if visible}
-  <div use:portal use:coversScreen class="fixed inset-0 z-(--z-sheet) md:hidden">
+  <div use:portal use:coversScreen style:z-index={layer.z} class="fixed inset-0 md:hidden">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"
