@@ -4247,6 +4247,7 @@
   "shop_return_declined": "Le paiement a été refusé. Aucun achat n'a été enregistré, vous pouvez réessayer.",
   "shop_return_not_completed": "Le paiement n'a pas abouti (annulé ou expiré). Aucun achat n'a été enregistré, vous pouvez réessayer.",
   "shop_return_unknown": "Ce paiement est introuvable.",
+  "shop_payment_in_progress_note": "Paiement en cours sur Lydia : confirmez-le sur la page de Lydia ou dans l'application Lydia, puis revenez ici - votre achat est vérifié à votre retour.",
   "payer_email_title": "Votre adresse e-mail",
   "payer_email_hint": "Le prestataire de paiement en a besoin pour vous envoyer la demande de paiement. Canari ne la conserve pas.",
   "payer_email_label": "E-mail",

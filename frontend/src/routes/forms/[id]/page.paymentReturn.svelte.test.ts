@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   submit: null as unknown as () => Promise<Record<string, unknown>>,
 }));
 const opened = vi.hoisted(() => [] as string[]);
+const nav = vi.hoisted(() => ({ result: null as unknown as () => Promise<void> }));
 
 vi.mock('$app/state', async () => ({
   page: {
@@ -48,7 +49,7 @@ vi.mock('$lib/utils/checkoutCallbacks', () => ({
 vi.mock('$lib/utils/openExternal', () => ({
   navigateExternal: (url: string) => {
     opened.push(url);
-    return Promise.resolve();
+    return nav.result();
   },
 }));
 vi.mock('$lib/associations/api', async (orig) => ({
@@ -91,6 +92,7 @@ beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   routeParams.current = { id: 'f1' };
   opened.length = 0;
+  nav.result = () => Promise.resolve();
   api.check = () => Promise.resolve({ ...fresh });
   api.submit = () =>
     Promise.resolve({ checkoutUrl: 'https://lydia.test/pay/1', submissionId: 's1' });
@@ -153,6 +155,29 @@ describe('the form page after handing the payer to Lydia', () => {
     expect(api.confirm).toHaveBeenCalledExactlyOnceWith('s1');
     expect(text()).toContain(m.form_success_confirmed_heading());
     expect(text()).not.toContain(m.form_view_payment_in_progress_note());
+  });
+
+  it('keeps the watch when the hand-off rejects after the browser opened', async () => {
+    nav.result = () => Promise.reject(new Error('openUrl failed'));
+    await render();
+    await pay();
+    expect(text()).toContain(m.form_view_payment_in_progress_note());
+    api.confirm = vi.fn(() => Promise.resolve({ paymentStatus: 'paid', formId: 'f1' }));
+    await leaveAndReturn();
+    expect(text()).toContain(m.form_success_confirmed_heading());
+  });
+
+  it('keeps the watch when the app returns before the hand-off call resolves', async () => {
+    let resolveNav!: () => void;
+    nav.result = () => new Promise<void>((done) => (resolveNav = done));
+    api.confirm = vi.fn(() => Promise.resolve({ paymentStatus: 'paid', formId: 'f1' }));
+    await render();
+    await pay();
+    await leaveAndReturn();
+    resolveNav();
+    await settle();
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+    expect(text()).toContain(m.form_success_confirmed_heading());
   });
 
   it('keeps "in progress" with the reopen button while still pending, and reopens Lydia', async () => {
