@@ -27,6 +27,7 @@ import {
   ADDRESSED_HISTORY_CAPABILITY,
   declaresAddressedHistory,
   devicePresenceKey,
+  addressabilityOf,
   publishIfAddressable,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
@@ -1602,9 +1603,13 @@ export class MessagingService {
     traceId: string
   ): Promise<void> {
     const incapable: string[] = [];
+    // Per device, WHY it was refused: the script that decides says so ('offline' = no presence key).
+    const why: string[] = [];
     for (const t of targets) {
-      if (!(await publishIfAddressable(this.redis, t.userId, t.deviceId))) {
+      const verdict = await addressabilityOf(this.redis, t.userId, t.deviceId);
+      if (verdict !== 'addressable') {
         incapable.push(`${t.userId}:${t.deviceId}`);
+        why.push(`${t.deviceId}=${verdict === 'offline' ? 'offline' : 'did-not-declare'}`);
       }
     }
     if (incapable.length === 0) {
@@ -1615,11 +1620,16 @@ export class MessagingService {
       );
       return;
     }
-    // EXPECTED while older builds are online, so not an error here: the answerer is told and answers
-    // nobody, and the older device is served by an older peer as before.
+    // EXPECTED, so not an error here, and for TWO causes the line names per device: the addressee
+    // was OFFLINE (the usual one - a newcomer's phone in a pocket when its Welcome is delivered; an
+    // addressed frame is transport-only, never queued, so nobody can be answered, tracked in
+    // docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), or it was online and a
+    // live session did not declare ${ADDRESSED_HISTORY_CAPABILITY} (an older build). The answerer is
+    // told and answers nobody; an older device is served by an older peer as before.
     this.logger.log(
       `[SEND][${traceId}] REJECT addressed_unsupported group=${groupId} devices=${incapable.join(',')}` +
-        ` - not every live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
+        ` - per device: ${why.join(',')} (offline, or online with a session that did not declare ` +
+        `${ADDRESSED_HISTORY_CAPABILITY})`
     );
     throw new BadRequestException({
       error: 'addressed_unsupported',
