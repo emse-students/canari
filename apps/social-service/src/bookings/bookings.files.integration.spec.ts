@@ -142,7 +142,7 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
     // ICM Saint-Etienne student, and every association reaches every space - the campus border is
     // `bookings.service.integration.spec.ts`'s subject, not this file's.
     await q(
-      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+      `CREATE TABLE users (id varchar PRIMARY KEY, "displayName" varchar, "firstName" varchar, "lastName" varchar,
          admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
          cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
     );
@@ -152,7 +152,9 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
     );
     await q(
-      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL,
+         permissions integer NOT NULL DEFAULT 0, "sortOrder" integer NOT NULL DEFAULT 0,
+         "createdAt" timestamptz NOT NULL DEFAULT now())`
     );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`

@@ -5541,6 +5541,8 @@
   "bookings_cell_label": "{resource}, {time} : {state}",
   "bookings_space_manage_short": "Gérer",
   "bookings_space_share": "Partager",
+  "bookings_space_contact_label": "Responsable : {name}",
+  "bookings_space_contact_button": "Contacter",
   "bookings_mine_here_heading": "Vos réservations ici",
   "bookings_mine_here_empty": "Aucune réservation à venir ici.",
   "bookings_space_qr_intro": "Scanner ce code ouvre la page de réservation de l'espace.",
