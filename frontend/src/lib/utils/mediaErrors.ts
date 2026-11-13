@@ -21,6 +21,7 @@
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from './apiRefusal';
 import { SegmentedMediaError, isWrittenByNewerClient } from '$lib/mediaSegmented';
 import { isTransportFailure } from './transportFailure';
+import { m } from '$lib/paraglide/messages';
 
 /** Wire-level marker kept as the message so existing logs stay greppable. */
 export const MEDIA_PURGED_MESSAGE = 'MEDIA_PURGED_BY_RETENTION';
@@ -302,4 +303,13 @@ export function uploadRefusalCause(
   if (err.origin === 'edge') return status === 403 ? 'blocked' : null;
   if (err.sessionLost) return null;
   return REFUSED_BY_THE_APP.includes(status) ? 'refused' : null;
+}
+
+/**
+ * The member's sentence for an upload refused by the daily bound, or `null` for anything else: the
+ * ONE mapping of that refusal, read by the chat outbox and by every screen that publishes a file
+ * (`publishFailureMessage`), so the same answer is never worded twice.
+ */
+export function overDailyLimitSentence(err: unknown): string | null {
+  return uploadRefusalCause(err) === 'over-daily-limit' ? m.upload_over_daily_limit() : null;
 }

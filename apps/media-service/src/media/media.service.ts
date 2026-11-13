@@ -75,7 +75,8 @@ const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 
  */
 export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
 /**
- * What one member may upload per rolling 24 hours, every class and every upload route together
+ * What one member may upload per rolling 24 hours, every class and every MEMBER upload route
+ * together - the plain upload, the legacy chunked routes, the resumable sessions -
  * (lead, 2026-11-13: 2 GB). Measured on production over 60 days before it was chosen: the busiest
  * member-day held 22 files, under a per-file ceiling of 100 MB
  * (docs/wiki/backlog.d/p2-a-daily-upload-bound-per-member.md).
@@ -1937,8 +1938,10 @@ export class MediaService {
    * size its upload registered ({@link setAccess}). An entry stored before sizes were recorded for
    * every class counts for nothing, so the bound is complete one day after it ships.
    *
-   * An upload with no owner is not a member's (a public asset, a server-side write) and is not
-   * metered here.
+   * OUTSIDE THE BOUND, ON PURPOSE: what a member does not upload through these routes. A public
+   * asset has no owner; a form's file (`internal/form-file`) and a live's segments
+   * (`internal/live`) arrive server-to-server, each under its own cap ({@link FORM_FILE_MAX_BYTES},
+   * `LIVE_SEGMENT_MAX_BYTES`), and reserve nothing here.
    */
   private reserveMemberUploadBudget(
     ownerId: string | undefined,

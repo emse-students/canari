@@ -2202,7 +2202,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
                 : cause === 'over-budget'
                   ? m.outbox_reel_over_budget()
                   : cause === 'over-daily-limit'
-                    ? m.outbox_upload_over_daily_limit()
+                    ? m.upload_over_daily_limit()
                     : cause === 'unpreparable' && notice
                       ? notice
                       : m.outbox_upload_refused();

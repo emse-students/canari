@@ -3,7 +3,8 @@
 **Decided (lead, 2026-11-13, under the owner's delegation; reversible):** one member may upload
 2 GB per rolling 24 hours, every class and every upload route together (the plain upload, the
 legacy chunked routes, the resumable sessions). The `chat-reel` budget of 500 MB keeps its own
-count beside it. The value is `MEDIA_MEMBER_DAILY_UPLOAD_BYTES`, 2 GB when unset
+count beside it. Outside the bound on purpose: public assets, which have no owner, and what
+arrives server-to-server under its own cap (a form's file, a live's segments). The value is `MEDIA_MEMBER_DAILY_UPLOAD_BYTES`, 2 GB when unset
 ([media-service](../services/media-service.md)).
 
 **What it was chosen from.** One read-only aggregate of production's media index on 2026-11-13,
