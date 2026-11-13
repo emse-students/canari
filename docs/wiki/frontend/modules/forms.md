@@ -1652,6 +1652,13 @@ The colspan is the case neither file shows on its own: it is a number written be
 that now has two lengths, and a short one leaves the panel ending mid-table. `answers.svelte.test.ts`
 asserts it equals the rendered header count on both.
 
+### The sheet is named after the title, made acceptable to Excel (2026-11-13)
+
+ExcelJS THROWS at `addWorksheet` on `* ? : \ / [ ]`, a quote at either end, an empty name or
+`History`, so a form titled "Service ... 19/11" made every export of it a 500 in production.
+`safeWorksheetName` (`apps/social-service/src/utils/worksheet-name.ts`) turns a refused character
+into `-`, cuts at 31 characters and trims after the cut; the form and booking exports both call it.
+
 ### THE XLSX IS WRITTEN IN WORDS THE SERVER DOES NOT HAVE (2026-09-22)
 
 The same report that asked about the chevrons carried a second half:

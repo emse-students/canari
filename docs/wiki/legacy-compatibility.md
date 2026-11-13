@@ -303,6 +303,18 @@ otherwise the call is a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`), never a guess
 then a week with no `[LEGACY] GET public/carte` line. Then make `space` required, delete the method,
 its branch, their spec cases and this entry.
 
+### Removal when the floor passes the release carrying `scheduled-to-edit` - `GET /api/posts/my-scheduled` (2026-11-13)
+
+- **What.** The editors' strip at the top of `/posts` reads `GET /api/posts/scheduled-to-edit`
+  (whole cards, for whoever may edit). Builds before it read `GET /api/posts/my-scheduled`, which
+  used to answer the author's own `{ id, markdown, scheduledAt, createdAt }` rows. It now answers
+  the SAME list as the new route (`getMyScheduledPostsLegacy`, one `[LEGACY]` line per call): a
+  superset of those fields, so an old strip still draws, now with the association posts its reader
+  may edit as well.
+- **Removal.** Delete the route and its controller method once `minClientVersion` passes the first
+  release carrying the new route and the `[LEGACY] GET /api/posts/my-scheduled served` line has
+  been silent on production for a week.
+
 ### No date yet - `GET /api/associations/categories`, for a build older than the per-map carte zones (2026-11-08)
 
 **Site:** `AssociationCategoriesController`
