@@ -1,4 +1,4 @@
-import { intlLocale } from '$lib/bookings/grid';
+import { intlLocale } from '$lib/utils/intlLocale';
 
 /** The structured facts of a booking notice (`post_notifications.meta`, migration 117). */
 export interface BookingNoticeMeta {

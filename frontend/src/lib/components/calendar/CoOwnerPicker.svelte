@@ -133,7 +133,7 @@
 </script>
 
 <div class="border-cn-border/70 bg-cn-bg/30 space-y-2 rounded-xl border p-3">
-  <p class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase">
+  <p class="text-text-muted flex items-center gap-1 text-xs font-bold">
     <Users size={14} />
     {m.asso_calendar_co_owner_label()}
     <span class="text-text-muted ml-auto font-normal normal-case" data-co-owner-counter
@@ -197,9 +197,7 @@
         class="border-cn-border bg-cn-surface absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border shadow-lg"
       >
         {#each groups as group (group.label)}
-          <p
-            class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold tracking-wide uppercase"
-          >
+          <p class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold">
             {group.label}
           </p>
           <ul>
@@ -213,7 +211,7 @@
                   }}
                   class="{group.muted
                     ? 'text-text-muted'
-                    : 'text-text-main'} hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
+                    : 'text-text-main'} hover:bg-accent/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
                 >
                   {#if asso.color}
                     <span

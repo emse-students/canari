@@ -226,6 +226,23 @@ describe('FormQuestion - a file on its way', () => {
     expect(help.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('keeps the line breaks typed in the label and the description', () => {
+    const { target } = render(
+      {
+        id: 'q',
+        label: 'Ligne un\nLigne deux',
+        description: 'Aide un\nAide deux',
+        required: false,
+        type: 'short_text',
+      },
+      ''
+    );
+    expect(target.querySelector('label span:last-child')!.className).toContain(
+      'whitespace-pre-line'
+    );
+    expect(target.querySelector('p')!.className).toContain('whitespace-pre-line');
+  });
+
   it('names the question in the alt when its author wrote none, and draws nothing without an image', () => {
     const withImage = render(
       {

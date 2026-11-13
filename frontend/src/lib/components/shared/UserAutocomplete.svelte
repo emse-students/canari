@@ -3,7 +3,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
-  import { insideViewerLayer, popoverLayerClass as popoverRung } from '$lib/utils/viewerLayer';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -13,9 +13,6 @@
     id: string;
     displayName: string | null;
   }
-
-  /** A dropdown inside a lifted dialog must clear it (`utils/viewerLayer.ts`). */
-  const popoverLayerClass = popoverRung(insideViewerLayer());
 
   interface Props {
     /** Currently selected user ID (empty string when nothing is selected). */
@@ -75,6 +72,9 @@
    * `filterUserSuggestions` because it is worth a test of its own.
    */
   const suggestions = $derived(filterUserSuggestions(results, { excludeIds, filterUserIds }));
+
+  /** Registered while the dropdown shows: opened later than any dialog it sits in, so it clears it. */
+  const layer = useOverlayLayer(() => showDropdown && suggestions.length > 0, 'UserAutocomplete');
 
   const listboxId = $derived(`${inputId}-listbox`);
   const optionId = (index: number) => `${inputId}-option-${index}`;
@@ -248,13 +248,13 @@
     onfocus={handleFocus}
     {placeholder}
     autocomplete="off"
-    class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
+    class="border-cn-border focus:border-accent/60 focus:ring-accent/45 w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:ring-2"
   />
 
   {#if isLoading}
     <div class="absolute top-1/2 right-3 -translate-y-1/2">
       <svg
-        class="h-4 w-4 animate-spin text-amber-500"
+        class="text-accent-text h-4 w-4 animate-spin"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -279,7 +279,8 @@
       id={listboxId}
       role="listbox"
       aria-label={placeholder}
-      class="bg-cn-surface fixed {popoverLayerClass} overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
+      style:z-index={layer.z}
+      class="bg-cn-surface fixed overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
     >
       {#each suggestions as user, index (user.id)}
         <!--
@@ -293,9 +294,9 @@
           id={optionId(index)}
           role="option"
           aria-selected={index === selectedIndex}
-          class="cursor-pointer px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-amber-100/50 dark:hover:bg-amber-900/30 {index ===
+          class="hover:bg-accent/20 cursor-pointer px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {index ===
           selectedIndex
-            ? 'bg-amber-100/50 dark:bg-amber-900/30'
+            ? 'bg-accent/20'
             : ''}"
           onmousedown={() => selectUser(user)}
         >

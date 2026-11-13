@@ -101,7 +101,7 @@
       {#if status === 'loading'}
         <p class="text-text-muted">{m.form_success_verifying()}</p>
       {:else}
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold">
           {STATUS_TITLE[status]()}
         </h1>
         <p class="text-text-muted mt-2">
@@ -123,7 +123,7 @@
     {#if status === 'pending' || status === 'confirmed'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
@@ -131,7 +131,7 @@
       <!-- The answer is released: the form's own pay button is the retry, one tap away. -->
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_retry()}
       </a>

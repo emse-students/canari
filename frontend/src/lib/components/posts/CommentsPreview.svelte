@@ -70,7 +70,7 @@
 
 {#if comments.length > 0 || commentCount > 0}
   <div
-    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10"
+    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 dark:border-white/10 dark:bg-black/10"
     data-comments-preview
   >
     {#if commentCount > 1}
@@ -130,7 +130,7 @@
     <button
       type="button"
       onclick={() => onOpen({ write: true })}
-      class="mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="focus-visible:ring-accent-icon mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2"
     >
       <span class="block h-8 w-8 shrink-0"><Avatar userId={currentUserId} fill /></span>
       <span

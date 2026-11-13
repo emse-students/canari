@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -35,7 +36,6 @@
     TriangleAlert,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { SvelteSet } from 'svelte/reactivity';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
@@ -207,14 +207,14 @@
   {#if loading}
     <div class="flex justify-center py-12">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
     <!-- Club-side: delegate this association's payments to a parent. -->
     <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div>
-        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
           <Share2 size={20} />
           {m.asso_deleg_club_title()}
         </h2>
@@ -247,7 +247,7 @@
           </p>
         </div>
         {#if !delegation.parentReady}
-          <p class="text-amber-warn flex items-start gap-2 text-sm">
+          <p class="text-amber-warn-text flex items-start gap-2 text-sm">
             <TriangleAlert size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_ready()}
           </p>
@@ -283,7 +283,7 @@
     {#if !receivesNever}
       <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div>
-          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
             <Inbox size={20} />
             {m.asso_deleg_parent_title()}
           </h2>
@@ -291,7 +291,7 @@
         </div>
 
         {#if !canReceiveDelegation}
-          <p class="text-amber-warn flex items-start gap-2 text-sm">
+          <p class="text-amber-warn-text flex items-start gap-2 text-sm">
             <TriangleAlert size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_payments_ready()}
           </p>
@@ -310,7 +310,7 @@
                       class="rounded-full px-2 py-0.5 text-xs font-semibold {child.status ===
                       'approved'
                         ? 'bg-green-ok/15 text-green-ok'
-                        : 'bg-amber-warn/15 text-amber-warn'}"
+                        : 'bg-amber-warn/15 text-amber-warn-text'}"
                     >
                       {child.status === 'approved'
                         ? m.asso_deleg_child_approved_badge()
@@ -377,7 +377,7 @@
                   {#if childLoading === child.associationId}
                     <div class="flex justify-center py-6">
                       <div
-                        class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+                        class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
                       ></div>
                     </div>
                   {:else if (childPurchases[child.associationId]?.length ?? 0) === 0}
@@ -387,9 +387,7 @@
                   {:else}
                     <div class="border-cn-border/70 overflow-x-auto rounded-lg border">
                       <table class="w-full text-sm">
-                        <thead
-                          class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase"
-                        >
+                        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold">
                           <tr>
                             <th class="px-3 py-2">{m.asso_achats_col_date()}</th>
                             <th class="px-3 py-2">{m.asso_achats_col_buyer()}</th>
@@ -402,9 +400,7 @@
                           {#each childPurchases[child.associationId] as purchase (purchase.id)}
                             <tr class="bg-cn-bg/20">
                               <td class="text-text-muted px-3 py-2 whitespace-nowrap">
-                                {new Date(purchase.paidAt).toLocaleString(
-                                  getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                                )}
+                                {new Date(purchase.paidAt).toLocaleString(intlLocale())}
                               </td>
                               <td class="text-text-main px-3 py-2 font-medium">
                                 {purchaseBuyerName(purchase)}

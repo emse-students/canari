@@ -2,6 +2,7 @@
   import Modal from '../shared/Modal.svelte';
   import { tick } from 'svelte';
   import { m } from '$lib/paraglide/messages';
+  import { COMMUNITY_NAME_MAX_LENGTH } from '$lib/services/ChannelService';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -36,9 +37,10 @@
         id="new-community-name"
         type="text"
         value={communityName}
+        maxlength={COMMUNITY_NAME_MAX_LENGTH}
         oninput={(e) => onNameChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_modal_community_name_placeholder()}
-        class="bg-cn-surface w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
+        class="bg-cn-surface focus:ring-accent/45 w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 dark:border-white/10"
         onkeydown={(e) => e.key === 'Enter' && onSubmit()}
       />
     </div>
@@ -48,7 +50,7 @@
     <button
       onclick={onSubmit}
       disabled={!communityName.trim()}
-      class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+      class="text-on-accent bg-accent hover:bg-accent-hover w-full rounded-xl py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.chat_modal_create_community_button()}
     </button>

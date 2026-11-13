@@ -33,9 +33,10 @@ import {
   rowsReleasedBy,
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
+import { announceCampusTrend } from './campus-trend';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
-import { isExpiredReel } from './reel.constants';
+import { isExpiredPost } from './reel.constants';
 import {
   reactionContent,
   reactionTypeToEmoji,
@@ -89,7 +90,7 @@ export class PostInteractionsService {
     const post = opened ?? (await this.postRepo.findOne({ where: { id: postId } }));
     // A reel past its expiry is dead to every reader until the worker removes it; a reaction on it
     // would be content nobody can ever see.
-    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
+    if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
     const reactions = this.sanitizeReactions(post.reactions);
     const isNew = !reactions[userId];
     reactions[userId] = reactionType;
@@ -115,6 +116,9 @@ export class PostInteractionsService {
             text: reactionType,
             skipPush: true,
           });
+          // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a reaction counts against it.
+          const [pushTo] = await this.notifications.withinPushBudget('reaction', [post.authorId]);
+          if (!pushTo) return;
           // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
           // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
           await this.push.notifyContent(
@@ -137,7 +141,25 @@ export class PostInteractionsService {
       })();
     }
 
+    // A NEW reaction only - changing the emoji is not news: this write may make the post take off.
+    if (isNew) this.evaluateTrend(post.id);
+
     return { ok: true, reactions: post.reactions };
+  }
+
+  /**
+   * Fire-and-forget, after a new reaction or a comment is stored: CAMPUS TRENDS (engagement WP-10) -
+   * this write may be the one that makes the post take off. Friends' activity is no longer a
+   * notification of its own (owner, 2026-11-10): the followed people who reacted are NAMED in the
+   * trend instead (`campus-trend.ts`). The act is already stored; a failure is logged, nothing else.
+   */
+  private evaluateTrend(postId: string): void {
+    void announceCampusTrend(
+      { manager: this.postRepo.manager, notifications: this.notifications },
+      postId
+    ).catch((e: unknown) => {
+      this.logger.warn(`[TREND] post=${postId.slice(0, 8)} not told: ${String(e)}`);
+    });
   }
 
   /** Removes the user's reaction from a post. */
@@ -179,7 +201,16 @@ export class PostInteractionsService {
     isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
+    if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
+
+    // The picture must be the writer's own upload: deleting this comment releases the blob it names.
+    if (data.media?.mediaId) {
+      await this.mediaRetention.assertOwnMedia(
+        data.userId,
+        [String(data.media.mediaId)],
+        'comment'
+      );
+    }
 
     const { anonymous, associationId } = commentIdentityOf(data);
     const masked = anonymous || !!associationId;
@@ -282,6 +313,10 @@ export class PostInteractionsService {
           return;
         }
         await notify(recipientId, type);
+        // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a comment counts, a reply and a
+        // mention do not (`PUSH_BUDGET`) - one table answers, so this asks it for every type.
+        const [pushTo] = await this.notifications.withinPushBudget(type, [recipientId]);
+        if (!pushTo) return;
         await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {
           type: 'social',
           postId,
@@ -374,7 +409,11 @@ export class PostInteractionsService {
           }
         }
       }
-    })();
+    })().finally(() => {
+      // Only once the comment's own notices are written: a reader this comment answers or mentions
+      // has a row for the post by then, so a trend it makes is not told to them on top.
+      this.evaluateTrend(post.id);
+    });
 
     const [served] = await this.identity.serve([comment], post, {
       viewerId: data.userId,

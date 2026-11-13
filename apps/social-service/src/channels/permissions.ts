@@ -216,7 +216,7 @@ export interface ViewerRoleStanding {
  * Whether a salon's `writePolicy` lets this viewer post - THE ONLY definition, read by both sides.
  *
  * WHY IT IS A PURE FUNCTION AND NOT A METHOD. The server enforces the policy per message, in
- * `canWriteToChannel`, which loads the viewer's roles; the workspace listing already holds the same
+ * `writeStandingIn`, which loads the viewer's roles; the workspace listing already holds the same
  * two booleans for the viewer and hands them to the client. Those are the same decision asked in two
  * places, and until 2026-08-20 only the first one existed: the client never learned the policy at
  * all, so it offered a composer in a salon the server refused every message from, and the person
@@ -224,11 +224,66 @@ export interface ViewerRoleStanding {
  *
  * The two callers must not be able to disagree, so neither carries the rule.
  */
-export function writePolicyAllows(
-  policy: 'everyone' | 'admins_moderators' | 'admins',
-  viewer: ViewerRoleStanding
-): boolean {
+export function writePolicyAllows(policy: WritePolicy, viewer: ViewerRoleStanding): boolean {
   if (policy === 'everyone') return true;
   if (policy === 'admins') return viewer.canManage;
   return viewer.canModerate || viewer.canManage;
+}
+
+/** A salon's write policy, spelled here so this module needs no DTO import. */
+export type WritePolicy = 'everyone' | 'admins_moderators' | 'admins';
+
+/** Every write policy, most open first. */
+export const WRITE_POLICIES: readonly WritePolicy[] = ['everyone', 'admins_moderators', 'admins'];
+
+/**
+ * The standing ONE set of permissions gives - the two facts {@link writePolicyAllows} asks about.
+ * Pass one role's list to ask about that role, or the union of a member's roles to ask about them.
+ */
+export function standingOfPermissions(permissions: readonly string[]): ViewerRoleStanding {
+  return {
+    canManage: permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+    canModerate: roleGrantsModeration(permissions),
+  };
+}
+
+/**
+ * {@link writePolicyAllows} answered for EVERY policy at once, for one standing.
+ *
+ * What `workspace.role.changed` carries, so a client whose role changed can redraw the composer of
+ * every salon it holds from the salon's policy and this table - the rule stays on this side, the
+ * client only looks its policy up in the answer.
+ */
+export function writeVerdicts(viewer: ViewerRoleStanding): Record<WritePolicy, boolean> {
+  return {
+    everyone: writePolicyAllows('everyone', viewer),
+    admins_moderators: writePolicyAllows('admins_moderators', viewer),
+    admins: writePolicyAllows('admins', viewer),
+  };
+}
+
+/**
+ * The refusal code (403) of a salon message from a member the salon's `writePolicy` excludes, ONE
+ * PER POLICY so the client can say who may write ("only admins and moderators") from the type
+ * rather than from prose. `everyone` never refuses, so it has no code.
+ */
+export const CHANNEL_WRITE_REQUIRES_MODERATION = 'CHANNEL_WRITE_REQUIRES_MODERATION';
+/** See {@link CHANNEL_WRITE_REQUIRES_MODERATION}: the `admins` policy's refusal. */
+export const CHANNEL_WRITE_REQUIRES_ADMIN = 'CHANNEL_WRITE_REQUIRES_ADMIN';
+
+/** The refusal code of a post refused by `policy` (never `everyone`, which refuses nobody). */
+export function writeRefusalCode(policy: Exclude<WritePolicy, 'everyone'>): string {
+  return policy === 'admins' ? CHANNEL_WRITE_REQUIRES_ADMIN : CHANNEL_WRITE_REQUIRES_MODERATION;
+}
+
+/**
+ * The roles that, held alone, let their holder write under `policy` - what the salon access panel
+ * shows under its write-policy select, so "Admins and moderators" stops reading as if a role's NAME
+ * counted. Decided by {@link writePolicyAllows} on each role's own permissions, never by its name.
+ */
+export function rolesQualifyingFor<R extends { permissions: readonly string[] }>(
+  policy: WritePolicy,
+  roles: readonly R[]
+): R[] {
+  return roles.filter((r) => writePolicyAllows(policy, standingOfPermissions(r.permissions)));
 }

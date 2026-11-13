@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { rememberVideoPosition, resumePosition, takeVideoPosition } from './videoResume';
+import {
+  awaitVideoHandBack,
+  endVideoHandBack,
+  handBackVideoPosition,
+  rememberVideoPosition,
+  resumePosition,
+  takeVideoPosition,
+} from './videoResume';
 
 describe('videoResume', () => {
   it('hands the position to the viewer once, then forgets it', () => {
@@ -44,5 +51,15 @@ describe('videoResume', () => {
     it('trusts the position when the duration is not known', () => {
       expect(resumePosition(5, Number.NaN)).toBe(5);
     });
+  });
+
+  it('a hand-back reaches the waiting card until the viewer owner ends the wait', () => {
+    const got: number[] = [];
+    awaitVideoHandBack('media-x', (s) => got.push(s));
+    handBackVideoPosition('media-x', 8);
+    endVideoHandBack('media-x');
+    // A later viewer of the same media, opened from elsewhere, no longer moves this card.
+    handBackVideoPosition('media-x', 21);
+    expect(got).toEqual([8]);
   });
 });

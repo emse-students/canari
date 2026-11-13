@@ -62,8 +62,8 @@
 with the call kept alive in the background on Android and on the iPhone; video follows later.
 The flip PR (2026-10-22) compiled in-app audio calls in (an invite, the per-conversation permission control and the sibling-status request also honour `calls_mode` client-side through `callsAvailable(serverCallsMode())`) (`CALLS_COMPILED = true`); what keeps production shut is the server's `calls_mode` (`off` at deploy), and the flip is merged and shipped only when every blocker below is lifted. This section is
 the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
-2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)
-row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
+2026-10-15 design and the test matrix (section 7). The readings still owed are the last column of
+the table below. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
 
 **The owner's answers, 2026-10-21** - not to be re-opened:
 
@@ -1672,7 +1672,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)).
+for a group ([group calls](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
 
 ## Audio quality, measured 2026-10-19
 
@@ -2714,13 +2714,13 @@ is set), `ended` ("Appel termine ·
 
 ### Which layer the call is on, and what it may never cover
 
-**The full screen has its own rung, `--z-call` (330), ABOVE `--z-critical` (320, a confirmation).**
+**The full screen has its own rung, `--z-call` (330), ABOVE the whole overlay stack (200-309, `utils/overlayStack.ts`), confirmations included.**
 A call that rings while a "sign out?" or "delete?" confirmation is open must still be answerable;
 the confirmation is not lost - minimise the call and it is there, unchanged. Sharing 320 with
-`ModalOverlay` would have left the winner to DOM order, which is exactly the "on or under the rest"
+`ModalOverlay` (then on a fixed rung of its own) would have left the winner to DOM order, which is exactly the "on or under the rest"
 the user reported.
 
-**The PIN lock is never covered, and it is not by a z-index.** `PinModal` sits at `--z-modal` (280),
+**The PIN lock is never covered, and it is not by a z-index.** `PinModal` is an overlay on the stack (under 310),
 below the call - so while it is up (`ChatBackgroundService` -> `callView.setLocked(showPinModal)`)
 the full screen STEPS BACK and the call is the top bar, which is in flow and covers nothing; it comes
 back when the PIN is entered. A ring on a locked app is still answerable from the bar - the device is
@@ -3054,7 +3054,8 @@ minimising destroyed the element playing the voice and built another. `CallOverl
 the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
-backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.d/p1-blocks-production-calls-mode-a-call-does-not-survive-the-app-leavin.md)):
+work packages WP-C-BG-A and WP-C-BG-I below, built in `v1.3.1`, their readings owed in
+[the verification table](../../backlog.md#owed-a-verification-and-nothing-else)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|
@@ -3289,19 +3290,54 @@ playing. What changed:
   screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
   or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
   no native hook on the WebContent kill was added.
-- **Audio focus changes are logged** (`audio focus LOSS_TRANSIENT for call=...`), never acted on;
-  holding or muting on a loss is a product decision ([backlog](../../backlog.md)).
+- **A focus loss HOLDS the microphone, never hangs up** (D056, decided by the lead on 2026-11-12
+  under the owner's delegation; reversible). Before, a loss was only logged, and a cellular call
+  ringing in left the member's voice running to the peer under it. Now `LOSS_TRANSIENT` (a phone
+  call) and `LOSS` (an app taking the focus for good) emit `focus`/`lost` once
+  (`call/CallFocusHold.kt`, a pure class held by `CallFocusHoldTest`); the page
+  (`CallService.onAudioFocus`) disables every capture track whatever the member's own mute, shows
+  "Votre téléphone a coupé votre micro" and tells the peer `MicSuspended` - the same state, strings
+  and frame the OS's own microphone hold uses, with the two sources counted apart so neither clears
+  the other. The `GAIN` after a transient loss emits `focus`/`gained`: the tracks follow the
+  member's OWN mute again (muted before stays muted; a mute tap during the loss is what comes
+  back), the toast says how long they could not be heard. `LOSS_TRANSIENT_CAN_DUCK` changes nothing.
+  Rejected: hanging up on `LOSS` (only the member ends a call) and muting both ways (the member may
+  want to hear the peer say "I'll wait"). Every change is logged natively; the page writes ONE WARN
+  per loss (`CallService`), the bridge line is plain.
+- **A permanent `LOSS` is never followed by a GAIN** (Android's contract; review of #3395): a video
+  started in another app would hold the microphone for the rest of the call. The way back is
+  ASKING: a mute control's tap while held (`CallService.muteButtonTap` -> the session's `askFocus` ->
+  `CallBridge.askFocus` -> `CallServiceCommand.AskFocus` -> `CallAudio.askFocus`), and the app
+  coming back on screen (the service's screen listener). A grant is `focus`/`gained`; a refusal (a
+  phone call still holds the focus) is `focus`/`refused`, the hold stays and the member reads
+  "Une autre application garde le son". A call not held asks nothing.
+- **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
+  ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
+  audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
+  while held and not muted by the member, ONE tap asks the focus again and leaves the member's own
+  mute alone (flipping it would leave them muted once the focus came back, re-review of #3395);
+  otherwise it is the member's toggle, which also asks while held.
+- **A hold never outlives its service or its call.** A session whose service Android stops
+  (`stopped`) while the call goes on, or whose surface closes while the service still runs, hands
+  the call `released`, which ends the hold like a gain. A hold that ends WITH the call - a hang-up
+  from the notification, or the page stopping the service once the call is over - hands nothing:
+  the call's own end clears its hold, and a `released` then would enable the tracks, send
+  `MicSuspended: false` and toast during the ended summary. A `focus` event reaching a session whose
+  service is not started is dropped, `onAudioFocus` ignores any state with no live call (no capture,
+  or the ended summary), and a new capture starts unheld.
 - The mute action draws a microphone, struck while muted.
 
 **The native incoming ring (item 4 of the study) was NOT in this change**: it shipped with Canari's
 own ring ([the incoming ring](#the-incoming-ring-canaris-own-owner-2026-11-01)), and the caller's
 ringback before it ([the caller's ringback](#the-callers-ringback-2026-10-31)).
 
-**What a gate holds, and what nothing does.** NO CI gate compiles `CallForegroundService.kt`,
-`CallBridge.kt` or `CanariFirebaseMessagingService.kt`: `android-tests` compiles only the pure
-packages (`call/`, `push/`, `gesture/`, `share/`), which is where `OngoingCallTest` holds
-`pickCallOutput`, `holdsProximityScreenOff` and the spec. The whole app's Kotlin was compiled by
-hand on 2026-10-30 (`:app:compileArm64DebugKotlin`, BUILD SUCCESSFUL); the Objective-C of
+**What a gate holds, and what nothing does.** `CallForegroundService.kt`, `CallBridge.kt` and
+`CanariFirebaseMessagingService.kt` are COMPILED by CI's `compile-android-app` job
+(`:app:compileArm64DebugKotlin`, since 2026-10-30, [cicd](../../cicd.md)) and tested by nothing:
+`android-tests` runs only the pure packages (`call/`, `push/`, `gesture/`, `share/`), which is
+where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec, and
+`CallFocusHoldTest` the focus hold. The compile was also run by hand for the focus hold
+(2026-11-12, BUILD SUCCESSFUL); the Objective-C of
 `canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;
 a video call on the loudspeaker; (B) a wired, then a Bluetooth headset connected BEFORE the call:
@@ -3310,7 +3346,9 @@ speaker and in another app - Android `proximity screen-off held`, iPhone `call p
 (D) the caller's photo on the ongoing notification (`caller photo drawn on the call notification`),
 and the name alone for an account with none; (E) music playing before the call pauses for it and
 resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call
-screen shows muted, the action reads "Réactiver le micro", a second press undoes it.
+screen shows muted, the action reads "Réactiver le micro", a second press undoes it; (G) Android
+only, a cellular call rung into a Canari call: the peer sees the microphone cut, the member the
+banner, and both come back when the phone call ends (`focus`/`lost` then `gained` in the app log).
 
 **Four log lines the same call's log misread, fixed with it.** (1) `audio_level_in` read `0.000` on
 4 ticks of 5 while 32-41 kbps of voice arrived: it was the INSTANTANEOUS `audioLevel`, one sample
@@ -3552,7 +3590,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 
-Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
+Re-rated P1 -> P3 on 2026-10-01 and kept there when calls were revived (`1.5.0`): production's 1:1 calls are peer to peer through Cloudflare TURN, and the School drops the UDP the SFU needs, so no production call reaches this code; it becomes P1 the day the School opens UDP to it. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
 
 `apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
 

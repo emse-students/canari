@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount, tick, untrack } from 'svelte';
   import { ArrowLeft, ArrowRight, Check } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -51,7 +52,6 @@
   import { cotisationOptionsFor } from '$lib/forms/cotisationSettings';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -169,7 +169,7 @@
   );
   const lineCount = $derived(draft.slotMode === 'slots' ? wizardLines(draft).length : 0);
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
   const dayNames = $derived(weekdayNames(locale, 'long'));
   const shortDayNames = $derived(weekdayNames(locale, 'short'));
   const week = $derived(weekRunsOf(draft.rows));
@@ -303,7 +303,7 @@
       {#if i > 0}
         <li
           aria-hidden="true"
-          class="h-0.5 min-w-3 flex-1 rounded-full {step > i ? 'bg-cn-yellow' : 'bg-cn-border'}"
+          class="h-0.5 min-w-3 flex-1 rounded-full {step > i ? 'bg-accent' : 'bg-cn-border'}"
         ></li>
       {/if}
       <li
@@ -314,7 +314,7 @@
       >
         <span
           class="grid size-6 place-items-center rounded-full text-xs font-bold {step === i + 1
-            ? 'bg-cn-yellow text-cn-ink'
+            ? 'bg-accent text-on-accent'
             : step > i + 1
               ? 'bg-green-ok/15 text-green-ok'
               : 'bg-control-fill'}"
@@ -439,7 +439,7 @@
         <label
           class="flex cursor-pointer items-start gap-3 rounded-xl border p-3 {draft.slotMode ===
           'step'
-            ? 'border-cn-yellow'
+            ? 'border-accent-icon'
             : 'border-cn-border'}"
         >
           <input
@@ -479,7 +479,7 @@
         <label
           class="flex cursor-pointer items-start gap-3 rounded-xl border p-3 {draft.slotMode ===
           'slots'
-            ? 'border-cn-yellow'
+            ? 'border-accent-icon'
             : 'border-cn-border'}"
         >
           <input
@@ -529,14 +529,14 @@
         <label
           class="flex cursor-pointer items-center gap-3 rounded-xl border p-3 {draft.restricted
             ? 'border-cn-border'
-            : 'border-cn-yellow'}"
+            : 'border-accent-icon'}"
         >
           <input type="radio" name="wizard-audience" value={false} bind:group={draft.restricted} />
           <span class="text-text-main text-sm font-bold">{m.bookings_wizard_audience_all()}</span>
         </label>
         <label
           class="flex cursor-pointer items-start gap-3 rounded-xl border p-3 {draft.restricted
-            ? 'border-cn-yellow'
+            ? 'border-accent-icon'
             : 'border-cn-border'}"
         >
           <input
@@ -610,7 +610,7 @@
         type="button"
         onclick={next}
         disabled={posterBusy}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         {m.bookings_wizard_next()}
         <ArrowRight size={16} />
@@ -620,7 +620,7 @@
         type="button"
         onclick={create}
         disabled={creating || posterBusy}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Check size={16} />
         {creating ? m.bookings_wizard_creating() : m.bookings_tab_create_button()}

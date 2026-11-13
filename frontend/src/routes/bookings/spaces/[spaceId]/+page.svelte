@@ -103,7 +103,7 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if notFound}
@@ -111,7 +111,7 @@
       <p class="text-text-main text-base">{m.bookings_space_unavailable()}</p>
       <a
         href={resolve('/bookings')}
-        class="bg-cn-yellow text-cn-dark rounded-xl px-4 py-2 text-sm font-semibold"
+        class="bg-accent text-on-accent rounded-xl px-4 py-2 text-sm font-semibold"
       >
         {m.bookings_space_unavailable_back()}
       </a>

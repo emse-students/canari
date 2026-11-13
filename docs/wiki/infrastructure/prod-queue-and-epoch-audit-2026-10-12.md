@@ -237,7 +237,7 @@ destructive, so the user's go is required** (backlog, "owed to the user").
 | F2 | Every device of the elected answerer answers (G) | Doubles or triples each answer for a user with 2-3 devices online | The request names an answering DEVICE, chosen from presence by device, or the answerer's devices pick the lowest online device id | Duplicates go to 0 | Low |
 | F3 | The request volume itself: 185 or more in 37 min from 34 devices, while only 22 new sessions were minted | About 47 % of key-group application frames (transport, so live only) | **Measure first**: give each `[GRAINE] asked` line the reason the session was missing (never received, past epoch, answer arrived after the epoch moved). Then remove whatever re-asks (for example a re-ask on every cold load or tab, since the asked set lives in memory) | Up to the whole 47 % | None for the measurement |
 | F4 | Replaced device generations keep their seats | 42 % of seats, 56 % of rows | Predicate R, staged, through the revoke path (section 6). Settings > Appareils connectés could also list a stale profile | About -38 % rows now. Every future fan-out drops by 27 % of seats | Destructive. A returning old browser must register again. Requires the user's go |
-| F5 | The live client pays a checkpoint per frame (C) and a salon refetch per bundle (B) | About 220 s of checkpoint per online hour on the web during a burst | B: #1761. C: already in the [backlog](../backlog.md#p2---one-encrypted-mls-checkpoint-per-inbound-application-message) | What "slow" feels like on an open client | As stated there |
+| F5 | The live client pays a checkpoint per frame (C) and a salon refetch per bundle (B) | About 220 s of checkpoint per online hour on the web during a burst | B: #1761. C: decided and built behind `checkpoint_skip_mode` ([open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)) | What "slow" feels like on an open client | As stated there |
 | F6 | Onboarding moves the epoch once per seat, and every commit rotates every sender's seed (22 sessions for 34 messages) | 137 commits, 9 623 queued commit rows across key groups | Admit all pending newcomers in ONE Add commit. Reopen rotate-on-Add for key groups only with the numbers above | Fewer commits and seeds during a join wave | Rotate-on-Add was a deliberate security choice (channel-encryption, Graine section) |
 | F7 | The pull orders by `createdAt` over an index without it | Minor | Index `("recipientId","deviceId","createdAt")` | Cheaper pages for 9 000-row queues | Migration only |
 
@@ -453,8 +453,9 @@ about 09:00 UTC. Nothing was written.
 **Hypothesis, NOT proven:** `1b1687d0` is the community key group whose seed requests and answers
 were broadcast to every member (F1 and F3 in section 7). #1768 addresses each answer to the device
 that asked. It shipped in `v1.2.6` on 2026-10-13, so the rate should fall as clients update. The
-measurement that settles it is in the
-[backlog](../backlog.md#p1---a-community-key-group-sends-every-repair-answer-to-every-seat-and-42--of-seats-have-no-device-behind-them-production-2026-10-12).
+24 h / 72 h re-measure planned here was never taken, and can no longer be read in its own terms: the
+third and fourth passes below revoked the devices holding most of those rows (backlog entry closed
+2026-11-11; the regrowth is watched daily, [backlog](../backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)).
 No deletion is proposed: these rows belong to live devices.
 
 ## How to re-measure

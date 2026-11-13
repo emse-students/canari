@@ -14,6 +14,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { BadGatewayException, BadRequestException } from '@nestjs/common';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -25,8 +27,15 @@ jest.mock('../utils/url-guard', () => {
   const actual = jest.requireActual('../utils/url-guard');
   return {
     ...actual,
-    // The SSRF guard is not what is under test here; it answers for any public URL.
-    assertSafeExternalUrl: jest.fn(async (u: string | URL) => new URL(String(u))),
+    // A NAME is accepted without the DNS lookup the real guard makes; a host written as an
+    // ADDRESS, or another scheme, needs no lookup: those go to the real guard and are judged
+    // as in production.
+    assertSafeExternalUrl: jest.fn(async (u: string | URL) => {
+      const parsed = new URL(String(u));
+      const isAddress = /^[\d.]+$/.test(parsed.hostname) || parsed.hostname.startsWith('[');
+      const isWeb = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      return isAddress || !isWeb ? actual.assertSafeExternalUrl(String(u)) : parsed;
+    }),
     ssrfSafeFetch: jest.fn(),
     fetchYouTubeOEmbed: jest.fn(async () => null),
     fetchMiGalleryPreview: jest.fn(async () => null),
@@ -34,9 +43,11 @@ jest.mock('../utils/url-guard', () => {
 });
 
 import { SecurityController } from './security.controller';
-import { ssrfSafeFetch } from '../utils/url-guard';
+import { assertSafeExternalUrl, ssrfSafeFetch } from '../utils/url-guard';
+import { mintPreviewTicket } from '../utils/previewTicket';
 
 const fetchMock = ssrfSafeFetch as jest.MockedFunction<typeof ssrfSafeFetch>;
+const guardMock = assertSafeExternalUrl as jest.MockedFunction<typeof assertSafeExternalUrl>;
 
 /** `@Res({ passthrough: true })` only ever has `setHeader` called on it here. */
 const makeRes = () => {
@@ -91,6 +102,10 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
@@ -167,5 +182,109 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
     );
 
     expect(payload.image).toBe('https://events.example/files/event/150/1461421.jpg?v=1789050716');
+  });
+
+  /**
+   * THE IMAGE WALKS ITS REDIRECTS THE WAY THE PAGE DOES: every hop is judged before anything is
+   * sent to it, and a hop that is not a public http(s) URL ends the walk.
+   */
+  describe('the image of a preview', () => {
+    const SECRET = 'link-preview-test-secret';
+    const savedSecret = process.env.INTERNAL_SHARED_SECRET;
+    let ticket: string;
+
+    beforeAll(() => {
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
+      ticket = mintPreviewTicket(SECRET).ticket;
+    });
+    afterAll(() => {
+      process.env.INTERNAL_SHARED_SECRET = savedSecret;
+    });
+    // An answer queued by one case and never asked for must not be served to the next.
+    beforeEach(() => void fetchMock.mockReset());
+
+    /** What the route writes: a status, headers, a body. */
+    const makeImageRes = () => {
+      const seen: { status: number; headers: Record<string, unknown>; body?: unknown } = {
+        status: 200,
+        headers: {},
+      };
+      const res = {
+        status: (code: number) => ((seen.status = code), res),
+        setHeader: (k: string, v: unknown) => void (seen.headers[k] = v),
+        end: (body?: unknown) => void (seen.body = body),
+      };
+      return { seen, res };
+    };
+
+    const png = () =>
+      ({
+        status: 200,
+        ok: true,
+        headers: new Map([['content-type', 'image/png']]) as unknown as Headers,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }) as never;
+
+    it('follows a hop to a public host and serves the image', async () => {
+      fetchMock
+        .mockResolvedValueOnce(redirectTo('https://cdn.example/a.png'))
+        .mockResolvedValueOnce(png());
+      const { seen, res } = makeImageRes();
+
+      await controller.getLinkPreviewImage('https://img.example/a', ticket, res as never);
+
+      expect(seen.status).toBe(200);
+      expect(seen.headers['Content-Type']).toBe('image/png');
+      expect(fetchMock.mock.calls.map(([target]) => target)).toEqual([
+        'https://img.example/a',
+        'https://cdn.example/a.png',
+      ]);
+      // Each leg is asked for one answer, never for a chain.
+      for (const [, init] of fetchMock.mock.calls) expect(init?.redirect).toBe('manual');
+    });
+
+    it.each([
+      ['an IPv4 loopback address', 'http://127.0.0.1/a.png'],
+      ['an IPv6 loopback address', 'http://[::1]/a.png'],
+      ['another scheme', 'file:///etc/hostname'],
+    ])('sends nothing to a hop that names %s, and answers 502', async (_what, hop) => {
+      fetchMock.mockResolvedValueOnce(redirectTo(hop)).mockResolvedValueOnce(png());
+      const { seen, res } = makeImageRes();
+
+      await controller.getLinkPreviewImage('https://img.example/b', ticket, res as never);
+
+      expect(seen.status).toBe(502);
+      expect(seen.body).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // It is the guard that refused the hop, not a fetch that happened to fail: the hop was
+      // handed to it, and its answer was a refusal.
+      const hopCheck = guardMock.mock.calls.findIndex(([asked]) => String(asked) === hop);
+      expect(hopCheck).toBeGreaterThan(-1);
+      await expect(guardMock.mock.results[hopCheck].value).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+    });
+
+    it('cancels the body of each redirect it follows', async () => {
+      const cancel = jest.fn(async () => undefined);
+      const hop = { ...(redirectTo('https://cdn.example/a.png') as object), body: { cancel } };
+      fetchMock.mockResolvedValueOnce(hop as never).mockResolvedValueOnce(png());
+      const { seen, res } = makeImageRes();
+
+      await controller.getLinkPreviewImage('https://img.example/d', ticket, res as never);
+
+      expect(seen.status).toBe(200);
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops after five redirects', async () => {
+      fetchMock.mockResolvedValue(redirectTo('https://img.example/again'));
+      const { seen, res } = makeImageRes();
+
+      await controller.getLinkPreviewImage('https://img.example/c', ticket, res as never);
+
+      expect(seen.status).toBe(502);
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
   });
 });

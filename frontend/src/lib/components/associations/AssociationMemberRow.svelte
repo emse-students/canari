@@ -130,7 +130,7 @@
     <div class="flex min-w-0 flex-1 items-center gap-3">
       <a
         href="/profile/{encodeURIComponent(member.userId)}"
-        class="hover:ring-cn-yellow/40 shrink-0 rounded-full ring-2 ring-transparent transition-shadow"
+        class="hover:ring-accent/40 shrink-0 rounded-full ring-2 ring-transparent transition-shadow"
         title={m.asso_member_view_profile_title()}
       >
         <Avatar userId={member.userId} size="lg" shape="circle" fallbackLabel={displayName} />
@@ -167,8 +167,8 @@
           type="button"
           disabled={!canEditPermissions}
           onclick={() => (showPermissions = !showPermissions)}
-          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex flex-1 items-center justify-between gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:w-44 sm:flex-none {showPermissions
-            ? 'border-cn-yellow/60 bg-cn-yellow/5'
+          class="border-cn-border text-text-main hover:border-accent/60 inline-flex flex-1 items-center justify-between gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:w-44 sm:flex-none {showPermissions
+            ? 'border-accent/60 bg-accent/5'
             : ''}"
           aria-expanded={showPermissions}
         >
@@ -207,7 +207,7 @@
             checked={hasPermissionFlag(permissions ?? 0, flag)}
             disabled={!mayToggle}
             onchange={() => toggleFlag(flag)}
-            class="border-cn-border accent-cn-yellow h-4 w-4 rounded {mayToggle
+            class="border-cn-border accent-accent h-4 w-4 rounded {mayToggle
               ? 'cursor-pointer'
               : 'cursor-not-allowed'}"
           />

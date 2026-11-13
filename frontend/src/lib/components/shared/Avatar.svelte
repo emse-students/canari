@@ -15,7 +15,7 @@
     /** ID of the user whose avatar should be displayed. */
     userId: string;
     /** Avatar size preset. */
-    size?: 'xs' | 'sm' | 'md' | 'lg';
+    size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
     /** When true, the avatar stretches to fill its container instead of using a preset size. */
     fill?: boolean;
     /** Border-radius style of the avatar. */
@@ -101,9 +101,11 @@
         ? 'w-4 h-4 text-2xs'
         : size === 'sm'
           ? 'w-6 h-6 text-xs'
-          : size === 'lg'
-            ? 'w-12 h-12 text-base'
-            : 'w-8 h-8 text-sm'
+          : size === 'xl'
+            ? 'w-14 h-14 text-lg'
+            : size === 'lg'
+              ? 'w-12 h-12 text-base'
+              : 'w-8 h-8 text-sm'
   );
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
   /**

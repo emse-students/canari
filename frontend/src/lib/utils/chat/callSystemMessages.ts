@@ -209,11 +209,12 @@ function callDurationMs(
     );
     return eventMs(end) - clocks.local;
   }
-  // A FALLBACK, AND IT ACCUSES: a row an older build wrote carries no clocks (legacy-compatibility.md),
-  // or a received end came with no server time, which every delivery route carries. The only measure
-  // left subtracts the inviter's clock from the hangup sender's.
+  // A FALLBACK, AND IT ACCUSES: both reasons are faults. A start row with no clocks was a build before
+  // `1.6.2`, and the floor is above it, so a call in flight across that upgrade is long over; a received
+  // end with no server time contradicts every delivery route. The only measure left subtracts the
+  // inviter's clock from the hangup sender's.
   console.error(
-    `[CallRecord] ${callId} duration MIXES two devices' clocks: ${clocks ? 'a received end with no server time' : 'a row with no start clocks (older build)'}`
+    `[CallRecord] ${callId} duration MIXES two devices' clocks: ${clocks ? 'a received end with no server time' : 'a start row with no clocks'}`
   );
   return eventMs(end) - start.startedAt;
 }

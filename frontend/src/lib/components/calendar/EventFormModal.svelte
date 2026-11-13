@@ -3,6 +3,7 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X, ImagePlus, Link2 } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -20,6 +21,7 @@
   } from '$lib/calendar/eventForm';
   import type { Association } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE EVENT FORM, ONCE, FOR EVERY SURFACE THAT OFFERS ONE.
@@ -89,6 +91,7 @@
     onWithdraw = null,
     onClose,
   }: Props = $props();
+  const layer = useOverlayLayer(() => open, 'EventFormModal');
 
   let saving = $state(false);
   let error = $state('');
@@ -160,6 +163,16 @@
     }
   }
 
+  /**
+   * The keyboard inside the panel, as the shared `Modal` reads it: the key is stopped here, so an
+   * Escape closes this dialog and not one stacked under it (both are portaled, siblings under
+   * `body`), and Escape closes it the way a click on the backdrop does. Tab is `focusTrap`'s.
+   */
+  function onPanelKeydown(e: KeyboardEvent) {
+    e.stopPropagation();
+    if (e.key === 'Escape') onClose();
+  }
+
   async function onPosterRemoved() {
     if (!poster) return;
     try {
@@ -175,7 +188,8 @@
     <div
       use:coversScreen
       data-keyboard-aware-overlay
-      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
+      style:z-index={layer.z}
+      class="flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -184,6 +198,9 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby="event-form-title"
+        tabindex="-1"
+        use:focusTrap
+        onkeydown={onPanelKeydown}
       >
         <h3 id="event-form-title" class="text-text-main text-lg font-bold">{heading}</h3>
         {#if note}
@@ -242,7 +259,7 @@
                 onclick={() => (values.kind = 'event')}
                 class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {values.kind ===
                 'event'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  ? 'border-accent-icon bg-accent/10 text-cn-dark'
                   : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
               >
                 {m.asso_calendar_event_kind_event()}
@@ -252,7 +269,7 @@
                 onclick={() => (values.kind = 'break')}
                 class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {values.kind ===
                 'break'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  ? 'border-accent-icon bg-accent/10 text-cn-dark'
                   : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
               >
                 {m.asso_calendar_event_kind_break()}
@@ -340,7 +357,7 @@
                 </div>
               {:else}
                 <label
-                  class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {poster.uploading
+                  class="border-cn-border bg-cn-bg text-text-muted hover:border-accent/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {poster.uploading
                     ? 'pointer-events-none opacity-50'
                     : ''}"
                 >
@@ -401,9 +418,7 @@
 
         {#if capabilities.canLinkForm && linkableForms && !neutral}
           <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">
-            <p
-              class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase"
-            >
+            <p class="text-text-muted flex items-center gap-1 text-xs font-bold">
               <Link2 size={14} />
               {m.asso_calendar_link_form_label()}
             </p>
@@ -439,7 +454,7 @@
             type="button"
             onclick={submit}
             disabled={saving}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+            class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? savingLabel : submitLabel}
           </button>

@@ -12,6 +12,7 @@ vi.mock('$lib/utils/appVersion', () => ({ isMobileTauriRuntime: () => false }));
 vi.mock('$lib/utils/viewport', () => ({ isNarrowChatLayout: () => false }));
 
 const { conversationBeingRead } = await import('./arrivalRuntime');
+const { windowAttention } = await import('$lib/utils/windowAttention.svelte');
 const { reconcileSalonUnread, beginUnreadReconcile, resetSalonUnread } =
   await import('./salonUnread');
 
@@ -21,6 +22,8 @@ function screen(path: string, focused: boolean, visibility: 'visible' | 'hidden'
   window.history.pushState({}, '', path);
   vi.spyOn(document, 'hasFocus').mockReturnValue(focused);
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(visibility);
+  // A person is at the window (`windowAttention.svelte.ts`); the idle case is its own test.
+  windowAttention.noteGesture();
 }
 
 /** One salon the device counts 3 in, the server 0: what a read on another device leaves. */

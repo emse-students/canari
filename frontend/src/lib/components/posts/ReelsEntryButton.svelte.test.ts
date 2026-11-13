@@ -11,6 +11,7 @@ import FeedTabRow from './FeedTabRow.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
+import { settings } from '$lib/stores/settingsStore.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The empty sheet (`Modal`) opens with a transition every case unmounts mid-flight: claimed, see
@@ -54,7 +55,7 @@ function renderRow() {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(FeedTabRow, {
     target,
-    props: { feed: 'followed', onFeed, authToken: 't' },
+    props: { feed: 'foryou', onFeed, authToken: 't' },
   });
   flushSync();
   mounted.push(() => unmount(instance));
@@ -76,8 +77,8 @@ it('draws ONE row: the three tabs, then the named clap icon at its right end', (
   const tabs = [...row.querySelectorAll<HTMLButtonElement>('[data-feed-tabs] button')];
   expect(tabs.map((b) => b.textContent!.trim())).toEqual([
     m.posts_tab_associations(),
-    m.posts_tab_followed(),
-    m.posts_tab_all(),
+    m.posts_tab_foryou(),
+    m.posts_tab_campus(),
   ]);
   expect(tabs.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
   // No second bar, no filter control: nothing on the row is a tablist or a toggle.
@@ -125,8 +126,8 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
     multiMedia: true,
-    withLinks: true,
-    feed: 'all',
+    feed: 'reels',
+    ranked: true,
     offset: 0,
     limit: 10,
   });
@@ -168,4 +169,27 @@ it('a refusal from the server is logged as the defect it is', async () => {
   expect(showToast).toHaveBeenCalledWith(m.posts_reels_open_error(), 'error');
   expect(error).toHaveBeenCalled();
   error.mockRestore();
+});
+
+it('a change of order still being read when the viewer closes is dropped: it stays closed, nothing remembered', async () => {
+  settings.setReelsOrder('ranked');
+  listPosts.mockResolvedValueOnce([{ id: 'newest' }] as PostEntity[]);
+  const { icon } = renderRow();
+  icon.click();
+  await settle();
+  const viewer = () => document.querySelector('[data-reel-viewer-stub]');
+  expect(viewer()).not.toBeNull();
+
+  let answer!: (rows: PostEntity[]) => void;
+  listPosts.mockImplementationOnce(() => new Promise<PostEntity[]>((r) => (answer = r)));
+  document.querySelector<HTMLButtonElement>('[data-reel-viewer-recent]')!.click();
+  await settle();
+  document.querySelector<HTMLButtonElement>('[data-reel-viewer-close]')!.click();
+  await settle();
+  expect(viewer()).toBeNull();
+
+  answer([{ id: 'late' }] as PostEntity[]);
+  await settle();
+  expect(viewer(), 'the late answer does not reopen the viewer').toBeNull();
+  expect(settings.reelsOrder, 'nor is its order remembered').toBe('ranked');
 });

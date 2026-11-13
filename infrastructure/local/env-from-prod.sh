@@ -76,15 +76,16 @@ log "snapshot: $(printf '%s\n' "$PROD_NAMES" | wc -l | tr -d ' ') variables"
 # Kept exactly as production has them: no local equivalent, or the key that reads the data.
 # LIVE_ENABLED is the live routes' deploy lock, `true` on both estates since 2026-10-30; what closes
 # lives is the runtime `platform_config.lives_mode`, which the dump carries, so local matches both.
+# LIVE_REPLAY_TOTAL_MAX_GB is a disk budget, a number with no secret in it: kept like the TURN budget.
 KEEP="APNS_VOIP_KEY_ID APNS_VOIP_KEY_P8 APNS_VOIP_SANDBOX APNS_VOIP_TEAM_ID APNS_VOIP_TOPIC
 AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET QUEUED_PAYLOAD_SHARED_WRITES
 CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_CALLS_API_TOKEN CLOUDFLARE_TURN_ANALYTICS_TOKEN CLOUDFLARE_TURN_KEY_ID
-CLOUDFLARE_TURN_MONTHLY_BUDGET_GB
+CLOUDFLARE_TURN_MONTHLY_BUDGET_GB LIVE_REPLAY_TOTAL_MAX_GB
 CLOUDFLARE_TURN_TTL_SECONDS EXTERNAL_API_KEY
 FIREBASE_SERVICE_ACCOUNT_JSON GOOGLE_SAFE_BROWSING_API_KEY KLIPY_API_KEY
 MEDIA_MAX_SIZE_MB MIGALLERY_API_KEY MIGALLERY_API_URL SERVICE_ACCOUNT_USER_ID
 SKY_API_KEY SKY_API_URL TURN_CREDENTIAL TURN_URL
-TURN_USERNAME LIVE_ENABLED"
+TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES COMMUNITY_OWNED_MAX"
 
 # WRITTEN EMPTY, and this list exists because "no local equivalent" is not the only question.
 #
@@ -115,8 +116,9 @@ TURN_USERNAME LIVE_ENABLED"
 # person straight in (docs/wiki/sessions.md, "The sign-in handoff"): a laptop holding it could forge a
 # token for anybody. Not REGENERATE either: a regenerated hex string is no EC key, and core-service
 # would say so at error on every boot. Empty, the local stack mints nothing and opens sites plainly.
+# MICONNECT_READER_TOKEN because it reads every MiConnect account: read-only, still personal data.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
-LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY"
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY MICONNECT_READER_TOKEN"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump
@@ -255,7 +257,8 @@ HEADER
 # file describes the same stack. POSTGRES_* MUST match the compose - the cluster was initialised
 # with those.
 DOMAIN=localhost
-ALLOW_ORIGIN=*
+# ALLOW_ORIGIN is NOT written here: production's list is not carried over, and the local one is
+# built by the compose file from the port it publishes (CANARI_LOCAL_ALLOW_ORIGIN overrides it).
 
 # IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
 #

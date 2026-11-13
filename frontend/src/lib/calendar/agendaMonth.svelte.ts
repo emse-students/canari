@@ -1,9 +1,9 @@
+import { intlLocale } from '$lib/utils/intlLocale';
 import { onMount } from 'svelte';
 import { SvelteDate } from 'svelte/reactivity';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import { calendarDayOf } from '$lib/calendar/feedEvents';
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
 import {
   SCHEDULE_AGENDA_QUERY,
   isScheduleAgendaViewport,
@@ -246,7 +246,7 @@ export function createAgendaMonth(ctx: AgendaMonthContext): AgendaMonthState {
   let detailModalOpen = $state(false);
 
   const titleMonth = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    new Intl.DateTimeFormat(intlLocale(), {
       month: 'long',
       year: 'numeric',
     }).format(focusDate)

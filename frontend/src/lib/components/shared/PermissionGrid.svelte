@@ -118,7 +118,7 @@
             class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {isAdmin
               ? 'bg-red-500/10 text-red-600 dark:text-red-400'
               : role.priority >= 50
-                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                ? 'bg-accent/10 text-accent-text'
                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
           >
             @{role.label ?? role.name}
@@ -149,7 +149,7 @@
                   onclick={() => cycleCell(role.id, perm.key)}
                   title={hint}
                   aria-label={hint}
-                  class="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-all outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {state ===
+                  class="focus-visible:ring-accent-icon inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-all outline-none hover:scale-110 focus-visible:ring-2 active:scale-95 {state ===
                   'allow'
                     ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                     : state === 'deny'

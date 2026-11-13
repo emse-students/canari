@@ -18,6 +18,7 @@
   import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
   import { sheetClearance, sheetRestingTop } from '$lib/utils/chat/sheetClearance';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
 
@@ -36,8 +37,6 @@
     isOwn?: boolean;
     /** When true, hides reply and edit actions (message has been deleted). */
     isDeleted?: boolean;
-    /** When true, hides the edit action (media messages cannot be edited). */
-    hasMedia?: boolean;
     /** When false, hides the reply button. */
     canReply?: boolean;
     /** When false, hides the react button. */
@@ -86,7 +85,6 @@
     anchor = null,
     isOwn = false,
     isDeleted = false,
-    hasMedia = false,
     canReply = true,
     canReact = true,
     canEdit = true,
@@ -105,6 +103,9 @@
     onClose,
     canModerate = false,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => visible, 'MessageMobileActions');
 
   /** One entry of the action row; `tone` is the colour of a special action. */
   type SheetAction = {
@@ -161,10 +162,11 @@
         key: 'pin',
         label: pinned ? m.msg_unpin_label() : m.msg_pin_label(),
         icon: pinned ? PinOff : Pin,
-        tone: 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-500',
+        tone: 'text-accent-text hover:bg-accent/10',
         run: onPin,
       });
-    if (isOwn && !hasMedia && canEdit)
+    // A media message's edit is its caption's, so it is offered too (owner, 2026-11-11).
+    if (isOwn && canEdit)
       list.push({
         key: 'edit',
         label: m.common_edit_label(),
@@ -263,11 +265,11 @@
   root context, so a sheet asking for 160 was really asking for 160-of-10, and anything the wrapper
   does not cover - the conversation header among them - stayed outside the scrim.
 
-  Moving the node to `document.body` is what makes `inset-0` mean the viewport and `--z-sheet` mean
-  the ladder, on every device rather than on the ones whose wrapper happens to fill the screen.
+  Moving the node to `document.body` is what makes `inset-0` mean the viewport and its z-index mean
+  the window, on every device rather than on the ones whose wrapper happens to fill the screen.
 -->
 {#if visible}
-  <div use:portal use:coversScreen class="fixed inset-0 z-(--z-sheet) md:hidden">
+  <div use:portal use:coversScreen style:z-index={layer.z} class="fixed inset-0 md:hidden">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"
@@ -292,7 +294,7 @@
             <button
               type="button"
               class="flex h-11 w-11 items-center justify-center rounded-full text-2xl leading-none transition-transform active:scale-75 {isActive
-                ? 'bg-amber-400/20 ring-2 ring-amber-400'
+                ? 'bg-accent/20 ring-accent-icon ring-2'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
               aria-label={m.msg_react_with_emoji({ emoji })}
               aria-pressed={isActive}

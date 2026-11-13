@@ -11,6 +11,8 @@
    The Android twin is app/src/main/res/values/strings.xml. */
 "notif.reaction.body" = "a réagi %@ à votre message";
 "notif.message.from" = "Nouveau message de %@";
+"notif.message.new" = "Nouveau message";
+"notif.group.unnamed" = "Conversation de groupe";
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";
@@ -47,6 +49,20 @@
 "notif.social.association_repost.body" = "Nouvelle publication";
 "notif.social.member_repost.title" = "%@ a republié une publication";
 "notif.social.member_repost.body" = "Nouvelle publication";
+"notif.social.friend_reaction.title" = "%@ a réagi à une publication";
+"notif.social.friend_reaction.body" = "Voir la publication";
+"notif.social.friend_comment.title" = "%@ a commenté une publication";
+"notif.social.friend_comment.body" = "Voir la publication";
+"notif.social.campus_trend.title" = "Suggestion : %@";
+"notif.social.campus_trend.body" = "Une publication qui fait réagir votre espace";
+"notif.social.campus_trend.untitled" = "Suggestion : une publication";
+"notif.social.campus_trend_photo.title" = "Suggestion : une photo";
+"notif.social.campus_trend_photo.body" = "Une publication qui fait réagir votre espace";
+"notif.social.campus_trend_video.title" = "Suggestion : une vidéo";
+"notif.social.campus_trend_video.body" = "Une publication qui fait réagir votre espace";
+"notif.social.campus_trend.liked_by" = "Aimée par %1$@";
+"notif.social.campus_trend.liked_by_one" = "Aimée par %1$@ et 1 autre personne";
+"notif.social.campus_trend.liked_by_many" = "Aimée par %1$@ et %2$@ autres";
 "notif.social.repost_proposed.title" = "%@ propose de relayer une publication";
 "notif.social.repost_proposed.body" = "Publication à relayer";
 "notif.social.repost_personal_requested.title" = "%@ demande à relayer votre publication";
@@ -55,6 +71,8 @@
 "notif.social.coorganise_proposed.body" = "Événement à co-organiser";
 "notif.social.live_started.title" = "%@ est en live";
 "notif.social.live_started.body" = "Appuyez pour regarder";
+"notif.social.live_mention.title" = "%@ vous a mentionné dans un live";
+"notif.social.live_mention.body" = "Appuyez pour rejoindre le live";
 "notif.social.follow_request.title" = "%@ demande à vous suivre";
 "notif.social.follow_request.body" = "Appuyez pour répondre";
 "notif.social.join_ask.title" = "%@ veut rejoindre";
@@ -76,6 +94,10 @@
 "notif.social.booking_withdrawn.body" = "Votre réservation est maintenue";
 "notif.social.booking_added.title" = "%@ vous a inscrit à une réservation";
 "notif.social.booking_added.body" = "Retrouvez-la dans Réservations";
+"notif.social.booking_open.title" = "%@ ouvre les réservations";
+"notif.social.booking_open.body" = "Retrouvez-les dans Réservations";
+"notif.social.event_open.title" = "%@ publie un événement";
+"notif.social.event_open.body" = "Retrouvez-le dans l'agenda";
 "notif.social.booking_changed.title" = "%@ a modifié votre réservation";
 "notif.social.booking_changed.body" = "Retrouvez le nouvel horaire dans Réservations";
 "notif.social.booking_removed.title" = "%@ vous a retiré d'une réservation";

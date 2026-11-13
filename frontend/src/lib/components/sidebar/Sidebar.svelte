@@ -636,7 +636,7 @@
                 : undefined}
               class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 select-none [-webkit-touch-callout:none] {selectedCommunityWorkspaceId ===
               workspace.id
-                ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
+                ? 'ring-accent-icon ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
               onclick={() => {
                 if (selectedCommunityWorkspaceId === workspace.id) return;
@@ -717,10 +717,12 @@
         onOpenNewChat={() => openNewChatModal('contact')}
       />
     {:else}
+      <!-- A plain header, no glass box of its own: `.glass-chrome` is unlayered, so its full border and square corners beat the utilities and cut into the panel's rounded corner on pc and ran to the screen's edge on a phone. Same surface as the panel, one bottom rule, the 16px gutter kept. -->
       <div
-        class="glass-chrome sticky top-0 z-10 flex items-center justify-between rounded-none border-x-0 border-t-0 border-white/50 px-4 py-3 shadow-none dark:border-white/10"
+        data-community-header
+        class="bg-cn-surface sticky top-0 z-10 flex items-center justify-between border-b border-white/50 px-4 py-3 dark:border-white/10"
       >
-        <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
+        <h2 class="font-display text-text-main truncate text-lg font-bold">
           <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />
         </h2>
 
@@ -787,6 +789,7 @@
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}
+              lastActivityAt={conversationRecency(convo)}
               onClick={() => onSelectConversation(name)}
             />
           </div>
@@ -809,7 +812,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('contact')}
-                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold transition-all active:scale-95"
+                class="text-on-accent bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>
@@ -888,7 +891,7 @@
                       }`}
                   class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
                   channel.id
-                    ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
+                    ? 'text-text-main bg-[color-mix(in_srgb,var(--accent)_16%,transparent)]'
                     : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
                 >
                   <span class="opacity-70" aria-hidden="true">
@@ -907,7 +910,7 @@
                   {#if unjoined}
                     <span
                       aria-hidden="true"
-                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
+                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold"
                     >
                       {m.chat_channel_join_as_admin_label()}
                     </span>
@@ -915,7 +918,7 @@
                   {#if unreadCount}
                     <span
                       aria-hidden="true"
-                      class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
+                      class="bg-cn-ink text-accent text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                     >
                       {unreadCount > 99 ? '99+' : unreadCount}
                     </span>

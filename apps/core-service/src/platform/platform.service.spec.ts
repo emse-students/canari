@@ -47,6 +47,7 @@ describe('PlatformService', () => {
       livesMode: 'off' as const,
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
+      liveReplaysMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -62,6 +63,7 @@ describe('PlatformService', () => {
       livesMode: 'off' as const,
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
+      liveReplaysMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -79,6 +81,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -115,6 +118,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ checkpointSkipMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with live replays OFF - every live is deleted at its end until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ liveReplaysMode: 'off' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -127,6 +139,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -178,6 +191,7 @@ describe('PlatformService', () => {
         livesMode: 'off',
         pushMode: 'full',
         checkpointSkipMode: 'off',
+        liveReplaysMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -251,6 +265,7 @@ describe('PlatformService', () => {
         livesMode: 'off',
         pushMode: 'full',
         checkpointSkipMode: 'off',
+        liveReplaysMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -309,6 +324,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -331,6 +347,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -409,6 +426,22 @@ describe('PlatformService', () => {
     warn.mockRestore();
   });
 
+  it('updateConfig moves the live replays switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ liveReplaysMode: 'on' }, ADMIN);
+
+    expect(result.liveReplaysMode).toBe('on');
+    expect(result.livesMode).toBe('on');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { liveReplaysMode: 'on' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'liveReplaysMode off -> on by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
   it('updateConfig leaves the lives mode alone when the update does not name it', async () => {
     const existing = rowWithMin('0.13.0');
     existing.livesMode = 'on';
@@ -416,5 +449,69 @@ describe('PlatformService', () => {
     const result = await service.updateConfig({ callsMode: 'off' }, ADMIN);
 
     expect(result.livesMode).toBe('on');
+  });
+
+  describe('getConfig - one query, one read in flight', () => {
+    it('reads the existing row with ONE query, never ensureDefaults first', async () => {
+      rowWithMin('1.6.6');
+      const config = await service.getConfig();
+      expect(config.minClientVersion).toBe('1.6.6');
+      expect(repo.findOne).toHaveBeenCalledTimes(1);
+      expect(repo.findOneOrFail).not.toHaveBeenCalled();
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('writes the defaults only when no row exists yet', async () => {
+      const row = rowWithMin('0.0.0');
+      repo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      const config = await service.getConfig();
+      expect(repo.save).toHaveBeenCalledTimes(1);
+      expect(config.minClientVersion).toBe(row.minClientVersion);
+    });
+
+    it('concurrent callers share one read, and a later caller reads afresh', async () => {
+      rowWithMin('1.6.6');
+      const [a, b] = await Promise.all([service.getConfig(), service.getConfig()]);
+      expect(a).toEqual(b);
+      expect(repo.findOne).toHaveBeenCalledTimes(1);
+      await service.getConfig();
+      expect(repo.findOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('a write drops the read in flight: a caller after the write never joins the older read', async () => {
+      const row = rowWithMin('1.6.6');
+      // The first read is HELD OPEN across the whole write, so only the write's clear can stop the
+      // caller after it from joining that read.
+      let releaseFirst: (value: typeof row) => void = () => undefined;
+      repo.findOne.mockImplementationOnce(
+        () => new Promise((resolve) => (releaseFirst = resolve)) as never
+      );
+      const before = service.getConfig();
+      mockDeployed.mockReturnValue('1.6.9');
+      await service.updateConfig({ minClientVersion: '1.6.8' }, ADMIN);
+
+      const readsBefore = repo.findOne.mock.calls.length;
+      const after = service.getConfig();
+      expect(repo.findOne.mock.calls.length).toBe(readsBefore + 1);
+      expect(after).not.toBe(before);
+      expect((await after).minClientVersion).toBe('1.6.8');
+
+      releaseFirst(row);
+      await before;
+    });
+
+    it('a failed read fails every caller that joined it, and the next call reads again', async () => {
+      const row = rowWithMin('1.6.6');
+      repo.findOne.mockRejectedValueOnce(new Error('connection reset'));
+      const results = await Promise.allSettled([service.getConfig(), service.getConfig()]);
+      expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+      expect(repo.findOne).toHaveBeenCalledTimes(1);
+
+      // Dropped on the failure too, not only on a success: the next caller is not handed it.
+      await expect(service.getConfig()).resolves.toMatchObject({
+        minClientVersion: row.minClientVersion,
+      });
+      expect(repo.findOne).toHaveBeenCalledTimes(2);
+    });
   });
 });

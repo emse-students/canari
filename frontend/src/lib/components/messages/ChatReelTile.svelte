@@ -14,10 +14,11 @@
    * met in the viewer, it is recorded on the message's local row and drawn "CanaReel supprime" when
    * it came before the hint, "CanaReel expire" after (`reelTombstoneOf`, RC-6) - never the reason.
    */
-  import { CircleAlert, Play, Trash2, Video as VideoIcon, VideoOff, X } from '@lucide/svelte';
+  import { CircleAlert, Trash2, Video as VideoIcon, VideoOff, X } from '@lucide/svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import type { MediaRef } from '$lib/media';
   import type { ReelTombstone } from '$lib/reels/chatReel';
+  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
   import { formatVideoTime } from '$lib/utils/videoPlayback';
   import { timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -166,13 +167,11 @@
       }}
       onpointerdown={(e) => e.stopPropagation()}
       aria-label={label}
-      class="focus-visible:ring-cn-yellow absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset"
+      class="focus-visible:ring-accent-icon absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset"
       data-reel-tile
     >
-      <span
-        class="bg-cn-scrim/50 flex h-14 w-14 items-center justify-center rounded-full transition-transform duration-300 md:group-hover/media:scale-110"
-      >
-        <Play size={26} strokeWidth={2.25} fill="currentColor" />
+      <span class="transition-transform duration-300 md:group-hover/media:scale-110">
+        <VideoGlassGlyph kind="play" size={64} />
       </span>
       <span class="bg-cn-scrim/50 rounded-full px-3 py-1 text-xs font-semibold">
         {m.reel_chat_tile_tap()}

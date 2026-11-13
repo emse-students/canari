@@ -184,7 +184,8 @@ function structuralClaims(selector, panelSource) {
   const [, cls, label] = parts;
   // Markup only: the script block and its prose name `.side-panel` a dozen times and prove nothing.
   const markup = panelSource.slice(panelSource.indexOf('</script>'));
-  const aside = new RegExp(`<aside\\s+class="${cls}[\\s"]`).exec(markup);
+  // Any attribute may precede `class` (a `style:` directive does since #3434).
+  const aside = new RegExp(`<aside\\b[^>]*?\\sclass="${cls}[\\s"]`).exec(markup);
   if (!aside) return [`no <aside class="${cls} ..."> in SidePanel.svelte, so ${selector} matches nothing`];
   const inside = markup.slice(aside.index);
   const key = [...inside.matchAll(/aria-label=\{m\.(\w+)\(\)\}/g)]

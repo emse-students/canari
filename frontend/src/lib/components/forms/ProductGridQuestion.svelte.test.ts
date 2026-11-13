@@ -85,6 +85,12 @@ describe('ProductGridQuestion', () => {
     expect(target.textContent).toContain('300g - broderie');
   });
 
+  it('draws the product image whole and keeps the line breaks of the label and help', () => {
+    const { target } = render(grid(), {}, {});
+    expect(target.querySelector('h2')!.className).toContain('whitespace-pre-line');
+    expect(target.querySelector('h2 ~ p, p.italic')!.className).toContain('whitespace-pre-line');
+  });
+
   it('turns a "+" into a stepper bounded by maxPerCell, and back at 0', () => {
     const { target, state } = render(grid());
     const table = desktop(target);

@@ -97,9 +97,16 @@
      * dropdown opens the store is populated, so that path always worked.
      */
     void (async () => {
+      // A list drawn from the device's copy (slow-link chantier, gap 2) already says what was
+      // unread: kept as the band, and the answer's own unread rows join it - never fewer, so a
+      // row the reader saw as new before the answer lands is not demoted by it.
+      const fromCopy = postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id);
       await postNotifStore.load(50);
       openedAt = new Date();
-      unreadAtOpen = new Set(postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id));
+      unreadAtOpen = new Set([
+        ...fromCopy,
+        ...postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id),
+      ]);
       await postNotifStore.markAllRead();
     })();
   });
@@ -164,7 +171,7 @@
           aria-pressed={filter === tab.key}
           class="tap-target rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {filter ===
           tab.key
-            ? 'bg-cn-yellow text-cn-ink'
+            ? 'bg-accent text-on-accent'
             : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           {tab.label}
@@ -176,9 +183,9 @@
   {#if pendingFollowRequests > 0}
     <a
       href={resolve(FOLLOW_REQUESTS_ROUTE)}
-      class="border-cn-border bg-cn-surface text-text-main mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors hover:border-amber-400"
+      class="border-cn-border bg-cn-surface text-text-main hover:border-accent-icon mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors"
     >
-      <UserPlus size={16} strokeWidth={2.5} class="shrink-0 text-amber-600 dark:text-amber-400" />
+      <UserPlus size={16} strokeWidth={2.5} class="text-accent-text shrink-0" />
       {m.follow_requests_banner({ count: pendingFollowRequests })}
     </a>
   {/if}
@@ -186,9 +193,9 @@
   {#if pendingRequests > 0}
     <a
       href={resolve(REPUBLICATION_REQUESTS_ROUTE)}
-      class="border-cn-border bg-cn-surface text-text-main mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors hover:border-amber-400"
+      class="border-cn-border bg-cn-surface text-text-main hover:border-accent-icon mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors"
     >
-      <Repeat2 size={16} strokeWidth={2.5} class="shrink-0 text-amber-600 dark:text-amber-400" />
+      <Repeat2 size={16} strokeWidth={2.5} class="text-accent-text shrink-0" />
       {m.republication_requests_banner({ count: pendingRequests })}
     </a>
   {/if}

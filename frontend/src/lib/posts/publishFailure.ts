@@ -30,6 +30,12 @@ import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
 import { STUDENTS_ONLY_NOT_OFFERED } from '$lib/posts/studentsOnly';
+import {
+  INSTITUTION_REACH_INVALID,
+  INSTITUTION_REACH_NOT_OFFERED,
+  INSTITUTION_REACH_OUTSIDE_AUDIENCE,
+  INSTITUTION_REACH_REQUIRED,
+} from '$lib/posts/institutionReach';
 import { COMMENT_REMOVED_BY_MODERATION } from '$lib/posts/commentRemovedRefusal';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -81,6 +87,19 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // "Entre étudiants" asked where it is not offered (the composers offer it on the same types).
   if (error instanceof ApiRefusalError && error.code === STUDENTS_ONLY_NOT_OFFERED) {
     return m.post_students_only_not_offered();
+  }
+  // The reach of an institution's post (owner, 2026-11-10): each refusal names what to fix.
+  if (error instanceof ApiRefusalError) {
+    switch (error.code) {
+      case INSTITUTION_REACH_REQUIRED:
+        return m.post_reach_required();
+      case INSTITUTION_REACH_NOT_OFFERED:
+        return m.post_reach_not_offered();
+      case INSTITUTION_REACH_INVALID:
+        return m.post_reach_invalid();
+      case INSTITUTION_REACH_OUTSIDE_AUDIENCE:
+        return m.post_reach_outside_audience();
+    }
   }
   // A reply to (or a like of) a comment moderation removed while this copy still showed it live.
   if (error instanceof ApiRefusalError && error.code === COMMENT_REMOVED_BY_MODERATION) {

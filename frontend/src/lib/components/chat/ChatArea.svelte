@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { ChannelWritePolicy } from '$lib/services/ChannelService';
+  import { writePolicyLine } from '$lib/utils/chat/channelWritePolicy';
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import { excludeRightEdgeOver } from '$lib/mobile/edgeGestureExclusion';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -14,7 +16,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { flushSync, onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -40,15 +42,23 @@
   import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
     chatViewCountLine,
+    chatViewEntryLine,
     isPinnedToBottom,
     respondToNewMessage,
+    stickToBottomAfterScroll,
+    threadReach,
     keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import {
+    countUnreadBelow,
+    countingReadPoint,
+    dmReadAnchorId,
+    seenByAnchors,
+  } from '$lib/utils/chat/readState';
   import {
     lastRowAbove,
     resolveAnchor,
@@ -77,9 +87,21 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import {
+    dropAnchorsExcept,
+    firstRowEndingBelow,
+    peekConversationAnchor,
+    rememberConversationAnchor,
+    resolveEntryAnchor,
+    takeConversationAnchor,
+    type ConversationAnchor,
+    type EntryAnchorDecision,
+  } from '$lib/utils/chat/scrollAnchors';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import {
     isNarrowChatLayout,
     isOverlayLayout,
@@ -230,10 +252,12 @@
      * write policy, and a channel row that has not been refreshed must not silence anybody.
      */
     canWrite?: boolean;
+    /** The open salon's write policy, so the read-only line can say who may write. */
+    writePolicy?: ChannelWritePolicy;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Sends a finished recording straight out, without staging it. Enables the microphone. */
-    onSendVoiceNote?: (file: File) => void;
+    onSendVoiceNote?: (file: File, loudness: MediaLoudness | null) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -307,6 +331,7 @@
     pendingInvites = [],
     mentionRoster,
     canWrite = true,
+    writePolicy,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -419,6 +444,8 @@
   let lastConversationKey = $state('');
   /** Counts entries (fill passes): only the latest entry's fill and widen may go on. */
   let entryEpoch = 0;
+  /** The entry's `[CHAT_VIEW] ... entry settled` line is still to be written (one per entry). */
+  let entryReportOwed = false;
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
@@ -440,9 +467,19 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let chatHeaderRef = $state<{ focusSearchToggle: () => void } | null>(null);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
+  /**
+   * The older-history load in flight; a conversation switch retires it, so its late `scrollTop`
+   * restore - computed from the PREVIOUS conversation's offsets - never lands on the new one, and its
+   * `isLoadingOlder` does not hold the new entry's growth to `keep-row` (review of #3223).
+   */
+  let olderLoadToken = 0;
+  /** `scrollTop` at the last `measureScroll` of this conversation (`stickToBottomAfterScroll`). */
+  let lastMeasuredScrollTop: number | null = null;
   /**
    * Where this conversation's scrollback stands - the ask made once the LOCAL store is exhausted
    * and only a peer can supply what is older.
@@ -457,7 +494,14 @@
   // other says this device cannot fetch. They were one value until 2026-09-21, and a brand-new
   // conversation was told no device could serve its history because nothing had asked whether
   // there was any.
-  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'complete' | 'unavailable';
+  type ScrollbackState =
+    | 'idle'
+    | 'asking'
+    | 'asked'
+    | 'no-peer'
+    | 'complete'
+    | 'unavailable'
+    | 'main-tab';
   let scrollbackState = $state<ScrollbackState>('idle');
   /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
   let scrollbackAskedAt = $state<number | null>(null);
@@ -479,21 +523,21 @@
   /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
   let threadTouch: TouchHold | null = null;
 
-  function scrollToBottom(smooth = true) {
+  /**
+   * Puts the pane on its last row.
+   *
+   * **INSTANT, NEVER SMOOTH** (2026-11-09). A smooth scroll is a span of frames in which the pane
+   * is between two places: every `scroll` event of the glide is measured (`measureScroll`), so the
+   * stick-to-bottom flag reads `false` mid-way, and a row growing then - a preview upgraded into its
+   * reply bubble - was answered as growth under a reader in history: the glide ended at the OLD
+   * bottom and the new rows stayed below the fold. Any plain `scrollTop` write also aborts a glide
+   * (the jump-to-message defect of 2026-10-12, chat.md). An instant scroll has nothing in flight.
+   */
+  function scrollToBottom() {
     if (!chatContainer) return;
-    chatContainer.scrollTo({
-      top: chatContainer.scrollHeight,
-      behavior: smooth ? 'smooth' : 'auto',
-    });
+    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
   }
 
-  /**
-   * Robustly pins the view to the latest message when entering a conversation.
-   * A single rAF scroll often fires before late-settling content (images, fonts,
-   * the freshly rendered group window) has finished growing the list, leaving the
-   * view above the bottom. Re-pinning across a few frames and two short delays
-   * guarantees we actually land on the last message.
-   */
   /**
    * Entering a conversation : the initial render window is kept small (one screenful) so the
    * first paint is instant. If that screenful happens to be shorter than the viewport while
@@ -552,6 +596,171 @@
   }
 
   /**
+   * Where the reader stands, kept for their return from another page (a profile opened from a sender,
+   * a members row or a direct header). MEASURED when a navigation to ANOTHER ROUTE begins
+   * (`beforeNavigate`, the DOM still mounted), COMMITTED only when this pane is actually torn down
+   * (`onDestroy`): a navigation that is cancelled, or that leaves this pane mounted, commits nothing
+   * (`afterNavigate` drops the measure). Never a scroll listener or a timer. The next entry of this
+   * conversation reads it (`decideEntryAnchor`). A reader at the bottom saves nothing: the usual
+   * entry (first unread, bottom) is where they belong.
+   */
+  function measureReaderPosition(): ConversationAnchor | null {
+    const c = conversation;
+    if (!c) return null;
+    if (!chatContainer || entering || isNearBottom) {
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} left at the bottom - nothing kept`);
+      return null;
+    }
+    const drawnIds = new Set(
+      visibleMessageGroups.filter(isMessageGroupRow).map((group) => group.message.id)
+    );
+    const rows = Array.from(chatContainer.querySelectorAll<HTMLElement>('[id^="msg-"]')).filter(
+      (row) => drawnIds.has(row.id.slice('msg-'.length))
+    );
+    // The top of what the reader SEES: the scroller runs under the floating chrome, whose height is
+    // its padding-top (the same edge the sticky date is measured from).
+    const visibleTop =
+      chatContainer.getBoundingClientRect().top +
+      (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+    const index = firstRowEndingBelow(
+      rows.length,
+      (i) => rows[i].getBoundingClientRect().bottom,
+      visibleTop
+    );
+    if (index < 0) {
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} no row in view on leaving - nothing kept`);
+      return null;
+    }
+    return {
+      messageId: rows[index].id.slice('msg-'.length),
+      windowStart: renderWindow.start,
+      offsetPx: rows[index].getBoundingClientRect().top - visibleTop,
+      lastMessageId: c.messages.at(-1)?.id ?? null,
+    };
+  }
+  let pendingLeave: { conversationId: string; anchor: ConversationAnchor | null } | null = null;
+  beforeNavigate((nav) => {
+    // Only a real leave of this route: not a page unload (memory dies anyway), not a navigation that
+    // stays on the same path (a query change, a shallow push of an overlay).
+    if (nav?.willUnload) return;
+    const to = nav?.to?.url.pathname;
+    if (!to || to === nav?.from?.url.pathname || !conversation) return;
+    pendingLeave = { conversationId: conversation.id, anchor: measureReaderPosition() };
+  });
+  afterNavigate(() => {
+    // Still mounted after a navigation completed: this pane did not leave, so nothing is committed.
+    if (!pendingLeave) return;
+    Log.d('chat.anchor', 'navigation ended with the pane still mounted - nothing kept');
+    pendingLeave = null;
+  });
+  onDestroy(() => {
+    if (!pendingLeave) return;
+    const { conversationId, anchor } = pendingLeave;
+    pendingLeave = null;
+    rememberConversationAnchor(conversationId, anchor);
+    if (anchor) {
+      Log.d(
+        'chat.anchor',
+        `${conversationId.slice(0, 8)} kept at ${anchor.messageId.slice(0, 8)} (window ${anchor.windowStart})`
+      );
+    }
+  });
+
+  /**
+   * THE ONE PLACE A SAVED POSITION ENTERS THE ENTRY (`resolveEntryAnchor` decides).
+   *
+   * An anchor serves the IMMEDIATE return only: every other conversation's anchor ends at this entry,
+   * and one whose conversation has newer messages than when the reader left is declined (the usual
+   * entry puts them at the first unread). The anchor is TAKEN only once the entry has its groups: an
+   * entry onto a list still loading leaves it in place, silently, for a later entry. A message gone
+   * from a settled list is the one stale case, and it says so: a fallback is a signal.
+   */
+  function decideEntryAnchor(c: Conversation): EntryAnchorDecision {
+    const dropped = dropAnchorsExcept(c.id);
+    if (dropped > 0) Log.d('chat.anchor', `${dropped} position(s) of other conversations dropped`);
+    const anchor = peekConversationAnchor(c.id);
+    if (anchor === null) return { kind: 'bottom', reason: 'none' };
+    const index = messageGroups.findIndex(
+      (group) => isMessageGroupRow(group) && group.message.id === anchor.messageId
+    );
+    if (index < 0 && (messageGroups.length === 0 || isLoadingHistory || isCatchingUpMessages)) {
+      Log.d(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} list still loading - saved position kept for later`
+      );
+      return { kind: 'bottom', reason: 'none' };
+    }
+    takeConversationAnchor(c.id);
+    const decision = resolveEntryAnchor(
+      anchor,
+      index,
+      messageGroups.length,
+      c.messages.at(-1)?.id ?? null
+    );
+    if (decision.kind === 'bottom' && decision.reason === 'message-not-in-list') {
+      Log.w(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} saved position is stale (${decision.reason}) - opening at the usual entry`
+      );
+    } else if (decision.kind === 'bottom' && decision.reason === 'newer-messages') {
+      Log.d(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} messages arrived since the reader left - usual entry`
+      );
+    }
+    return decision;
+  }
+
+  /** A restore is running (the window opened, the row not yet revealed): a late merge must not pin. */
+  let restoringEntry = false;
+
+  /**
+   * Opens the conversation where the reader left it: the render window opens at the saved start, the
+   * anchor row is put back at its saved offset, and only then is the list revealed. It goes through
+   * the entry's own machinery - the hidden frame, `entering`, the widen after the reveal - so nothing
+   * about it is a second mechanism; only the landing differs from `fillViewportThenPin`.
+   */
+  async function restoreEntryAnchor(decision: Extract<EntryAnchorDecision, { kind: 'restore' }>) {
+    const epoch = ++entryEpoch;
+    windowStart = decision.windowStart;
+    await tick();
+    if (epoch !== entryEpoch) return;
+    const place = (): boolean => {
+      const row = document.getElementById(`msg-${decision.messageId}`);
+      if (!row || !chatContainer) return false;
+      const visibleTop =
+        chatContainer.getBoundingClientRect().top +
+        (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+      chatContainer.scrollTop += row.getBoundingClientRect().top - visibleTop - decision.offsetPx;
+      return true;
+    };
+    if (!place()) {
+      Log.w(
+        'chat.anchor',
+        `row ${decision.messageId.slice(0, 8)} not mounted after the window opened at ${decision.windowStart} - usual entry`
+      );
+      restoringEntry = false;
+      isNearBottom = true;
+      void fillViewportThenPin();
+      return;
+    }
+    Log.d(
+      'chat.anchor',
+      `restored ${decision.messageId.slice(0, 8)} (window ${decision.windowStart})`
+    );
+    requestAnimationFrame(() => {
+      if (epoch !== entryEpoch) return;
+      place();
+      restoringEntry = false;
+      // The same reveal as the usual entry: one flush, the floor held at the entry frame's until the
+      // widen after it has finished.
+      entryWidening = true;
+      entering = false;
+      void widenEntryWindow(epoch);
+    });
+  }
+
+  /**
    * Grows the entry window from its first-frame size to `INITIAL_RENDER_GROUPS`, AFTER the frame
    * that showed the tail, so a page of rows is never one long task before the first paint.
    *
@@ -601,29 +810,26 @@
   }
 
   /**
-   * Pins the view to the bottom, then keeps re-pinning across a few frames and two short
-   * delays so late-settling content (images, fonts) can't leave us above the bottom.
-   * `onPinned` fires on the first frame we are actually at the bottom - used to reveal the
-   * list only once it is correctly scrolled, so the entry never flashes the top.
+   * Pins the view to the bottom now and again on the next frame, where `onPinned` reveals the list -
+   * so the entry never flashes the top.
+   *
+   * **WHAT SETTLES LATER IS FOLLOWED, NOT WAITED FOR** (2026-11-09). This used to re-pin for four
+   * more frames and at 250 and 600 ms, guessing when late content (a medium, a font, a preview
+   * upgraded into its reply) would have landed. Content that landed after the guess was not
+   * followed, and a reader who scrolled up inside it was pulled back down. `observeThreadGrowth`
+   * follows every change of the thread's extent while the entry runs and while the reader is at the
+   * bottom after it (`threadGrowthResponse`), so the guess is gone.
    */
   function scrollToBottomSettled(onPinned?: () => void) {
     if (!chatContainer) {
       onPinned?.();
       return;
     }
-    scrollToBottom(false);
+    scrollToBottom();
     requestAnimationFrame(() => {
-      scrollToBottom(false);
+      scrollToBottom();
       onPinned?.();
-      let frames = 0;
-      const repin = () => {
-        scrollToBottom(false);
-        if (++frames < 4) requestAnimationFrame(repin);
-      };
-      requestAnimationFrame(repin);
     });
-    setTimeout(() => scrollToBottom(false), 250);
-    setTimeout(() => scrollToBottom(false), 600);
   }
 
   /**
@@ -650,7 +856,15 @@
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
-    isNearBottom = isPinnedToBottom(chatContainer);
+    // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
+    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`).
+    isNearBottom = stickToBottomAfterScroll({
+      pinned: isPinnedToBottom(chatContainer),
+      scrollTop: chatContainer.scrollTop,
+      wasNearBottom: isNearBottom,
+      previousScrollTop: lastMeasuredScrollTop,
+    });
+    lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
@@ -880,6 +1094,20 @@
         )
       : undefined
   );
+  /**
+   * A DM: the one own message that carries the "Lu" marker, under the newest message the peer has
+   * read (owner, 2026-11-13), computed over every row like `seenBy`, never the render window.
+   */
+  let dmReadAnchor = $derived(
+    chatView?.isDirect
+      ? dmReadAnchorId(
+          messageRows,
+          chatView.conversation.readWatermarks,
+          currentUserId,
+          chatView.conversation.serverReadWatermarks
+        )
+      : null
+  );
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
   /**
@@ -898,7 +1126,7 @@
     if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
+    const mine = countingReadPoint(convo, currentUserId.trim().toLowerCase());
     return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
   });
   /**
@@ -919,20 +1147,25 @@
       return;
     }
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
+      const token = ++olderLoadToken;
       isLoadingOlder = true;
       try {
         const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
         const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
+        if (token !== olderLoadToken) {
+          Log.d('ChatArea', 'older-history load retired by a conversation switch - no restore');
+          return;
+        }
         if (!hasMore) hasMoreInDb = false;
         // New messages were prepended - restore scroll position so the
         // viewport doesn't jump back to the top.
         await tick();
-        if (chatContainer) {
+        if (chatContainer && token === olderLoadToken) {
           chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
         }
       } finally {
-        isLoadingOlder = false;
+        if (token === olderLoadToken) isLoadingOlder = false;
       }
       return;
     }
@@ -981,7 +1214,7 @@
 
   function jumpToLatest() {
     windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-    tick().then(() => requestAnimationFrame(() => scrollToBottom(true)));
+    tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     isNearBottom = true;
   }
 
@@ -1058,13 +1291,23 @@
     if (seq !== searchSeq) return; // a newer query superseded this one
 
     if (ids === null) {
-      searchMatches = inMemoryMatches(q);
+      // NEWEST FIRST: match 1 is the one nearest the bottom, as Messenger and WhatsApp land.
+      searchMatches = inMemoryMatches(q).reverse();
       searchLimitedToLoaded = isChannel;
     } else {
-      searchMatches = ids;
+      searchMatches = [...ids].reverse();
       searchLimitedToLoaded = false;
     }
     activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
+    // The list for THIS term is now known (a superseded one returned above): take the reader to
+    // the match the counter calls 1, paging older history in exactly as the arrows do.
+    if (activeSearchIndex === 0) {
+      Log.d(
+        'chat.search',
+        `term settled: ${searchMatches.length} match(es), jumping to 1 (the newest)`
+      );
+      await navigateToMessageEnsureLoaded(searchMatches[0]);
+    }
   }
 
   /**
@@ -1086,7 +1329,41 @@
     await navigateToMessage(messageId);
   }
 
-  async function jumpSearch(delta: 1 | -1) {
+  /**
+   * Opens the bar and focuses its field in the SAME call stack as the tap: `flushSync` mounts the
+   * input now, because iOS raises the keyboard only for a focus made inside the user gesture.
+   */
+  function openSearch() {
+    showSearch = true;
+    flushSync();
+    Log.d('chat.search', `opened, field ${searchInputEl ? 'focused' : 'missing'}`);
+    searchInputEl?.focus();
+  }
+
+  /** Closes the bar, resets the search and hands the focus back to the magnifier. */
+  function closeSearch() {
+    showSearch = false;
+    searchQuery = '';
+    searchMatches = [];
+    activeSearchIndex = -1;
+    searchLimitedToLoaded = false;
+    Log.d('chat.search', 'closed, focus returned to the magnifier');
+    chatHeaderRef?.focusSearchToggle();
+  }
+
+  function onSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      void jumpSearch(e.shiftKey ? 'older' : 'newer');
+    }
+  }
+
+  /** Steps through the newest-first list: `older` is the up arrow, `newer` the down arrow. */
+  async function jumpSearch(direction: 'older' | 'newer') {
+    const delta = direction === 'older' ? 1 : -1;
     if (searchMatches.length === 0) return;
     const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
     activeSearchIndex = next;
@@ -1181,7 +1458,13 @@
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
+        const entryAnchor = decideEntryAnchor(c);
+        restoringEntry = entryAnchor.kind === 'restore';
         hasMoreInDb = !isChannel;
+        // The previous conversation's older-history load and scroll offset are not this one's.
+        olderLoadToken++;
+        isLoadingOlder = false;
+        lastMeasuredScrollTop = null;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
@@ -1190,8 +1473,14 @@
         entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
-        tick().then(() => fillViewportThenPin());
-        isNearBottom = true;
+        entryReportOwed = true;
+        if (entryAnchor.kind === 'restore') {
+          isNearBottom = false;
+          tick().then(() => restoreEntryAnchor(entryAnchor));
+        } else {
+          tick().then(() => fillViewportThenPin());
+          isNearBottom = true;
+        }
       } else if (hasNewMessage) {
         // WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION IS ONE DECISION, AND IT IS NOT HERE.
         // `respondToNewMessage` holds it, tested on its own; this branch only carries it out.
@@ -1208,12 +1497,16 @@
         // `scrollToBottom` moves the pane, not the slice, and with the window stopped short of the
         // list it scrolled to the bottom of something that did not contain the message that had
         // just arrived - so the message was, to the reader, simply not delivered.
-        const response = respondToNewMessage({
-          entering,
-          catchupActive,
-          isNearBottom,
-          ownMessageAdded: c.messages.at(-1)?.isOwn === true,
-        });
+        // A RESTORE IN FLIGHT IS NOT AN ENTRY TO PIN: a late merge or catch-up lands as `stay`, and the
+        // row the reader is put back on is kept by the thread's row anchor.
+        const response: NewMessageResponse = restoringEntry
+          ? 'stay'
+          : respondToNewMessage({
+              entering,
+              catchupActive,
+              isNearBottom,
+              ownMessageAdded: c.messages.at(-1)?.isOwn === true,
+            });
         viewResponse = response;
         if (response !== 'stay') {
           // A re-pin of the entry never RAISES the start: a window already widened to 60 stays
@@ -1225,7 +1518,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else tick().then(() => scrollToBottom(true));
+          else tick().then(() => scrollToBottom());
         }
       }
 
@@ -1238,6 +1531,42 @@
 
       lastConversationKey = convoKey;
       lastMessageCount = messageCount;
+    });
+  });
+
+  /**
+   * THE ENTRY'S OUTCOME, ONCE, IN THE EXPORTED LOG (owner's Android 1.6.8, 2026-11-09).
+   *
+   * The owner's log showed every row of a notification-tap open reaching the conversation map, and
+   * nothing of where the pane then stood - the count line above is debug, which the in-app log does
+   * not record. So one INFO line per entry, written when the entry is revealed AND its catch-up has
+   * ended (the history replay's upgrades and withdrawal have landed by then), measured on the next
+   * frame so the layout of those last changes is the one read. One line per entry, never per frame:
+   * `entryReportOwed` is set by the switch and spent here.
+   */
+  $effect(() => {
+    const settled = !entering && !(isLoadingHistory || isCatchingUpMessages);
+    const c = conversation;
+    if (!settled || !c) return;
+    untrack(() => {
+      if (!entryReportOwed) return;
+      entryReportOwed = false;
+      const epoch = entryEpoch;
+      requestAnimationFrame(() => {
+        // A switch inside this frame owes its own line; this one would measure the other list.
+        if (epoch !== entryEpoch || !chatContainer) return;
+        const newest = messageRows.at(-1);
+        Log.i(
+          'CHAT_VIEW',
+          chatViewEntryLine(c.id, {
+            pinned: isPinnedToBottom(chatContainer),
+            isNearBottom,
+            newestVisible: newest !== undefined && measureLastVisibleAnchor()?.id === newest.id,
+            rows: c.messages.length,
+            fromBottom: Math.round(threadReach(chatContainer) - chatContainer.scrollTop),
+          })
+        );
+      });
     });
   });
 
@@ -1315,7 +1644,11 @@
     if (!el) return;
     return observeThreadGrowth(
       el,
-      () => ({ wasNearBottom: isNearBottom, isLoadingOlder, isEntering: entering }),
+      () => ({
+        wasNearBottom: isNearBottom,
+        isLoadingOlder,
+        isEntering: entering && !restoringEntry,
+      }),
       composerBand
     );
   });
@@ -1323,7 +1656,7 @@
   $effect(() => {
     if (!_composerFocused || !chatContainer) return;
     untrack(() => {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     });
   });
 
@@ -1344,7 +1677,7 @@
       Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
     if (response === 'follow-bottom') {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     }
     keyboardWasOpen = kbOpen;
   });
@@ -1489,14 +1822,8 @@
         {onStartVideoCall}
         {onOpenMembers}
         {membersActive}
-        onToggleSearch={() => {
-          showSearch = !showSearch;
-          if (!showSearch) {
-            searchQuery = '';
-            searchMatches = [];
-            activeSearchIndex = -1;
-          }
-        }}
+        bind:this={chatHeaderRef}
+        onToggleSearch={() => (showSearch ? closeSearch() : openSearch())}
         searchActive={showSearch}
         {onOpenMedia}
       />
@@ -1508,7 +1835,9 @@
               <Search size={15} class="opacity-60" />
               <input
                 type="text"
+                bind:this={searchInputEl}
                 value={searchQuery}
+                onkeydown={onSearchKeydown}
                 oninput={(e) => (searchQuery = e.currentTarget.value)}
                 placeholder={m.chat_search_in_conversation_placeholder()}
                 class="chat-search-input"
@@ -1537,7 +1866,7 @@
               </span>
               <button
                 type="button"
-                onclick={() => void jumpSearch(-1)}
+                onclick={() => void jumpSearch('older')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_previous_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1546,7 +1875,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => void jumpSearch(1)}
+                onclick={() => void jumpSearch('newer')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_next_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1570,7 +1899,7 @@
             onclick={() => (showPolls = !showPolls)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <ChartColumn size={14} class="text-cn-yellow shrink-0" />
+            <ChartColumn size={14} class="text-accent-icon shrink-0" />
             <span class="font-semibold"
               >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
             >
@@ -1608,7 +1937,7 @@
             onclick={() => (showPinned = !showPinned)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <Pin size={14} class="shrink-0 text-amber-500" />
+            <Pin size={14} class="text-accent-text shrink-0" />
             <span class="font-semibold"
               >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
             >
@@ -1752,6 +2081,15 @@
               <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
               {m.chat_scrollback_no_peer()}
             </div>
+          {:else if scrollbackState === 'main-tab'}
+            <div
+              class="text-muted-foreground flex items-center justify-center gap-2 px-4 py-2 text-xs"
+              role="status"
+              aria-live="polite"
+            >
+              <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_main_tab()}
+            </div>
           {/if}
           <ChatMessageGroups
             {visibleMessageGroups}
@@ -1761,6 +2099,7 @@
             readWatermarks={conversation?.readWatermarks}
             serverReadWatermarks={conversation?.serverReadWatermarks}
             {seenBy}
+            {dmReadAnchor}
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}
@@ -1835,7 +2174,7 @@
         </span>
         {#if unreadBelowCount > 0}
           <span
-            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
+            class="text-on-accent text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
             aria-hidden="true"
           >
             {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
@@ -1871,7 +2210,7 @@
           {#if (conversation?.conversationType ?? 'group') === 'group'}
             <button
               onclick={() => onStartAgainWithSamePeople?.()}
-              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+              class="bg-accent/15 hover:bg-accent/25 rounded-lg px-4 py-1.5 text-sm font-medium transition-all active:scale-95"
             >
               {m.chat_unopenable_start_again()}
             </button>
@@ -1895,7 +2234,7 @@
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-[var(--color-surface)] px-4 py-3 dark:border-white/10"
       >
         <p class="text-center text-sm text-[var(--color-text-muted)]">
-          {m.chat_channel_read_only()}
+          {writePolicyLine(writePolicy)}
         </p>
       </div>
     {:else}
@@ -1949,6 +2288,7 @@
           {onCancelReply}
           {nicknameScope}
           editingText={editSession.original}
+          editingAllowsEmpty={editSession.emptyAllowed}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}

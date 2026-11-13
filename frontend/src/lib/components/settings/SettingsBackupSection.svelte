@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
-  import { RefreshCw, Upload, Download } from '@lucide/svelte';
+  import { Upload, Download } from '@lucide/svelte';
   import {
     globalSession as session,
     globalConvs as convs,
@@ -106,20 +106,15 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <RefreshCw size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_backup_heading()}</h2>
-  </div>
-  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
+  <h2 class="sr-only">{m.profile_backup_heading()}</h2>
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium">
     {m.profile_backup_desc()}
   </p>
 
   {#if session.isLoggedIn}
     {#if backupOwed}
       <p
-        class="border-cn-yellow/40 bg-cn-yellow/10 text-text-main mb-4 rounded-xl border px-4 py-3 text-sm leading-relaxed font-medium"
+        class="border-accent/40 bg-accent/10 text-text-main mb-4 rounded-xl border px-4 py-3 text-sm leading-relaxed font-medium"
         role="status"
         data-testid="backup-owed-after-key-move"
       >
@@ -131,7 +126,7 @@
         type="button"
         onclick={triggerImport}
         disabled={session.isImporting}
-        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
+        class="border-cn-border hover:border-accent/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Upload size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_import_label()}</span>
@@ -142,7 +137,7 @@
         type="button"
         onclick={handleExport}
         disabled={session.isExporting}
-        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
+        class="border-cn-border hover:border-accent/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Download size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_export_label()}</span>
@@ -169,7 +164,7 @@
           {shownNote ?? m.profile_backup_code_desc()}
         </p>
         <p
-          class="text-text-main mt-3 font-mono text-sm font-bold tracking-wide break-all select-all"
+          class="text-text-main mt-3 font-mono text-sm font-bold break-all select-all"
           data-testid="backup-recovery-code"
         >
           {shownCode}

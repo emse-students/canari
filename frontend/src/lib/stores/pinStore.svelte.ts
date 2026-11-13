@@ -14,7 +14,76 @@
  * removal (a tombstone, exactly like a removed reaction), and the larger `at` wins.
  */
 
-const storageKey = (conversationId: string) => `canari_pins_${conversationId}`;
+import { currentUserId } from '$lib/stores/userState.svelte';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+
+/**
+ * PER ACCOUNT. The register is stored under the signed-in account ({@link ACCOUNT_KEY}
+ * `.conversationPins`), so two accounts sharing a conversation on one install keep two registers, and
+ * an account deletion sweeps its own. With nobody signed in it lives in memory only.
+ */
+const owner = (): string => (currentUserId() ?? '').trim();
+
+/**
+ * THE KEY OF BUILDS BEFORE 2026-11-12, named by the conversation alone, so shared by every account of
+ * the install and swept by nothing. Moved once to the account that first reads the conversation
+ * (`takeLegacyRegister`); see `docs/wiki/legacy-compatibility.md`.
+ */
+const legacyKey = (conversationId: string) => `canari_pins_${conversationId}`;
+
+/**
+ * Moves a conversation's legacy register to `account`, and returns it (or null when there is none).
+ *
+ * The legacy copy was every account's, so whichever account reads the conversation first takes it -
+ * the same register those accounts already shared - and nobody after it does.
+ *
+ * THE LEGACY KEY GOES ONLY ONCE THE COPY IS WRITTEN. A write that throws (quota, private mode) keeps
+ * it, so nothing is lost: the register is still read from it this time, and the move is tried again
+ * on the next load.
+ */
+function takeLegacyRegister(account: string, conversationId: string): string | null {
+  const legacy = legacyKey(conversationId);
+  const raw = localStorage.getItem(legacy);
+  if (raw === null) return null;
+  try {
+    localStorage.setItem(ACCOUNT_KEY.conversationPins(account, conversationId), raw);
+  } catch (e) {
+    console.warn(
+      `[PINS] legacy register of ${conversationId.slice(0, 8)}… not moved, kept where it is: ${String(e)}`
+    );
+    return raw;
+  }
+  localStorage.removeItem(legacy);
+  console.log(
+    `[PINS] legacy register of ${conversationId.slice(0, 8)}… moved to the signed-in account`
+  );
+  return raw;
+}
+
+/**
+ * Forgets every pin register of `userId` on this install - its stored copies and what is in memory.
+ * Run at sign-out (`clearUserLocally`) and by the account deletion (`eraseAccountRecordsLocally`), as
+ * the nickname registers are: a shared install keeps nothing of the account that left, and the
+ * history bundles restate the pins after the next sign-in.
+ */
+export function forgetConversationPins(userId: string): void {
+  const account = userId.trim();
+  if (!account) return;
+  const prefix = ACCOUNT_KEY.conversationPins(account, '');
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) doomed.push(key);
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`[PINS] stored registers of ${account.slice(0, 8)} not removed: ${String(e)}`);
+  }
+  // Deleting the entry being visited is defined for a Map's iterator: no copy is needed.
+  for (const key of pins.keys()) if (key.startsWith(`${account}|`)) pins.delete(key);
+  revision++;
+}
 
 /** One message's pin state and the sender's clock for it. */
 export type PinEntry = { pinned: boolean; at: number };
@@ -61,20 +130,34 @@ function parseStored(raw: string): Array<[string, PinEntry]> {
   });
 }
 
-/** Lazily loads (and caches) the pin register for a conversation from localStorage; a reactive read. */
+/**
+ * Lazily loads (and caches) the signed-in account's pin register for a conversation from
+ * localStorage; a reactive read. The cache is keyed by account too, so a switch never reads the
+ * previous account's register.
+ */
 function load(conversationId: string): Map<string, PinEntry> {
   void revision;
-  const existing = pins.get(conversationId);
+  const account = owner();
+  const cacheKey = `${account}|${conversationId}`;
+  const existing = pins.get(cacheKey);
   if (existing) return existing;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- `revision` carries the reactivity
   const map = new Map<string, PinEntry>();
-  try {
-    const raw = localStorage.getItem(storageKey(conversationId));
-    if (raw) for (const [id, entry] of parseStored(raw)) map.set(id, entry);
-  } catch {
-    // ignore corrupt/inaccessible storage
+  if (account) {
+    try {
+      const raw =
+        localStorage.getItem(ACCOUNT_KEY.conversationPins(account, conversationId)) ??
+        takeLegacyRegister(account, conversationId);
+      if (raw) for (const [id, entry] of parseStored(raw)) map.set(id, entry);
+    } catch (e) {
+      // An unreadable copy costs the pins until the next bundle restates them - and it is said,
+      // because nothing else would.
+      console.warn(
+        `[PINS] stored register unreadable for ${conversationId.slice(0, 8)}…: ${String(e)}`
+      );
+    }
   }
-  pins.set(conversationId, map);
+  pins.set(cacheKey, map);
   return map;
 }
 
@@ -88,10 +171,15 @@ function persist(conversationId: string, map: Map<string, PinEntry>): void {
       .slice(0, map.size - MAX_ENTRIES);
     for (const [id] of doomed) map.delete(id);
   }
+  const account = owner();
+  if (!account) return;
   try {
-    localStorage.setItem(storageKey(conversationId), JSON.stringify(Object.fromEntries(map)));
-  } catch {
-    // ignore quota / private-mode errors
+    localStorage.setItem(
+      ACCOUNT_KEY.conversationPins(account, conversationId),
+      JSON.stringify(Object.fromEntries(map))
+    );
+  } catch (e) {
+    console.warn(`[PINS] register not persisted for ${conversationId.slice(0, 8)}…: ${String(e)}`);
   }
 }
 

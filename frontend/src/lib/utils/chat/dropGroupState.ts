@@ -31,6 +31,7 @@
  *   next load already knows nothing of the group.
  */
 
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { clearEpochGap } from './epochGapRegistry';
@@ -90,7 +91,10 @@ export async function dropGroupState(
   // ONE CALL, AND THE FLAG DECIDES ONLY WHETHER IT IS AWAITED. Started before the branch so a
   // `'deferred'` drop cannot become a drop with no checkpoint at all.
   const durable = persistMlsStructuralCheckpoint({ mlsService }).catch((e: unknown) => {
-    write(`[MLS] checkpoint after dropping ${short}... FAILED: ` + String(e));
+    // A follower tab's copy is never written (`persistCheckpoint`, said once there): expected.
+    if (!(e instanceof MlsStateWriteRefusedError && e.outcome === 'follower-tab')) {
+      write(`[MLS] checkpoint after dropping ${short}... FAILED: ` + String(e));
+    }
     return false;
   });
   if (checkpoint === 'awaited') await durable;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { untrack } from 'svelte';
   import { MoonStar, Plus, Save, TriangleAlert, X } from '@lucide/svelte';
   import {
@@ -39,7 +40,6 @@
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -108,7 +108,7 @@
     onDirty(draftNow() !== savedDraft);
   });
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
   /** What the painter's exact-hours pickers sit on: the step, or what the slots' edges need. */
@@ -417,7 +417,7 @@
       type="button"
       onclick={save}
       disabled={blocked || saving}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     >
       <Save size={16} />
       {saving ? m.form_saving_label() : m.bookings_avail_save()}

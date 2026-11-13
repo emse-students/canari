@@ -74,7 +74,7 @@
     {#if loading}
       <div class="flex items-center justify-center py-20">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error}
@@ -99,9 +99,7 @@
       {:else}
         {#each shelves as shelf (shelf.year)}
           <section class="space-y-3">
-            <h2
-              class="text-text-muted flex items-center gap-3 text-sm font-bold tracking-wide uppercase"
-            >
+            <h2 class="text-text-muted flex items-center gap-3 text-sm font-bold">
               <span class="whitespace-nowrap">
                 {shelf.year === 0
                   ? m.list_misc_heading()

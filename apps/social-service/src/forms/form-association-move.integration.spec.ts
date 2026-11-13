@@ -19,7 +19,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
-import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -56,17 +56,38 @@ maybe('the association of a form, against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, FormRespondent, PurchaseRecord],
+      entities: [Form, Submission, OpeningReminder, FormRespondent, PurchaseRecord],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
     await ds.query(readFileSync(join(__dirname, '../migrations/146_form_drafts.sql'), 'utf8'));
+    // A publication under an association tells its followers (engagement WP-4,
+    // `announceOpeningToFollowers`): the tables that statement reads, in the shape it reads them.
+    // Nobody follows here, so it writes no row - this file is about the association link.
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
+    await ds.query(
+      `CREATE TABLE users (id varchar PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
+         campus varchar, cursus jsonb NOT NULL DEFAULT '[]')`
+    );
+    await ds.query(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
+    await ds.query(
+      `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
+    );
+    await ds.query(
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+    );
+    await ds.query(
+      `CREATE TABLE association_follows (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         "followerUserId" varchar NOT NULL, "associationId" uuid NOT NULL)`
+    );
 
     service = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
-      ds.getRepository(FormReminder),
+      ds.getRepository(OpeningReminder),
       { get: () => 'https://canari.example' } as any,
       {
         isMember: async (userId: string, associationId: string) =>

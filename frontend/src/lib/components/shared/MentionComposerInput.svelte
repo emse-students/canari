@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
+  import { onDestroy } from 'svelte';
   import MentionDropdown from './MentionDropdown.svelte';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import {
@@ -29,6 +30,7 @@
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
+  import type { MentionUser } from '$lib/composables/useMentionAutocomplete.svelte';
 
   interface Props {
     value?: string;
@@ -43,6 +45,8 @@
     editorClass?: string;
     /** The conversation's members, suggested locally by the @mention picker. */
     mentionRoster?: MentionRosterMember[];
+    /** Narrows a name search to who a mention may reach (see `useMentionAutocomplete`). */
+    mentionAudienceFilter?: (users: MentionUser[]) => Promise<MentionUser[]>;
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
@@ -69,6 +73,7 @@
     class: className = '',
     editorClass = '',
     mentionRoster,
+    mentionAudienceFilter,
     onchange,
     onkeydown,
     onpaste,
@@ -101,6 +106,9 @@
     get roster() {
       return mentionRoster;
     },
+    get audienceFilter() {
+      return mentionAudienceFilter;
+    },
   });
 
   // An open picker follows the roster prop (a member list that finished loading, a conversation
@@ -109,6 +117,9 @@
     void mentionRoster;
     mention.refreshRoster();
   });
+
+  // A search or a name batch still on its way when the composer goes is dropped, never applied.
+  onDestroy(() => mention.dispose());
 
   const renderOptions = $derived({ markdownPreview });
 

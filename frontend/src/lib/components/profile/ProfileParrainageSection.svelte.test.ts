@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ProfileParrainageSection from './ProfileParrainageSection.svelte';
-import ProfileChips from './ProfileChips.svelte';
+import ProfileSummaryLine from './ProfileSummaryLine.svelte';
 
 /** The member heads ask for a name and an avatar over HTTP; the keys are what is under test. */
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
@@ -73,7 +73,8 @@ describe('profile lists with a repeated identity', () => {
   });
 
   it('renders a cursus that repeats a formation and a promo', () => {
-    const el = render(ProfileChips, {
+    const el = render(ProfileSummaryLine, {
+      userId: 'u1',
       profile: {
         cursus: [
           { formation: 'ICM', promo: 2026 },
@@ -83,6 +84,8 @@ describe('profile lists with a repeated identity', () => {
         campus: null,
       },
     });
-    expect(el.querySelectorAll('.rounded-full').length).toBe(4);
+    expect(el.querySelector('[data-profile-summary]')?.textContent?.trim()).toBe(
+      'ICM · ICM · École · École'
+    );
   });
 });

@@ -32,7 +32,6 @@
   {open}
   {onClose}
   label={m.chat_gif_search_label()}
-  layer="sheet"
   scrim={false}
   panelClass="flex h-[70vh] max-h-[80vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"
 >

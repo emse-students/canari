@@ -15,6 +15,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 import { noteAbsentUser } from './absentUsers';
 import { noteDeletedAccount, noteResolvedName } from './nameMirror';
+import { forgetPeerName, notePeerName, readPeerName } from './peerNameDirectory';
 import { visibleNickname } from './conversationNicknames.svelte';
 
 const displayNameCache = new Map<string, string>();
@@ -179,6 +180,7 @@ export function seedUserDisplayName(userId: string, name: string, firstName?: st
     displayNameCache.set(normalized, trimmed);
     // The phone's own copy of names, for a mention banner drawn natively (WP-MENTION-NAME).
     noteResolvedName(normalized, trimmed);
+    notePeerName(currentUserId(), normalized, trimmed);
   }
   const first = firstName?.trim();
   if (first) firstNameCache.set(normalized, first);
@@ -206,7 +208,9 @@ export function peekUserDisplayName(userId: string): string | null {
     }
   }
 
-  return null;
+  // THE LOCAL SOURCE, BEFORE ANY ROUND TRIP: a name this device resolved in an earlier launch. Not
+  // put in `displayNameCache`, so `resolveUserDisplayName` still asks the server and refreshes it.
+  return readPeerName(currentUserId(), normalized);
 }
 
 /**
@@ -245,6 +249,11 @@ export function getUserDisplayNameSync(userId: string, fallback?: string, scope?
       return value;
     }
   }
+
+  // The directory of earlier launches answers before the caller's fallback or the label (see
+  // `peerNameDirectory.ts`): a cold start on a slow link names its rows on the first frame.
+  const remembered = readPeerName(currentUserId(), normalized);
+  if (remembered) return remembered;
 
   // A FAILED LOOKUP MAY NOT OVERRULE A NAME THE CALLER ALREADY HAS. There used to be a branch here
   // returning the label during the backoff window, whose stated purpose - "don't flicker between the
@@ -362,6 +371,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   // without asking the network, and a lookup that never left is not a lookup that could fail.
   lookupsAttempted += 1;
 
+  // THE ACCOUNT THE LOOKUP WAS ASKED FOR, taken before the fetch: a name that lands after a
+  // switch of account must not be filed under the account that is on screen by then.
+  const askedFor = currentUserId();
   const promise = fetchUserProfile(normalized)
     .then((profile) => {
       const value = formatProfileDisplayName(profile);
@@ -377,7 +389,10 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       displayNameCache.set(normalized, value);
       // Mirrored only when the profile carries a name: the unknown-user LABEL is this app's word
       // for "no name", and a banner would print it as if it were one (WP-MENTION-NAME).
-      if (profileHasName(profile)) noteResolvedName(normalized, value);
+      if (profileHasName(profile)) {
+        noteResolvedName(normalized, value);
+        notePeerName(askedFor, normalized, value);
+      }
       const first = profile.firstName?.trim();
       if (first) firstNameCache.set(normalized, first);
       failedAt.delete(normalized);
@@ -410,6 +425,8 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         // The server says this account does not exist: no native banner may name it again, seeded
         // name or not (WP-MENTION-NAME) - the phone's copy drops it, and a banner says "someone".
         noteDeletedAccount(normalized);
+        // Nor may the directory keep drawing it from the device.
+        forgetPeerName(askedFor, normalized);
         // A seeded name outranks the label: the 404 here was only a first-name lookup.
         if (cached) return cached;
         const label = isDeletedAccountError(e) ? m.user_deleted_label() : m.user_unknown_label();

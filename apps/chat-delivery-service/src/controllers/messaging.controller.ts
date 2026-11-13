@@ -12,7 +12,7 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -285,7 +285,7 @@ export class MessagingController {
    * log and forge a line of its own; a value outside the allowlist prints as `invalid`, which is
    * itself worth reading. The reporter is the authenticated user, never a field of the body.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/sender-mismatch')
   reportSenderMismatch(
     @Headers('x-user-id') authUserId: string | undefined,
@@ -331,7 +331,7 @@ export class MessagingController {
    * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
    * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/uninvited-entry')
   async reportUninvitedEntry(
     @Headers('x-user-id') authUserId: string | undefined,
@@ -410,7 +410,7 @@ export class MessagingController {
    * `proven` field and never from `detail` (free text): `proven: false` (a fork it could not
    * attribute) is a warn, as in mls-core; `true` is ERROR, and so is a report carrying no boolean.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/integrity-finding')
   async reportIntegrityFinding(
     @Headers('x-user-id') authUserId: string | undefined,

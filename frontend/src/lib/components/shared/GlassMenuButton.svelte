@@ -22,6 +22,7 @@
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * A ROUND GLASS BUTTON THAT GROWS INTO ITS OPTIONS - the Liquid Glass menu, in CSS (user,
@@ -81,7 +82,7 @@
 
   const buttonClass = $derived(
     variant === 'glass'
-      ? 'glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95'
+      ? 'glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-accent-icon active:scale-95'
       : 'ui-icon-button chat-composer-icon-button'
   );
   const panelSkin = $derived(
@@ -92,6 +93,9 @@
 
   let ownOpen = $state(false);
   const open = $derived(controlledOpen ?? ownOpen);
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'GlassMenuButton');
 
   /** The one place the menu's openness changes: reported in controlled mode, held here otherwise. */
   function setOpen(next: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') {
@@ -169,7 +173,8 @@
       use:portal
       role="menu"
       tabindex="-1"
-      class="glass-menu-panel {panelSkin} fixed z-(--z-popover) flex w-max min-w-44 flex-col gap-0.5 p-1.5 {alignEnd
+      style:z-index={layer.z}
+      class="glass-menu-panel {panelSkin} fixed flex w-max min-w-44 flex-col gap-0.5 p-1.5 {alignEnd
         ? 'glass-menu-end'
         : 'glass-menu-start'}"
       transition:scale={{ duration: 180, start: 0.35, easing: cubicOut }}
@@ -182,8 +187,8 @@
           onclick={() => pick(item)}
           onmousedown={holdFocus}
           aria-checked={item.active}
-          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10 {item.active
-            ? 'text-amber-600 dark:text-amber-400'
+          class="hover:bg-accent/10 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors {item.active
+            ? 'text-accent-text'
             : 'text-text-main'}"
         >
           <ItemIcon size={18} strokeWidth={2.25} aria-hidden="true" class="shrink-0" />

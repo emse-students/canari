@@ -63,7 +63,16 @@ vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => false,
   isMobileTauriRuntime: () => runtime.iosApp,
 }));
-vi.mock('$lib/reels/videoDuration', () => ({ readVideoDurationMs: () => Promise.resolve(5_000) }));
+const pickedMetadata = vi.hoisted(() => ({
+  value: {
+    durationMs: 5_000 as number | null,
+    width: 720 as number | null,
+    height: 1280 as number | null,
+  },
+}));
+vi.mock('$lib/reels/videoDuration', () => ({
+  readVideoMetadata: () => Promise.resolve(pickedMetadata.value),
+}));
 const pickNatively = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively }));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
@@ -126,7 +135,8 @@ beforeEach(() => {
   getReelLimits.mockResolvedValue({
     maxDurationMs: 90_000,
     chatMaxDurationMs: 60_000,
-    retentionDays: 30,
+    maxAspectRatio: 0.8,
+    retentionDays: 365,
     warningWindowDays: 7,
   });
 });
@@ -195,7 +205,8 @@ describe('ReelCapture', () => {
     answer({
       maxDurationMs: 90_000,
       chatMaxDurationMs: 60_000,
-      retentionDays: 30,
+      maxAspectRatio: 0.8,
+      retentionDays: 365,
       warningWindowDays: 7,
     });
     await settle();
@@ -790,7 +801,8 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
   it('a chat camera that may film does NOT film when the server serves no chat cap: said, never the 90 s cap', async () => {
     getReelLimits.mockResolvedValue({
       maxDurationMs: 90_000,
-      retentionDays: 30,
+      maxAspectRatio: 0.8,
+      retentionDays: 365,
       warningWindowDays: 7,
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -949,6 +961,46 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_take_refused());
   });
 
+  it.each([
+    ['landscape', 1280, 720],
+    ['square', 1080, 1080],
+  ])(
+    'a %s pick is refused at once: a CanaReel is vertical (owner, 2026-11-09)',
+    async (_l, w, h) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      pickedMetadata.value = { durationMs: 5_000, width: w, height: h };
+      try {
+        const { target } = await render();
+        const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+        const clip = new File([new Uint8Array(3)], 'wide.mp4', { type: 'video/mp4' });
+        Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+        await settle();
+        expect(target.querySelector('[data-reel-review]')).toBeNull();
+        expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_not_vertical());
+      } finally {
+        pickedMetadata.value = { durationMs: 5_000, width: 720, height: 1280 };
+      }
+    }
+  );
+
+  it('a pick whose frame the engine cannot read reaches the review: the publish decides', async () => {
+    pickedMetadata.value = { durationMs: 5_000, width: null, height: null };
+    try {
+      const { target } = await render();
+      const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+      const clip = new File([new Uint8Array(3)], 'odd.mp4', { type: 'video/mp4' });
+      Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      await settle();
+      expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    } finally {
+      pickedMetadata.value = { durationMs: 5_000, width: 720, height: 1280 };
+    }
+  });
+
   it('a pick that cannot be taken is said, never dropped', async () => {
     const { target } = await render();
     const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
@@ -1048,7 +1100,12 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       oncapture,
       onpublished,
       onclose,
-      composerStart: { caption: 'hello', identity: '', studentsOnly: false },
+      composerStart: {
+        caption: 'hello',
+        identity: '',
+        studentsOnly: false,
+        reach: { spaces: [], public: null },
+      },
     });
 
     expect(tab.sheet).not.toBeNull();
@@ -1067,61 +1124,21 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
     expect(oncapture).not.toHaveBeenCalled();
   });
 
-  it('from the composer the publish step says the reel is deleted, and "Garder comme post" hands the video back', async () => {
-    const still = new Blob(['first-frame'], { type: 'image/jpeg' });
-    framed.thumbnail.mockReturnValue(still);
+  it('from the composer the publish step says the reel is deleted, and offers no way back to a post', async () => {
     const oncapture = vi.fn();
-    const onclose = vi.fn();
     const { target, hold } = await render({
       destination: 'post',
       oncapture,
-      onclose,
-      publishDeps: publishDeps(),
-    });
-    await hold();
-    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
-    await settle();
-    expect(target.querySelector('[data-reel-publish-composer-notice]')).not.toBeNull();
-
-    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    await settle();
-
-    const file = oncapture.mock.calls[0][0] as File;
-    expect(file.type).toMatch(/^video\//);
-    expect(capturePosterOf(file)).toBe(still);
-    expect(onclose).toHaveBeenCalledTimes(1);
-  });
-
-  it('"Garder comme post" applies the step\'s caption and identity only to a take the composer received', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const onkept = vi.fn();
-    const received: string[] = [];
-    const oncapture = vi.fn(() => received.push('take'));
-    onkept.mockImplementation(() => received.push('caption'));
-    const { target, hold } = await render({
-      destination: 'post',
-      oncapture,
-      onkept,
       onclose: vi.fn(),
       publishDeps: publishDeps(),
     });
     await hold();
     target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
     await settle();
-    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    await settle();
-    expect(received).toEqual(['take', 'caption']);
-    unmount(mounted.pop()!);
-
-    // No `oncapture`: the take is lost (and said so), and the composer's text is NOT touched.
-    const lost = vi.fn();
-    const second = await render({ destination: 'post', onkept: lost, publishDeps: publishDeps() });
-    await second.hold();
-    second.target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
-    await settle();
-    second.target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    await settle();
-    expect(lost).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-publish-composer-notice]')).not.toBeNull();
+    // Owner, 2026-11-09: a vertical take of 90 s or less IS a CanaReel.
+    expect(target.querySelector('[data-reel-keep-as-post]')).toBeNull();
+    expect(oncapture).not.toHaveBeenCalled();
   });
 
   it('a PHOTO from the new-post composer is still handed back as a file', async () => {
