@@ -573,7 +573,8 @@
           <tr>
             <td>Compte, profil, annuaire</td>
             <td
-              >Vous reconnaître, vous permettre de trouver et d'être trouvé par les autres membres</td
+              >Vous reconnaître, vous permettre de trouver et d'être trouvé par tout membre
+              connecté, grâce à l'annuaire des membres</td
             >
             <td>Exécution du service (6.1.b)</td>
           </tr>

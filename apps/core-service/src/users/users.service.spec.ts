@@ -376,6 +376,33 @@ describe('UsersService.directory campus and post filters', () => {
     await service.directory({ post: 'ALUMNI' });
     expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
   });
+
+  it('hides accounts blocked in either direction, as the New chat search does', async () => {
+    const where: Array<[string, unknown]> = [];
+    const qb: Record<string, jest.Mock> = {};
+    for (const m of ['select', 'orderBy', 'skip', 'take', 'andWhere', 'where', 'leftJoin']) {
+      qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
+        if (m === 'andWhere') where.push([sql as string, params]);
+        return qb;
+      });
+    }
+    qb.getCount = jest.fn().mockResolvedValue(0);
+    qb.getMany = jest.fn().mockResolvedValue([]);
+    const blocks = {
+      invisibleUserIdsFor: jest.fn().mockResolvedValue(['blocked-1', 'blocker-2']),
+    } as unknown as UserBlocksService;
+    const service = new UsersService(
+      { createQueryBuilder: jest.fn().mockReturnValue(qb) } as unknown as Repository<User>,
+      {} as DataSource,
+      blocks
+    );
+    await service.directory({ campus: 'gardanne' }, 'me');
+    expect(blocks.invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(where).toContainEqual([
+      'user.id NOT IN (:...blockedIds)',
+      { blockedIds: ['blocked-1', 'blocker-2'] },
+    ]);
+  });
 });
 
 /**
