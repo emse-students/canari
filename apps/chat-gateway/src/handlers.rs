@@ -601,6 +601,8 @@ async fn handle_socket(
             // Take ownership of the shared connection (or None in degraded mode).
             // On any Redis error we attempt a single reconnect via the client.
             let mut con_opt = redis_conn;
+            // What this connection sent, written once when this task ends or is aborted.
+            let mut frames = crate::frame_census::FrameCensus::open(&user_id, &device_id);
 
             while let Some(msg) = receiver.next().await {
                 match msg {
@@ -619,6 +621,7 @@ async fn handle_socket(
                         continue;
                     }
                     Ok(Message::Text(text)) => {
+                        frames.note(text.len());
                         // Any inbound data frame proves the client is reachable
                         // end-to-end (not just the nginx TCP layer).
                         pong_flag_recv.store(0, Ordering::Relaxed);
@@ -643,6 +646,7 @@ async fn handle_socket(
                         // Application-level heartbeat: reply so the browser can detect
                         // liveness (WS protocol Pong frames do not fire `onmessage`).
                         if json.get("type").and_then(|v| v.as_str()) == Some("ping") {
+                            frames.heartbeat();
                             if tx_for_dispatch
                                 .send(r#"{"type":"pong"}"#.to_string())
                                 .await
