@@ -1,6 +1,7 @@
 mod addressing;
 mod audience;
 mod census;
+mod frame_census;
 mod handlers;
 mod log_repeat;
 mod models;

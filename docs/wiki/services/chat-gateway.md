@@ -227,6 +227,28 @@ window rather than as a rate per week. The baseline was reachable only because i
 an unusually long quiet period. Anything wanting a genuinely comparable 7-day count would have to
 name a mechanism that outlives the container, and none is deployed.
 
+## What one connection sent, said once when it ends (2026-11-13)
+
+Each connection carries a `FrameCensus` (`frame_census.rs`), fed by the receive loop, whose `Drop`
+writes one line whichever way the connection ends - a close frame, a reset, or the sender half
+ending first:
+
+```
+[WS FRAMES] <user>:<device> closed after 75s: frames=2 heartbeats=1 bytes=135 largest=120 peakPerMinute=2
+```
+
+`frames` is every inbound text frame, `heartbeats` the application pings among them, `largest` the
+largest frame in bytes. It counts and refuses nothing.
+
+**`peakPerMinute` is the busiest FIXED minute, counted from the open.** A burst that straddles two
+windows is split between them, so the true count over any sixty seconds is at most twice the value
+written. The clock only names the window.
+
+**Why it exists.** A per-connection limit has to sit above what real clients send, and only the
+gateway sees that: the delivery queue holds what is still stored, a sample of what was accepted.
+A week of this line is the distribution the frame limits are sized from
+([entry](../backlog.d/p2-gateway-frame-limits-sized-from-a-week-of-counts.md)).
+
 ## WebSocket message routing
 
 On each WebSocket connection, the gateway registers the user+device key (`userId:deviceId`) in the in-memory `connected_users` map (a `Mutex<HashMap<String, HashMap<String, Sender>>>`).
