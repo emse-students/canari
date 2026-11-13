@@ -214,6 +214,23 @@ printf 'frontend host port: %s\n' "$FRONTEND_HOST_PORT"
 # Only what changed, when the caller knows. `latest`-style tags are mutable, so a service whose image
 # did not change is already the right one; a service whose image did change must be re-pulled or
 # `up -d` sees no reason to recreate it.
+#
+# THE CALLER PASSES WHAT THE RELEASE BUILT, AND AN ESTATE PULLS WHAT IT RUNS. `build.yml` builds one
+# set for both estates, and production runs a service dev does not (`adminer`, absent from dev by
+# design - `compose-wiring.test.sh` names it), so `compose pull` would refuse the unknown name. Each
+# built service this estate's compose file does not declare is named here, never dropped silently.
+if [ -n "$PULL_SERVICES" ]; then
+  declared_services="$(dc config --services)"
+  pulled=""
+  for service in $PULL_SERVICES; do
+    if grep -qx "$service" <<<"$declared_services"; then
+      pulled="$pulled $service"
+    else
+      printf 'built by this release, not run by the %s estate, so not pulled: %s\n' "$ENVIRONMENT" "$service"
+    fi
+  done
+  PULL_SERVICES="${pulled# }"
+fi
 if [ -n "$PULL_SERVICES" ]; then
   printf '\npulling changed images: %s\n' "$PULL_SERVICES"
   # shellcheck disable=SC2086 # deliberate word splitting: the caller passes a service list

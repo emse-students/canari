@@ -154,13 +154,13 @@
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
  {isActive
-          ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
+          ? 'bg-accent/15 text-accent-text shadow-accent/5 hover:bg-accent/25 shadow-sm'
           : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
         <!-- Narrow left accent bar for the active item. -->
         {#if isActive}
           <div
-            class="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
           ></div>
         {/if}
 
@@ -222,12 +222,12 @@
         aria-current={settingsActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
  {settingsActive
-          ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
+          ? 'bg-accent/15 text-accent-text shadow-accent/5 hover:bg-accent/25 shadow-sm'
           : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
         {#if settingsActive}
           <div
-            class="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
           ></div>
         {/if}
 

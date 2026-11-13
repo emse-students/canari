@@ -1,9 +1,12 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
+import type { Repository } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException, Logger } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
@@ -56,6 +59,10 @@ describe('PushController - POST mls/push/blind-banner', () => {
     })
       .overrideGuard(ThrottlerGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretThrottlerGuard)
@@ -64,13 +71,26 @@ describe('PushController - POST mls/push/blind-banner', () => {
     controller = module.get(PushController);
   });
 
+  /**
+   * The route as mounted: the REAL `PushSecretGuard` first (it is what refuses a wrong secret, the
+   * handler no longer re-checks it), then the handler.
+   */
+  async function post(auth: string, body: Parameters<PushController['reportBlindBanner']>[0]) {
+    const guard = new PushSecretGuard(pushTokenRepo as unknown as Repository<PushToken>);
+    const req = { method: 'POST', headers: { authorization: auth }, body };
+    await guard.canActivate({
+      switchToHttp: () => ({ getRequest: () => req }),
+    } as unknown as ExecutionContext);
+    return controller.reportBlindBanner(body);
+  }
+
   afterEach(() => warn.mockRestore());
 
   const blindLines = () =>
     warn.mock.calls.map((c) => c[0] as string).filter((l) => l.startsWith('[PUSH_BLIND]'));
 
   it('names the missing terms and whether the frame is held, so a GROUP BY separates the causes', async () => {
-    const res = await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+    const res = await post(`PushSecret ${SECRET}`, {
       userId: 'user-1',
       deviceId: 'dev-1',
       channelId: 'chan-1',
@@ -85,7 +105,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
   });
 
   it('prints a term outside the allowlist as invalid, never as sent', async () => {
-    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+    await post(`PushSecret ${SECRET}`, {
       userId: 'user-1',
       deviceId: 'dev-1',
       channelId: 'chan-1',
@@ -95,7 +115,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
   });
 
   it('names the refusal of an open that ran, with nothing missing', async () => {
-    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+    await post(`PushSecret ${SECRET}`, {
       userId: 'user-1',
       deviceId: 'dev-1',
       channelId: 'chan-1',
@@ -110,7 +130,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
   });
 
   it('prints a refusal outside the allowlist as invalid, never as sent', async () => {
-    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+    await post(`PushSecret ${SECRET}`, {
       userId: 'user-1',
       deviceId: 'dev-1',
       channelId: 'chan-1',
@@ -120,7 +140,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
   });
 
   it('keeps the shape an older build sends: no refused field prints refused=none', async () => {
-    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+    await post(`PushSecret ${SECRET}`, {
       userId: 'user-1',
       deviceId: 'dev-1',
       channelId: 'chan-1',
@@ -141,7 +161,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
 
   it('refuses a caller without the device push secret, and prints no count', async () => {
     await expect(
-      controller.reportBlindBanner('PushSecret wrong', {
+      post('PushSecret wrong', {
         userId: 'user-1',
         deviceId: 'dev-1',
         missing: ['seed'],

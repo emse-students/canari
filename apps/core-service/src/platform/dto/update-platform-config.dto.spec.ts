@@ -65,3 +65,18 @@ describe('UpdatePlatformConfigDto.checkpointSkipMode', () => {
     expect(errors.map((e) => e.property)).toEqual(['checkpointSkipMode']);
   });
 });
+
+/** The live replays switch takes exactly the two values migration 021's CHECK allows. */
+describe('UpdatePlatformConfigDto.liveReplaysMode', () => {
+  const errorsFor = (liveReplaysMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { liveReplaysMode }));
+
+  it.each(['off', 'on'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['ON', 'true', 'always', '', true, 3])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['liveReplaysMode']);
+  });
+});

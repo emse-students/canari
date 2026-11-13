@@ -39,6 +39,7 @@
     classifyLimitsFault,
     destinationRules,
     handsBackTake,
+    hardwareShutterEvent,
     formatTakeTime,
     lensFlipAllowed,
     shutterRingFraction,
@@ -51,10 +52,12 @@
     type LimitsFault,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
+  import type { CameraKeyPhase } from '$lib/mobile/cameraHardware.svelte';
   import { zoomFromDrag } from '$lib/reels/cameraZoom';
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
-  import { readVideoDurationMs } from '$lib/reels/videoDuration';
+  import { readVideoMetadata } from '$lib/reels/videoDuration';
+  import { isReelFrame, reelRuleOf } from '$lib/reels/reelRule';
   import { attachCapturePoster } from '$lib/reels/capturePoster';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
@@ -97,8 +100,6 @@
     composerStart?: ComposerReelState;
     /** A reel filmed from the composer was published (`post`), as `identity`. */
     onpublished?: (identity: string) => void;
-    /** "Garder comme post" from the composer: the step's state, as it stands. */
-    onkept?: (kept: ComposerReelState) => void;
     /**
      * A `chat` destination that may FILM (the chat reel writer, `chatReelWriter.ts`): a hold records
      * a video, handed back marked as a reel message. Absent, the chat camera takes photos only.
@@ -116,7 +117,6 @@
     onclose,
     composerStart = EMPTY_COMPOSER_REEL_STATE,
     onpublished,
-    onkept,
   }: Props = $props();
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
@@ -768,10 +768,19 @@
       showToast(m.reels_capture_not_a_video(), 'error');
       return;
     }
-    const durationMs = await readVideoDurationMs(file);
+    const { durationMs, width, height } = await readVideoMetadata(file);
     if (durationMs !== null && durationMs > capMs) {
       console.warn(`[reel-capture] picked ${durationMs} ms, over ${capMs}`);
       showToast(m.reels_capture_too_long({ seconds: Math.round(capMs / 1000) }), 'error');
+      return;
+    }
+    // A CanaReel is VERTICAL (owner, 2026-11-09, `reels/reelRule.ts`): a landscape or square pick is
+    // a post video, refused here with where to publish it. A frame the engine cannot read is let
+    // through: the publish reads the PREPARED frame, the one the server is told, and decides there.
+    const rule = limits ? reelRuleOf(limits) : null;
+    if (rule && width !== null && height !== null && !isReelFrame(width, height, rule)) {
+      console.warn(`[reel-capture] picked a ${width}x${height} video, not vertical`);
+      showToast(m.reels_capture_not_vertical(), 'error');
       return;
     }
     send({
@@ -824,6 +833,36 @@
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');
+  /** The white shutter refuses a press - and so does a volume key (`hardwareShutterEvent`). */
+  const shutterDisabled = $derived(
+    (!rules.photoHandsBack && !limits) ||
+      // A take in progress keeps its shutter through a lens flip (no frame for a moment):
+      // a disabled button under the held finger could swallow the release that ends it.
+      (!recording && !camera?.ready) ||
+      capture.kind === 'finishing' ||
+      capture.kind === 'photo'
+  );
+
+  /**
+   * A VOLUME KEY DOES WHAT THE WHITE SHUTTER DOES (owner, 2026-11-11): down is the press, up the
+   * release, so a short press is a photo and a held one films until the key is let go. Native sends
+   * it only while the camera's live preview is in front (`cameraHardware.svelte.ts`).
+   */
+  function onVolumeKey(phase: CameraKeyPhase) {
+    if (destroyed) {
+      // The camera's release cancels a held key at its teardown; the screen is already gone and its
+      // own teardown abandoned the take.
+      console.debug(`[reel-capture] volume ${phase} after the screen was torn down - ignored`);
+      return;
+    }
+    const event = hardwareShutterEvent(phase, performance.now(), !shutterDisabled);
+    if (!event) {
+      console.debug(`[reel-capture] volume ${phase} refused: the shutter is disabled`);
+      return;
+    }
+    console.debug(`[reel-capture] volume ${phase} -> ${event.type}`);
+    send(event);
+  }
   const fraction = $derived(capMs !== null ? shutterRingFraction(capture, elapsedMs, capMs) : 0);
 </script>
 
@@ -842,6 +881,7 @@
       : () => endPicking('none, the member reopened the camera')}
     {onBeforeRelease}
     {onclose}
+    onvolumekey={onVolumeKey}
     microphoneAsked={rules.microphone === 'with-lens'}
   >
     {#snippet faultActions()}
@@ -850,7 +890,7 @@
       {#if rules.gallery}
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          class="focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-40"
           disabled={!limits}
           data-reel-fault-gallery
           onclick={openGallery}
@@ -866,7 +906,7 @@
           {#if !recording && rules.gallery}
             <button
               type="button"
-              class="flex h-11 w-11 items-center justify-center rounded-lg border-2 border-white/80 bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+              class="camera-glyph-turn focus-visible:ring-accent-icon flex h-11 w-11 items-center justify-center rounded-lg border-2 border-white/80 bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40"
               aria-label={m.reels_capture_gallery()}
               title={m.reels_capture_gallery()}
               disabled={!limits}
@@ -882,12 +922,7 @@
             {recording}
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
-            disabled={(!rules.photoHandsBack && !limits) ||
-              // A take in progress keeps its shutter through a lens flip (no frame for a moment):
-              // a disabled button under the held finger could swallow the release that ends it.
-              (!recording && !camera?.ready) ||
-              capture.kind === 'finishing' ||
-              capture.kind === 'photo'}
+            disabled={shutterDisabled}
             onpress={(at) => send({ type: 'press', at })}
             onrelease={(at) => send({ type: 'release', at })}
             oncancel={() => send({ type: 'cancel' })}
@@ -900,7 +935,7 @@
         <div class="mt-3 flex justify-center" role="alert" data-reel-limits-fault={limitsFault}>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold outline-none focus-visible:ring-2"
             onclick={() => void loadLimits()}
           >
             <RefreshCcw size={14} strokeWidth={2.5} />
@@ -965,11 +1000,6 @@
         composer={rules.fromComposer
           ? {
               start: composerStart,
-              onkeep: (kept) => {
-                // The take first: the step's state follows only a take the composer actually
-                // received, never one lost to a missing `oncapture`.
-                if (handBack(clip.blob, clip.poster)) onkept?.(kept);
-              },
               onpublished: publishedFromComposer,
             }
           : undefined}

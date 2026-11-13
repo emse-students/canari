@@ -47,7 +47,7 @@ services:
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
-    image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     ports:
       - "6379:6379"
     healthcheck:
@@ -86,7 +86,14 @@ services:
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
       SOCIAL_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      ALLOW_ORIGIN: "*"
+      # A LIST, NEVER "*": a socket upgrade must come from an allowed origin, and the gateway takes
+      # no wildcard for one (docs/wiki/services/chat-gateway.md). The nginx entry, the Vite dev
+      # server and the Tauri WebViews. A phone's chat socket is opened by the native plugin and
+      # names no origin, so it needs no entry; a desktop browser loading the page from a LAN address
+      # does, through CANARI_LOCAL_ALLOW_ORIGIN. THAT OVERRIDE REPLACES THE WHOLE LIST, for the four
+      # Nest services too (they read it below): it must keep the 1420 pair, or `bun run dev` is
+      # refused by them.
+      ALLOW_ORIGIN: &local-origins "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
     depends_on:
       redis:
         condition: service_healthy
@@ -101,6 +108,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name: the nginx entry, the Vite dev server and the Tauri
+      # WebViews. A page served from anywhere else is named through CANARI_LOCAL_ALLOW_ORIGIN.
+      ALLOW_ORIGIN: *local-origins
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
@@ -142,6 +152,9 @@ services:
       ALLOW_INSECURE_COOKIES: "true"
       # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -253,6 +266,9 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
@@ -271,8 +287,13 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
     depends_on:
       garage:
         condition: service_healthy
@@ -306,6 +327,7 @@ services:
       AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-dev-avatar-token-secret-change-me-0123456789}
       # The sign-in handoff (docs/wiki/sessions.md). Unset locally: no site trusts a local issuer.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # No /adminer/ route on a laptop stack: the database is one `docker exec` away.
       ADMINER_ENABLED: "false"
       DB_HOST: postgres
@@ -319,10 +341,16 @@ services:
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
+      # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
+      # (docs/wiki/frontend/guided-help.md). Unset: nobody; a value that does not parse: nobody + boot error.
+      PROFILE_PHOTO_PROMPT_SPACES: ${PROFILE_PHOTO_PROMPT_SPACES:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
@@ -390,6 +418,9 @@ services:
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts).
+      ALLOW_ORIGIN: *local-origins
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
@@ -407,6 +438,11 @@ services:
       # env-from-prod.sh regenerates a random one. Both estates still require their own, no default.
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-dev-agenda-signing-key-change-me-0123456789abcdef}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # The communities one account may hold as their creator; empty means 20
+      # (apps/social-service/src/channels/community-limits.ts).
+      COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
@@ -536,3 +572,5 @@ volumes:
   garage_meta:
   garage_data:
   media_meta:
+  # The live segments, never backed up (docs/wiki/live-replays.md, D2).
+  live_segments:

@@ -46,6 +46,9 @@ import {
 } from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { deliverOwedSalonWrites, isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
+import { clearAllUploads, textWaitOf, uploadViewOf } from '$lib/utils/chat/uploadProgress.svelte';
+import { MAX_UNAVAILABLE_ANSWERS, unavailableHoldMs } from '$lib/utils/chat/retryLadder';
+import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 
 /** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
 function proveRepeatsSafe() {
@@ -114,6 +117,7 @@ beforeEach(() => {
   // Every test but the ones about the proof itself runs against a server known to carry 090.
   resetSalonRepeatProofForTests();
   proveRepeatsSafe();
+  clearAllUploads();
 });
 
 afterEach(() => {
@@ -406,5 +410,261 @@ describe('a repeat of a message deleted since it landed', () => {
 
     expect(rows(ctx)).toHaveLength(0);
     expect(ledger()).toEqual([]);
+  });
+});
+
+/**
+ * R05 (2026-11-09): A SALON SEND ACROSS A DEPLOY. The deploy answers `502`/`503`/`504` for a few
+ * seconds; before the fix each was drawn `unconfirmed` with a banner ("ce message n'est peut-etre pas
+ * parti") and waited for its author's Retry. It is now held for the server - `pending`, "waiting for
+ * the server" - and goes again under its client id at the reconnect or its ladder step.
+ */
+describe('a salon send the server answered "not now" (R05)', () => {
+  const notNow = (status: 502 | 503 | 504) =>
+    new ChannelApiError(status, null, '{"statusCode":503,"message":"upstream unavailable"}');
+
+  afterEach(() => vi.useRealTimers());
+
+  it('503 then 200: pending, "waiting for the server", no banner, then sent once under its client id at the reconnect', async () => {
+    sendMock.mockRejectedValueOnce(notNow(503));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+
+    expect(await useMessaging().handleSendChat(ctx, 'sent during the deploy')).toBe(true);
+    const clientId = rows(ctx)[0].id;
+    expect(rows(ctx)[0]).toMatchObject({ status: 'pending', awaitingServerId: true });
+    expect(textWaitOf(clientId)).toBe('server');
+    // A text has no upload: no upload view is written for it.
+    expect(uploadViewOf(clientId)).toBeUndefined();
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(expect.stringMatching(/./));
+    expect(ledger().map((e) => e.messageId)).toEqual([clientId]);
+
+    sendMock.mockResolvedValueOnce({ id: 'srv-after-deploy' });
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-after-deploy' }));
+    expect(rows(ctx)[0].status).toBe('sent');
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(posted(1).messageId).toBe(clientId);
+    expect(textWaitOf(clientId)).toBeUndefined();
+    expect(ledger()).toEqual([]);
+  });
+
+  it('with no reconnect at all (one service rotated), its ladder step sends it again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValueOnce(notNow(502)).mockResolvedValueOnce({ id: 'srv-ladder' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'one service rotated');
+    const clientId = rows(ctx)[0].id;
+    expect(sendMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() =>
+      expect(rows(ctx)[0]).toMatchObject({ id: 'srv-ladder', status: 'sent' })
+    );
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(posted(1).messageId).toBe(clientId);
+  });
+
+  it('a reconnect and its ladder step together send it ONCE more (no double send)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValueOnce(notNow(504)).mockResolvedValue({ id: 'srv-once' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'both at once');
+
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-once' }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps waiting through a long deploy, never failing: 502, 503, 504, 503, then sent', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock
+      .mockRejectedValueOnce(notNow(502))
+      .mockRejectedValueOnce(notNow(503))
+      .mockRejectedValueOnce(notNow(504))
+      .mockRejectedValueOnce(notNow(503))
+      .mockResolvedValueOnce({ id: 'srv-long' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'a long deploy');
+
+    for (const step of [2_000, 5_000, 15_000, 30_000]) {
+      expect(rows(ctx)[0].status).toBe('pending');
+      await vi.advanceTimersByTimeAsync(step);
+    }
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-long', status: 'sent' }));
+    expect(sendMock).toHaveBeenCalledTimes(5);
+    expect(new Set(sendMock.mock.calls.map((c) => c[2])).size).toBe(1);
+  });
+
+  it('a REAL refusal still fails it: a 503, then a 403, is `error` and offers its Retry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock
+      .mockRejectedValueOnce(notNow(503))
+      .mockRejectedValueOnce(new ChannelApiError(403, null, 'forbidden'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'refused after the deploy');
+    const clientId = rows(ctx)[0].id;
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => expect(rows(ctx)[0].status).toBe('error'));
+    expect(textWaitOf(clientId)).toBeUndefined();
+    // Nothing asks again on its own after a refusal.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a 4xx at once is `error`, never held: only "not now" is waited out', async () => {
+    sendMock.mockRejectedValueOnce(new ChannelApiError(400, null, 'bad request'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'malformed');
+    expect(rows(ctx)[0].status).toBe('error');
+    expect(isSalonWriteOwed(`send:${rows(ctx)[0].id}`)).toBe(false);
+  });
+
+  it("the author's Retry ends the hold: its ladder step asks nothing more", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValueOnce(notNow(503)).mockResolvedValueOnce({ id: 'srv-by-hand' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'retried by hand');
+    const clientId = rows(ctx)[0].id;
+
+    await messaging.retrySend(ctx, clientId);
+    expect(rows(ctx)[0]).toMatchObject({ id: 'srv-by-hand', status: 'sent' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('before a repeat is PROVEN safe, a "not now" is unconfirmed, and goes once an answer proves it', async () => {
+    resetSalonRepeatProofForTests();
+    sendMock.mockRejectedValueOnce(notNow(504));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'maybe stored by a 504');
+    const clientId = rows(ctx)[0].id;
+    expect(rows(ctx)[0].status).toBe('unconfirmed');
+
+    sendMock.mockResolvedValueOnce({ id: 'srv-proven-after-504' });
+    proveRepeatsSafe();
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-proven-after-504' }));
+    expect(posted(1).messageId).toBe(clientId);
+  });
+
+  /**
+   * Lets the held send's ladder run `n` steps, each answered by whatever `sendMock` says: the step
+   * after the k-th answer is exactly `unavailableHoldMs(k)`, so one advance fires one step.
+   */
+  async function climb(n: number) {
+    for (let k = 0; k < n; k++) {
+      await vi.advanceTimersByTimeAsync(unavailableHoldMs(sendMock.mock.calls.length, null));
+    }
+  }
+
+  it('BOUNDED BY ANSWERS (review of #3189): the 12th "not now" in a row is unconfirmed, its Retry offered, and nothing asks again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    sendMock.mockRejectedValue(notNow(502));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'a route that stays dead');
+    const clientId = rows(ctx)[0].id;
+
+    await climb(MAX_UNAVAILABLE_ANSWERS - 2);
+    expect(sendMock).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS - 1);
+    expect(rows(ctx)[0].status).toBe('pending');
+    await climb(1);
+    await vi.waitFor(() => expect(rows(ctx)[0].status).toBe('unconfirmed'));
+    expect(sendMock).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS);
+    expect(textWaitOf(clientId)).toBeUndefined();
+    expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
+    // The text is still in the ledger, with its run.
+    expect(ledger()).toMatchObject([
+      { messageId: clientId, unavailableAnswers: MAX_UNAVAILABLE_ANSWERS },
+    ]);
+    // A reconnect proves the link, not the route: it sends nothing more, nor does the clock.
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await climb(3);
+    expect(sendMock).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS);
+  });
+
+  it("the author's Retry after the bound starts a fresh run", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    sendMock.mockRejectedValue(notNow(503));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'retried after the bound');
+    const clientId = rows(ctx)[0].id;
+    await climb(MAX_UNAVAILABLE_ANSWERS - 1);
+    await vi.waitFor(() => expect(rows(ctx)[0].status).toBe('unconfirmed'));
+
+    await messaging.retrySend(ctx, clientId);
+    expect(rows(ctx)[0].status).toBe('pending');
+    expect(ledger()).toMatchObject([{ messageId: clientId, unavailableAnswers: 1 }]);
+  });
+
+  it('a held salon text offers its Retry: it goes NOW, not at its ladder step (D2)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValueOnce(notNow(503)).mockResolvedValueOnce({ id: 'srv-now' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'send it now');
+    const clientId = rows(ctx)[0].id;
+    expect(rows(ctx)[0].status).toBe('pending');
+
+    await messaging.retrySend(ctx, clientId);
+    expect(rows(ctx)[0]).toMatchObject({ id: 'srv-now', status: 'sent' });
+    await climb(2);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a held salon text can be discarded while it waits: nothing POSTs it afterwards (D2)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValue(notNow(504));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'given up while held');
+    const clientId = rows(ctx)[0].id;
+
+    messaging.discardSend(ctx, clientId);
+    expect(rows(ctx)).toEqual([]);
+    expect(ledger()).toEqual([]);
+    expect(textWaitOf(clientId)).toBeUndefined();
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await climb(3);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('the frame proving it delivered ends the hold: no ladder step or reconnect POSTs it again (D3)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    sendMock.mockRejectedValue(notNow(502));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    await useMessaging().handleSendChat(ctx, 'the 502 came after the row was written');
+    const clientId = rows(ctx)[0].id;
+
+    // What the channel handler does on this tab's own frame.
+    forgetDeliveredSalonSend(clientId, 'me');
+    expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
+    expect(textWaitOf(clientId)).toBeUndefined();
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await climb(3);
+    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });

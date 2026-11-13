@@ -96,6 +96,10 @@ jobs:
 
       - name: Build test matrices
         id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
@@ -127,11 +131,11 @@ jobs:
 
           # ── Determine base commit ──
           BASE=""
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          elif [[ -n "${{ github.event.before }}" ]] && \
-               [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
-            BASE="${{ github.event.before }}"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE="$PR_BASE_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" ]] && \
+               [[ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            BASE="$PUSH_BEFORE_SHA"
           elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
             BASE="$(git rev-parse HEAD~1)"
           fi
@@ -178,8 +182,9 @@ jobs:
           # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
           # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
           # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
-          # change runs them: ask what the gate reads.
-          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/'; then
+          # change runs them, and chat-delivery's device limit (`state.rs` asserts its copy of it):
+          # ask what the gate reads.
+          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/' || has '^apps/chat-delivery-service/src/retention\.constants\.ts$'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native
@@ -449,7 +454,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -489,8 +494,7 @@ jobs:
 
       - name: Install dependencies (Linux)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev cmake libcurl4-openssl-dev pkg-config
+          bash .github/scripts/apt-install.sh libssl-dev cmake libcurl4-openssl-dev pkg-config
 
       - name: Install WASM target
         if: matrix.component.wasm == true
@@ -502,8 +506,7 @@ jobs:
       - name: Install Tauri system dependencies (Linux)
         if: matrix.component.tauri == true
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev             libjavascriptcoregtk-4.1-dev
+          bash .github/scripts/apt-install.sh libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
 
       # The bun side of this repo has been installed with `--frozen-lockfile` since day one; the
       # Rust side had NOTHING. Nothing read the committed `Cargo.lock` at all, so cargo silently
@@ -558,7 +561,10 @@ jobs:
         working-directory: ${{ matrix.component.path }}
         env:
           GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
-        run: ${{ matrix.component.cmd }}
+          COMPONENT_CMD: ${{ matrix.component.cmd }}
+        # Unquoted on purpose: the matrix names a command and its arguments in one string
+        # (`cargo test --all-targets`), and word splitting is what makes it a command line.
+        run: $COMPONENT_CMD
 
   # =================================================================================================
   # THE REAL APPLICATION, BOOTED
@@ -622,7 +628,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -831,7 +837,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -1196,7 +1202,9 @@ jobs:
 
       - name: Assert what the build carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
-        run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: bun .github/scripts/assert-frontend-build.mjs frontend "$BUILD_SHA"
 
   # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
   # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
@@ -1240,7 +1248,9 @@ jobs:
 
       - name: Run Vitest shard with coverage
         working-directory: frontend
-        run: bun run test:coverage --shard=${{ matrix.shard }}/4
+        env:
+          VITEST_SHARD: ${{ matrix.shard }}
+        run: bun run test:coverage --shard="$VITEST_SHARD"/4
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
@@ -1421,6 +1431,21 @@ jobs:
         with:
           workspaces: frontend/src-tauri
           key: ios-app
+
+      # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
+      # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),
+      # cloned and fetched cold from GitHub and Google on every run. SwiftPM keeps the bare clones
+      # and the binary artefacts in `org.swift.swiftpm` and resolves from there when it can.
+      # CocoaPods is not a source of downloads: `gen/apple/Podfile` declares no pod. Every plugin's
+      # `Package.swift` is in the key because a plugin can add a dependency the app project's
+      # `Package.resolved` does not list.
+      # docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09
+      - name: Cache Swift packages
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/apple/canari.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'frontend/src-tauri/**/ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -1886,22 +1911,57 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          # Two commits: the tested one and its first parent, which the upgrade step starts from.
+          fetch-depth: 2
 
       - name: Apply the blueprints to a fresh MiConnect, twice
         run: bash infrastructure/authentik/test-blueprints.sh
 
       # Production is never fresh: it carries main's blueprints, and a rename entry only runs there.
+      # "MAIN" IS THE TESTED COMMIT'S FIRST PARENT, NEVER A FETCH OF THE BRANCH. On a pull request
+      # `github.sha` is the merge commit, whose first parent is the main it was merged onto; on a push
+      # it is the main before this commit. A live `origin/main` is whatever main is when the job
+      # RUNS: a re-run after main gained a blueprint with a new `!Env` applied that blueprint in a
+      # container booted from the OLDER compose.yml under test, which does not hand the variable to
+      # the worker, and failed every such pull request (2026-11-11, docs/wiki/infrastructure/authentik.md).
       - name: Apply them over main's blueprints, twice
-        run: |
-          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
-          PREVIOUS_REF=origin/main bash infrastructure/authentik/test-blueprints.sh
+        run: PREVIOUS_REF=HEAD^1 bash infrastructure/authentik/test-blueprints.sh
+
+  # =================================================================================================
+  # IS THE UPSTREAM MONITOR STILL READING? - ASKED FROM OUTSIDE THE SCHEDULER
+  # =================================================================================================
+  # The `upstream` job of `scheduled.yml` is the only report of a public name that stops answering,
+  # and it runs when GitHub's scheduler lets it (13 of ~240 requested slots, 2026-11-06..09). If it
+  # stops altogether, its silence reads as "all up". A push to `main` is the one trigger here that
+  # owes nothing to that scheduler, so the witness rides it: no reading in 12 hours opens one issue,
+  # the next fresh one closes it. On a pull request it skips (it says nothing about the change).
+  # docs/wiki/infrastructure/upstream-reachability.md#who-watches-the-monitor
+  upstream-monitor-freshness:
+    name: The upstream monitor still reads
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      # The report is an issue, as the monitor's own is.
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - name: Read the monitor's last reading
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/upstream-monitor-freshness.sh
 
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, compile-ios-app, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit, upstream-monitor-freshness]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job either passed or had nothing to do

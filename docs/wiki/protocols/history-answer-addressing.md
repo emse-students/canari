@@ -24,9 +24,16 @@ a member of any age, and that push is filtered for its own reader like every oth
 1. **Every history answer is addressed** - the diff, the scrollback AND the push.
    `sendBundleChunks` sends with `recipientDevices = [to]` (`addressedHistoryAnswer`), `to` being the
    asking device's `userId:deviceId`. *Changed from the review, which kept the push a broadcast -
-   see above, for consistency.* An ask that carries no `requestId` (an older asker) is not answered when the server
-   routes addressed answers: the asker could not accept the answer (rule 5), and the generation it
-   costs would be skipped by every other member for nothing.
+   see above, for consistency.* **An ask that carries no `requestId` is refused where it is parsed**
+   (`historyAskId`, `systemMessageHandler.ts`, D211, 2026-11-12): every build since step A mints one
+   and the floor is past it, so such an ask is malformed. Nothing is stored and nothing is answered -
+   the asker could not accept the answer (rule 5), and the generation it would cost is skipped by
+   every other member for nothing. Every answer names its ask by TYPE (`BundleAnswer`: a `requestId`,
+   or `join` on the push), so no answer to an id-less ask can be built.
+   **The broadcast branch of the `history_bundle` receiver is NOT a shim and stays:** a current build
+   still broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)`
+   in `groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the
+   same `dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 2. **The answer is filtered for its ONE reader** (`readerHistorySelection`). The windows are the
    reader's own `withheld` ones (gaps plus the span before their arrival), no longer the union of
    every member's. That has a second effect: a new device of a continuous member now restores the
@@ -165,8 +172,26 @@ A non-recipient never sees an addressed frame, so the sender's generation moves 
 member last decrypted. OpenMLS derives forward on the next frame it does see, up to
 `maximum_forward_distance` (2 000, `sender_ratchet_config` (2000, 2000)). Only CONSECUTIVE addressed
 frames from one sender in one epoch count, because any frame the member does receive resets the
-distance. A chunk is 200 messages, so 2 000 consecutive frames would be one answer of 400 000
-messages. Graine accepted the same bound
+distance.
+
+**One answer is not the unit; one Add is** (since #3185). The inviter's join push follows EVERY Welcome
+the server stored (`joinPush.ts`), and the pushes run one after another, so one bulk Add of D devices
+sends D pushes back to back, all in the epoch that Add opened, each addressed to one newcomer - and
+every member, the other newcomers included, skips all of them. The distance a member must cross to
+read the inviter's next frame in that epoch is the SUM, over the devices of that Add, of the frames
+each push took:
+
+- a first-time newcomer: **1** frame (everything before the arrival is withheld, so the push is the
+  state-only frame, or one chunk of what was sent since the Add);
+- a returning member: up to `ceil(entitled messages / 200)` frames (a chunk is 200 messages).
+
+**Nothing caps the devices of one Add** (`addMembersBulk` takes the whole list), so the bound is stated
+here rather than enforced: the 2 000 is crossed by one Add of more than **2 000 first-time devices**
+(about 1 000 people at two devices each), or by fewer returning members whose entitled stores add up
+to more than **400 000 messages**. Past it, the members who skipped the run do not decrypt the
+inviter's next frame of that epoch. A group conversation approaching either number is the moment to bound the Add in code (a cap on `inviteMembersToGroup`'s list, with
+a test), not to raise `maximum_forward_distance`, whose 2 000 caps the keys a receiver derives.
+Graine accepted the same bound
 ([channel-encryption §23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 The durable rule that forbade addressing an application message is narrowed accordingly
 ([durable-rules](../durable-rules.md)).

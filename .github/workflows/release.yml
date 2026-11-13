@@ -142,14 +142,19 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          INPUT_VERSION: ${{ inputs.version }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           # shellcheck source-path=SCRIPTDIR
           # shellcheck source=/dev/null
           source .github/scripts/lib/release-preconditions.sh
 
-          if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
-            RAW='${{ inputs.version }}'
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            RAW="$INPUT_VERSION"
             REF='main'
             # A dispatch carries no checkbox, so there is nothing to cross-check against and the
             # version is the only statement made. That is the pre-2026-09-03 behaviour, kept for
@@ -157,10 +162,10 @@ jobs:
             EVENT_SAYS=''
             AGREEMENT='not asked of a dispatch - it carries no checkbox, so the version is the only statement made'
           else
-            RAW='${{ github.event.release.tag_name }}'
+            RAW="$TAG_NAME"
             REF="$RAW"
             # `prereleased` or `released` - the checkbox, as GitHub read it.
-            EVENT_SAYS='${{ github.event.action }}'
+            EVENT_SAYS="$EVENT_ACTION"
           fi
           VERSION="${RAW#v}"
 
@@ -215,7 +220,7 @@ jobs:
           # and every job below builds it. No pre-release of this version is an answer, and the
           # preflight's fourth gate would have refused it anyway.
           if [ "$PRERELEASE" = 'false' ]; then
-            SOURCE_TAG="$(gh api "repos/${{ github.repository }}/git/matching-refs/tags/v${VERSION}-" \
+            SOURCE_TAG="$(gh api "repos/${REPO}/git/matching-refs/tags/v${VERSION}-" \
               --jq '.[].ref | sub("^refs/tags/"; "")' | latest_prerelease_tag "$VERSION")"
             if [ -z "$SOURCE_TAG" ]; then
               echo "::error::No pre-release of $VERSION exists. A stable ships the latest v${VERSION}-alpha.N, so cut one first: gh release create v${VERSION}-alpha.1 --prerelease"
@@ -224,7 +229,7 @@ jobs:
             REF="$SOURCE_TAG"
             echo "Stable $VERSION ships $SOURCE_TAG"
           fi
-          TARGET_SHA="$(gh api "repos/${{ github.repository }}/commits/$REF" --jq '.sha')"
+          TARGET_SHA="$(gh api "repos/${REPO}/commits/$REF" --jq '.sha')"
 
           {
             echo "version=$VERSION"
@@ -300,15 +305,20 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Bump every manifest, both store build numbers, and the changelog
-        run: bash scripts/bump-app-version.sh "${{ needs.preflight.outputs.version }}"
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: bash scripts/bump-app-version.sh "$RELEASE_VERSION"
 
       - name: Commit and push to the release branch
         id: push
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
         run: |
           set -euo pipefail
           # The branch is named by the version WITHOUT its suffix: every alpha of 1.5.2 and the
           # 1.5.2 stable share `release/v1.5.2`, the name the stable has used since 2026-10-02.
-          VERSION_CORE='${{ needs.preflight.outputs.version }}'
+          VERSION_CORE="$RELEASE_VERSION"
           VERSION_CORE="${VERSION_CORE%%-*}"
           # The App is what the ruleset lets through, so the commit says so rather than claiming to
           # be `github-actions[bot]`, the identity that is REFUSED here.
@@ -325,11 +335,11 @@ jobs:
           git add -u
 
           if git diff --cached --quiet; then
-            echo "No version changes (already at ${{ needs.preflight.outputs.version }})"
+            echo "No version changes (already at ${RELEASE_VERSION})"
           else
-            echo "Staged for the bump to ${{ needs.preflight.outputs.version }}:"
+            echo "Staged for the bump to ${RELEASE_VERSION}:"
             git diff --cached --name-only | sed 's/^/  /'
-            git commit -m "chore: bump version to ${{ needs.preflight.outputs.version }}"
+            git commit -m "chore: bump version to ${RELEASE_VERSION}"
             # NO RELEASE PUSHES TO `main` - a stable since 2026-10-02, a pre-release since
             # 2026-10-30. The bump is built on the commit the release was cut at, which `main` may
             # have moved past by now (a pull request merging in these minutes refused
@@ -346,12 +356,12 @@ jobs:
           # ordinary event - a re-published release, or a bump landed through a pull request first -
           # and its HEAD is already the right commit.
           SHA="$(git rev-parse HEAD)"
-          if [ "${{ needs.preflight.outputs.prerelease }}" = 'false' ]; then
+          if [ "$RELEASE_PRERELEASE" = 'false' ]; then
             # THE STABLE'S TAG FOLLOWS THE COMMIT THAT SHIPPED (user, 2026-10-02): `v1.0.1` must name
             # what production runs, not the commit it was typed against. A tag moved under a published
             # release keeps the release; `--force` is the point, and the release branch is what keeps
             # the old commit reachable.
-            git push --force origin "$SHA:refs/tags/v${{ needs.preflight.outputs.version }}"
+            git push --force origin "$SHA:refs/tags/v${RELEASE_VERSION}"
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Every arm of this release builds ${SHA:0:8}"
@@ -381,11 +391,14 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Land the version (pre-release) or the changelog (stable) on main
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
         run: |
           git config user.name "canari-auto-merge[bot]"
           git config user.email "canari-auto-merge[bot]@users.noreply.github.com"
           bash .github/scripts/land-release.sh \
-            "${{ needs.preflight.outputs.version }}" "${{ needs.preflight.outputs.target_sha }}"
+            "$RELEASE_VERSION" "$RELEASE_TARGET_SHA"
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE THREE ARMS

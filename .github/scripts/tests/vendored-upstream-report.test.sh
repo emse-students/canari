@@ -186,8 +186,20 @@ fi
 run "$(tree drift 2.5.1 2.5.0)" 200 "$(crate_json 2.5.0 2.5.0)"
 expect 'a pin that does not name the fork'"'"'s version is reported' 1 'title=Vendored fork and its pin disagree'
 
-run "$(tree pre 2.5.0-rc.1 2.5.0-rc.1)" 200 "$(crate_json 2.5.0 2.5.0)"
-expect 'a fork of a pre-release has no comparison rule and says so' 1 'not a plain X.Y.Z'
+printf '\na fork of a PRE-release is compared with every upstream release\n'
+PRE_TREE="$(tree pre 2.5.0-rc.1 2.5.0-rc.1)"
+run "$PRE_TREE" 200 '{"crate":{"name":"tauri-plugin-websocket","max_version":"2.5.0-rc.1","max_stable_version":null}}'
+expect 'a fork of upstream'"'"'s newest pre-release passes, with no stable release upstream at all' 0 'ok:'
+run "$PRE_TREE" 200 "$(crate_json 2.5.0-rc.2 2.4.0)"
+expect 'CONTROL: the next pre-release is a rebase owed' 1 'released past the vendored fork'
+run "$PRE_TREE" 200 "$(crate_json 2.5.0-rc.10 2.4.0)"
+expect 'pre-release numbers compare as numbers (rc.10 is past rc.1)' 1 'released past'
+run "$PRE_TREE" 200 "$(crate_json 2.5.0 2.5.0)"
+expect 'the release a pre-release led to is a rebase owed' 1 "move the '=2.5.0-rc.1' pin"
+run "$PRE_TREE" 200 "$(crate_json 2.5.0-beta.1 2.4.0)"
+expect 'an OLDER newest release (beta < rc) is a withdrawal, not a pass' 1 'title=Upstream withdrew the release'
+run "$(tree odd 2.5 2.5)" 200 "$(crate_json 2.5.0 2.5.0)"
+expect 'a fork version of no known shape says so' 1 'no rule for that shape'
 
 printf '\nwhat it asks, and the real tree\n'
 run "$OK_TREE" 200 "$(crate_json 2.5.0 2.5.0)"
@@ -196,7 +208,7 @@ case "$(cat "$FAKE_LOG")" in
   *) fail "the request was not what crates.io needs: $(cat "$FAKE_LOG")" ;;
 esac
 
-for crate in tauri-plugin-websocket wry; do
+for crate in tauri-plugin-websocket wry tauri-plugin-system-components tauri-plugin-keystore; do
   REAL_VER="$(awk '/^\[/{p=($0=="[package]");next} p&&/^version/{gsub(/^version *= *"|".*$/,"");print;exit}' \
     "$REAL_ROOT/frontend/src-tauri/patches/$crate/Cargo.toml")"
   WATCH="$crate" run "$REAL_ROOT" 200 "$(crate_json "$REAL_VER" "$REAL_VER")"
@@ -206,7 +218,7 @@ done
 # The script's OWN allowlist against the real tree: every fork on it is asked about. One body cannot
 # match two versions, so only WHO was asked is asserted here; the verdicts are asserted above.
 WATCH='' run "$REAL_ROOT" 200 "$(crate_json 0.0.1 0.0.1)"
-for crate in tauri-plugin-websocket wry; do
+for crate in tauri-plugin-websocket wry tauri-plugin-system-components tauri-plugin-keystore; do
   if grep -q "/$crate\$" "$FAKE_LOG"; then
     pass "the script's own allowlist watches $crate"
   else

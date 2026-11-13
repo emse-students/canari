@@ -140,7 +140,7 @@
         <p class="text-text-muted">{m.moderation_live_standing_clean()}</p>
       {/if}
       {#if standing.withdrawalDue}
-        <p class="font-semibold text-amber-600" data-moderation-live-due>
+        <p class="text-accent-text font-semibold" data-moderation-live-due>
           {m.moderation_live_standing_due()}
         </p>
       {/if}

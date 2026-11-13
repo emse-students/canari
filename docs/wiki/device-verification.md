@@ -22,6 +22,25 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-11-09, the bench readings of `v1.6.9-alpha.1` (dev answering `1.6.9-alpha.1`, build `100600901`): Mi 9T `canari-test-alpha` (the release `app-universal-release.apk` sideloaded with `adb install -r`: Play had not been asked, the install carries no installer), iPhone 12 `canari-test-gamma` (TestFlight offered `1.6.9 (100600901)`, taken from the TestFlight app), the harness Chrome slots as beta, gamma and delta (W5 started for delta).** Screenshots are kept out of the repo.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. iOS share suggestions donation (#3167) | **PASS** | After the unlock, `pymobiledevice3 syslog live` carried `[ShareSuggestions] publish: 5 of 5 donated`, no refusal code (1901) anywhere in the capture. The share sheet itself was not opened to look at the suggestions |
+| 1b. Tab title of an association page after in-app navigation (#3167) | **PASS** | iPhone, feed then the association link: the page's accessibility title read `Club d'Echecs Fictif - Canari`; the same route on the `alpha.3` build read the slug `echecs-fictif - Canari`. A second hidden label of the screen read `Association - Canari` (a route-announcer text, probably; not investigated) |
+| 2. Chat long-press (#3168) | **PASS** | iPhone and Mi 9T, arriving in a conversation then a 900 ms press on a bubble: no selected word, no handles; the reaction bar plus ONE row of icons (seven on the iPhone for an own message: reply, forward, copy, share, pin, edit, delete; five on the Mi 9T for another's message) |
+| 3. Emoji picker paints at once (#3170) | **PASS** | iPhone, app terminated and relaunched, FIRST picker open of the session (reaction "+"): the screenshot taken straight after the tap, while the sheet was still sliding in, already held the tab bar with its nine icons and the first screen of cells at full size, none blank, none growing. A warm open the same |
+| 4. "Mes formulaires" actions on one row (#3169) | **PASS** | iPhone (a draft with 5 actions and two forms with 7) and Mi 9T (7): every action of a card on one line, each 44 px tall (rects `y=427` for all five of the draft, `y=581` for all seven of a form); the card description shows plain text, no markdown markers |
+| 5. Two-tab follower header, selection across promotion (#3173) | **PASS, live End NOT TAKEN** | One browser profile, tab A (communities) and tab B (chat, new, PIN unlocked): tab B read `Connecte` (the pill, not `Hors-ligne`), a conversation opened in B stayed open and `Connecte` held after tab A was closed. That B was the follower at the time was inferred from the order, not proved (`navigator.locks` lists the `canari-tab-leader` lock without its holder). A live was not started (no camera) |
+| 6. Drag and drop into the post composer, Chrome (#3171) | **PASS** | Real `Input.dispatchDragEvent` with a file path (enter, over, drop) at three places of the open sheet: on the media strip area and the text area (a PNG each: `1/10`, `2/10`) and on the toolbar row (a text file: `3/10`, drawn as a file tile); the sheet was closed unpublished. An image dragged from another web page (URL, no file) was NOT tried |
+| 7. Engagement WP-2, Suivre (#3176) | **PASS** | Mi 9T: the chip on an association post header followed at ONCE and disappeared (and from every other header of that association); the chip on a personal post header (icon-only on the phone) became `Demande envoyee - retirer la demande de suivi ...` on all six headers of that person at once; the person accepted from the web bell (`Demandes d'abonnement en attente: 1`, `Accepter`) and `follow-status` answered `accepted`. Web: the chip on six association cards (beta) and on three directory rows (never on itself). No chip on an association post of a club the account is a member of |
+| 8. Community role names (#3175) | **PASS** | Delta (administrator) of the bench community: the `Roles` tab holds a `Noms des roles` editor; renaming the member role made the member badges of the open member list of another account read the new name at once without a reload; a blank save restored the default (checked after a reload). A non-admin (gamma): no `Roles` tab and no editor |
+| 9. Nicknames, the 8 readings | **1 PASS, 2 FAIL, 3 PASS, 4-8 NOT TAKEN** | See [the entry](backlog.md#owed-a-verification-and-nothing-else); **FAIL 2**: a member added after a nickname never showed it - fixed by #3185 (first stable `v1.6.9`), re-read as item 2 of that row |
+| 10. Birthdays | **5 PARTIAL, 6 PASS, 1-4 and 7 NOT TAKEN (need the day)** | See [birthdays](birthdays.md); what is left is a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else). The date was set on the iPhone account for TOMORROW and the Mi 9T account follows it, so the morning notice and the ring can be read on 2026-11-10 |
+| 11. Community open on the Mi 9T (#3174) | **MEASURED** | See [community-open-budget](frontend/community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08): cold and warm, five runs each, 1x |
+
+**What this pass left on dev, for the next reading to know:** the account of the iPhone has tomorrow's birthday saved (visibility followers) and the Mi 9T account follows it; the Mi 9T account follows "Liste Fictive 2026" and the web account `beta` is a fourth member of the bench group "nse banc groupe" (it has no remove path run). Nicknames, the role name, the post and every attachment of the drag-and-drop were removed.
+
 **2026-11-04, the bench readings of `v1.6.4-alpha.2` (dev answering `1.6.4-alpha.2`): Mi 9T `canari-test-alpha` (the release APK sideloaded, versionCode `100600402`), iPhone 12 `canari-test-gamma`, the harness Chrome as gamma and delta.** TestFlight offered only `1.6.4 (100600401)` (`alpha.1`) on the iPhone; `alpha.2` changed only the deploy scripts (#3003), so the iPhone read the same client code.
 
 | Reading | Verdict | What was seen |
@@ -174,7 +193,7 @@ slots W4 (beta) and W5 (delta) were started and signed in for this; W1, W2 and W
 | Wry wake (WMP, #2974) | Mi 9T | **NOT-READ** | No abort, no ANR, process alive, but the trigger was not reached: with `always_finish_activities 1` this MIUI build kept the activity alive, so no `[WRY_MAIN_PIPE] no WebView for activity` line appeared. The setting was reset to 0 |
 | Cold avatars (AV) | Mi 9T | **NOT-READ** | The bench accounts show initials, not photos: no signed avatar request to time and the server `[AVATAR]` count is not reachable from the bench. Cold start to the communities tab took about 3 s |
 
-**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md). Not read: the newcomer afterwards.
+**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22). Not read: the newcomer afterwards.
 
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
@@ -326,9 +345,9 @@ row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
 | --- | --- | --- | --- |
 | R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
 | R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
-| R2. `push_context.json` follows an account switch ([entry](backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
-| R3a. No more sandbox refusal ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
-| R3b. A marker from before a reboot ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
+| R2. `push_context.json` follows an account switch ([entry](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
+| R3a. No more sandbox refusal ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
+| R3b. A marker from before a reboot ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
 
 R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
 (its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
@@ -649,7 +668,11 @@ locked and the app killed, and a second device calling it with VIDEO.
 
 ## The emoji picker paints at once - owed on the iPhone (2026-11-08)
 
-Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture. **Since the emoji setting (2026-11-09) this reading is of the "Canari" mode**: choose it in Settings > Preferences first.
+
+## The emoji setting - owed on both phones (2026-11-09)
+
+Mechanism: [emoji](frontend/emoji.md#the-setting---one-resolver-2026-11-09). On a pre-release, both phones, an install that had the app before the update. Read: **(1)** with nothing chosen, Settings > Preferences > "Emojis" shows "Systeme" selected, and a bubble, a reaction pill, the picker's cells and tab bar and the composer draw the platform's emoji (Apple's on the iPhone, the phone maker's on the Mi 9T), a skin-toned thumb in one glyph; **(2)** the picker's cells sit centred at the size of the pictures, nothing clipped; **(3)** switching to "Canari" redraws the open conversation in Noto's pictures without a restart, and a cold start opens straight in pictures with no system glyph on the first frame; **(4)** back to "Systeme", a cold start draws no picture first; **(5)** a jumbo emoji-only message is large in both modes; **(6)** under "Systeme", a poster export still shows Noto's pictures.
 
 ## The seed mirror labelled by account - owed (2026-11-07)
 
@@ -1635,7 +1658,7 @@ lines.
 `sign-in refused` is expected ONLY as step 4e's offline `sign-in refused, as expected` (INFO).
 
 **Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
-stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
+stable.** The result goes into the [per-account backlog entry](backlog.md#owed-a-verification-and-nothing-else).
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T
 
@@ -1834,12 +1857,35 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
    choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
    lands on the "Tout" feed.
 
+## RV. Every vertical video of 90 s or less is a CanaReel, kept a year - owed on BOTH phones
+
+**Proves** [the rule of 2026-11-09](frontend/modules/reels.md#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09)
+on real hardware: the gates replace the decoder, so whether `videoWidth`/`videoHeight` honour a
+phone video's rotation tag (an Android portrait clip is often stored 1920x1080 + 90 degrees) and
+whether the prepared frame comes out vertical is read here only. **Supersedes CR steps 3, 5 and 9's
+"Garder comme post"** (the button is gone). **Precondition:** a pre-release carrying it on an estate
+serving `maxAspectRatio`, a bench account, the console for `[PUBLISH-QUEUE]`, `[reel-capture]`,
+`[reel-publish]` and `[reel-rule]`.
+
+1. **"+" -> new post -> "Photo/vidéo" -> a PORTRAIT gallery video under 90 s** (one filmed upright
+   with the system camera), a caption, "Publier": the log says `one video 720x1280, N ms: a
+   CanaReel`; the feed shows a reel card that opens the reel pager; `my-reels` lists it with an
+   `expiresAt` a year out.
+2. **The same with a LANDSCAPE video, then a 2-minute portrait video**: `a post` in the log, an
+   ordinary post video.
+3. **A portrait video PLUS a photo, or with a poll**: a post.
+4. **The CanaReels tab -> gallery -> a landscape video**: the toast "Un CanaReel est une vidéo
+   verticale...", no review. A portrait one reaches the review and publishes as a reel.
+5. **The composer's camera, HOLD**: the step shows "Une vidéo verticale de 90 secondes au plus est
+   un CanaReel : supprimé au bout de 1 an" and NO "Garder comme post"; the tab's step reads "Visible
+   1 an...".
+
 ## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
 
 **Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
 on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
 and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
-carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+carrying `multiMedia`, a bench account, at least two reels and one post of exactly one photo;
 the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
 `[reel-comments]` lines.
 
@@ -2190,7 +2236,7 @@ stays owed until a pre-release build is distributed to the tester group.
 | #1605 "Ouvrir dans l'application", Android half | Mi 9T | **`PASS`** | `https://canari.emse.fr/login` in Chrome (not signed in) shows the link; the tap starts `act=VIEW cat=BROWSABLE dat=https://canari.emse.fr/... pkg=fr.emse.canari` from Chrome and Canari comes to the front |
 | #1548 the reply context is per conversation | iPhone | **`PASS`** | "Repondre" armed on a DM message ("Repondre a Canari Test Delta"); the `Bench126` salon opened with no reply bar; back in the DM the bar and its quote were still there; cancelled afterwards |
 | The send path on the iPhone (#1536 row) | iPhone | **`PASS`** | `ios1013send` in the DM: "Message envoye", the double check, and the Mi 9T's list shows it. **The reaction-failure toast was not read**: nothing here makes a reaction fail |
-| #1604, no PIN prompt after a later sign-in | iPhone | **answered in part: NOT the "Rester connecte" vault** | The install sat on the login page; a sign-in as gamma landed on the feed and `/chat` with NO PIN, history decrypting and a send working. A cold relaunch ~9 minutes later DID ask for the PIN - which a vault would not have - and its sheet has no "Rester connecte" row (`showStaySignedIn = !biometricConfigured`). So the unlock was skipped on a key the live process still held. **Then the right PIN on that cold launch answered "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"** - the [account-switch P3](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable) met again, here with no switch inside this session (which account the install held before it is unknown). Remedy taken: uninstall, reinstall `100200305` from TestFlight, sign in (the PIN asked this time), unlock |
+| #1604, no PIN prompt after a later sign-in | iPhone | **answered in part: NOT the "Rester connecte" vault** | The install sat on the login page; a sign-in as gamma landed on the feed and `/chat` with NO PIN, history decrypting and a send working. A cold relaunch ~9 minutes later DID ask for the PIN - which a vault would not have - and its sheet has no "Rester connecte" row (`showStaySignedIn = !biometricConfigured`). So the unlock was skipped on a key the live process still held. **Then the right PIN on that cold launch answered "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"** - the [account-switch P3](backlog.md#owed-a-verification-and-nothing-else) met again, here with no switch inside this session (which account the install held before it is unknown). Remedy taken: uninstall, reinstall `100200305` from TestFlight, sign in (the PIN asked this time), unlock |
 | Dynamic Type at the largest standard size (lot 5) | iPhone | **no effect, warm or cold** | Reglages > Accessibilite > Affichage et taille du texte > Police plus grande, slider 50 % -> 100 %: a DM drew at exactly the size it had before, and so did the PIN sheet after a cold relaunch. The WebView ignores the setting, so Dynamic Type users get the default size. Whether that is accepted or wants `-apple-system-body` is a decision, not a reading. Restored to 50 % |
 
 **What a bench phone cannot settle, and why.** Every push row (check H step 4, NOTIF-10, D2/D3 with
@@ -3148,3 +3194,52 @@ a reload rather than a frame.
 
 - **Comment sort row.** At 150-200 % text the row "Afficher les N commentaires" + Récents / Anciens / Aimés did not wrap (page scroller 553 px on a 436 px screen). `PostComments.svelte` now wraps the row and the sort group (`flex-wrap`, `min-w-0`, `gap-x-2 gap-y-1`); `textZoomBoxes.test.ts` asserts it. Owed one look at 200 % on the Mi 9T.
 - **`[TAURI] Couldn't find callback id N` every ~15 s after a WebView reload** (`r1017-a129a5/cons-2.ndjson`: 27 lines, ONE id, intervals 14.85-15.05 s). The warning means Rust still answers a callback registered by the previous page. The only recurring Rust-to-JS channel in the app is the `plugin-websocket` listener in `TauriMlsService.connect()` (`addListener`); a reload does not run `pauseSocket()` (only the backgrounding path does, `sessionConnection.ts`), so a socket opened by the old page could keep delivering frames to the dead id. **NOT established from source**: no 15 s server frame was found in `backend/`, and the plugin's per-connection channel was not observed. Muting the line or adding a `pagehide` disconnect without that proof would be a guess. Next step: with the warning live, `adb logcat` for the websocket plugin plus the gateway's connection count for the account (two sockets after a reload would confirm it), then release the socket at `pagehide`.
+
+## One background Welcome on the Mi 9T: the procedure (2026-10-22)
+
+The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
+push-secret-authenticated committer, so a native path changed and no gate here runs native code.
+
+**Verified from source instead of hardware (2026-10-22).** The rig could not build the trigger: a new
+device asks for a background Welcome only when its own external join fails for a reason other than
+not being a member. So the request was compared with the route by reading both.
+`sendWelcomeAndCommit` in `CanariFirebaseMessagingService.kt` sends `Authorization: PushSecret`, puts
+`userId` and `deviceId` in the body, and sends neither `senderId` nor `x-user-id`. The route
+authenticates that exact pair and hands it to `validateCommit` as the committer, `senderId` included.
+The pair passes the registry check because the push-token row and the key-package row both take
+`userId` from `x-user-id`. iOS never posts this route. `push.controller.welcome-commit.spec.ts`
+already sends exactly this body. The reading is a row of [the verification table](backlog.md#owed-a-verification-and-nothing-else).
+
+The reading has one setup and three checks:
+
+- **Setup.** The Mi 9T is killed, not force-stopped (swiped away), and is a member of a group
+  conversation. A new device of another member must send a `welcome_request` for it, which makes the
+  phone answer in the background. **That request is sent only when the newcomer's own external join
+  for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
+  base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
+  login on a healthy estate does not send it: see the attempt below. The PROCESS must be cold: a
+  process in which the app was loaded since it last died answers `prepare refused
+  reason=warm-process` and sends nothing, by design.
+- **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)):
+  - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
+
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT HELD` line appears.
+- **The same reading with the app OPENED inside the round trip** (open the app between the
+  `Welcome staged` line and the answer): the phone logs `stage left in mls.bin (left-to-foreground)`
+  or `already settled by the foreground`; the foreground's next load logs `background stage of
+  group=... found in the loaded state` (or `already merged`), then the WebView logs `[COMMIT] settling
+  1 staged commit(s) by resubmission` and `... accepted - merged`; the newcomer reads the next message.
+  No `ACCEPTED AND NOT HELD`, no `is ABSENT from the state this foreground keeps`, no `ERASES`.
+- **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
+  the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
+  the phone then reads the group's next message once opened, and the newcomer's next ask logs
+  `already refused as stale from this mls.bin -> not answered`.
+- **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
+  - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
+  - `commit accepted -> activeEpoch=N+1`;
+  - `DONE`.
+
+  No `REJECT` appears, and in particular no commit-caller refusal.
+- **The newcomer.** It opens the group and reads the next message.

@@ -40,6 +40,10 @@ export async function loadOpenLivesForFeed(
       console.log('[LIVE] feed card: no answer from the server - the card keeps what it shows');
       return { kind: 'kept' };
     }
+    // ASKED AGAIN ON EVERY LOAD, NEVER LATCHED: `disabled` is the runtime kill switch
+    // (`platform_config.lives_mode`, flipped at /admin/platform and read per request), so a "switched
+    // off" learned once would hide lives reopened later for the rest of a phone's process. The
+    // answer is an expected one (`listOpenLives` declares it), so it costs debug lines, no warning.
     if (isLiveRefusal(e, 'disabled')) {
       console.debug('[LIVE] feed card: lives are switched off on this estate');
       return { kind: 'hidden' };

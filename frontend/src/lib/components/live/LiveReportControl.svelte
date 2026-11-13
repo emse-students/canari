@@ -92,7 +92,7 @@
 {#if !ownLive}
   <button
     type="button"
-    class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+    class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
     aria-label={m.live_report_button()}
     title={m.live_report_button()}
     aria-haspopup="dialog"
@@ -107,7 +107,6 @@
 
   <ReportReasonDialog
     {open}
-    layer="critical"
     title={m.live_report_dialog_title()}
     {submitting}
     onSubmit={submit}

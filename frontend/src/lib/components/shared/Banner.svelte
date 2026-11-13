@@ -19,6 +19,13 @@
    * which - so position comes in through `class`. Keeping placement out is deliberate: it is the one
    * property that legitimately differs, and pretending otherwise would push every caller to fight
    * the component.
+   *
+   * ONE LINE, ONE HEIGHT (owner, 2026-11-09: "les bandeaux sont tres fournis en texte ... je veux
+   * qu'il soit reduit au minimum"). The row never wraps: the label truncates and a banner is `--banner-height`
+   * (2rem) tall whatever it says, `--banner-height-thin` for the deployment marker. It used to wrap
+   * to four lines on a 390 px phone (~130 px with its inset) for a sentence the reader did not need
+   * on screen. Anything longer than a few words goes to `title` / a screen-reader-only span, never
+   * to a second visible line. The inset is 0.5rem on all four sides, still square.
    */
   interface Props {
     /**
@@ -34,8 +41,10 @@
     tone?: 'status' | 'alert';
     /** Marks the region busy while work is in progress, so assistive tech can say so. */
     busy?: boolean;
-    /** Centres the row. Left-aligned reads better when the text can wrap to two lines. */
+    /** Centres the row. */
     center?: boolean;
+    /** The thinner strip (`--banner-height-thin`), for a marker rather than a message. */
+    thin?: boolean;
     /** Placement and any call-site spacing. The surface itself is not overridable. */
     class?: string;
     children: Snippet;
@@ -48,6 +57,7 @@
     tone = 'status',
     busy = false,
     center = false,
+    thin = false,
     class: extra = '',
     children,
     action,
@@ -68,7 +78,9 @@
 </script>
 
 <div
-  class="m-3 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-xl px-4 py-2 text-sm {center
+  class="m-2 flex items-center gap-2 rounded-lg px-3 text-xs {thin
+    ? 'text-2xs min-h-(--banner-height-thin)'
+    : 'min-h-(--banner-height)'} {center
     ? 'justify-center text-center'
     : 'justify-between'} {SURFACE[variant]} {extra}"
   role={tone}
@@ -76,8 +88,8 @@
   aria-busy={busy ? 'true' : undefined}
 >
   {#if action}
-    <!-- basis + grow: the label keeps a readable column and takes the full row once the actions wrap below it -->
-    <div class="flex min-w-0 flex-1 basis-56 items-center gap-2">{@render children()}</div>
+    <!-- the label takes what the actions leave and truncates: the row never wraps -->
+    <div class="flex min-w-0 flex-1 items-center gap-2">{@render children()}</div>
     {@render action()}
   {:else}
     {@render children()}

@@ -17,7 +17,7 @@ Un invite peut **payer** comme un membre :
 - une **grille de prix selon les reponses** (ex. : menu vegetarien 10 EUR, menu viande 12 EUR) ;
 - une **grille de prix selon la promo, la formation ou la cotisation** : un invite n'a rien de
   tout cela, il paie donc le tarif **"autres"** de la grille (qui doit rester disponible) ;
-- en **ligne** (Lydia) ou en **especes** si vous l'autorisez.
+- en **ligne** (Lydia) ou **sur place** si vous l'autorisez.
 
 Ce qui reste **impossible** sur un formulaire public, parce qu'un invite n'a ni compte ni profil :
 
@@ -34,10 +34,10 @@ l'enregistrement, avec la meme raison).
 ## Mettre un formulaire en public
 
 1. Creez ou modifiez le formulaire (onglet **Formulaires** de l'association).
-2. Reglez le prix, les supplements, la grille sur les reponses et le paiement en especes
+2. Reglez le prix, les supplements, la grille sur les reponses et le paiement sur place
    comme pour un formulaire normal, avec deux obligations propres au formulaire public :
-   - si vous acceptez les especes, **fixez un delai de paiement en especes** (obligatoire : une
-     reponse en especes non payee garde sa place jusqu'a ce delai) ;
+   - si vous acceptez le paiement sur place, **fixez un delai de paiement sur place** (obligatoire : une
+     reponse a regler sur place non payee garde sa place jusqu'a ce delai) ;
    - avec une grille de prix, la case **"tous les autres"** ne peut pas valoir 0 si un invite
      peut y tomber (question de prix facultative, masquee par une autre reponse, ou option rangee
      dans aucun groupe) : donnez-lui un prix ou marquez-la indisponible.
@@ -62,25 +62,25 @@ l'enregistrement, avec la meme raison).
   (ex. `1A2B-3C4D`). **Aucun e-mail de confirmation n'est envoye** : l'invite doit noter sa
   reference. Le lien de cette page reste valable : il peut y revenir si le paiement met du
   temps a se confirmer.
-- **En especes** : la reponse est enregistree tout de suite, avec la somme due et la
+- **Sur place** : la reponse est enregistree tout de suite, avec la somme due et la
   **reference** a vous donner.
 
-## Retrouver un invite et valider ses especes
+## Retrouver un invite et valider ses paiements sur place
 
 - Dans la liste des reponses, un invite apparait sous le **nom** qu'il a donne (ou son e-mail),
   avec le badge **"Invite"**. Si vous ne lui avez rien demande, un invite qui a paye ou doit payer
   apparait sous sa reference (ex. `1A2B-3C4D`), celle qu'il vous donne.
 - L'**export** reprend son nom et son prenom dans les colonnes de nom, et son e-mail dans une
   colonne **"E-mail"**.
-- Les **especes** se valident comme pour un membre : **"Valider"** une fois l'argent recu.
+- Les paiements **sur place** se valident comme pour un membre : **"Valider"** une fois l'argent recu.
 - Dans l'onglet **Achats** de l'association, un paiement d'invite apparait au nom de
   **"Invite"**.
 
 ## Limites a connaitre
 
 - **Une place est retenue pendant le paiement.** Une reponse en ligne non payee bloque sa
-  place 30 minutes, puis la libere. Une reponse en especes bloque sa place jusqu'a la date
-  limite de paiement en especes que vous avez fixee.
+  place 30 minutes, puis la libere. Une reponse a regler sur place bloque sa place jusqu'a la date
+  limite de paiement sur place que vous avez fixee.
 - **Un paiement arrive au-dela de la capacite n'est pas signale pour l'instant** : seul le
   tableau des reponses le montre (en tete, "paye hors capacite"). Regardez-le apres l'evenement.
 - **Trois reponses en attente au plus par reseau.** Un meme reseau (une meme adresse IPv4, ou

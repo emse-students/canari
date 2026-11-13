@@ -34,7 +34,7 @@ services:
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
-    image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     restart: always
     # Bounded on purpose. Redis holds presence, rendezvous digests and history streams and was
     # running with maxmemory 0 / noeviction, i.e. unbounded growth on a 16 GB host - the forecast
@@ -124,22 +124,30 @@ services:
 
   adminer:
     logging: *logging
+    # `exclusive`, NOT `pinned`, FOR AS LONG AS THIS REPOSITORY BUILDS THE IMAGE: every release moves the
+    # tag of every image it builds, so every release replaces this container (a gap on a console nobody
+    # but a global admin opens). `replace-modes.py` refuses `pinned` on an image built here.
     labels:
-      canari.deploy.replace: pinned
+      canari.deploy.replace: exclusive
     # REACHED TWO WAYS: loopback on the host (an ssh tunnel), and /adminer/ through the frontend nginx for
     # GLOBAL ADMINS (core-service signs a short cookie; docs/wiki/infrastructure/databases.md). It publishes
     # nothing else.
-    # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
-    # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
-    # name it has.
-    image: adminer@sha256:400af848ac3f57938abde4867677df1b195674d232c8896a27d111d04b9c088c
+    # BUILT HERE, TEMPORARILY (owner, 2026-11-13): upstream's digest, pinned in the Dockerfile's `FROM`,
+    # with Alpine's `libpq` upgraded past the 38 HIGH advisories its newest build still carried. Back to
+    # `image: adminer@sha256:<digest>` and `pinned` the day upstream ships `libpq >= 18.7-r0`
+    # (infrastructure/local/Dockerfile.adminer, docs/wiki/legacy-compatibility.md).
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/adminer:${TAG:-latest}
+    build:
+      context: ..
+      dockerfile: infrastructure/local/Dockerfile.adminer
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     # upload progress OFF (host IT's request, 2026-10-22): Adminer does not use it, and PHP is patched here
-    # by moving the image digest, not by the host's unattended-upgrades - the container is already php-cli.
+    # by moving the base digest (the Dockerfile's `FROM`), not by the host's unattended-upgrades - the
+    # container is already php-cli.
     volumes:
       - ./adminer/php-hardening.ini:/usr/local/etc/php/conf.d/zz-hardening.ini:ro
     depends_on:
@@ -208,6 +216,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name (docs/wiki/services/call-service.md): the same list
+      # as chat-gateway's, because the same pages open both sockets.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:?ALLOW_ORIGIN must be set in infrastructure/.env - see .env.example; CD writes it in the deploy job}
       JWT_SECRET: ${JWT_SECRET}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
@@ -387,8 +398,13 @@ services:
       # The live switch's relay (lives-mode.ts), through the mesh: the code's default names
       # social-service directly, around its rotation.
       SOCIAL_SERVICE_URL: http://mesh:3014
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
       - media_upload_sessions:/app/upload_sessions
     healthcheck:
@@ -434,6 +450,9 @@ services:
       # Signs the one-time sign-in handoff to the MiConnect sites (docs/wiki/sessions.md, "The
       # sign-in handoff"). Unset: no handoff is minted and every site opens plainly.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      # The read-only MiConnect account a handoff mint asks whether the user may enter the site
+      # (F3-bound). Unset: every mint is refused HANDOFF_MICONNECT_UNAVAILABLE and the site opens plainly.
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
       # does not set it, so core-service issues no session there and the route does not exist.
       # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.
@@ -460,6 +479,9 @@ services:
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
+      # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
+      # (docs/wiki/frontend/guided-help.md). Unset: nobody; a value that does not parse: nobody + boot error.
+      PROFILE_PHOTO_PROMPT_SPACES: ${PROFILE_PHOTO_PROMPT_SPACES:-}
       EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
       SKY_API_URL: ${SKY_API_URL:-https://sky.emse.fr}
       SKY_API_KEY: ${SKY_API_KEY:-}
@@ -543,6 +565,11 @@ services:
       # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md);
       # unset, every chat-line report is refused 503 and nothing is kept.
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # The communities one account may hold as their creator; empty means 20
+      # (apps/social-service/src/channels/community-limits.ts).
+      COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
@@ -660,7 +687,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.8-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09
+    image: nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
     restart: always
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
     # The DIRECTORY, not the file: `git reset --hard` replaces a file by a new inode, and a bind mount
@@ -704,7 +731,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.8-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09
+    image: nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
     restart: always
     command: ["nginx", "-c", "/etc/nginx/edge/mesh.conf", "-g", "daemon off;"]
     # The edge's directory, for the edge's reason (a directory, not a file), and for the list the
@@ -744,3 +771,6 @@ volumes:
   media_meta:
   # Transient staging, DELIBERATELY not backed up: a session is a day of resumable work at most.
   media_upload_sessions:
+  # Live segments and replays, DELIBERATELY not backed up (owner decision D2, 2026-11-09): a replay
+  # promised gone after 3 days must not survive in a snapshot (docs/wiki/live-replays.md).
+  live_segments:

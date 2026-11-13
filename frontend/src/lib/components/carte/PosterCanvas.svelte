@@ -490,7 +490,7 @@
       style:color={theme.polaroidTextColor}
       style="overflow-wrap:anywhere;word-break:break-word;"
     >
-      <EmojiText text={person.name} />
+      <EmojiText text={person.name} emojiStyle="canari" />
     </p>
     {#if person.role}
       <p
@@ -503,7 +503,7 @@
         style:color={theme.polaroidTextColor}
         style="opacity:0.72;overflow-wrap:anywhere;word-break:break-word;"
       >
-        <EmojiText text={person.role} />
+        <EmojiText text={person.role} emojiStyle="canari" />
       </p>
     {/if}
   </div>
@@ -559,7 +559,7 @@
         style:margin="0"
         style:color={theme.titleColor}
       >
-        <EmojiText text={title} />
+        <EmojiText text={title} emojiStyle="canari" />
       </h1>
     </div>
 
@@ -594,7 +594,7 @@
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={selected ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline={selected ? `${3 / visualScale}px solid var(--accent)` : 'none'}
           style:outline-offset="{4 / visualScale}px"
           style:border-radius="16px"
           onpointerdown={(e) =>
@@ -610,7 +610,7 @@
               style:top="{ink.y}px"
               style:width="{ink.w}px"
               style:height="{ink.h}px"
-              style:border="{2 / visualScale}px dashed #ef4444"
+              style:border="{2 / visualScale}px dashed var(--red-err)"
               style:border-radius="12px"
               style:pointer-events="none"
             ></div>
@@ -685,7 +685,7 @@
               style:color="#ffffff"
               style="overflow-wrap:break-word;text-shadow:0 1px 3px rgba(0,0,0,0.45);"
             >
-              <EmojiText text={data.name} />
+              <EmojiText text={data.name} emojiStyle="canari" />
             </p>
             {#if data.contactEmail}
               <p
@@ -706,7 +706,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
                   visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
@@ -743,7 +743,7 @@
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={dsel ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline={dsel ? `${3 / visualScale}px solid var(--accent)` : 'none'}
           style:outline-offset="{4 / visualScale}px"
           style:border-radius="6px"
           onpointerdown={(e) =>
@@ -760,8 +760,10 @@
             style:overflow-wrap="break-word"
             style:color={deco.color}
           >
-            {#if deco.content}<EmojiText text={deco.content} />{:else if editable}<span
-                style:opacity="0.45">{m.carte_text_placeholder()}</span
+            {#if deco.content}<EmojiText
+                text={deco.content}
+                emojiStyle="canari"
+              />{:else if editable}<span style:opacity="0.45">{m.carte_text_placeholder()}</span
               >{/if}
           </div>
 
@@ -770,7 +772,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
                   visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
@@ -792,12 +794,12 @@
     <!-- Alignment guides: shown only during an editable drag, never rasterised (no active drag on export). -->
     {#if editable && snapLines.x !== null}
       <div
-        style="position:absolute;top:0;bottom:0;left:{snapLines.x}px;width:0;border-left:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+        style="position:absolute;top:0;bottom:0;left:{snapLines.x}px;width:0;border-left:1px dashed var(--accent);pointer-events:none;z-index:9999;"
       ></div>
     {/if}
     {#if editable && snapLines.y !== null}
       <div
-        style="position:absolute;left:0;right:0;top:{snapLines.y}px;height:0;border-top:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+        style="position:absolute;left:0;right:0;top:{snapLines.y}px;height:0;border-top:1px dashed var(--accent);pointer-events:none;z-index:9999;"
       ></div>
     {/if}
   </div>
@@ -849,7 +851,7 @@
                   ? '1.5em'
                   : '0'};margin-bottom:0.8em;font-weight:700;font-family:{FREDOKA_STACK};font-size:1.0em;color:{theme.directoryTextColor};letter-spacing:0.01em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
               >
-                <EmojiText text={zone.label} />
+                <EmojiText text={zone.label} emojiStyle="canari" />
               </div>
               {#each zone.bubbles as asso (asso.assoId)}
                 <div style="break-inside:avoid;margin-bottom:0.9em;">
@@ -866,7 +868,7 @@
                       data-pdf-text
                       style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
                     >
-                      <EmojiText text={asso.name} />
+                      <EmojiText text={asso.name} emojiStyle="canari" />
                     </span>
                   </div>
                   {#if asso.members.length > 0}

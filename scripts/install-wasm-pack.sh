@@ -49,8 +49,16 @@ url="https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSIO
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# THE ARCHIVE IS DOWNLOADED TO A FILE, THEN UNPACKED, and curl retries a transient answer. This is
+# the one download every pipeline makes cold on a WASM cache miss: main's run on the bump commit of
+# v1.6.9-alpha.1 died on a 504 from github.com here, in the iOS compile job, though nothing about
+# iOS was involved. A pipe into `tar` cannot be retried (a retry after a partial body would feed
+# `tar` the first bytes twice); a file can. The version is pinned and the URL is the release's own,
+# so a retry fetches the SAME bytes - it changes when the answer arrives, never what is installed.
 echo "Downloading ${url}"
-curl -fsSL "$url" | tar -xz -C "$tmp"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 180 \
+  -o "${tmp}/archive.tar.gz" "$url"
+tar -xz -C "$tmp" -f "${tmp}/archive.tar.gz"
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "${tmp}/${archive}/wasm-pack" "${INSTALL_DIR}/wasm-pack"

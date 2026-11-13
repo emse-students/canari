@@ -72,7 +72,7 @@ maybe('the republished-feed clauses against PostgreSQL', () => {
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "logoUrl" varchar);
-      CREATE TABLE posts (id uuid PRIMARY KEY, "associationId" uuid NULL, "studentsOnly" boolean NOT NULL DEFAULT false,
+      CREATE TABLE posts (id uuid PRIMARY KEY, "associationId" uuid NULL, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         "publishedAt" timestamptz NOT NULL);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);

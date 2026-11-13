@@ -63,6 +63,15 @@ it('keeps every action of a published form on one non-wrapping row, each one nam
   }
 });
 
+it('from sm up an icon button gets its square box back, never a content-width sliver', async () => {
+  const target = await render();
+  const row = actionsOf(target, 'f1');
+  // `w-auto` here once undid the 38px box of `.ui-icon-button` and squeezed every icon button to
+  // its glyph (owner, 2026-11-10); `revert-layer` hands the width back to the component layer.
+  expect(row.className).toContain('sm:[&_.ui-icon-button]:w-[revert-layer]');
+  expect(row.className).not.toContain('sm:[&_.ui-icon-button]:w-auto');
+});
+
 it('keeps a draft on one row too, without the link and QR it cannot hand out', async () => {
   const target = await render();
   const row = actionsOf(target, 'f2');

@@ -1,5 +1,9 @@
 import { sendChatMessage } from '$lib/utils/chat/messaging';
-import { ChannelApiError } from '$lib/services/ChannelService';
+import {
+  ChannelApiError,
+  CHANNEL_WRITE_REQUIRES_ADMIN,
+  CHANNEL_WRITE_REQUIRES_MODERATION,
+} from '$lib/services/ChannelService';
 import type { Conversation } from '$lib/types';
 import { m } from '$lib/paraglide/messages';
 import { GraineDistributionUnavailableError } from '$lib/utils/graine/seedDistribution';
@@ -70,6 +74,33 @@ describe('a refused channel send is described from its status, never from its bo
     expect(result.error).not.toContain(SERVER_WORDS);
     // 403 is one `describeApiRefusal` maps, so the line names the action rather than staying generic.
     expect(result.error).toContain('message');
+  });
+
+  it('says WHO may write when the write policy refused it, and takes the composer away', async () => {
+    // Production 2026-11-10: a "Moderateur" whose role granted nothing read "vous n'avez pas les
+    // droits nécessaires". The refusal is TYPED; the line comes from the code, never the body.
+    sendEncryptedChannelMessage.mockImplementation(() =>
+      Promise.reject(new ChannelApiError(403, CHANNEL_WRITE_REQUIRES_MODERATION, SERVER_WORDS))
+    );
+    const onChannelWriteRefused = vi.fn();
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, {
+      ...(deps() as object),
+      onChannelWriteRefused,
+    } as never);
+
+    expect(result.error).toBe(m.chat_channel_write_only_admins_mods());
+    expect(onChannelWriteRefused).toHaveBeenCalledWith('channel_c1', 'admins_moderators');
+  });
+
+  it('names the admins-only policy by its own code', async () => {
+    sendEncryptedChannelMessage.mockImplementation(() =>
+      Promise.reject(new ChannelApiError(403, CHANNEL_WRITE_REQUIRES_ADMIN, SERVER_WORDS))
+    );
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, deps());
+
+    expect(result.error).toBe(m.chat_channel_write_only_admins());
   });
 
   it('falls back to a generic line of OUR OWN for a status it cannot describe', async () => {

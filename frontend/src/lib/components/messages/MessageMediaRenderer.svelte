@@ -1,5 +1,4 @@
 <script lang="ts">
-  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -32,6 +31,7 @@
   import { uploadCaption } from '$lib/utils/chat/uploadLabel';
   import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
+  import { NO_FURTHER_REELS } from '$lib/reels/allReels';
   import { isReelMessage, reelMessageAsPost, reelTombstoneOf } from '$lib/reels/chatReel';
   import { dropGoneReelCopy } from '$lib/reels/chatReelCache';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -79,6 +79,11 @@
      * has exactly one whenever there is media at all.
      */
     onNear?: () => void;
+    /**
+     * Opens the message's actions sheet from a video's own chip: a hold on a conversation's video is
+     * its pause (owner, 2026-11-09), so a video-only bubble needs another way to its menu.
+     */
+    onActions?: () => void;
     /**
      * The picture or video fills the top of its bubble edge to edge, and the caption sits under it
      * in the same bubble (Messenger's and WhatsApp's). Set by `MessageBubble` for a photo or a video
@@ -131,6 +136,7 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    onActions,
     bleed = false,
     senderId,
     sentAt,
@@ -215,6 +221,15 @@
     onAmber
       ? 'bg-black/10 border-black/10 text-cn-ink'
       : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10 text-text-main'
+  );
+
+  /**
+   * A FILE ROW IS A COMPACT ROW, NOT A BORDERED CARD (design audit M6, 2026-11-09): the fill alone
+   * separates it from the bubble, as Messenger's attachment does; the border is what made two files
+   * take 150 dp.
+   */
+  const fileRowClass = $derived(
+    onAmber ? 'bg-black/10 text-cn-ink' : 'bg-black/5 dark:bg-white/10 text-text-main'
   );
 
   /** Red is unreadable on one's own amber bubble, so the failure box speaks in its ink there. */
@@ -339,19 +354,23 @@
               <Download size={16} strokeWidth={2.5} />
             </button>
           {:else if blobUrl}
-            <!-- THE FEED'S VIDEO, NOT THE ENGINE'S (2026-10-01): plays by itself while on screen,
-                 muted by the app's one sound answer, a tap opening the viewer. ITS OWN SHAPE, NEVER
+            <!-- CANARI'S PLAYER, NOT THE ENGINE'S (2026-10-01): played when asked, its sound its
+                 own, the expand chip opening the viewer (`VideoPlayer` `chat`). ITS OWN SHAPE, NEVER
                  CROPPED (user, 2026-10-02): CONTAINED in the frame, so past the height ceiling it
                  letterboxes on the black rather than losing its edges. -->
-            <InlineVideo
-              src={blobUrl}
-              onOpen={() => (showLightbox = true)}
-              onMetadata={frame.onLoad}
-              manualPlay
-              openLabel={m.msg_open_video_fullscreen_label()}
-              class="absolute inset-0"
-              videoClass="h-full w-full object-contain object-center"
-            />
+            <div class="absolute inset-0">
+              <VideoPlayer
+                variant="chat"
+                src={blobUrl}
+                loudness={mediaRef?.loudness}
+                onOpen={() => (showLightbox = true)}
+                {onActions}
+                onMetadata={frame.onLoad}
+                openLabel={m.msg_open_video_fullscreen_label()}
+                class="h-full w-full"
+                videoClass="h-full w-full object-contain object-center"
+              />
+            </div>
           {:else if failure}
             <!-- `compact`: the frame of a 4:1 panorama is 56 px tall, and the failure must fit the
                  box the picture would have had rather than re-shape the row. The frame's own
@@ -445,6 +464,7 @@
           <VoiceMessagePlayer
             src={blobUrl}
             mimeType={mediaRef.mimeType}
+            loudness={mediaRef.loudness}
             onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
           />
         </div>
@@ -489,27 +509,27 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex w-full max-w-full items-center gap-3.5 rounded-3xl border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
+        class="flex w-full max-w-full items-center gap-3 rounded-2xl py-1.5 pr-1.5 pl-2.5 {fileRowClass} group/file transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
         {#snippet fileRowContent()}
           <!-- File icon, or the PDF's own first page once it is decrypted. -->
           <div
-            class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-current/10 text-current opacity-80"
+            class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-current/10 text-current opacity-80"
           >
             {#if isPdf && blobUrl}
               <PdfThumbnail
                 url={blobUrl}
-                maxWidth={44}
+                maxWidth={36}
                 imgClass="w-full h-full object-cover object-top"
               >
                 {#snippet fallback()}
-                  <FileText size={22} strokeWidth={2} />
+                  <FileText size={20} strokeWidth={2} />
                 {/snippet}
               </PdfThumbnail>
             {:else}
-              <FileText size={22} strokeWidth={2} />
+              <FileText size={20} strokeWidth={2} />
             {/if}
           </div>
 
@@ -540,7 +560,7 @@
               </p>
             {:else if !failure}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
-              <p class="text-2xs font-semibold tracking-wider opacity-60">
+              <p class="text-2xs font-semibold opacity-60">
                 {formatFileSize(mediaRef!.size)}
               </p>
             {/if}
@@ -553,7 +573,7 @@
           <button
             type="button"
             onclick={openPdfViewer}
-            class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-current"
+            class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-current"
             aria-label={m.pdf_open_document_label()}
           >
             {@render fileRowContent()}
@@ -655,7 +675,7 @@
     startPost={reelPost}
     {authToken}
     onClose={() => (showReelViewer = false)}
-    loadPage={async () => []}
+    loadPage={NO_FURTHER_REELS}
     onMediaGone={reelGone}
   />
 {/if}
@@ -691,7 +711,13 @@
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else}
-      <VideoPlayer src={blobUrl} soundScope="local" class="h-full w-full" />
+      <VideoPlayer
+        src={blobUrl}
+        variant="conversation"
+        soundScope="local"
+        loudness={mediaRef?.loudness}
+        class="h-full w-full"
+      />
     {/if}
   </MediaLightbox>
 {/if}

@@ -97,7 +97,7 @@ function gridText(
   if (charged.length > 0) {
     return charged.map((l) => gridCellText(l.rowLabel, l.colLabel, l.quantity)).join('; ');
   }
-  if (typeof answer !== 'object' || answer === null || Array.isArray(answer)) return '';
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) return '';
   const label = (axis: AnswerOption[] | undefined, id: string) =>
     axis?.find((entry) => entry.id === id)?.label ?? id;
   return Object.entries(answer as Record<string, unknown>)

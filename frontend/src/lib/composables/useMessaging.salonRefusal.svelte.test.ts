@@ -133,6 +133,29 @@ describe('a salon text send', () => {
     expect(rows(ctx)[0]).toMatchObject({ id: 'server-row-2', status: 'sent' });
   });
 
+  it('hands a write-policy refusal to the context, which takes the composer away', async () => {
+    // The wiring of `onChannelWriteRefused` from the page's context down to the send helper: without
+    // it the precise line still shows, but the stale composer stays.
+    sendMock.mockRejectedValueOnce(
+      new ApiRefusalError(
+        403,
+        'CHANNEL_WRITE_REQUIRES_ADMIN',
+        'Not allowed to post in this channel'
+      )
+    );
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const onChannelWriteRefused = vi.fn();
+    const ctx = { ...makeContext(), onChannelWriteRefused } as MessagingContext;
+
+    await messaging.handleSendChat(ctx, 'hello');
+
+    expect(onChannelWriteRefused).toHaveBeenCalledWith(CHANNEL, 'admins');
+    expect(vi.mocked(ctx.setSendError).mock.calls.at(-1)?.[0]).toBe(
+      m.chat_channel_write_only_admins()
+    );
+  });
+
   it('a transport failure is an UNKNOWN outcome: the row is unconfirmed, never failed', async () => {
     sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     const { useMessaging } = await import('./useMessaging.svelte');

@@ -49,6 +49,8 @@
          is all this device can honestly say. %1$s is the salon, resp. the sender. -->
     <string name="notif_channel_new_message">Nouveau message dans #%1$s</string>
     <string name="notif_new_message_from">Nouveau message de %1$s</string>
+    <string name="notif_new_message">Nouveau message</string>
+    <string name="notif_unnamed_group">Conversation de groupe</string>
     <string name="notif_new_message_generic">Vous avez reçu un message chiffré</string>
 
     <!-- A MENTION IS A TOKEN IN THE CIPHERTEXT, NOT A NAME. A decrypted body carries `@[<64 hex>]`
@@ -103,6 +105,20 @@
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
     <string name="notif_social_member_repost_title">%1$s a republié une publication</string>
     <string name="notif_social_member_repost_body">Nouvelle publication</string>
+    <string name="notif_social_friend_reaction_title">%1$s a réagi à une publication</string>
+    <string name="notif_social_friend_reaction_body">Voir la publication</string>
+    <string name="notif_social_friend_comment_title">%1$s a commenté une publication</string>
+    <string name="notif_social_friend_comment_body">Voir la publication</string>
+    <string name="notif_social_campus_trend_title">Suggestion : %1$s</string>
+    <string name="notif_social_campus_trend_body">Une publication qui fait réagir votre espace</string>
+    <string name="notif_social_campus_trend_untitled">Suggestion : une publication</string>
+    <string name="notif_social_campus_trend_photo_title">Suggestion : une photo</string>
+    <string name="notif_social_campus_trend_photo_body">Une publication qui fait réagir votre espace</string>
+    <string name="notif_social_campus_trend_video_title">Suggestion : une vidéo</string>
+    <string name="notif_social_campus_trend_video_body">Une publication qui fait réagir votre espace</string>
+    <string name="notif_social_campus_trend_liked_by">Aimée par %1$s</string>
+    <string name="notif_social_campus_trend_liked_by_one">Aimée par %1$s et 1 autre personne</string>
+    <string name="notif_social_campus_trend_liked_by_many">Aimée par %1$s et %2$d autres</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
     <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>
@@ -111,6 +127,8 @@
     <string name="notif_social_coorganise_proposed_body">Événement à co-organiser</string>
     <string name="notif_social_live_started_title">%1$s est en live</string>
     <string name="notif_social_live_started_body">Appuyez pour regarder</string>
+    <string name="notif_social_live_mention_title">%1$s vous a mentionné dans un live</string>
+    <string name="notif_social_live_mention_body">Appuyez pour rejoindre le live</string>
     <string name="notif_social_follow_request_title">%1$s demande à vous suivre</string>
     <string name="notif_social_follow_request_body">Appuyez pour répondre</string>
     <string name="notif_chat_join_ask_title">%1$s veut rejoindre</string>
@@ -132,6 +150,10 @@
     <string name="notif_social_booking_withdrawn_body">Votre réservation est maintenue</string>
     <string name="notif_social_booking_added_title">%1$s vous a inscrit à une réservation</string>
     <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
+    <string name="notif_social_booking_open_title">%1$s ouvre les réservations</string>
+    <string name="notif_social_booking_open_body">Retrouvez-les dans Réservations</string>
+    <string name="notif_social_event_open_title">%1$s publie un événement</string>
+    <string name="notif_social_event_open_body">Retrouvez-le dans l\'agenda</string>
     <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
     <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
     <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>

@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { verifyInternalToken } from './internal-token';
@@ -12,7 +13,9 @@ import { verifyInternalToken } from './internal-token';
  * HTTP header. This header is injected by Nginx after it validates the request
  * against the core-service auth endpoint (`/internal/auth/verify`). If the header
  * is `"true"` AND the per-minute HMAC `X-Internal-Token` verifies for `x-user-id` the request is
- * allowed through; otherwise (an unset INTERNAL_SHARED_SECRET included) a 401 is thrown.
+ * allowed through; otherwise a 401 is thrown. An unset INTERNAL_SHARED_SECRET is the SERVICE's own
+ * fault, not an answer about the caller's bearer: it is a 500, which every client reads as "retry
+ * later", never a 401 a client would read as a dead session (sessions.md, the 401 rule).
  *
  * This guard must never be used on routes that are intentionally public - those
  * should be excluded from Nginx's `auth_request` directive instead.
@@ -23,6 +26,23 @@ export class HeaderAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
+    // THE SECRET FIRST, IN EVERY GUARD (core's and social's `NginxAuthGuard` too): an unset secret
+    // is this service's misconfiguration, so every request gets the same 500 whatever headers it
+    // carries - never a 401 a client would read as its session ending (#3366 review, 2026-11-12).
+    // x-user-logged-in is a plain header: nginx sets it, but so can any caller that reaches this
+    // container, so it proves nothing by itself. The per-minute HMAC nginx mints for the user is the
+    // proof, and it is required in EVERY environment (CodeQL 2547, 2026-10-09: it used to be skipped
+    // when the secret was unset outside production, leaving the header alone as the credential).
+    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+    if (!internalSecret) {
+      this.logger.error(
+        '[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing every guarded request'
+      );
+      throw new InternalServerErrorException(
+        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
+      );
+    }
+
     const loggedIn = request.headers['x-user-logged-in'];
 
     if (loggedIn !== 'true') {
@@ -36,20 +56,6 @@ export class HeaderAuthGuard implements CanActivate {
         );
       }
       throw new UnauthorizedException('User is not authenticated');
-    }
-
-    // x-user-logged-in is a plain header: nginx sets it, but so can any caller that reaches this
-    // container, so it proves nothing by itself. The per-minute HMAC nginx mints for the user is the
-    // proof, and it is required in EVERY environment (CodeQL 2547, 2026-10-09: it used to be skipped
-    // when the secret was unset outside production, leaving the header alone as the credential).
-    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
-    if (!internalSecret) {
-      this.logger.error(
-        '[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing every guarded request'
-      );
-      throw new UnauthorizedException(
-        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
-      );
     }
 
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';

@@ -81,6 +81,7 @@ describe('ChatGroupPanel call permission', () => {
   it('follows the level while the account never chose: a DM at none does not ring', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: { [G]: 'none' },
       groupCalls: {},
     });
@@ -93,6 +94,7 @@ describe('ChatGroupPanel call permission', () => {
   it('writes a choice for this conversation', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -109,6 +111,7 @@ describe('ChatGroupPanel call permission', () => {
   it('says so, and puts it back, when the server refuses the choice', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -130,6 +133,7 @@ describe('ChatGroupPanel call permission', () => {
   it('is not offered in a group, where no call can be placed', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });

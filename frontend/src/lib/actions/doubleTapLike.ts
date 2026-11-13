@@ -51,6 +51,12 @@ export const DOUBLE_TAP_DEFERS = 'data-double-tap-defers';
 
 /** Marks a region of a likeable surface where a tap is never part of a double tap. */
 export const NO_DOUBLE_TAP = 'data-no-double-tap';
+/**
+ * Set on the surface while its double tap is ON. A video player inside reads it (`videoGestures`):
+ * its own single tap (the sound) then waits for the same window, so a like never flips the sound
+ * twice. A fact the surface states, rather than a prop threaded through every layer between.
+ */
+export const DOUBLE_TAP_LIKES = 'data-double-tap-likes';
 
 export interface DoubleTapLikeParams {
   /**
@@ -208,6 +214,7 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
     e.preventDefault();
   }
 
+  node.toggleAttribute(DOUBLE_TAP_LIKES, enabled());
   node.addEventListener('click', onClick, { capture: true });
   node.addEventListener('pointerdown', onPointerDown, { capture: true });
   node.addEventListener('pointermove', onPointerMove, { capture: true, passive: true });
@@ -218,12 +225,14 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
   return {
     update(next: DoubleTapLikeParams) {
       params = next;
+      node.toggleAttribute(DOUBLE_TAP_LIKES, enabled());
       if (!enabled()) {
         presses.clear();
         reset('disabled');
       }
     },
     destroy() {
+      node.removeAttribute(DOUBLE_TAP_LIKES);
       node.removeEventListener('click', onClick, { capture: true });
       node.removeEventListener('pointerdown', onPointerDown, { capture: true });
       node.removeEventListener('pointermove', onPointerMove, { capture: true });

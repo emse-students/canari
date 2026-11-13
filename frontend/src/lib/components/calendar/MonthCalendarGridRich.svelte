@@ -178,7 +178,7 @@
 {#if loading}
   <div class="flex justify-center py-16">
     <div
-      class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+      class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else}
@@ -194,7 +194,7 @@
     <div class="grid grid-cols-7 bg-(--cn-surface)">
       {#each weekdayLabels as w, wi (w)}
         <div
-          class="border-cn-border/60 text-2xs border-b py-2.5 text-center font-bold tracking-widest uppercase
+          class="border-cn-border/60 text-2xs border-b py-2.5 text-center font-bold
  {wi >= 5 ? 'text-text-muted/60' : 'text-text-muted'}"
         >
           {w}
@@ -256,7 +256,7 @@
               <!-- Empty cell: the day number, in the corner it has always held. -->
               <span
                 class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
+ {today ? 'text-accent-text' : 'text-text-muted/50'}">{day}</span
               >
               <!-- A BREAK IS A WORD WRITTEN ACROSS THE DAY, the sheet's rendering and the Canva's
                    before it. `breakMark` is the shared rule, so this grid cannot stamp where the
@@ -283,7 +283,7 @@
                   <div class="relative flex-1">
                     <span
                       class="absolute top-1.5 left-2 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
+ {today ? 'text-accent-text' : 'text-text-muted/50'}">{day}</span
                     >
                   </div>
                 {/if}
@@ -297,10 +297,11 @@
                     ei === 0 && loneSlot !== 1 ? slotH - DAY_NUM_H : slotH,
                     SCREEN_MIN_FONT
                   )}
+                  <!-- A PENDING EVENT IS TOLD BY ITS DASHED OUTLINE AND TITLE, NEVER BY OPACITY: the
+                       50 % it wore dimmed the text with the fill (grey on dark purple, unreadable),
+                       while `fg` is already the contrast pair of this very fill. -->
                   <div
-                    class="relative flex flex-1 flex-col overflow-hidden {ev.status === 'pending'
-                      ? 'opacity-50'
-                      : ''}"
+                    class="relative flex flex-1 flex-col overflow-hidden"
                     style="{eventBgStyle(ev)} color:{fg};{ev.status === 'pending'
                       ? `outline:1.5px dashed ${fg};outline-offset:-2px;`
                       : ''}"
@@ -443,7 +444,7 @@
             <!-- Selected ring overlay (always on top) -->
             {#if selected}
               <div
-                class="ring-cn-yellow/70 pointer-events-none absolute inset-0 z-20 ring-2 ring-inset"
+                class="ring-accent/70 pointer-events-none absolute inset-0 z-20 ring-2 ring-inset"
               ></div>
             {/if}
           </button>

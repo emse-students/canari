@@ -11,6 +11,7 @@ import {
   coverCropRect,
   cropFor,
   draw,
+  effectiveTurn,
   FramedStream,
   type FrameSource,
   framedOutputSize,
@@ -18,6 +19,8 @@ import {
   takeFramedPhoto,
   THUMBNAIL_LONG_EDGE,
   thumbnailSize,
+  turnedSize,
+  turnTransform,
   videoBitrateFor,
 } from './framedCapture';
 
@@ -312,6 +315,134 @@ describe('FramedStream across a lens flip (user, 2026-10-22)', () => {
   it('does not start with no decoded frame', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(FramedStream.start(() => null, [])).toBeNull();
+    vi.restoreAllMocks();
+  });
+});
+
+describe('the turn of a capture made with the phone sideways (owner, 2026-11-11)', () => {
+  /** Where the transform sends a point of the picture: rotate, then translate. */
+  function map(t: { dx: number; dy: number; radians: number }, x: number, y: number) {
+    const cos = Math.round(Math.cos(t.radians));
+    const sin = Math.round(Math.sin(t.radians));
+    return [x * cos - y * sin + t.dx, x * sin + y * cos + t.dy];
+  }
+  const out = { width: 360, height: 640 };
+
+  it('a quarter turn swaps the sides of the file, a half turn does not', () => {
+    expect(turnedSize(out, 0)).toEqual(out);
+    expect(turnedSize(out, 90)).toEqual({ width: 640, height: 360 });
+    expect(turnedSize(out, 180)).toEqual(out);
+    expect(turnedSize(out, 270)).toEqual({ width: 640, height: 360 });
+  });
+
+  it('keeps every corner of the picture inside the turned canvas', () => {
+    for (const turn of [0, 90, 180, 270] as const) {
+      const t = turnTransform(out, turn);
+      const file = turnedSize(out, turn);
+      const corners = [
+        [0, 0],
+        [out.width, 0],
+        [0, out.height],
+        [out.width, out.height],
+      ].map(([x, y]) => map(t, x, y));
+      for (const [x, y] of corners) {
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(file.width);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(file.height);
+      }
+    }
+  });
+
+  it("puts the side the world's up was on at the top", () => {
+    // Phone turned clockwise (left side up): the world's up is the picture's LEFT edge.
+    expect(map(turnTransform(out, 90), 0, out.height / 2)[1]).toBe(0);
+    // Turned counter-clockwise (right side up): the RIGHT edge.
+    expect(map(turnTransform(out, 270), out.width, out.height / 2)[1]).toBe(0);
+    // Upside down: the BOTTOM edge.
+    expect(map(turnTransform(out, 180), out.width / 2, out.height)[1]).toBe(0);
+  });
+
+  it('turns, then mirrors in the preview frame, draws, and undoes both', () => {
+    const calls: string[] = [];
+    const context = {
+      save: () => calls.push('save'),
+      restore: () => calls.push('restore'),
+      translate: (x: number, y: number) => calls.push(`translate ${x} ${y}`),
+      rotate: (r: number) => calls.push(`rotate ${r.toFixed(3)}`),
+      scale: (x: number, y: number) => calls.push(`scale ${x} ${y}`),
+      drawImage: () => calls.push('drawImage'),
+    } as unknown as CanvasRenderingContext2D;
+    draw(context, {} as HTMLVideoElement, { sx: 0, sy: 0, sw: 720, sh: 1280 }, out, true, 90);
+    expect(calls).toEqual([
+      'save',
+      'translate 640 0',
+      `rotate ${(Math.PI / 2).toFixed(3)}`,
+      'translate 360 0',
+      'scale -1 1',
+      'drawImage',
+      'restore',
+    ]);
+  });
+
+  it('an engine that already turned the frame to the device is not turned twice', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const portraitBox = { width: 360, height: 640 };
+    // The expected case: a portrait frame in a portrait preview, turned.
+    expect(effectiveTurn({ width: 720, height: 1280 }, portraitBox, 90)).toBe(90);
+    expect(error).not.toHaveBeenCalled();
+    // A landscape frame in a portrait preview: refused at ERROR, the frame kept as it came.
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 270)).toBe(0);
+    expect(error).toHaveBeenCalledTimes(1);
+    // No quarter turn asked: nothing to refuse.
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 0)).toBe(0);
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 180)).toBe(180);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('a photo of a frame the engine already turned is not turned again', async () => {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toDataURL: () => `data:image/jpeg;base64,${btoa('jpeg')}`,
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const video = { videoWidth: 1280, videoHeight: 720 } as HTMLVideoElement;
+    await takeFramedPhoto(video, { width: 360, height: 640, dpr: 2, mirror: false, turn: 90 });
+    expect(canvas.height).toBeGreaterThan(canvas.width);
+    vi.restoreAllMocks();
+  });
+
+  it('a photo made turned is a landscape file', async () => {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toDataURL: () => `data:image/jpeg;base64,${btoa('jpeg')}`,
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const video = { videoWidth: 720, videoHeight: 1280 } as HTMLVideoElement;
+    await takeFramedPhoto(video, { width: 360, height: 640, dpr: 2, mirror: false, turn: 270 });
+    expect(canvas.width).toBeGreaterThan(canvas.height);
     vi.restoreAllMocks();
   });
 });

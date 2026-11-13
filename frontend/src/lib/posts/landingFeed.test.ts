@@ -17,9 +17,9 @@ describe('feedToShowAfterPublish', () => {
     expect(feedToShowAfterPublish('associations', 'all')).toBe('all');
   });
 
-  it('moves a reader on Followed to the feed holding the post', () => {
-    expect(feedToShowAfterPublish('followed', 'associations')).toBe('associations');
-    expect(feedToShowAfterPublish('followed', 'all')).toBe('all');
+  it('moves a reader on Pour toi to the feed holding the post', () => {
+    expect(feedToShowAfterPublish('foryou', 'associations')).toBe('associations');
+    expect(feedToShowAfterPublish('foryou', 'all')).toBe('all');
   });
 
   it('keeps a reader on All, and on the feed the post lands in', () => {

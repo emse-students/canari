@@ -18,6 +18,7 @@ import { DataSource } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { createPostNotificationsTable } from './post-notifications.it-schema';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -58,7 +59,8 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
       url: URL,
       entities: [PostNotification],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -69,7 +71,7 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
@@ -171,5 +173,78 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
     expect(
       (scan!['Actual Rows'] ?? 0) + (scan!['Rows Removed by Filter'] ?? 0)
     ).toBeLessThanOrEqual(PAGE);
+  });
+
+  it('never JIT-compiles the page, however high its estimated cost (2026-11-09: 1-13 s of compilation)', async () => {
+    // One connection for every statement, so the SETs below hold for the EXPLAINs that follow.
+    const runner = ds.createQueryRunner();
+    try {
+      expect(await runner.query('SHOW jit')).toEqual([{ jit: 'off' }]);
+      const [sql, params] = bell.bellPageQuery('me', PAGE).getQueryAndParameters();
+      const planOf = async () => {
+        const rows: { 'QUERY PLAN': Record<string, unknown>[] }[] = await runner.query(
+          `EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`,
+          params
+        );
+        return rows[0]['QUERY PLAN'][0];
+      };
+      // Every plan past the threshold - production's heavy reader crossed it on cost alone.
+      await runner.query('SET jit_above_cost = 0');
+      expect(await planOf()).not.toHaveProperty('JIT');
+      // The control: the same statement on a session WITH JIT is compiled, so the assertion above
+      // can fail. The server must be built with JIT, as the estates' and CI's images are
+      // (`pg_jit_available()` also reads the session's `jit`, hence after the SET).
+      await runner.query('SET jit = on');
+      expect(await runner.query('SELECT pg_jit_available() AS available')).toEqual([
+        { available: true },
+      ]);
+      expect(await planOf()).toHaveProperty('JIT');
+    } finally {
+      await runner.release();
+    }
+  });
+
+  /**
+   * NEVER A TYPE THE READER'S BUILD CANNOT DRAW (owner, 2026-11-10): `1.6.8` drew 1.6.9's campus
+   * trends as "a notification this version cannot show". The read serves the types whose floor the
+   * build it names meets (`notification-client-floor.ts`); a headerless read is a build up to 1.6.9.
+   */
+  it("serves only the types the reader's build draws, from the build it names", async () => {
+    await q(
+      `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", text, "createdAt")
+         VALUES ('me', 'campus_trend', $1, 'system', 'p', now() + interval '2 minutes'),
+                ('me', 'friend_reaction', $1, 'officer', 'p', now() + interval '1 minute')`,
+      [P(1)]
+    );
+    try {
+      const typesFor = async (build?: string) =>
+        (await bell.getNotifications('me', 3, build)).map((n) => n.type);
+      // Up to 1.6.9 (no header): what it was served before the rule, never the trend it drew wrong.
+      expect(await typesFor(undefined)).toEqual([
+        'friend_reaction',
+        'association_post',
+        'association_post',
+      ]);
+      // A 1.6.8 build that names itself is not served 1.6.9's friend activity either.
+      expect(await typesFor('1.6.8')).toEqual([
+        'association_post',
+        'association_post',
+        'association_post',
+      ]);
+      // The first build that draws a trend as a suggestion, a pre-release of it included.
+      expect(await typesFor('1.6.10-alpha.1')).toEqual([
+        'campus_trend',
+        'friend_reaction',
+        'association_post',
+      ]);
+      // A build it cannot read is served only what every admitted build draws: fail closed.
+      expect(await typesFor('latest')).toEqual([
+        'association_post',
+        'association_post',
+        'association_post',
+      ]);
+    } finally {
+      await q(`DELETE FROM post_notifications WHERE type IN ('campus_trend', 'friend_reaction')`);
+    }
   });
 });

@@ -52,6 +52,7 @@ export const PRIVATE_PREFIXES = [
   '/directory',
   '/documents',
   '/events',
+  '/games',
   '/institutions',
   '/lists',
   '/login',
@@ -150,12 +151,14 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/forms/cancel': () => m.form_cancel_title(),
   '/forms/create': () => m.form_create_heading(),
   '/forms/success': () => m.form_success_title(),
+  '/games': () => m.games_page_title(),
   '/institutions': () => m.inst_heading(),
   '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),
   '/lists/new': () => m.list_new_create_btn(),
   '/profile': () => m.seo_profile_title(),
   '/settings': () => m.settings_page_title(),
+  '/settings/principes': () => m.settings_principles_label(),
 };
 
 function normalizePath(pathname: string): string {

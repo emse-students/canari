@@ -13,6 +13,10 @@ export interface LiveSweepReport {
   deleted: number;
   /** Ended lives kept for the next run: the store refused, still listed something, or a segment is storing. */
   kept: number;
+  /** Ended lives whose replay this run published instead of purging them (docs/wiki/live-replays.md). */
+  replays: number;
+  /** Replays ended early because the replays together passed the total cap (D5, `[LIVE_REPLAY_CAP]`). */
+  capEvicted: number;
   /** Segment folders with no live row behind them, emptied by the orphan reaper. */
   orphans: number;
   /** Staff cuts past `LIVE_CUT_RETENTION_MS`, deleted from `live_cuts`. */
@@ -40,6 +44,9 @@ export interface LiveSweepReport {
  *    rows past their retention (`LIVE_CUT_RETENTION_MS`).
  * 4. ERASES every reported chat line whose report was handled, or that was kept
  *    `LIVE_CHAT_REPORT_MAX_KEEP_MS` unhandled (`LivesService.pruneReportedChatLines`, WP-L8b).
+ * 5. HOLDS THE REPLAYS UNDER THEIR TOTAL CAP (`LivesService.enforceReplayCap`, D5 of
+ *    docs/wiki/live-replays.md) - after step 2, so a replay this run published is counted - and
+ *    deletes the eviction records past their 30 days.
  *
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
@@ -83,6 +90,8 @@ export class LiveRetentionScheduler {
       ended: 0,
       deleted: 0,
       kept: 0,
+      replays: 0,
+      capEvicted: 0,
       orphans: 0,
       cutsPruned: 0,
       chatLinesErased: 0,
@@ -105,8 +114,15 @@ export class LiveRetentionScheduler {
       if (ids.length === 0) break;
       for (const id of ids) {
         try {
-          if ((await this.lives.purgeEnded(id)) === 'deleted') {
+          const outcome = await this.lives.purgeEnded(id);
+          if (outcome === 'deleted') {
             report.deleted += 1;
+            continue;
+          }
+          if (outcome === 'replayed') {
+            // Excluded from this run's next query like a kept live: its replay post now holds it.
+            report.replays += 1;
+            kept.push(id);
             continue;
           }
         } catch (e) {
@@ -146,10 +162,20 @@ export class LiveRetentionScheduler {
     } catch (e) {
       this.logger.warn(`[LIVE_GC] reported chat line erasure skipped this run: ${String(e)}`);
     }
+    try {
+      report.capEvicted = (await this.lives.enforceReplayCap()).length;
+    } catch (e) {
+      this.logger.warn(`[LIVE_REPLAY_CAP] the cap was not enforced this run: ${String(e)}`);
+    }
+    try {
+      await this.lives.pruneReplayEvictions();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] replay eviction prune skipped this run: ${String(e)}`);
+    }
 
     if (Object.values(report).some((n) => n > 0)) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned} chatLinesErased=${report.chatLinesErased} keysSealed=${report.keysSealed} keysUnsealed=${report.keysUnsealed}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} replays=${report.replays} capEvicted=${report.capEvicted} orphans=${report.orphans} cutsPruned=${report.cutsPruned} chatLinesErased=${report.chatLinesErased} keysSealed=${report.keysSealed} keysUnsealed=${report.keysUnsealed}`
       );
     }
     return report;

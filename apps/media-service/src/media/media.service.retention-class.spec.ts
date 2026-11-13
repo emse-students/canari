@@ -174,7 +174,7 @@ describe('retention class: the idle sweep is an ALLOWLIST', () => {
     };
     const { service } = serviceWith(items);
 
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
 
     // Only the ephemeral object is a verdict on the sweep.
     expect(stats.overdueCount).toBe(1);

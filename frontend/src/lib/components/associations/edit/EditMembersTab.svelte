@@ -227,7 +227,7 @@
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div>
-      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.common_members_label()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.common_members_label()}</h2>
       <p class="text-text-muted mt-1 text-sm">
         {m.asso_members_subtitle()}
       </p>
@@ -253,7 +253,7 @@
         ondragend={onDragEnd}
         class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx
           ? 'opacity-40'
-          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-cn-yellow/60 ring-2' : ''}"
+          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-accent/60 ring-2' : ''}"
       >
         <button
           type="button"
@@ -318,7 +318,7 @@
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
       >
         {addingMember ? '…' : m.common_add_button()}
       </button>

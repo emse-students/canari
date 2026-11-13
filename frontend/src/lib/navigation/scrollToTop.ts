@@ -43,6 +43,23 @@ export function scrollPageToTop(trigger: ScrollToTopTrigger): ScrollToTopOutcome
 }
 
 /**
+ * Puts the page scroller back at the top AT ONCE, no animation, no refresh: what a change of feed tab
+ * asks (owner, 2026-11-10) - the new tab is another list, and keeping the old tab's offset dropped the
+ * reader in the middle of it. Distinct from {@link scrollPageToTop}, a smooth gesture the reader asked
+ * for. Returns whether a scroller was there to reset.
+ */
+export function resetPageScroll(): boolean {
+  const scroller = document.querySelector<HTMLElement>(PAGE_SCROLLER_SELECTOR);
+  if (!scroller) {
+    Log.d('scrollToTop', 'reset: no page scroller mounted');
+    return false;
+  }
+  Log.d('scrollToTop', `reset from ${Math.round(scroller.scrollTop)}px`);
+  scroller.scrollTop = 0;
+  return true;
+}
+
+/**
  * Whether a tap on the place at `placeHref` is a RE-TAP: the reader is already on that place's own
  * page. Deeper in the place (`/posts/<id>`) the tap is a way back and must navigate, not scroll.
  */

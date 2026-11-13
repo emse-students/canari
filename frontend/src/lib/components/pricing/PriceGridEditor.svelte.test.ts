@@ -359,6 +359,46 @@ describe('PriceGridEditor', () => {
     expect(target.querySelector('[role="status"]')).not.toBeNull();
   });
 
+  describe('a criterion on a multiple-choice question takes one group', () => {
+    const question = (type: string) =>
+      ({
+        id: 'q',
+        label: 'Extras',
+        type,
+        options: [
+          { id: 'o1', label: 'A' },
+          { id: 'o2', label: 'B' },
+        ],
+      }) as unknown as FormItem;
+    const grid = (): PriceMatrix => ({
+      dimensions: [
+        {
+          id: 'x',
+          kind: 'answer',
+          questionId: 'q',
+          buckets: [{ id: 'g1', label: 'A', values: ['o1'] }],
+        },
+      ],
+      cells: { g1: 10, [O]: 0 },
+    });
+
+    it('offers no second group, and says why (the server would refuse it)', () => {
+      const { target } = render(grid(), { items: [question('multiple_choice')] });
+      const criterion = target.querySelector<HTMLElement>('[data-testid="criterion-x"]')!;
+      expect(buttonNamed(criterion, m.form_criterion_add_group_short())).toBeUndefined();
+      expect(criterion.querySelector('[data-testid="one-group-only"]')?.textContent).toBe(
+        m.form_criterion_multiple_choice_one_group()
+      );
+    });
+
+    it('still offers it on a single-choice question', () => {
+      const { target } = render(grid(), { items: [question('single_choice')] });
+      const criterion = target.querySelector<HTMLElement>('[data-testid="criterion-x"]')!;
+      expect(buttonNamed(criterion, m.form_criterion_add_group_short())).toBeDefined();
+      expect(criterion.querySelector('[data-testid="one-group-only"]')).toBeNull();
+    });
+  });
+
   it('does not flag it on a form that is not public', () => {
     const grid = stored();
     grid.cells[`${O}|${O}`] = 0;

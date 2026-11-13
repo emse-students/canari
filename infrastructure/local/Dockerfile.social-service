@@ -34,4 +34,8 @@ COPY --from=builder /app/apps/social-service/package.json ./
 
 EXPOSE 3014
 
+# NON-ROOT: the image's own `bun` user (uid 1000). This service writes nothing to disk and mounts no
+# volume (both compose files), and listens above 1024, so root bought it nothing (Trivy DS-0002).
+USER bun
+
 CMD ["bun", "dist/main.js"]

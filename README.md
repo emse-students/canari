@@ -5,6 +5,9 @@
 
 **End-to-end encrypted messaging & campus life platform for École des Mines de Saint-Étienne**
 
+*Canari permet à chacun de retrouver toute sa vie étudiante au même endroit, sans être ni pisté, ni manipulé.*
+Our principles, in French, in order of importance: [Nos principes](docs/principes.md).
+
 [![Built with SvelteKit](https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte)](https://kit.svelte.dev/)
 [![Powered by Bun](https://img.shields.io/badge/Bun-000000?logo=bun)](https://bun.sh/)
 [![Built with Rust](https://img.shields.io/badge/Rust-CE422B?logo=rust)](https://www.rust-lang.org/)
@@ -21,16 +24,22 @@
 ## Overview
 
 Canari is the messaging and campus life platform for École des Mines de Saint-Étienne.
-Private conversations and groups are **end-to-end encrypted** with the [MLS protocol](docs/wiki/protocols/mls-protocol.md)
-(RFC 9420). Communities (workspaces/channels) use HKDF-derived symmetric encryption.
+Direct messages and group conversations are **end-to-end encrypted** with the
+[MLS protocol](docs/wiki/protocols/mls-protocol.md) (RFC 9420). Community messages are end-to-end
+encrypted too, by a different design: each sender seals its messages with a key derived from its own
+seed, the seeds are handed out through an MLS key group, and the server stores ciphertext only
+([DM vs community encryption](docs/wiki/protocols/dm-vs-community-encryption.md)). Names of groups and
+communities are not encrypted yet.
 
 Key features:
-- **E2E encrypted messaging** — Direct messages, group chats, media sharing (AES-256-GCM + MLS)
-- **Voice & video calls** — WebRTC with SFU relay, CallKit integration on iOS
-- **Communities** — Role-based workspaces and channels with server-assisted encryption
-- **Associations** — Club management, membership dues (cotisations), boutique shop (Lydia)
-- **Forms & payments** — Dynamic form builder with online payment (Lydia), cash payments, Excel export
-- **News feed** — Markdown posts, polls, reactions, comments
+- **E2E encrypted messaging** — direct messages, group chats, communities, media sharing (AES-256-GCM key generated on the device; the server stores opaque blobs)
+- **Calls** — 1:1 audio and video over WebRTC (Cloudflare TURN relay), with a native ring on the phone
+- **Communities** — role-based workspaces and channels
+- **Associations** — club pages, membership dues (cotisations), boutique shop, bookings of rooms and slots
+- **Forms & payments** — dynamic form builder, online payment through Lydia (shown as "Paiement Canari") or cash, Excel export; Stripe was removed in October 2026 ([archive](docs/wiki/stripe-archive.md))
+- **News feed** — Markdown posts, polls, reactions, comments, follows
+- **CanaReels and lives** — short vertical videos, and live video broadcasts
+- **Agenda** — events, global calendar, ICS export
 - **Cross-platform** — Web (SvelteKit), Android & iOS (Tauri 2)
 
 ## Architecture
@@ -45,8 +54,9 @@ Browser / Tauri (Native App)
     |-> call-service:3004      (Rust/Axum)  WebRTC SFU relay
     |-> chat-delivery:3010     (NestJS)     MLS API, offline queue, push, sync
     |-> media-service:3011     (NestJS)     Encrypted blob storage (Garage)
-    |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, payments
-    `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
+    |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, payments (Lydia)
+    |-> social-service:3014    (NestJS)     Posts, reels, lives, forms, bookings, channels, associations
+    `-> frontend-ssr:3000      (SvelteKit)  Server-rendered pages (adapter-node)
 
 Service to service:  caller ──> mesh:<port> (nginx) ──> chat-delivery | core | social
 
@@ -165,7 +175,7 @@ French-language user documentation is in [`docs/user-guide/`](docs/user-guide/in
 | **MLS client** | Rust (OpenMLS) → WASM · ChaCha20-Poly1305 · Argon2 |
 | **Gateway** | Rust · Axum · Tokio · Redis pub/sub |
 | **SFU** | Rust · webrtc-rs · Axum · Cloudflare TURN |
-| **Backend services** | NestJS 10 · TypeORM · Node.js 24 |
+| **Backend services** | NestJS 12 · TypeORM · Node.js 24 |
 | **Data stores** | PostgreSQL · Redis · Garage |
 | **Auth** | Authentik (OIDC) · JWT HS256 · HttpOnly cookies |
 | **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |

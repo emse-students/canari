@@ -340,7 +340,7 @@ one. No field is added until it is measured: on homologation, once the dev Busin
 (owed by the user), send one request per candidate value to an inbox someone watches, and record
 here what arrived. Until then, a guest's payment request may reach the typed address from Lydia.
 
-**The prompt and `PaymentModal` are portalled to `body` and sit on `--z-modal` (2026-10-07).** Both
+**The prompt and `PaymentModal` are portalled to `body` and take their z-index from the overlay stack (2026-10-07; a fixed modal rung until 2026-11-13).** Both
 were written in place at a raw `z-50`. The form page renders them inside `.page-scroll-wrap`, whose
 `will-change: transform` makes it the containing block and a stacking context
 ([the layer ladder](../../../../frontend/src/app.css)): the "fixed" overlay was laid out against the

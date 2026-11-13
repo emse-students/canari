@@ -7,10 +7,12 @@
     formatTimeRange,
     isOfferedStart,
     unitText,
+    isInvitedUnit,
   } from '$lib/bookings/grid';
   import type { GridRun } from '$lib/bookings/gridRuns';
   import type { PlanningDay } from '$lib/bookings/planning';
   import HolderAvatar from '$lib/components/bookings/booker/HolderAvatar.svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -32,6 +34,8 @@
     /** The day the strip selected: the list scrolls to it. */
     focusDate: string;
     today: string;
+    /** The first-time hint's anchor id for the "+" button, or undefined when no hint points at it. */
+    guideAnchorId?: string;
     onOpen: (unit: SlotUnit) => void;
     onFree: (run: GridRun) => void;
     onAdd: () => void;
@@ -46,6 +50,7 @@
     blockMode,
     focusDate,
     today,
+    guideAnchorId,
     onOpen,
     onFree,
     onAdd,
@@ -77,7 +82,7 @@
   const rowClass = (run: GridRun, takeable: boolean) =>
     run.kind === 'booked'
       ? run.units[0].state === 'booked' && run.units[0].booking.mine
-        ? 'border-cn-yellow/60 bg-cn-yellow/25 text-text-main'
+        ? 'border-accent/60 bg-accent/25 text-text-main'
         : 'border-cn-border bg-control-fill text-text-main'
       : run.kind === 'blocked'
         ? 'border-red-err/30 bg-red-err/10 text-red-err'
@@ -90,7 +95,7 @@
   {#each days as day (day.date)}
     <section data-day={day.date} aria-label={formatDay(day.date)} class="scroll-mt-2">
       <h3
-        class="px-1 pt-3 pb-1.5 text-xs font-bold tracking-wide uppercase {day.date === today
+        class="px-1 pt-3 pb-1.5 text-xs font-bold {day.date === today
           ? 'text-text-main'
           : 'text-text-muted'}"
       >
@@ -124,7 +129,7 @@
                 })}
                 disabled={run.kind === 'free' && !takeable}
                 onclick={() => (run.kind === 'free' ? onFree(run) : onOpen(unit))}
-                class="focus-visible:ring-cn-yellow flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-default {rowClass(
+                class="focus-visible:ring-accent-icon flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-default {rowClass(
                   run,
                   takeable
                 )}"
@@ -134,6 +139,11 @@
                   <HolderAvatar {unit} />
                 {/if}
                 <span class="min-w-0 flex-1 truncate font-semibold">{text}</span>
+                {#if isInvitedUnit(unit)}
+                  <span class="text-text-muted text-2xs shrink-0" data-invited
+                    >{m.bookings_cell_invited()}</span
+                  >
+                {/if}
                 {#if takeable}
                   <Plus size={18} aria-hidden="true" />
                 {/if}
@@ -149,8 +159,9 @@
 <button
   type="button"
   onclick={onAdd}
+  use:guideAnchorWhen={guideAnchorId}
   aria-label={blockMode ? m.bookings_planning_add_block() : m.bookings_planning_add()}
-  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover focus-visible:ring-cn-yellow sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
+  class="bg-accent text-on-accent hover:bg-accent-hover focus-visible:ring-accent-icon sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
 >
   <Plus size={28} aria-hidden="true" />
 </button>
