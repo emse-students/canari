@@ -549,11 +549,25 @@ Client: [live](../frontend/modules/live.md#the-chat-readable-over-the-video-and-
 
 ## Titles and the preview image (owner, 2026-11-07)
 
-**The decisions** ([backlog](../backlog.d/live-titles-and-a-preview-on-the-feed-card.md)): a live
+**The decisions** (owner, 2026-11-07): a live
 carries an optional title (at most 80 characters, entered before the start, editable on air; none
 reads "X est en live"); the feed shows a refreshed still of the stream, sealed under a key derived from the live key,
 with the EN DIRECT badge, the viewer count and the title, as ONE large card or a carousel of cards;
 the preview takes no viewer seat and adds no per-viewer poll; the follower push carries the title.
+
+**Decided by the lead, all reversible:** JPEG only (WebKit has no WebP encoder); the card badge
+reads "EN DIRECT" where the viewer keeps "LIVE"; the title is the push's BODY (the notification's
+title stays "X est en live"); at most 256 KiB per preview; a preview shares the ingest concurrency
+bound with segments; a muted account cannot edit a title; an account erasure clears the title.
+
+**Decided at the review of #3135 (coordinator, 2026-11-07, all reversible):** the list serves a
+POSTER key, `HKDF-SHA256(live key, salt = live id, info = "canari-live-poster-v1")`, only with a
+poster - never the live key, which leaves only through the seated `GET /api/lives/:id`; ONE preview
+period, 16 s, served as `previewPeriodMs`: the broadcaster sends one every 8 segments, a card on
+screen re-reads the list once per period, the server refuses a second preview under 8 s; a poster
+is fetched once per name; the poster has its own nginx path and zones, 8 Mb/s per address; the list
+is `no-store`; a key that does not open logs once per outage; the title is edited by the
+broadcaster ONLY, an association's live included.
 
 **The title.** `lives."title"` (`varchar(80)`, NULL for none). `parseLiveTitle` is the one rule:
 absent or `null` is none; a non-string is `400 LIVE_TITLE_INVALID`; the string is trimmed, blank is

@@ -91,6 +91,7 @@ function fakeService(state: CallState) {
     reconnecting: writable(false),
     e2eProven: writable(false),
     localMicSuspended: writable(false),
+    audioFocusHeld: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
     noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
@@ -101,6 +102,8 @@ function fakeService(state: CallState) {
     acceptCall: vi.fn(async () => {}),
     endCall: vi.fn(),
     toggleMute: vi.fn(),
+    muteButtonTap: vi.fn(),
+    setAudioFocusAsker: vi.fn(),
     toggleVideo: vi.fn(),
     switchCamera: vi.fn(async () => {}),
   };

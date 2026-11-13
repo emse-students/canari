@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 import type { StoredPostKind } from '../reel.constants';
+import type { InstitutionReachPublic, InstitutionReachSpace } from '../institution-reach';
 
 /** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')
@@ -92,6 +93,24 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   studentsOnly: boolean;
 
+  /**
+   * THE REACH AN INSTITUTION CHOSE FOR THIS POST (owner, 2026-11-10; migration 162): the public in
+   * the ticked spaces - 'all', 'students' (an account with a cursus) or 'staff' (no cursus). NULL on
+   * every post that is not an institution's, and on an institution post written before the reach
+   * existed (read as its whole audience, everyone). Set with {@link reachSpaces}, never alone (a
+   * CHECK says so); read by `institutionReachAdmitsUserSql`, a conjunct of `postVisibleToUserSql`.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  reachPublic: InstitutionReachPublic | null;
+
+  /**
+   * The spaces an institution's post targets, inside the institution's audience (migration 162): a
+   * jsonb array of `{formation, campus}` pairs, NULL exactly when {@link reachPublic} is. Read by
+   * containment in the predicate, so a value that is not such an array reaches nobody.
+   */
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  reachSpaces: InstitutionReachSpace[] | null;
+
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 
@@ -133,6 +152,39 @@ export class Post {
    */
   @Column({ type: 'uuid', nullable: true, default: null })
   liveId: string | null;
+
+  /**
+   * CAMPUS TRENDS (engagement WP-10, migrations 160 and 161), declared so a `synchronize` boot (the
+   * local stack, the CI boot probe) builds them; production builds them from the migrations. Written
+   * ONLY by `EVALUATE_TREND_SQL` (`posts/campus-trend.ts`), so neither is selected, inserted or
+   * updated through the entity - no `save()` can write a stale value over the evaluation's.
+   * `trendAnnouncedAt`: the stamp, set once the engaged count reached the threshold.
+   */
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    default: null,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  trendAnnouncedAt?: Date | null;
+
+  /**
+   * The engaged count the last evaluation read; a new post is born with 0 (the default), a post
+   * older than migration 161 holds NULL ("never evaluated", which never announces). A `synchronize`
+   * that ADDS this column to an existing local database gives its rows 0, not NULL - a disposable
+   * database, never an estate.
+   */
+  @Column({
+    type: 'integer',
+    nullable: true,
+    default: 0,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  trendEngagedSeen?: number | null;
 
   @CreateDateColumn()
   @Index()

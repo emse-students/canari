@@ -21,6 +21,7 @@ import {
 } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
+import type { NotificationType } from '../push/notification-client-floor';
 
 /** Retention durations for unbounded-growth data tables. */
 const GC_NOTIFICATION_DAYS = 90;
@@ -30,7 +31,7 @@ const GC_WEBHOOK_DELIVERY_DAYS = 30;
 const GC_CONTENT_REPORT_DAYS = 90;
 
 /** The in-app type of an opening, per kind - what the bell draws and where it leads. */
-const OPENING_NOTIFICATION_TYPE: Readonly<Record<OpeningKind, string>> = {
+const OPENING_NOTIFICATION_TYPE: Readonly<Record<OpeningKind, NotificationType>> = {
   form: 'form_reminder',
   booking: 'booking_open',
   event: 'event_open',
@@ -297,12 +298,13 @@ export class FormReminderScheduler {
     }
   }
 
-  /** Daily at 03:05 - deletes the engagement push counters older than a week (engagement WP-8). */
+  /** Daily at 03:05 - deletes the engagement push counters older than a week (engagement WP-8), and the weekly trend counters older than two. */
   @Cron('5 3 * * *')
   async purgeEngagementPushDays() {
     try {
       const deleted = await pruneEngagementPushDays(this.reminderRepo.manager);
-      if (deleted > 0) this.logger.log(`[GC] engagement_push_days: ${deleted} deleted`);
+      if (deleted > 0)
+        this.logger.log(`[GC] engagement_push_days, campus_trend_weeks: ${deleted} deleted`);
     } catch (e) {
       this.logger.warn('[GC] purgeEngagementPushDays failed', e);
     }

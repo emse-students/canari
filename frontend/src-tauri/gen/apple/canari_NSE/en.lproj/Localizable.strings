@@ -2,6 +2,8 @@
    Keep in sync with fr.lproj/Localizable.strings and with canari_iOS/*.lproj. */
 "notif.reaction.body" = "reacted %@ to your message";
 "notif.message.from" = "New message from %@";
+"notif.message.new" = "New message";
+"notif.group.unnamed" = "Group conversation";
 "notif.message.encrypted" = "You received an encrypted message";
 "notif.channel.message" = "New message in #%@";
 "notif.channel.unnamed" = "Channel";
@@ -31,8 +33,16 @@
 "notif.social.friend_reaction.body" = "See the post";
 "notif.social.friend_comment.title" = "%@ commented on a post";
 "notif.social.friend_comment.body" = "See the post";
-"notif.social.campus_trend.title" = "A post is taking off in your space";
-"notif.social.campus_trend.body" = "See the post";
+"notif.social.campus_trend.title" = "Suggestion: %@";
+"notif.social.campus_trend.body" = "A post your space is reacting to";
+"notif.social.campus_trend.untitled" = "Suggestion: a post";
+"notif.social.campus_trend_photo.title" = "Suggestion: a photo";
+"notif.social.campus_trend_photo.body" = "A post your space is reacting to";
+"notif.social.campus_trend_video.title" = "Suggestion: a video";
+"notif.social.campus_trend_video.body" = "A post your space is reacting to";
+"notif.social.campus_trend.liked_by" = "Liked by %1$@";
+"notif.social.campus_trend.liked_by_one" = "Liked by %1$@ and 1 other";
+"notif.social.campus_trend.liked_by_many" = "Liked by %1$@ and %2$@ others";
 "notif.social.repost_proposed.title" = "%@ proposes a post to share";
 "notif.social.repost_proposed.body" = "A post to share";
 "notif.social.repost_personal_requested.title" = "%@ asks to share your post";

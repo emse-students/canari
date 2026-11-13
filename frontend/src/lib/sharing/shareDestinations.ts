@@ -58,10 +58,18 @@ export interface ShareCandidate {
 }
 
 /**
+ * The order of the "Envoyer a..." picker: most recent first, like the conversation list and every
+ * other share surface; alphabetical once a search is typed, a list to scan (lead, 2026-11-12).
+ */
+export function forwardPickerOrder(query: string): 'alphabetical' | 'recent' {
+  return query.trim() ? 'alphabetical' : 'recent';
+}
+
+/**
  * The destinations a picker lists, filtered by `query` (name or community) - read the same way by
- * the "Envoyer a..." picker (`ForwardMessageModal`, ordered `alphabetical`: a list to search) and by
- * a post's share sheet (`PostShareSheet`, ordered `recent`: the grid opens on whom the member talks
- * to, as Instagram's does). A row with no name yet is left out, never shown as a raw id.
+ * the "Envoyer a..." picker (`ForwardMessageModal`: `recent`, and `alphabetical` once a search is
+ * typed - a list to scan) and by a post's share sheet (`PostShareSheet`, ordered `recent`: the grid
+ * opens on whom the member talks to, as Instagram's does). A row with no name yet is left out, never shown as a raw id.
  * `peerNames` carries the DM names fetched after the list was first built
  * (`missingPeerNameIds`).
  */

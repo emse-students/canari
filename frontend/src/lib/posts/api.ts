@@ -12,6 +12,8 @@ import {
   serverRankedFeeds,
 } from '$lib/stores/appVersionCheck.svelte';
 import { Log } from '$lib/utils/Log';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -292,6 +294,12 @@ export interface PostEntity {
    * members, whatever the path. Served to every reader, so the card says so to all of them.
    */
   studentsOnly?: boolean;
+  /**
+   * The reach an institution chose for this post (owner, 2026-11-10): its spaces and its public.
+   * Null on every other post, and on an institution post published before the reach existed.
+   * Served to every reader, so the card says so to all of them.
+   */
+  reach?: InstitutionReach | null;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -458,25 +466,12 @@ export interface ListPostsOptions {
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
   /**
-   * With `kind: 'reel'`: the posts whose only content is ONE picture or ONE video come too - the CanaReels list
-   * (`reels/fullScreenPost.ts`). The URL carries the older switch too (`singlePhotos`): a server that
-   * does not know `singleMedia` answers the pictures with the reels, and one older than both
-   * answers the reels alone.
-   */
-  singleMedia?: boolean;
-  /**
-   * With `kind: 'reel'`: the posts of TWO TO TEN pictures and videos come too, with the single
-   * ones - the carousel pages (owner, 2026-11-06). The URL carries both older switches with it: a
-   * server that does not know `multiMedia` answers the single pictures and videos, one older still
-   * the pictures (docs/wiki/legacy-compatibility.md).
+   * With `kind: 'reel'`: the full-screen posts come too - one, or two to ten (a carousel), pictures
+   * and videos only, a link in the text allowed (`reels/fullScreenPost.ts`). ONE switch since
+   * 2026-11-11: every estate reads it, so the older `singlePhotos`, `singleMedia` and `withLinks`
+   * are no longer sent (docs/wiki/legacy-compatibility.md).
    */
   multiMedia?: boolean;
-  /**
-   * With `multiMedia`: a post with a link in its text comes too, its link drawn in the caption
-   * (owner, 2026-11-06). Sent only with `multiMedia`; a server that does not know it keeps the
-   * link out, which this client reads as before.
-   */
-  withLinks?: boolean;
   /**
    * The feed and the CanaReels list carry the live replays too (`kind = 'replay'`, docs/wiki/live-replays.md).
    * Left undefined, `listPosts` sends it exactly when the server's switch reads `on`
@@ -510,6 +505,8 @@ export interface CreatePostPayload {
   anonymous?: boolean;
   /** "Entre étudiants" - offered on an association's or a list's post only (`studentsOnly.ts`). */
   studentsOnly?: boolean;
+  /** The reach of an institution's post - REQUIRED there, refused anywhere else (`institutionReach.ts`). */
+  reach?: InstitutionReach;
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
@@ -529,6 +526,8 @@ export interface UpdatePostPayload {
   scheduledAt?: string | null;
   /** "Entre étudiants", changed after publication; absent leaves it as stored. */
   studentsOnly?: boolean;
+  /** An institution post's reach, changed after publication; absent leaves it as stored. */
+  reach?: InstitutionReach;
 }
 
 /**
@@ -577,13 +576,6 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.kind) p.set('kind', options.kind);
   if (options.withReplays) p.set('withReplays', 'true');
   if (options.multiMedia) p.set('multiMedia', 'true');
-  if (options.multiMedia && options.withLinks) p.set('withLinks', 'true');
-  if (options.singleMedia || options.multiMedia) {
-    p.set('singleMedia', 'true');
-    // An installed server knows only the pictures' switch and drops the unknown one: it keeps
-    // serving pictures, and the client draws no video it was not sent (docs/wiki/legacy-compatibility.md).
-    p.set('singlePhotos', 'true');
-  }
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -713,6 +705,19 @@ export async function fetchFeedAudience(): Promise<{ inAudience: boolean }> {
 /** The server's reel numbers (`ReelLimits`). */
 export async function getReelLimits(): Promise<ReelLimits> {
   return request<ReelLimits>('/api/posts/reel-limits');
+}
+
+/**
+ * The spaces institution `associationId` may target with a post: those of its own audience, sorted
+ * campus then formation. 403 when the caller may not post as it; 400
+ * `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getInstitutionReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/posts/reach-options/${encodeURIComponent(associationId)}`
+  );
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {
@@ -1016,12 +1021,24 @@ export interface PostNotification {
   text: string;
   /** Structured facts a client draws itself (a booking notice's place, slot and zone); null on older rows. */
   meta?: Record<string, unknown> | null;
+  /**
+   * The comment the row is about, for a row a comment wrote (a comment, a reply, a mention in a
+   * comment, a friend's comment); null otherwise and on rows written before migration 132.
+   */
+  commentId?: string | null;
   read: boolean;
   createdAt: string;
 }
 
+/**
+ * The reader's bell. The read NAMES THIS BUILD (`X-Canari-Client-Version`): the server serves only
+ * the types this build draws, so a type added after it never reaches it as an unknown row
+ * (social-service `notification-client-floor.ts`, owner 2026-11-10).
+ */
 export async function getPostNotifications(limit = 30): Promise<PostNotification[]> {
-  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`);
+  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`, {
+    headers: withClientVersionHeader(),
+  });
 }
 
 export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {

@@ -338,26 +338,6 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
- * A frame of `groupId` was to be SEALED in a tab whose copy of the MLS state is not the leader's (a
- * follower, or a leader promoted in place before its reload), and refused before the ratchet moved.
- * Such a copy is behind the leader's, so the generation it would use may be one the peers have
- * already consumed: the frame would be dropped on arrival, silently (WP-MULTITAB-1). Reached by a
- * send that started while this document led and resumed after it stopped - a leader suspended by
- * the browser releases the lock (`tabLeader.ts`, `watchPageLifecycle`). Same fact as
- * {@link FollowerTabCommitError} (`refusesCommitsHere`), read at the last synchronous step before
- * the encrypt.
- */
-export class FollowerTabSendError extends Error {
-  constructor(readonly groupId: string) {
-    super(
-      `a frame of ${groupId.slice(0, 8)}... was to be sealed by a tab whose MLS copy is not the ` +
-        "leader's - nothing was encrypted, the leader sends it"
-    );
-    this.name = 'FollowerTabSendError';
-  }
-}
-
-/**
  * A key package was asked of a tab whose copy of the MLS state is not the leader's (a follower, or
  * a leader promoted in place before its reload), and refused before anything was minted: a key
  * package's private half would live only in that copy, so a peer's Welcome to it could never be
@@ -370,6 +350,41 @@ export class FollowerTabKeyPackageError extends Error {
         'mint one, so nothing was minted or published'
     );
     this.name = 'FollowerTabKeyPackageError';
+  }
+}
+
+/**
+ * An MLS frame of `groupId` was asked of a tab whose copy of the MLS state is not the leader's (a
+ * follower, or a leader promoted in place before its reload), and refused before anything was
+ * encrypted. Same fact as {@link FollowerTabCommitError} (`refusesCommitsHere`): a frame sealed on a
+ * copy spends a send generation the leader's state never learns of, and the shared send ledger it
+ * bumps then describes neither. A follower hands a frame to the leader instead
+ * (`mls-client/frameFromAnyTab.ts`), so reaching this is a caller that was not routed there.
+ */
+export class FollowerTabSendError extends Error {
+  /**
+   * @param refusal `follower`: the tab follows - its caller was not routed to the leader (a defect);
+   *   `reload-owed`: the tab was promoted in place and reloads - an expected refusal, the gesture is
+   *   refused rather than lost; `lead-lost`: a send begun while this document led reached its last
+   *   synchronous step after the lead left it (a leader suspended by the browser, or one that handed
+   *   the lead to a visible tab, releases the lock - `tabLeader.ts`) - expected, nothing was sealed
+   *   and the leader sends it.
+   */
+  constructor(
+    readonly groupId: string,
+    readonly refusal: 'follower' | 'reload-owed' | 'lead-lost' = 'follower'
+  ) {
+    super(
+      refusal === 'reload-owed'
+        ? `an MLS frame of ${groupId.slice(0, 8)}... was asked of a tab that has just become the ` +
+            'leader and reloads - nothing was encrypted'
+        : refusal === 'lead-lost'
+          ? `an MLS frame of ${groupId.slice(0, 8)}... reached the encrypt after this tab stopped ` +
+            'leading - nothing was encrypted, the leader sends it'
+          : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
+            'sends, so nothing was encrypted'
+    );
+    this.name = 'FollowerTabSendError';
   }
 }
 

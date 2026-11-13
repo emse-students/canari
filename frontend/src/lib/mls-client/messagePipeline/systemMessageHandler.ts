@@ -4,6 +4,7 @@ import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-cl
 import {
   serializeEnvelope,
   applyEditToBody,
+  editFitsBody,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
@@ -55,10 +56,9 @@ import {
   sendHistoryDigest,
 } from '$lib/utils/chat/groupActions';
 import {
-  countUnreadForUser,
+  derivedUnreadCount,
   mergeReadWatermarks,
   parseReadWatermarks,
-  readPointFor,
   boundedServerMarks,
   receivedReadWatermarkMark,
   watermarkAfterReading,
@@ -375,6 +375,10 @@ async function applyEdit(
     return;
   }
   if (!mutationIsAuthorised(target, senderNorm, 'edit', log)) return;
+  if (!editFitsBody(target.content, newText)) {
+    log(`[MLS] Dropped an edit of ${targetId.slice(0, 8)} - an empty text edits only a caption`);
+    return;
+  }
   // A DELETE IS ABSORBING: THE TOMBSTONE WINS, WHATEVER THE ORDER. The tombstone lives in `content`,
   // so an edit applied on top of it would put the deleted text back on screen.
   if (target.isDeleted) {
@@ -423,7 +427,9 @@ async function applyEdit(
       convoKey,
       [targetId],
       (current) =>
-        current.isDeleted || !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
+        current.isDeleted ||
+        !editFitsBody(current.content, newText) ||
+        !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
           ? null
           : mergeStoredMessage(current, {
               content: applyEditToBody(current.content, newText),
@@ -617,6 +623,27 @@ function probeSender(
 }
 
 /**
+ * The `requestId` of a history ask (`history_digest`, `history_pull`, `history_range`), or `null`
+ * when it carries none usable - and then the ask is MALFORMED, never an older client: every build
+ * since step A (#2270, first in the stable `v1.5.0`) mints one, and the floor is past it (D211). An
+ * addressed answer to an ask with no id would be refused by its asker, so nothing is answered.
+ */
+function historyAskId(
+  data: any,
+  senderNorm: string,
+  convoKey: string,
+  log: (msg: string) => void,
+  tag: string
+): string | null {
+  const requestId = parseHistoryRequestId(data?.requestId);
+  if (requestId !== undefined) return requestId;
+  log(
+    `[${tag}] No request id from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since step A mints one, so the ask is malformed - ignored`
+  );
+  return null;
+}
+
+/**
  * Dispatches a decoded MLS system event to the appropriate handler.
  *
  * Called from setupMessageHandler after JSON-parsing `msg.system.data`.
@@ -758,7 +785,8 @@ export async function handleSystemEvent(
       log(`[HISTORY_DIGEST] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    const requestId = parseHistoryRequestId(data?.requestId);
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
+    if (requestId === null) return true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
@@ -853,12 +881,14 @@ export async function handleSystemEvent(
       log(`[HISTORY_RANGE] Unusable range from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_RANGE');
+    if (requestId === null) return true;
     noteProbeReceived(convoKey, from, {
       kind: 'range',
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
       since,
-      requestId: parseHistoryRequestId(data?.requestId),
+      requestId,
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -941,6 +971,8 @@ export async function handleSystemEvent(
       log(`[HISTORY_PULL] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_PULL');
+    if (requestId === null) return true;
 
     // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
     // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
@@ -974,7 +1006,7 @@ export async function handleSystemEvent(
       await sendHistoryBundleForIds(convoKey, wanted, deps, {
         to: puller,
         since,
-        requestId: parseHistoryRequestId(data?.requestId),
+        requestId,
       }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;
@@ -1252,8 +1284,10 @@ export async function handleSystemEvent(
     return true;
   }
 
-  if (event === 'edit_message' && data.messageId && data.newContent) {
-    await applyEdit(String(data.messageId), String(data.newContent), data.editedAt, ctx);
+  // A STRING, NOT A TRUTHY ONE: an empty text removes a media message's caption, and whether it
+  // fits its target is `editFitsBody`'s to say once the target is known.
+  if (event === 'edit_message' && data.messageId && typeof data.newContent === 'string') {
+    await applyEdit(String(data.messageId), data.newContent, data.editedAt, ctx);
     return true;
   }
 
@@ -1623,10 +1657,14 @@ export async function handleSystemEvent(
           //    unread because it cannot see read state - a message this user already read on
           //    another device is below the watermark and must not raise a badge here.
           //    Clamped to the current value: an open conversation was already zeroed by the
-          //    add-path and must never regain a badge, and a genuine new member - whose watermark
-          //    is 0 - keeps the full count.
-          const mine = readPointFor(c, userId.toLowerCase());
-          const stillUnread = countUnreadForUser(nextMessages, mine.stamped, mine.server);
+          //    add-path and must never regain a badge, and a genuine new member - no saved mark
+          //    and no own message - keeps the full count.
+          //    At the SAME read point a cold start derives the count from (`derivedUnreadCount`), so
+          //    the badge this bundle leaves is the one the next load re-derives.
+          const stillUnread = derivedUnreadCount(
+            { ...c, messages: nextMessages },
+            userId.toLowerCase()
+          );
           const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
           if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
             conversations.set(convoKey, {

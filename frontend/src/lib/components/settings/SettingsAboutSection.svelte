@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Download, FileText } from '@lucide/svelte';
+  import { Download, FileText, Scale } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     getClientAppVersion,
     openLatestAppUpdate,
@@ -105,6 +106,18 @@
     {:else}
       <p class="text-text-muted text-sm">{m.settings_about_up_to_date()}</p>
     {/if}
+
+    <div class="border-cn-border border-t pt-4">
+      <Button
+        variant="secondary"
+        href="/settings/principes"
+        aria-label={m.settings_principles_aria()}
+        data-principles-link
+      >
+        <Scale size={16} />
+        {m.settings_principles_label()}
+      </Button>
+    </div>
 
     <div class="border-cn-border space-y-2 border-t pt-4">
       <p class="text-text-main text-sm font-bold">{m.settings_about_log_label()}</p>

@@ -1125,9 +1125,10 @@ three pushes carry `commentId`, and `socialDeepLink` writes `post/<id>?comment=<
 query, so a build that predates it still opens the post. `appRouteForDeepLink` keeps that one
 parameter (`POST_COMMENT_PARAM`), the post page hands it to `PostComments`, which scrolls the row
 (`id="comment-<id>"`) into view once drawn and rings its bubble; a comment deleted since the push
-leaves the post at its top and logs why. The in-app bell still opens the post without it: the
-notification ROW stores no comment id. Tests: `post-interactions.comment-notify.spec.ts`,
-`push-target.spec.ts`, `deepLinkRoutes.test.ts`, `PostComments.focus.svelte.test.ts`.
+leaves the post at its top and logs why. The in-app bell does the same since 2026-11-11: the row
+has carried `commentId` since migration 132, and `notificationHref` writes the same
+`?comment=` through `postHref`, the one spelling both surfaces share. Tests: `post-interactions.comment-notify.spec.ts`,
+`push-target.spec.ts`, `deepLinkRoutes.test.ts`, `notificationTarget.test.ts`, `PostComments.focus.svelte.test.ts`.
 
 **Not measured on the iPhone yet** - see the verification note appended below when it is.
 
@@ -3144,6 +3145,57 @@ a long-lived conversation shortcut (`publishConversationShortcut`, id `chat_<gro
 as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less shapes. **COMPILED
 NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
 notification could be raised on the Mi 9T without a push - owed a look on that phone.
+
+**The shortcut put the name back twice on a DM, and a DM drawn as a conversation is one-to-one again
+(owner, Android 16, `1.6.10`, 2026-11-11).** The expanded DM read the sender in the header, beside the
+avatar, and again above the message line. The cause is in SystemUI, not in this code: from API 30 a
+`MessagingStyle` post with a long-lived shortcut is drawn by `ConversationLayout`, and
+`ConversationNotificationProcessor.processNotification` first OVERWRITES the style's
+`conversationTitle` with the shortcut's label - the other person, for a DM. Leaving the title unset
+(the 2026-10-01 decision) therefore stopped mattering the day the DM gained its shortcut (2026-10-05),
+and the group shape then names every line under that header. The one-to-one shape is what removes the
+repeat: `PeopleHelper.maybeHideFirstSenderName` hides the first group's sender when it equals the
+header, while our own inline reply ("Vous") and any later change of speaker stay named - which is the
+symmetry the 2026-10-01 decision wanted. **One pure function decides it**, `push/ConversationShape.kt`
+(pinned by `ConversationShapeTest`): a group keeps its title and the group shape; a DM with a
+published shortcut on API 30+ takes the untitled one-to-one shape; a DM with no shortcut, or below
+API 30, keeps the untitled group shape of 2026-10-01 (no shortcut label on top there); a reaction
+keeps the old shape (every salon banner, blind or not, is a message and takes the group shape). A
+conversation the user demoted ("pas une conversation") is drawn by the legacy layout in the one-to-one
+shape: the name is the title once and the other person's lines carry none - the lopsided reading of
+2026-10-01, taken knowingly for that opt-out. **MIUI (the Mi 9T) may not draw `ConversationLayout` at
+all** - it is an Android 11 skin with its own shade: if it draws the legacy layout, a DM shows that
+same lopsided shape. The Mi 9T reading decides this before any stable.
+
+**GROUP OR DM IS THE SOURCE'S FACT, NOT THE NAME'S (review of #3344, M1).** `ConversationShape.isGroup`
+takes a `declared` discriminator that WINS when present: the push payload's `isGroup` (a third of
+production groups carry no name, `push-payload.ts`), the WebView's conversation type on the socket
+trigger (`notificationIsGroup`, carried through `notifier_message_natif` as a nullable
+`java.lang.Boolean`), and `true` for every salon push. Absent (an older server, a row it could not
+read, a row with no type, a reaction), the name rule decides as before. Without it, an unnamed
+three-person group took the one-to-one shape on API 30+: no face per speaker, and the top speaker's name
+hidden under a header naming them as if they were the peer. An UNNAMED group is titled **"Conversation
+de groupe" / "Group conversation"** (`notif_unnamed_group`, `notif.group.unnamed`) on both platforms,
+never with its first speaker - which is what a DM looks like. The failed-reply re-post
+(`repostReplyPending`) now keeps the conversation shortcut (`existing.shortcutId`), so it no longer
+drops to the legacy layout. **iOS had no
+such repeat**: a decrypted DM is titled with the sender, carries no subtitle, and its body is the
+message (`applyMessageContent`, `NotificationService.swift`; `canari_push.mm` passes no subtitle for
+a DM). **The line standing in for an UNREADABLE message repeated it on both platforms**, "Nouveau
+message de X" under the title X, and now reads **"Nouveau message" / "New message"** on a DM (lead,
+same day, the owner's "the name once"). A group keeps "Nouveau message de X": its title is the group,
+so the sentence is what says who wrote. With no sender name the "message chiffré" line is unchanged.
+One rule, three copies of its one predicate (the declared `isGroup`, else `groupName` non-empty and not
+the sender's name): `push/FallbackLine.kt` + `ConversationShape.isGroup` (Android, pinned by
+`FallbackLineTest`), `NotificationService.fallbackText` / `titledByGroup` (NSE) and
+`CanariBuildFallbackText` / `CanariTitledByGroup` (`canari_push.mm`), with `notif_new_message` and
+`notif.message.new` in fr and en; `messageNotificationShape.test.ts` pins the iOS half in the source.
+The rig already classifies `^Nouveau message$` as a generic body (`notif-bodies.mjs`). **Owed**: expand
+a DM on the Mi 9T and the iPhone 12, reply inline, and read the name once with "Vous" above the reply
+(on the Mi 9T this also decides whether MIUI draws the conversation layout at all); one unreadable DM
+banner on each, reading "Nouveau message" under the sender; one message in an UNNAMED group on each,
+titled "Conversation de groupe" with every speaker named; and one failed inline reply on the Mi 9T,
+whose re-post keeps the avatar header.
 
 **The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
 

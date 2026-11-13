@@ -2,7 +2,12 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { CAPPED_PUSH_TYPES, ENGAGEMENT_DAILY_PUSH_CAP } from './engagement-push-cap';
+import {
+  NOTIFICATION_TYPE_MIN_CLIENT,
+  PUSH_KEY_MIN_CLIENT,
+  PUSH_ONLY_NOTIFICATION_TYPES,
+} from '../push/notification-client-floor';
+import { CAPPED_PUSH_TYPES, ENGAGEMENT_DAILY_PUSH_CAP, PUSH_BUDGET } from './engagement-push-cap';
 
 /**
  * THE CAPPED TYPES AND THEIR CATEGORY (engagement WP-8, decisions 6 and 11 as amended 2026-11-10). The cap reads a
@@ -28,14 +33,79 @@ describe('CAPPED_PUSH_TYPES', () => {
   });
 
   it.each([...CAPPED_PUSH_TYPES])(
-    '%s files under the category chat-delivery applies to its content key',
-    (_type, { contentKey, category }) => {
-      expect(categories.get(contentKey)).toBe(category);
+    '%s files under the category chat-delivery applies to each of its content keys',
+    (_type, { contentKeys, category }) => {
+      expect(contentKeys.length).toBeGreaterThan(0);
+      for (const key of contentKeys) expect([key, categories.get(key)]).toEqual([key, category]);
     }
   );
 
-  it('caps ONLY accounts the reader does not follow (decision 11, amended 2026-11-10), at 5 a day', () => {
-    expect([...CAPPED_PUSH_TYPES.keys()]).toEqual(['campus_trend']);
-    expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(5);
+  it('files a campus trend under its own switch, suggestions (owner, 2026-11-10)', () => {
+    expect(CAPPED_PUSH_TYPES.get('campus_trend')?.category).toBe('suggestions');
+  });
+
+  it('counts the owner list of 2026-11-10, at 3 a day', () => {
+    expect([...CAPPED_PUSH_TYPES.keys()].sort()).toEqual([
+      'booking_open',
+      'campus_trend',
+      'comment',
+      'event_open',
+      'followed_post',
+      'friend_comment',
+      'friend_reaction',
+      'member_repost',
+      'reaction',
+    ]);
+    expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(3);
+  });
+
+  it.each([
+    'birthday',
+    'association_post',
+    'association_repost',
+    'mention',
+    'reply',
+    'live_mention',
+    'follow_request',
+    'follow_accepted',
+    'booking_reminder',
+    'booking_changed',
+    'event_pending',
+    'live_cut',
+  ])('never counts %s (owner, 2026-11-10)', (type) => {
+    expect(CAPPED_PUSH_TYPES.has(type)).toBe(false);
+  });
+});
+
+/**
+ * EVERY NOTIFICATION TYPE IS CLASSIFIED (owner, 2026-11-10): the `Record` type already refuses a
+ * missing one at compile time; this says the same at run time, against the two lists of types -
+ * the bell's (`NOTIFICATION_TYPE_MIN_CLIENT`) and the push-only ones - so neither can grow a type
+ * the budget has not placed, and the budget cannot keep one they dropped.
+ */
+describe('PUSH_BUDGET', () => {
+  it('classifies exactly every bell type and every push-only type', () => {
+    const types = [
+      ...Object.keys(NOTIFICATION_TYPE_MIN_CLIENT),
+      ...PUSH_ONLY_NOTIFICATION_TYPES,
+    ].sort();
+    expect(Object.keys(PUSH_BUDGET).sort()).toEqual(types);
+  });
+
+  it('gives every counted type ONE floor, shared by all its keys, which the claim applies', () => {
+    const split = [...CAPPED_PUSH_TYPES].filter(
+      ([, { contentKeys, floor }]) =>
+        !contentKeys.every((key) => (PUSH_KEY_MIN_CLIENT[key] ?? null) === floor)
+    );
+    expect(split).toEqual([]);
+    expect(CAPPED_PUSH_TYPES.get('campus_trend')?.floor).toBe('1.6.10');
+    expect(CAPPED_PUSH_TYPES.get('reaction')?.floor).toBeNull();
+  });
+
+  it('names at least one content key for every counted type', () => {
+    const empty = Object.entries(PUSH_BUDGET).filter(
+      ([, budget]) => budget.counted && budget.contentKeys.length === 0
+    );
+    expect(empty).toEqual([]);
   });
 });

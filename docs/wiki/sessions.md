@@ -15,7 +15,11 @@ Canari is the one variant, deliberately: its 1 h access token is a signed JWT th
 look up. The row backs the REFRESH token, and carries `sid` + `jti`
 (`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the verifier every
 `auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
-locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
+locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). The
+verifier's other read, the platform config for the maintenance check, is ONE query and shared by
+every request in flight at once IN THIS PROCESS (`PlatformService.getConfig`, 2026-11-11: never a
+TTL cache, and a config write drops the shared read - another replica of core-service may still
+answer from a read it started before the write, for the time of that one query). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -487,7 +491,7 @@ it stays queued, and no drain-waiter line. A Decline that wins the race against 
 only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
 
 **The cases this record does not reach** are a design limit, listed with what covers them in
-[backlog](backlog.md#a-revoked-device-whose-refresh-cannot-name-its-revocation). Tests:
+[the verification table](backlog.md#owed-a-verification-and-nothing-else). Tests:
 `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,
 `auth.deviceRevoked.test.ts` (the named body, an HTML and an edge 401), `BaseMlsService.revokedFrame.test.ts`,
 `session/revokedDeviceReset.test.ts` (both orderings, the offline return, a late discoverer, a
@@ -718,17 +722,39 @@ which also holds **the contract a site implements**. This section is what Canari
   payload `iss` (the origin of `FRONTEND_URL`'s first entry), `aud` (the site id), `sub` (the
   MiConnect sub, which IS `users.id`), `jti` (128 random bits), `iat`, `exp = iat + 60`, `dest` (a
   path). Its own key, `HANDOFF_SIGNING_KEY`, never `JWT_SECRET`: a separate key and an explicit type
-  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only (F1): no claim
-  rides in it until the MiConnect read of the design note's F3 is proven.
+  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only: no claim
+  rides in it (the design note's `preview_user` read is not wired).
+- **MiConnect still decides who enters (F3-bound, 2026-11-11).** Before signing, the mint asks
+  MiConnect, through the READ-ONLY service account `miconnect-canari-handoff-reader`
+  (`infrastructure/authentik/blueprints/55-handoff-reader.yaml`, token `MICONNECT_READER_TOKEN`),
+  the INPUTS of the target application's access decision (`auth/handoff/handoff-access.ts`,
+  `miconnect-reader.client.ts`): the account by `users.miconnect_uuid` must be active, the
+  application (`miconnectApplication` in the registry) must have no enabled policy binding - nor
+  its provider's authentication and authorization flows, nor any stage binding of them - the
+  MiConnect user's `uid` must be the account's own id (the OIDC `sub`), the authorization flow must
+  ask no more than a signed-in user, and the tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
+  That is exactly when authentik's `check_access` answers passing; `check_access?for_user` itself
+  cannot be asked, because authentik 2026.8 honours `for_user` for a superuser only. A bound
+  application is REFUSED, never evaluated in Canari. Refusals are typed and logged
+  `[HANDOFF] refused class=<class> aud=<site> user=<sub>`: `not_linked`, `unknown_miconnect_user`,
+  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off` (403
+  `HANDOFF_ACCESS_REFUSED`, at warn), and
+  `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
+  `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
+  boot logs one `[HANDOFF_ACCESS]` line per handoff application, at warn when it has gained a
+  binding (its handoff is then refused until authentik can answer for a non-superuser). The
+  account's real API is proven in CI by `test-handoff-reader.py` (reads work, a binding added later
+  on the application, a flow or a stage is seen; another application, any write and any binding
+  change are refused). Production only: dev holds no reader token and refuses
+  `miconnect_not_configured`, by design.
 - **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
   core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
   normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
-  false**. A flag goes on only when core-service runs MiConnect's access check at mint (the user
-  active, `check_access` on the target application - without it a handoff bypasses MiConnect's
-  decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
+  false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
+  above - without it a handoff bypasses MiConnect's decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
   redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
   any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
   sections 0 and 3.7).
@@ -848,11 +874,10 @@ and clears the restore key on `SessionExpiredError`) through the unguarded deliv
 `syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
 
 **The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
-every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
-handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
-handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
-would still answer it `duplicate`). Both server-side corrections are a P3 in
-[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+every 401 comes from the guard, before any handler. Social-service's handler-level 401s are
+authentication only (its authorization refusals are 403s); a handler-level 401 added under `/api/mls`
+would turn a commit's resend into a second submission (the gate would still answer it `duplicate`).
+What each server answers a 401 for is below.
 
 `MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
 the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
@@ -869,3 +894,15 @@ The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended a
 its old epoch (TOK-1; what the commit gate makes of each outcome is in
 [mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
 `mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
+
+**What answers a 401 on the servers (2026-11-11, review of #2420).** An unset secret is the
+service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401, and the
+three header guards ask it FIRST, so a request with no header gets the same 500 - in
+chat-delivery's `HeaderAuthGuard` (`header-auth.guard.spec.ts`), the `NginxAuthGuard` of core- and
+social-service (`nginx-auth.guard.spec.ts`, 2026-11-12) and media-service's bearer check on an unset
+`JWT_SECRET` (`media.controller.verify-token.spec.ts`). An internal token that does not
+verify stays a 401 on purpose: the guard cannot tell an nginx fault from a caller that reached the
+container with forged headers, and the forged call is the one the 401 must answer. Social-service's
+two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user
+on a manage action); its authorization refusals are 403s (`refuseModeration`).
+

@@ -33,15 +33,8 @@
   import { suggestionIfHeld } from '$lib/sharing/shareDestinations';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { m } from '$lib/paraglide/messages';
   import type { Conversation } from '$lib/types';
-
-  // THE PICKER CAN OPEN OVER A FULL-SCREEN VIEWER (a live's link shared "via Canari" from the live
-  // viewer): this host is at the app root, outside the viewer's subtree, so the viewer's own mark
-  // never reaches it and the picker would open on `--z-modal`, under the viewer. Marked here, its
-  // modal takes `--z-viewer-dialog` (`utils/viewerLayer.ts`); with no viewer open nothing differs.
-  markViewerLayer();
 
   const pickerOpen = $derived(
     globalSession.isLoggedIn && incomingShare.pending !== null && incomingShare.target === null

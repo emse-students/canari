@@ -11,7 +11,7 @@
 import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import VideoPlayer from './VideoPlayer.svelte';
-import { videoSound } from '$lib/stores/videoSound.svelte';
+import { VIDEO_SOUND_KEY, videoSound } from '$lib/stores/videoSound.svelte';
 import { rememberVideoPosition } from '$lib/utils/videoResume';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
@@ -267,11 +267,11 @@ it('a finger moving over the player shows nothing by itself', () => {
 });
 
 /**
- * A TAP ANYWHERE ON THE PLAYER TOGGLES THE SOUND (owner, 2026-11-09) - anywhere meaning the black
- * around a letterboxed clip too (user, 2026-10-02) - and RAISES the bar, never hides it: the bar
- * goes by itself after the fade.
+ * A TAP ANYWHERE ON THE PLAYER NEVER MUTES (owner, 2026-11-10) - anywhere meaning the black around a
+ * letterboxed clip too (user, 2026-10-02): on a MUTED video it turns the sound ON, on any it RAISES
+ * the bar, never hides it - the bar goes by itself after the fade. Sound goes off by the speaker.
  */
-it('a tap on the black around the picture toggles the sound and raises the bar', () => {
+it('a tap on the black around the picture turns a muted sound on, then pauses - never mutes - and raises the bar', () => {
   vi.useFakeTimers();
   const { target, root, video } = mountPlayer();
   startPlaying(video);
@@ -289,7 +289,12 @@ it('a tap on the black around the picture toggles the sound and raises the bar',
   flushSync();
   expect(barShown(target)).toBe(false);
   tap(root);
-  expect(video.muted).toBe(true);
+  expect(video.muted, 'a tap on a video with sound never mutes it').toBe(false);
+  expect(videoSound.muted).toBe(false);
+  expect(
+    HTMLMediaElement.prototype.pause,
+    'the tap on a video with sound pauses'
+  ).toHaveBeenCalled();
   expect(barShown(target), 'a tap raises the faded bar').toBe(true);
 });
 
@@ -337,9 +342,22 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
 });
 
 it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
+  // A MOUSE, so the speaker's volume pill is rendered: it too wears the FLAT tint inside the bar.
+  const fine = (q: string) =>
+    ({
+      matches: true,
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
+  vi.stubGlobal('matchMedia', fine);
+  window.matchMedia = fine;
   const { target, video } = mountPlayer();
   video.dispatchEvent(new Event('loadeddata'));
   flushSync();
+  const pill = target.querySelector<HTMLElement>('[data-video-bar] [data-video-volume]');
+  expect(pill, 'the pill is rendered inside the bar').not.toBeNull();
+  expect(pill!.dataset.glass, 'and flat, with no blur of its own').toBe('flat');
   expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
@@ -468,7 +486,7 @@ it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
  * answer, remembered - with its glyph, and a press held pauses until released. Instagram's reel tap
  * pauses; Canari's does not, by decision.
  */
-it('minimal: a tap toggles the sound with its glyph, and plays or pauses nothing', () => {
+it('minimal: a tap turns a muted sound on with its glyph (no pause), and the next pauses, never mutes', () => {
   const { target, root, video } = mountMinimal();
   video.dispatchEvent(new Event('loadeddata'));
   startPlaying(video);
@@ -483,6 +501,13 @@ it('minimal: a tap toggles the sound with its glyph, and plays or pauses nothing
   );
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+  // The second tap (the owner's defect): the sound stays on, the reel pauses.
+  tap(root);
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted, 'a tap on a reel with sound never mutes it').toBe(false);
+  expect(videoSound.muted).toBe(false);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
 });
 
 it('minimal: a press held pauses the reel and the release resumes it', () => {
@@ -609,8 +634,9 @@ it('minimal: a refusal before the first frame draws the button over the black bo
   warn.mockRestore();
 });
 
-it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows the button', async () => {
-  // Lead decision 2026-11-04: the sound is the reader's explicit choice; a refusal never mutes.
+it('minimal: an autoplay WITH SOUND that is refused plays muted, WARNs, and keeps the stored choice', async () => {
+  // Owner, 2026-11-10: the viewer opens with sound where the app may; a refusal falls back to muted
+  // for this session (logged), the stored "on" kept, and a tap turns the sound back on.
   videoSound.setMuted(false);
   const blocked = vi.fn();
   const { target, video } = mountMinimal(true, null, blocked);
@@ -620,17 +646,13 @@ it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows th
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   video.dispatchEvent(new Event('loadedmetadata'));
   await settlePlay();
-  expect(play).toHaveBeenCalledTimes(1);
-  expect(video.muted).toBe(false);
-  expect(videoSound.muted).toBe(false);
-  expect(playButton(target)).not.toBeNull();
-  expect(blocked).toHaveBeenCalledWith('refused');
-  expect(String(warn.mock.calls[0][0])).toContain('with sound');
-  // The reader's press on the play disc plays it as it is - with the sound they chose.
-  (playButton(target) as HTMLButtonElement).click();
-  flushSync();
   expect(play).toHaveBeenCalledTimes(2);
-  expect(video.muted).toBe(false);
+  expect(video.muted).toBe(true);
+  expect(videoSound.muted).toBe(true);
+  expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  expect(playButton(target)).toBeNull();
+  expect(blocked).not.toHaveBeenCalled();
+  expect(String(warn.mock.calls[0][0])).toContain('with sound refused');
   warn.mockRestore();
 });
 
@@ -802,6 +824,71 @@ it('the line seeks where it is pressed once the duration is known, and not befor
   flushSync();
   press(150);
   expect(video.currentTime).toBe(30);
+});
+
+/**
+ * A STREAM WITH NO LENGTH YET STILL HAS A LINE (owner, 2026-11-11: CanaReels showed no seek line).
+ * Until its tail gives the source a length (`segmentedMediaStream`), the line maps onto what the
+ * engine can seek - what is buffered - and moves; the length, once set, takes over. The player says
+ * nothing of a stream's missing length at its metadata: the stream names why when it cannot learn it.
+ */
+it('a stream with no length maps its line onto what it can seek, then onto the length once known', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { target, video } = mountConversation('blob:undeclared-stream', true);
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200, top: 0, height: 32 }) as DOMRect;
+  const press = (x: number) => {
+    slider.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: x, pointerId: 1 })
+    );
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  };
+  const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  flushSync();
+  expect(info.mock.calls.map((c) => String(c[0])).join(' ')).not.toContain('no duration');
+  expect(slider.getAttribute('aria-valuemax'), 'the line maps onto the 8 s it can seek').toBe('8');
+  press(100);
+  expect(video.currentTime).toBe(4);
+
+  // The stream read 61 s from its tail and set it on the source.
+  withDuration(video, 61);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  expect(slider.getAttribute('aria-valuemax')).toBe('61');
+  press(200);
+  expect(video.currentTime).toBe(61);
+});
+
+it('the bar draws no buffered part until the length is known - never a full bar of "what is loaded"', () => {
+  const { target, video } = mountPlayer('blob:bar-stream');
+  const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('progress'));
+  flushSync();
+  const bufferedBar = () =>
+    target.querySelector<HTMLElement>('[data-video-bar] .bg-white\\/35')!.getAttribute('style');
+  expect(bufferedBar()).toContain('width: 0%');
+
+  withDuration(video, 16);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  expect(bufferedBar()).toContain('width: 50%');
+});
+
+it('a FILE that declares no length is said, naming that it is the file', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { video } = mountConversation('blob:undeclared-file');
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(info.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+    'the file declares no duration'
+  );
 });
 
 /**

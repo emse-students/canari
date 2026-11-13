@@ -264,28 +264,41 @@
       <div>
         <dt>Suggestions et activité de vos abonnements</dt>
         <dd>
-          Des personnes et des associations à suivre vous sont proposées à partir de ce que le
-          service sait déjà (les personnes suivies par celles que vous suivez, vos associations,
-          votre campus, votre formation et votre promotion) ; une suggestion que vous écartez ne
-          revient plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des
-          publications populaires de personnes de votre espace, que vous voyez déjà, peuvent
-          apparaître dans « Pour toi » marquées « Suggestion » ; cet onglet range les publications
-          selon leur fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans
-          autre donnée sur vous. Quand une personne que vous suivez réagit à une publication ou la
-          commente, vous en êtes prévenu une seule fois par publication, et seulement si vous voyez
-          déjà cette publication, sans blocage entre vous, ni avec son auteur lorsque la publication
-          le nomme ; jamais pour un commentaire anonyme, écrit au nom d'une association ou retiré
-          par la modération, ni pour un commentaire sur une publication anonyme. Vos réactions et
-          commentaires sont annoncés de la même façon à vos abonnés acceptés, sauf si vous
-          désactivez « Partager mon activité » dans les réglages (activé par défaut) : cela arrête
-          les annonces à venir, sans retirer celles déjà envoyées. Quand une publication de votre
-          espace (votre campus ou votre formation, jamais par un abonnement ou un accès nominatif)
-          fait réagir au moins quatre personnes dans les 24 heures qui suivent sa publication, vous
-          en êtes prévenu une fois, sans nom de personne ; son auteur ne l'est pas. Ces annonces ne
-          vous envoient pas plus de cinq notifications par jour ; les autres restent dans vos
-          notifications. Sont conservés : votre réglage, le fait qu'un lecteur a déjà été prévenu
-          d'une publication (jusqu'à l'effacement de la publication ou de son compte) et le nombre
-          de ces notifications reçues chaque jour (sept jours).
+          Les suggestions dans l'application sont activées par défaut et se coupent en un geste : le
+          réglage « Suggestions dans l'app » des notifications couvre les comptes à suivre, les
+          publications suggérées dans « Pour toi » et les tendances de la cloche ; désactivé, rien
+          de ce qui suit n'est calculé pour vous. Les notifications push de tendance sont
+          désactivées par défaut, y compris pour les comptes créés avant le 11 novembre 2026, et ne
+          vous sont envoyées que si vous les activez ; couper les suggestions dans l'app les coupe
+          aussi. Si vous aviez désactivé « Suggestions », les deux restent désactivés. Activées, des
+          personnes et des associations à suivre vous sont proposées à partir de ce que le service
+          sait déjà (les personnes suivies par celles que vous suivez, vos associations, votre
+          campus, votre formation et votre promotion) ; une suggestion que vous écartez ne revient
+          plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des publications
+          populaires de personnes de votre espace, que vous voyez déjà, peuvent apparaître dans «
+          Pour toi » marquées « Suggestion » ; cet onglet range les publications selon leur
+          fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans autre
+          donnée sur vous. Quand une publication de votre espace (votre campus ou votre formation,
+          jamais par un abonnement ou un accès nominatif) fait réagir au moins dix personnes dans
+          les 24 heures qui suivent sa publication, elle peut vous être suggérée par une
+          notification, une fois par jour et deux fois par semaine au plus ; son auteur ne l'est
+          pas. Cette suggestion peut nommer une personne que vous suivez (abonnement accepté) qui a
+          aimé la publication, et dire combien d'autres personnes l'ont aimée ; elle ne nomme jamais
+          l'auteur, ni une personne avec qui un blocage existe. Vous pouvez être nommé ainsi auprès
+          de vos abonnés acceptés quand vous aimez une publication qu'ils voient déjà, seulement si
+          vous activez « Partager mon activité » dans les réglages (désactivé par défaut). La
+          notification conservée chez votre abonné garde l'identifiant de votre compte, jamais votre
+          nom : votre nom n'y est affiché que tant que vous aimez toujours la publication, que le
+          partage est activé, qu'il vous suit et qu'aucun blocage n'existe entre vous ; l'effacement
+          de votre compte retire cet identifiant. Une notification déjà reçue sur un téléphone ne
+          peut pas être retirée. Les notifications non essentielles (suggestions, réactions et
+          commentaires sur vos publications, publications des personnes suivies, republications,
+          ouvertures de réservations et d'événements) n'arrivent pas plus de trois fois par jour sur
+          votre téléphone ; les autres restent dans vos notifications. Sont conservés : votre
+          réglage, le fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement
+          de la publication ou de son compte), le nombre de ces notifications reçues chaque jour
+          (sept jours) et le nombre de suggestions reçues chaque semaine (quatorze jours après la
+          fin de la semaine).
         </dd>
       </div>
       <div>
@@ -333,7 +346,10 @@
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
           l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
           est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
-          effacée quand plus aucun formulaire ne l'affiche.
+          effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
+          cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
+          formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
+          supprimé avec le formulaire.
         </dd>
       </div>
       <div>
@@ -507,6 +523,19 @@
           sert aussi à ne vous la rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez
           toujours pas de photo. Une copie est gardée sur l'appareil jusqu'à la suppression du
           compte ou la réinitialisation de l'appareil.
+        </dd>
+      </div>
+      <div>
+        <dt>Démineur</dt>
+        <dd>
+          Une partie « Libre » n'envoie rien. Pour une partie classée : la partie (sa grille, sa
+          taille, ses dates et son état) et, si vous gagnez, votre temps et votre nombre de coups.
+          Les classements, général et par promo, montrent à chaque membre connecté le nom, le
+          meilleur temps et le rang de chaque joueur classé ; le classement par promo montre aussi
+          la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure pas). Votre
+          profil affiche votre rang (badge « Démineur »). La modération peut retirer un score ou
+          exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur qui l'a
+          prononcée et sa date. Tout est supprimé avec votre compte.
         </dd>
       </div>
       <div>
@@ -811,7 +840,13 @@
           </tr>
           <tr>
             <td>Publications, commentaires, médias des publications</td>
-            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
+            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : un an</td>
+          </tr>
+          <tr>
+            <td>Démineur : parties classées, scores, exclusions du classement</td>
+            <td
+              >Jusqu'à la suppression du compte ; un score retiré par la modération est supprimé</td
+            >
           </tr>
           <tr>
             <td>

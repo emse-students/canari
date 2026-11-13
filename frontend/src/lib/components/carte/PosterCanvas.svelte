@@ -594,7 +594,7 @@
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={selected ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline={selected ? `${3 / visualScale}px solid var(--accent)` : 'none'}
           style:outline-offset="{4 / visualScale}px"
           style:border-radius="16px"
           onpointerdown={(e) =>
@@ -610,7 +610,7 @@
               style:top="{ink.y}px"
               style:width="{ink.w}px"
               style:height="{ink.h}px"
-              style:border="{2 / visualScale}px dashed #ef4444"
+              style:border="{2 / visualScale}px dashed var(--red-err)"
               style:border-radius="12px"
               style:pointer-events="none"
             ></div>
@@ -706,7 +706,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
                   visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
@@ -743,7 +743,7 @@
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={dsel ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline={dsel ? `${3 / visualScale}px solid var(--accent)` : 'none'}
           style:outline-offset="{4 / visualScale}px"
           style:border-radius="6px"
           onpointerdown={(e) =>
@@ -772,7 +772,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
                   visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
@@ -794,12 +794,12 @@
     <!-- Alignment guides: shown only during an editable drag, never rasterised (no active drag on export). -->
     {#if editable && snapLines.x !== null}
       <div
-        style="position:absolute;top:0;bottom:0;left:{snapLines.x}px;width:0;border-left:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+        style="position:absolute;top:0;bottom:0;left:{snapLines.x}px;width:0;border-left:1px dashed var(--accent);pointer-events:none;z-index:9999;"
       ></div>
     {/if}
     {#if editable && snapLines.y !== null}
       <div
-        style="position:absolute;left:0;right:0;top:{snapLines.y}px;height:0;border-top:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+        style="position:absolute;left:0;right:0;top:{snapLines.y}px;height:0;border-top:1px dashed var(--accent);pointer-events:none;z-index:9999;"
       ></div>
     {/if}
   </div>

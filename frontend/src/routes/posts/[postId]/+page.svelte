@@ -12,7 +12,7 @@
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
-  import { POST_COMMENT_PARAM } from '$lib/mobile/deepLinkRoutes';
+  import { POST_COMMENT_PARAM } from '$lib/posts/notificationTarget';
 
   let { data }: { data: { post: Promise<PostEntity | null> } } = $props();
 

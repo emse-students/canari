@@ -1,6 +1,7 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import type { GateName } from '$lib/utils/overlayStack';
   import { LoaderCircle, TriangleAlert, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
@@ -9,6 +10,9 @@
   interface Props {
     /** Whether the modal is visible. */
     open: boolean;
+    /** A pinned gate (`GATES_TOP_FIRST`): a fixed place above the whole normal stack, never open order. */
+    gate?: GateName;
+
     /** Called with the current and new PIN when the form passes local validation. */
     onSubmit: (currentPin: string, newPin: string) => void;
     /** Called when the user dismisses the modal. */
@@ -29,6 +33,7 @@
 
   let {
     open,
+    gate,
     onSubmit,
     onClose,
     externalError = '',
@@ -130,7 +135,7 @@
     'w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3 text-center text-lg tracking-[0.3em] font-mono focus:border-accent-icon focus:ring-2 focus:ring-accent/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50';
 </script>
 
-<Modal {open} {title} {onClose} footerEdge>
+<Modal {open} {title} {onClose} footerEdge {gate}>
   <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-5 p-1">
     <div class="border-accent/30 bg-accent/10 rounded-xl border px-4 py-3">
       {#if isRecover}

@@ -51,6 +51,14 @@ const COMMUNITY_REFUSALS: Record<string, () => string> = {
    * was in flight: nothing saved, and the same list would be refused again.
    */
   CHANNEL_GRANTEE_NOT_MEMBER: () => m.chat_channel_grantee_not_member_error(),
+  /** A community name that is empty, longer than 80 characters, or holds a control character. */
+  COMMUNITY_NAME_INVALID: () => m.chat_community_name_invalid_error(),
+  /** A name from which no address can be made (no letter and no digit in it). */
+  COMMUNITY_SLUG_INVALID: () => m.chat_community_slug_invalid_error(),
+  /** More communities created in the last hour than one account may. */
+  COMMUNITY_CREATION_RATE: () => m.chat_community_creation_rate_error(),
+  /** The account already holds as many communities as one account may. */
+  COMMUNITY_OWNED_LIMIT: () => m.chat_community_owned_limit_error(),
   /** A role change computed from a member another edit changed or removed since: nothing saved. */
   MEMBER_CHANGED_MEANWHILE: () => m.chat_community_member_changed_error(),
 };

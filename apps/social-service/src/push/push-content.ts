@@ -33,6 +33,8 @@ export type PushContentKey =
   | 'social_friend_reaction'
   | 'social_friend_comment'
   | 'social_campus_trend'
+  | 'social_campus_trend_photo'
+  | 'social_campus_trend_video'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -137,6 +139,9 @@ export type PushContent = {
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
+   * - `social_campus_trend`: the opening of the post's own text, EMPTY for a post with no text and
+   *   no picture or video (the device then words it "une publication"); `social_campus_trend_photo`
+   *   / `_video`: nothing, always empty
    * - `social_live_started`: nothing, always empty
    * - `social_live_mention`: the live's title, empty when it has none
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
@@ -154,6 +159,12 @@ export type PushContent = {
    *   event's title - EMPTY for a space reached by its link only (Q-R5)
    */
   arg: string;
+  /**
+   * A number the sentence needs, set by ONE key family only: the three campus-trend keys, where it
+   * is how many OTHER accounts reacted besides the named `actorName` ("et 9 autres"). Sent as
+   * `contentCount` (decimal) and absent everywhere else - absent means absent, as for the icon.
+   */
+  count?: number;
   legacyTitle: string;
   legacyBody: string;
   /** The picture to draw, when this push has one. See `PushIcon`. */
@@ -494,6 +505,7 @@ export function pushContentData(content: PushContent): Record<string, string> {
     contentKey: content.key,
     actorName: content.actorName,
     contentArg: content.arg,
+    ...(content.count !== undefined ? { contentCount: String(content.count) } : {}),
     // ONE FIELD PER KIND, and neither is emitted when there is no picture: an empty string in an
     // FCM data payload is a present key with a falsy value, which every native reader then has to
     // remember to test for. Absent means absent.
@@ -716,18 +728,74 @@ export function friendCommentContent(
   };
 }
 
+/** What a campus trend's post shows when it has no text: its first picture or video, or neither. */
+export type TrendMedia = 'photo' | 'video' | null;
+
 /**
- * A post of the recipient's space took off (engagement WP-10, campus trends): nobody acted in the
- * notice's name, so `actorName` is empty - an anonymous post stays anonymous; `arg` is the opening
- * of the post's own text.
+ * WHO OF THE READER'S FOLLOWED ACCOUNTS LIKED A TRENDING POST (owner, 2026-11-10: friends' activity
+ * is no longer a notification of its own - the trend names them instead): ONE of them by name, and
+ * how many OTHER accounts reacted to the post. `null` when none of the accounts the reader follows
+ * reacted (or none of them shares their activity).
  */
-export function campusTrendContent(preview: string): PushContent {
+export type TrendLikedBy = { name: string; others: number } | null;
+
+/** The French sentence of {@link TrendLikedBy}, for the legacy body - the devices word their own. */
+function likedByFrench(likedBy: NonNullable<TrendLikedBy>): string {
+  if (likedBy.others <= 0) return `Aimée par ${likedBy.name}`;
+  if (likedBy.others === 1) return `Aimée par ${likedBy.name} et 1 autre personne`;
+  return `Aimée par ${likedBy.name} et ${likedBy.others} autres`;
+}
+
+/**
+ * A post of the recipient's space took off (engagement WP-10, campus trends), told as a SUGGESTION
+ * (owner, 2026-11-10): the title is "Suggestion : " followed by the post's opening. A post with no
+ * text never reads as a colon followed by nothing: its first picture or video names it
+ * (`social_campus_trend_photo` / `_video`), and a post with neither text nor either - a poll, a
+ * file - takes the base key with an empty `arg`, which the device words "Suggestion : une
+ * publication".
+ *
+ * THE BODY NAMES THE READER'S FOLLOWED ACCOUNTS WHO LIKED IT, when any did (`likedBy`): `actorName`
+ * is that account's name and `count` how many others reacted, and the device words "Aimée par Léa et
+ * 9 autres" - one sentence per count form (none, one, several), chosen by every native table from
+ * `count`, so the plural is exact in French and English. With nobody to name, `actorName` is empty
+ * and the body the fixed "Une publication qui fait réagir votre espace" - an anonymous post stays
+ * anonymous either way: only REACTORS the reader follows are named, never the author.
+ */
+export function campusTrendContent(
+  preview: string,
+  media: TrendMedia = null,
+  likedBy: TrendLikedBy = null
+): PushContent {
+  const named = likedBy
+    ? { actorName: likedBy.name, count: Math.max(0, likedBy.others) }
+    : { actorName: '' };
+  const legacyBody = likedBy
+    ? likedByFrench(likedBy)
+    : 'Une publication qui fait réagir votre espace';
+  if (!preview && media === 'photo') {
+    return {
+      key: 'social_campus_trend_photo',
+      ...named,
+      arg: '',
+      legacyTitle: 'Suggestion : une photo',
+      legacyBody,
+    };
+  }
+  if (!preview && media === 'video') {
+    return {
+      key: 'social_campus_trend_video',
+      ...named,
+      arg: '',
+      legacyTitle: 'Suggestion : une vidéo',
+      legacyBody,
+    };
+  }
   return {
     key: 'social_campus_trend',
-    actorName: '',
+    ...named,
     arg: preview,
-    legacyTitle: 'Une publication fait réagir votre espace',
-    legacyBody: preview || 'Voir la publication',
+    legacyTitle: `Suggestion : ${preview || 'une publication'}`,
+    legacyBody,
   };
 }
 

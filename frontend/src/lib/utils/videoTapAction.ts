@@ -6,10 +6,12 @@
  *   sound and moved full screen to the expand chip; readers disliked it - the chip still opens it, the
  *   speaker chip is the sound. A feed video with no viewer to open (none handed down) keeps the sound
  *   tap, and plays a paused video too (no play button is drawn there).
- * - **reel** and **lightbox** (full screen): the tap is the SOUND (Instagram's Reels); the press held
- *   pauses - the hold is `videoGestures`', the same everywhere.
- * - **conversation** (a conversation's media viewer, owner 2026-11-10: "minimal like the CanaReels"):
- *   the tap PAUSES or PLAYS; the speaker is its corner chip.
+ * - **reel**, **lightbox** and **conversation** (full screen; owner, 2026-11-10, after "n'importe quel
+ *   clic sur l'interface coupe le son"): THE TAP NEVER MUTES. It PLAYS or PAUSES, as TikTok, YouTube
+ *   Shorts and Instagram Reels do since March 2026 (Instagram dropped tap-to-mute); a MUTED video's
+ *   tap turns the sound ON instead (the autoplay-refused case). Sound goes off through the speaker or
+ *   the `m` key only. A double tap (Reels: the like) calls no single tap, so it leaves playback as it
+ *   was. The press held pauses - the hold is `videoGestures`'.
  * - **chat** (a conversation's inline video): the first tap plays it, audible, as its disc does; once
  *   started the tap is its sound (its pause chip pauses).
  */
@@ -20,7 +22,12 @@ export type VideoTapAction =
   | 'open-viewer'
   | 'toggle-play'
   | 'toggle-sound'
-  /** The sound, then play: a feed video on screen but paused has no button to press. */
+  /** Full screen, a muted video: the sound comes on and the controls rise. Never the other way. */
+  | 'sound-on'
+  /**
+   * The sound, then play: a feed video on screen but paused has no button to press, and a full-screen
+   * video muted AND paused gets both from one tap (its toggle can only turn the sound on).
+   */
   | 'toggle-sound-and-play';
 
 export interface VideoTapState {
@@ -31,6 +38,8 @@ export interface VideoTapState {
   paused: boolean;
   /** A conversation's inline video has been played once. */
   started: boolean;
+  /** The element's sound is off. */
+  muted: boolean;
 }
 
 /** The answer to a tap on the picture - see the table above. Pure, so it is tested as a table. */
@@ -39,6 +48,7 @@ export function videoTapAction({
   canOpen,
   paused,
   started,
+  muted,
 }: VideoTapState): VideoTapAction {
   switch (variant) {
     case 'feed':
@@ -47,9 +57,11 @@ export function videoTapAction({
     case 'chat':
       return started ? 'toggle-sound' : 'toggle-play';
     case 'conversation':
-      return 'toggle-play';
     case 'reel':
     case 'lightbox':
-      return 'toggle-sound';
+      // Muted AND paused (an autoplay refused even muted, its play disc up): ONE tap gives both,
+      // never a tap for the sound and a second for the picture.
+      if (muted) return paused ? 'toggle-sound-and-play' : 'sound-on';
+      return 'toggle-play';
   }
 }

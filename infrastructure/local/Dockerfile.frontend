@@ -827,13 +827,10 @@ server {\n\
     return 204;\n\
     }\n\
     # THIS LOCATION OWNS ITS CORS HEADERS, AND THE UPSTREAM MAY NOT ADD MORE.\n\
-    # social-service allowlists localhost and 127.0.0.1 origins and echoes them\n\
-    # back with Allow-Credentials, so a request from a localhost origin left here\n\
-    # carrying TWO Access-Control-Allow-Origin headers - the echo and the star.\n\
-    # Two of that header is invalid: every browser blocks the response, and so\n\
-    # does the universal fetch in SvelteKit, which is how it surfaced: the\n\
-    # portal 503ing on every detail page in dev. One layer answers CORS here,\n\
-    # and the allowlist upstream is for the credentialed routes only.\n\
+    # One layer answers CORS on /api/public/: an origin the upstream lists would\n\
+    # otherwise leave here with TWO Access-Control-Allow-Origin headers, its echo\n\
+    # and the star, which every browser and SvelteKit's universal fetch refuse.\n\
+    # The allowlist upstream is for the credentialed routes only.\n\
     proxy_hide_header Access-Control-Allow-Origin;\n\
     proxy_hide_header Access-Control-Allow-Credentials;\n\
     add_header Access-Control-Allow-Origin "*" always;\n\

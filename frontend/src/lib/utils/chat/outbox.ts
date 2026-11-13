@@ -5,6 +5,7 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import type { StoredMessagePatch } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { editSupersedes } from './editPrecedence';
 import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
@@ -27,6 +28,7 @@ import {
 } from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ReleaseAnswer } from './uploadReleaseMarks';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
 import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
@@ -36,13 +38,21 @@ import {
   encodeAppMessage,
   mediaEncodingProtoField,
   mediaReelProtoFields,
+  mediaLoudnessProtoField,
   mediaKindToType,
   mediaPlaceholderProtoField,
   mkMedia,
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import {
+  applyEditToBody,
+  envelopeBodyText,
+  serializeEnvelope,
+  mkMediaEnvelope,
+  mkTextEnvelope,
+  parseEnvelope,
+} from '$lib/envelope';
 import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -98,6 +108,7 @@ import {
   requestLeaderHandover,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -268,6 +279,8 @@ export interface PreparedOutboxMedia {
   width?: number;
   height?: number;
   durationMs?: number;
+  /** The video's or voice note's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /**
@@ -342,6 +355,35 @@ interface StoredProofs {
   editProof?: RecordedAuthorship;
   deleteProof?: RecordedAuthorship;
   restoredUnverified?: boolean;
+}
+
+/**
+ * The body a sent message is stored with: the copy on screen, unless the STORED row holds a later
+ * edit, whose text then goes onto the sent body (`applyEditToBody`, so the attachment reference and
+ * the quote are the send's).
+ *
+ * WHY THE STORED ROW DECIDES (owner, 2026-11-11; review of #3368). The copy on screen is the
+ * flushing tab's: a leader flushing a follower's queued photo holds the caption typed at the tap,
+ * while the follower's edit is at rest, and writing the screen's body put the old caption back
+ * under a "modifie" mark that a reload then showed. The same holds for a text edited in a follower
+ * tab. Decided by `editSupersedes`, so a later edit held only in memory still wins.
+ */
+export function sentRowContent(
+  shown: { content: string; isEdited?: boolean; editedAt?: Date | number | null },
+  stored: Pick<StoredMessage, 'content' | 'isEdited' | 'editedAt'>
+): string {
+  if (!stored.isEdited) return shown.content;
+  const storedEdit = { editedAt: stored.editedAt ?? null, content: stored.content };
+  // An undated edit on screen has no clock to defend, so the stored one keeps it (editSupersedes).
+  const shownAt = shown.editedAt instanceof Date ? shown.editedAt.getTime() : shown.editedAt;
+  if (
+    shown.isEdited &&
+    typeof shownAt === 'number' &&
+    editSupersedes({ editedAt: shownAt, content: shown.content }, storedEdit)
+  ) {
+    return shown.content;
+  }
+  return applyEditToBody(shown.content, envelopeBodyText(stored.content));
 }
 
 /**
@@ -777,6 +819,7 @@ export function buildMediaMessage(
     ...(media.voiceNote ? { voiceNote: true } : {}),
     ...(ref.encoding ? { encoding: ref.encoding } : {}),
     ...declaration,
+    ...(media.loudness ? { loudness: media.loudness } : {}),
   };
   const proto = encodeAppMessage({
     ...mkMedia({
@@ -793,6 +836,7 @@ export function buildMediaMessage(
       ...mediaPlaceholderProtoField(media.placeholder),
       ...mediaEncodingProtoField(ref.encoding),
       ...mediaReelProtoFields(declaration),
+      ...mediaLoudnessProtoField(media.loudness),
       // THE MESSAGE THIS FILE ANSWERS, the same reference a text reply carries (a reply that gets
       // a photo attached stays a reply on both sides). Absent for an ordinary attachment.
       ...(replyTo
@@ -1474,7 +1518,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         [messageId],
         (current) =>
           mergeStoredMessage(current, {
-            ...(current.isDeleted ? {} : { content: m.content }),
+            ...(current.isDeleted ? {} : { content: sentRowContent(m, current) }),
             ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
             ...own_,
             ...(reactionSigned ? { reactions: reactionSigned(current.reactions) } : {}),
@@ -1518,12 +1562,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
 
-  /** Replace a message's rendered content in memory (queued media -> real attachment on send). */
+  /**
+   * Replace a message's rendered content in memory (queued media -> real attachment on send).
+   *
+   * A CAPTION EDITED WHILE THE FILE WAS QUEUED IS KEPT (owner, 2026-11-11): the real envelope is
+   * built from the queue entry, which holds the caption typed at the tap, and writing it whole put
+   * the old caption back on the author's screen. This is the SCREEN's half; what is written at rest
+   * is decided from the stored row in `persistSent` (`sentRowContent`), which also covers an edit
+   * made in another tab. The peers are not concerned: the edit's control frame names this message, so it waits behind it in the queue
+   * (`dependsOnAny`) and reaches them after it.
+   */
   function updateMessageContent(messageId: string, content: string): void {
     const found = findMessage(messageId);
     if (!found) return;
+    const held = found.convo.messages[found.idx];
+    // A tombstone is final: the attachment it replaced must not come back under it.
+    if (held.isDeleted) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… is deleted - its uploaded envelope is not shown`);
+      return;
+    }
+    const kept = held.isEdited ? applyEditToBody(content, envelopeBodyText(held.content)) : content;
+    if (kept !== content) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… keeps the caption edited while it was queued`);
+    }
     const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], content };
+    messages[found.idx] = { ...held, content: kept };
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -2012,6 +2075,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(prepared.width ? { width: prepared.width } : {}),
       ...(prepared.height ? { height: prepared.height } : {}),
       ...(prepared.durationMs ? { durationMs: prepared.durationMs } : {}),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
     if (storage) {
       const { blob: _blob, ...withBytes } = next;
@@ -2764,7 +2828,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       let proto: Uint8Array;
       let mediaContent: string | undefined;
       // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
-      let commitQuote: () => Promise<void> = async () => {};
+      let commitQuote: () => Promise<void>;
       if (entry.kind === 'media') {
         const media = entry.media;
         if (!media) throw new LocalAttachmentError('the queued attachment has no payload');
@@ -2811,7 +2875,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // THE LEAD MAY HAVE LEFT DURING THE AWAITS ABOVE (an upload, the gates): a page the browser
       // froze released the lock (`tabLeader.ts`, `watchPageLifecycle`) and resumed here. The entry
       // stays queued for the tab that leads now; the service refuses the same thing at the encrypt.
-      if (!getIsTabLeader()) throw new FollowerTabSendError(terminalId);
+      // The state's fact, as at the top of the flush: a tab promoted in place does not send either.
+      if (refusesCommitsHere()) throw new FollowerTabSendError(terminalId, 'lead-lost');
       // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
       // through `persistSent` and its own delete, and a withdrawal reading it there was answered
       // "never sent" for a frame the peers already had - so no `delete_message` went out.
@@ -3254,7 +3319,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // (WP-MULTITAB-1). Leadership already gated the WebSocket and `initializeConnection`; this is
     // the write path it never covered - the follower was observed flushing the LEADER's entry.
     // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
-    if (!getIsTabLeader()) {
+    //
+    // THE GATE IS THE STATE'S, NOT THE ELECTION'S (review of #3371): a leader promoted in place
+    // leads on a copy it loaded as a follower, and sends nothing until its promotion reload - the
+    // queue waits for the reloaded page, whose own first flush drains it. Asking "the leader" from
+    // there would ask this very tab.
+    if (refusesCommitsHere()) {
+      if (promotedSinceLoad()) {
+        log(
+          '[OUTBOX] Flush skipped - this tab has just become the leader and reloads; the reloaded page drains the shared queue.'
+        );
+        return;
+      }
       if (!saidFollowerHandsOver) {
         saidFollowerHandsOver = true;
         log(
@@ -4193,7 +4269,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       takesRerun = true;
       return;
     }
-    const { mimeType, size, fileName, width, height, durationMs, ...ref } = adopted;
+    const { mimeType, size, fileName, width, height, durationMs, loudness, ...ref } = adopted;
     const media: NonNullable<OutboxEntry['media']> = {
       ...take.media!,
       mimeType,
@@ -4202,6 +4278,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       width,
       height,
       durationMs,
+      loudness,
       uploadedRef: ref,
       adoptedRef: undefined,
       prepare: undefined,
@@ -4277,6 +4354,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         width: file.width,
         height: file.height,
         ...(file.durationMs ? { durationMs: file.durationMs } : {}),
+        ...(file.loudness ? { loudness: file.loudness } : {}),
         uploadedRef: file.uploadedRef,
       },
     };
@@ -4375,6 +4453,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(ref.width ? { width: ref.width } : {}),
       ...(ref.height ? { height: ref.height } : {}),
       durationMs,
+      ...(ref.loudness ? { loudness: ref.loudness } : {}),
     };
     const written = await writeTakeRow(takeId, (take) => {
       if (!take.take || take.take.state || takeWithdrawn.has(takeId)) {

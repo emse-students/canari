@@ -1044,7 +1044,12 @@ export class WebMlsService extends BaseMlsService {
     } catch (e) {
       throw new MlsCheckpointNotWrittenError('store', e);
     }
-    if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
+    if (
+      outcome === 'stale' ||
+      outcome === 'collision' ||
+      outcome === 'ended' ||
+      outcome === 'follower-tab'
+    )
       throw new MlsStateWriteRefusedError(outcome);
   }
 

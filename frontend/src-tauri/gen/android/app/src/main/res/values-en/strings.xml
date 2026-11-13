@@ -32,6 +32,8 @@
 
     <string name="notif_channel_new_message">New message in #%1$s</string>
     <string name="notif_new_message_from">New message from %1$s</string>
+    <string name="notif_new_message">New message</string>
+    <string name="notif_unnamed_group">Group conversation</string>
     <string name="notif_new_message_generic">You received an encrypted message</string>
 
     <string name="notif_mention_you">you</string>
@@ -74,8 +76,16 @@
     <string name="notif_social_friend_reaction_body">See the post</string>
     <string name="notif_social_friend_comment_title">%1$s commented on a post</string>
     <string name="notif_social_friend_comment_body">See the post</string>
-    <string name="notif_social_campus_trend_title">A post is taking off in your space</string>
-    <string name="notif_social_campus_trend_body">See the post</string>
+    <string name="notif_social_campus_trend_title">Suggestion: %1$s</string>
+    <string name="notif_social_campus_trend_body">A post your space is reacting to</string>
+    <string name="notif_social_campus_trend_untitled">Suggestion: a post</string>
+    <string name="notif_social_campus_trend_photo_title">Suggestion: a photo</string>
+    <string name="notif_social_campus_trend_photo_body">A post your space is reacting to</string>
+    <string name="notif_social_campus_trend_video_title">Suggestion: a video</string>
+    <string name="notif_social_campus_trend_video_body">A post your space is reacting to</string>
+    <string name="notif_social_campus_trend_liked_by">Liked by %1$s</string>
+    <string name="notif_social_campus_trend_liked_by_one">Liked by %1$s and 1 other</string>
+    <string name="notif_social_campus_trend_liked_by_many">Liked by %1$s and %2$d others</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
     <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>

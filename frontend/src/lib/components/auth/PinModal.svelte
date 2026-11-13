@@ -159,6 +159,8 @@
   }
 
   const displayError = $derived(externalError || internalError);
+  /** A returning person's refusal is the long banner (the mismatch text plus the recover link); the header's mark and lead make room for it. */
+  const compactHeader = $derived(useNumpad && !isFirstSetup && !!displayError);
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -235,6 +237,7 @@
 -->
 <Modal
   {open}
+  gate="PinModal"
   title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
   dismissible={false}
   phoneFullScreen
@@ -275,18 +278,23 @@
       class="m-auto flex w-full max-w-xs shrink-0 flex-col items-center gap-4 pt-2 pb-4"
     >
       <header class="flex flex-col items-center gap-2 text-center">
-        <div
-          class="bg-cn-ink flex size-16 items-center justify-center rounded-2xl border border-white/10 shadow-lg [@media(max-height:700px)]:hidden"
-          aria-hidden="true"
-        >
-          <img src="/favicon.svg" alt="" class="size-11 object-contain" />
-        </div>
+        {#if !compactHeader}
+          <div
+            data-pin-mark
+            class="bg-cn-ink flex size-16 items-center justify-center rounded-2xl border border-white/10 shadow-lg [@media(max-height:700px)]:hidden"
+            aria-hidden="true"
+          >
+            <img src="/favicon.svg" alt="" class="size-11 object-contain" />
+          </div>
+        {/if}
         <h1 class="font-body text-text-main text-xl font-semibold">
           {isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
         </h1>
-        <p class="text-text-muted text-sm">
-          {isFirstSetup ? m.auth_pin_setup_lead() : m.auth_pin_unlock_desc()}
-        </p>
+        {#if !compactHeader}
+          <p data-pin-lead class="text-text-muted text-sm">
+            {isFirstSetup ? m.auth_pin_setup_lead() : m.auth_pin_unlock_desc()}
+          </p>
+        {/if}
         {#if isFirstSetup && useNumpad}
           <p class="text-text-muted text-xs">{m.auth_pin_hint_setup_short()}</p>
         {/if}
@@ -311,6 +319,11 @@
           {/each}
         </div>
 
+        <!-- THE REFUSAL TAKES THE HEADER'S ROOM, NOT THE KEYPAD'S (iPhone 12, 390 x 844, 2026-10-22: the
+             three-line "PIN incorrect" banner plus its recover link pushed the `0` key below the fold).
+             While a refusal is shown the app mark and the lead line are not drawn - the title still says
+             where the person is - so the banner's height is paid by what the person no longer needs,
+             and the keypad stays where it was. -->
         <!-- The error's line is reserved, so a refusal does not push the keypad down. -->
         <div class="-mt-2 min-h-5 text-center">
           {#if displayError}
@@ -606,6 +619,15 @@
     justify-content: center;
     width: 4rem;
     height: 4rem;
+  }
+
+  /* A short screen (an Android 360 x 640, a small phone with a banner up) gets 52 px keys: still
+     above the 44 px floor, and a row of the keypad is 12 px shorter. */
+  @media (max-height: 700px) {
+    .pin-key {
+      width: 3.25rem;
+      height: 3.25rem;
+    }
   }
 
   @media (min-height: 800px) {

@@ -1,3 +1,3 @@
-version: 1.6.9
+version: 1.6.11
 
-Le fil a trois onglets, Associations, Pour toi et Campus, et se rouvre sur le dernier utilisé. Suivez une association ou une personne d'un geste partout, avec des suggestions de comptes. Anniversaires sur les profils, surnoms en conversation, nouveau lecteur vidéo, choix du style des emojis. Corrigé : un plantage pendant la recherche de GIF, le son d'un live dans une seule oreille.
+Les vidéos en paysage se regardent en plein écran : le téléphone tourne avec elles. Vidéos et messages vocaux jouent à un volume proche. On peut modifier la légende d'une photo ou d'une vidéo envoyée et mentionner quelqu'un par son prénom ou son nom. Les touches de volume déclenchent l'appareil photo. Sur une connexion lente, l'app s'ouvre plus vite. Corrigé : des conversations en double avec la même personne, un appel qui raccrochait en perdant le son.

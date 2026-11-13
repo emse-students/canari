@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount, tick, untrack } from 'svelte';
   import { ArrowLeft, ArrowRight, Check } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -51,7 +52,6 @@
   import { cotisationOptionsFor } from '$lib/forms/cotisationSettings';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -169,7 +169,7 @@
   );
   const lineCount = $derived(draft.slotMode === 'slots' ? wizardLines(draft).length : 0);
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
   const dayNames = $derived(weekdayNames(locale, 'long'));
   const shortDayNames = $derived(weekdayNames(locale, 'short'));
   const week = $derived(weekRunsOf(draft.rows));

@@ -8,6 +8,7 @@ import {
 } from '../push/push-content';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
+import type { NotificationType } from '../push/notification-client-floor';
 
 /**
  * THE GATE: the Lydia payments notices ship SWITCHED OFF, and only a pull request turns them on.
@@ -51,7 +52,7 @@ export const DELEGATION_RESUMED_TYPE = 'delegation_resumed';
 export type DelegationNotice = 'revoked' | 'receiver-not-ready' | 'resumed';
 
 /** The bell row's type of each notice. */
-export const DELEGATION_NOTICE_TYPES: Readonly<Record<DelegationNotice, string>> = {
+export const DELEGATION_NOTICE_TYPES: Readonly<Record<DelegationNotice, NotificationType>> = {
   revoked: DELEGATION_REVOKED_TYPE,
   'receiver-not-ready': DELEGATION_RECEIVER_NOT_READY_TYPE,
   resumed: DELEGATION_RESUMED_TYPE,

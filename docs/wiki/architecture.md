@@ -13,7 +13,7 @@ In production, Cloudflare Tunnel exposes `http://localhost:8080`, which forwards
 | **call-service** | Rust / Axum / webrtc-rs | 3004 | - | WebRTC SFU, Cloudflare TURN relay, keyframe recovery |
 | **chat-delivery-service** | NestJS | 3010 | PostgreSQL + Redis | MLS API, offline queue, Redis Stream history |
 | **media-service** | NestJS | 3011 | Garage | E2EE encrypted blob storage |
-| **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Stripe payments |
+| **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Lydia payments |
 | **social-service** | NestJS | 3014 | PostgreSQL | Posts, forms, channels/communities, associations |
 | Redis | - | 6379 | - | Presence, pub/sub, history streams |
 | PostgreSQL | - | 5432 | `auth_db` | Relational data |
@@ -38,11 +38,11 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots ([bookings-chantier](bookings-chantier.md)) |
 | `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](services/lives.md)) |
-| `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
+| `/api/associations/*` | `social-service:3014` | yes | Clubs (Lydia payment profile) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
 | `/api/users/*` | `core-service:3012` | yes | User profiles, search |
-| `/api/payments/*` | `core-service:3012` | yes | Stripe (checkout, webhooks) |
+| `/api/payments/*` | `core-service:3012` | yes | Lydia (checkout, callback) |
 | `/api/calls/ws` | `call-service:3004` | yes | WebRTC SFU WebSocket (call media relay) |
 
 ## Auth flow

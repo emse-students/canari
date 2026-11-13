@@ -11,6 +11,7 @@
   import {
     isBelowMinClientVersion,
     isMaintenanceBlockingCurrentUser,
+    isVersionVerdictSettled,
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
@@ -31,9 +32,15 @@
 
   // One ask per app opening, and only once there IS an account to ask on behalf of: the endpoint
   // is authenticated, so asking before sign-in would spend a 401 to learn nothing.
+  //
+  // AND ONLY ONCE THE VERSION VERDICT HAS SETTLED (2026-11-11): the ask draws the device's copy at
+  // once, and a below-minimum or maintenance gate decided a moment later would otherwise have the
+  // modal flash in front of it. `/api/version` needs no token, so on a slow link it settles well
+  // before the session refresh the ask waits for anyway.
   $effect(() => {
-    if (!currentUserId() || blocked) return;
-    void refreshAnnouncement();
+    const userId = currentUserId();
+    if (!userId || !isVersionVerdictSettled() || blocked) return;
+    void refreshAnnouncement(userId);
   });
 
   async function close() {
@@ -46,7 +53,7 @@
   }
 </script>
 
-{#if announcement && !blocked}
+{#if announcement && isVersionVerdictSettled() && !blocked}
   <Modal
     open={true}
     title={announcement.title}

@@ -19,7 +19,13 @@ import type { LiveLimits, LiveListItem, LiveManifest } from '$lib/live/types';
 import { VIDEO_SOUND_KEY, videoSound } from '$lib/stores/videoSound.svelte';
 import { setContentModerator } from '$lib/stores/userState.svelte';
 import { m } from '$lib/paraglide/messages';
+import { resetScreenOrientationForTest } from '$lib/mobile/screenOrientation.svelte';
 
+vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/appVersion')>()),
+  isAndroidTauriRuntime: () => true,
+  isIosTauriRuntime: () => false,
+}));
 vi.mock('$lib/components/shared/Avatar.svelte', async () => ({
   default: (await import('../reels/AvatarStub.test-helper.svelte')).default,
 }));
@@ -365,21 +371,27 @@ describe('LiveViewer', () => {
     expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
   });
 
-  /** THE TAP IS THE SOUND ON EVERY VIDEO (owner, 2026-11-09), the live's included, with its glyph. */
-  it('a tap on the picture toggles the sound and shows what it did', async () => {
+  /** A TAP NEVER MUTES (owner, 2026-11-10): it turns a muted sound on, with its glyph. */
+  it('a tap on the picture turns the sound on, shows it, and never turns it off', async () => {
     await render();
     const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
-    video.dispatchEvent(
-      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
-    );
-    video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
-    video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
-    flushSync();
+    const tapPicture = () => {
+      video.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
+      );
+      video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+      video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      flushSync();
+    };
+    tapPicture();
     expect(videoSound.muted).toBe(false);
     expect(video.muted).toBe(false);
     expect(document.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
       'sound-on'
     );
+    tapPicture();
+    expect(videoSound.muted, 'a second tap leaves the sound on').toBe(false);
+    expect(video.muted).toBe(false);
   });
 
   it("a dry buffer draws the kit's spinner over the last frame, and the next segment takes it away", async () => {
@@ -610,5 +622,35 @@ describe('LiveViewer', () => {
       .click();
     await settle();
     expect(chatDeps.hideMessage).toHaveBeenCalledWith(LIVE.id, 'm-1');
+  });
+
+  it('holds the orientation for its whole mount (auto) and gives it back on unmount', async () => {
+    const sent: string[] = [];
+    resetScreenOrientationForTest();
+    (window as Window & { canariOrientation?: unknown }).canariOrientation = {
+      set: (mode: string) => sent.push(mode),
+    };
+    await render();
+    expect(sent).toEqual(['auto']);
+    unmount(mounted.pop()!);
+    flushSync();
+    expect(sent).toEqual(['auto', 'portrait']);
+    delete (window as Window & { canariOrientation?: unknown }).canariOrientation;
+    resetScreenOrientationForTest();
+  });
+
+  it('draws the rotate button while playing and not on a final screen', async () => {
+    resetScreenOrientationForTest();
+    (window as Window & { canariOrientation?: unknown }).canariOrientation = { set: () => {} };
+    await render();
+    expect(document.querySelector('[data-rotate-button]')).not.toBeNull();
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    manifestErrors.push(refusal('ended', 410));
+    await render();
+    expect(stateOf()).toBe('ended');
+    expect(document.querySelector('[data-rotate-button]')).toBeNull();
+    delete (window as Window & { canariOrientation?: unknown }).canariOrientation;
+    resetScreenOrientationForTest();
   });
 });

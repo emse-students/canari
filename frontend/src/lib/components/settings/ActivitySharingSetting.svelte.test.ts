@@ -52,6 +52,10 @@ describe('ActivitySharingSetting', () => {
     await render();
     expect(drawn()).toBe('true');
     expect(document.body.textContent).toContain(m.settings_share_activity());
+    // Row layout shared with its neighbours: icon tile first, the switch after the text (right).
+    const row = document.querySelector('[data-activity-sharing-setting] label')!;
+    expect(row.firstElementChild?.querySelector('svg')).not.toBeNull();
+    expect(row.lastElementChild).toBe(switchEl()!.parentElement);
   });
 
   it('writes the flip and draws what the server stored', async () => {

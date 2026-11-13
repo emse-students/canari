@@ -936,7 +936,7 @@ test estate - and it is fixed anyway, because the ladder makes it unspellable.
 ### The rungs
 
 Declared in `app.css` in **ascending order**, so that reading the block is reading the stack. Markup
-says `z-(--z-modal)`; twenty-six call sites were converted.
+says `z-(--z-banner)`; twenty-six call sites were converted. **OVERLAYS ARE NO LONGER ON THE LADDER (2026-11-13): see "The overlay stack" below - the sheet, popover, side-panel, modal, guide, viewer and critical rungs were retired, and the toast moved from the 60 shown in the history below to 310.**
 
 | rung | value | what it is |
 | --- | --- | --- |
@@ -945,23 +945,61 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | `--z-page-overlay` | 40 | the chat's own banner stack (the day pill is its last row), the composer footer |
 | `--z-nav-drawer-scrim` | 42 | |
 | `--z-nav-drawer` | 44 | |
-| `--z-toast` | 60 | |
 | `--z-banner` | 120 | the window-scale banner column in the root layout |
-| `--z-sheet` | 160 | a surface a GESTURE opened: message actions, GIF and poll pickers |
-| `--z-popover-scrim` | 190 | |
-| `--z-popover` | 200 | anchored to a control: notification panel, emoji picker |
-| `--z-side-panel-scrim` | 255 | |
-| `--z-side-panel` | 260 | |
-| `--z-modal` | 280 | |
-| `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
-| `--z-viewer` | 300 | a full-screen media viewer |
-| `--z-critical` | 320 | a confirmation |
-| `--z-call` | 330 | the full-screen call, ABOVE a confirmation; and the banner column while a minimised call's bar is up ([calls](modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)); a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
+| `--z-toast` | 310 | the answer to what the reader just did, over every overlay; non-interactive |
+| `--z-call` | 330 | the full-screen call, ABOVE every overlay and any confirmation; and the banner column while a minimised call's bar is up ([calls](modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)); a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
 | `--z-tooltip` | 400 | follows the pointer, never interactive |
 | `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
 
-**A sheet sits above the banner deliberately.** A banner is ambient; a sheet is what the reader just
+**An overlay sits above the banner deliberately** (the stack starts at 200, the banner is 120). A banner is ambient; a sheet is what the reader just
 asked for.
+
+### The overlay stack - what is on top is what opened last (2026-11-13)
+
+Every overlay (dialog, sheet, popover, drawer, viewer, guide, confirmation) used to sit on a fixed
+rung, and "what a dialog opens must clear it" was enforced by naming one more rung and one more
+context reader per nesting (`utils/viewerLayer.ts` and the `--z-viewer-dialog` pair). That is gone.
+**An overlay REGISTERS when it opens and takes its z-index from its place in the open order; it
+RELEASES on close or destroy.** No component names a rung, so no nesting needs a new one.
+
+- `utils/overlayStack.ts` - the pure stack: `register(label)`, `release(id)`, `placeOf(id)`. A
+  z-index is `OVERLAY_Z_BASE` (200) plus two per overlay below it (each owns `z` and `zAbove = z+1`,
+  for a drawer's panel over its own scrim); the range ends at `OVERLAY_Z_LIMIT` (310, the toast).
+  Closing one below the top closes ranks; a later open lands on top. Past the capacity (55) the
+  overlay shares the last slot and `Log.w` accuses a leak. Logs at register and release.
+- `utils/overlayLayer.svelte.ts` - `useOverlayLayer(() => open, 'Name')` during initialisation:
+  registers in `$effect.pre` (so the first frame already has its z-index), releases when `open`
+  goes false and on destroy. Markup: `style:z-index={layer.z}`; the SidePanel sets `--overlay-z` to
+  `layer.zAbove` and `.side-panel` reads it.
+- Consumers (all of them): `ModalOverlay` (its `layer` prop is gone - sheet, modal and critical are
+  one overlay), `Modal`, `CommentsDrawer` (page-level only), `FloatingSurface`, `UserAutocomplete`,
+  `SidePanel`, `ComposerGifPanel` (full screen), `EventFormModal`, `PayerEmailPrompt`,
+  `GuideOverlay`, `FullScreenViewer`, `ReelViewer`, `CameraOverlay`, `LiveViewer`, `LiveOverlay`,
+  `MessageMobileActions`, `MessageEmojiPicker`, `ComposerEmojiPicker`, `PostActionsMenu`,
+  `GlassMenuButton`, `CommunityRailMenu`, `EcosystemLauncher`, `FormExportMenu`, `ReelActionRail`.
+- **The pinned gate tier.** The surfaces that stand between the person and the app take a FIXED
+  place above the whole normal stack and under the toast and the call, not an open-order one:
+  `BootGate` on top, then `PinModal`, `PinRecovery` (the recovery `ChangePinModal` in
+  `ChatBackgroundService`), `BiometricBottomSheet`, `BiometricEnrollSheet`. The membership is one
+  explicit allowlist, `GATES_TOP_FIRST` in `utils/overlayStack.ts`; a component passes `gate="..."`
+  to `Modal`/`ModalOverlay` and a name not on the list does not type-check. Nothing in the normal
+  stack can be drawn over a gate: a viewer mounted by a deep link or a push tap while the PIN is up
+  stays under it, and the PIN opened while the boot gate is up stays under the boot gate (tests in
+  `shared/overlayLayer.svelte.test.ts`). The normal stack's capacity is what is left below the tier.
+- `useOverlayLayer` registers on a DERIVED boolean, so a signal `isOpen` reads (a dropdown's result
+  count) changing while it stays open never re-registers it above a later dialog; and a released
+  overlay HOLDS its last z-index, so a node playing a `transition:` outro (SidePanel,
+  FloatingSurface, MessageMobileActions) is not dropped to `auto` mid-outro. Both are tested.
+- What stays on the ladder: navigation (rail, drawer, their scrims), the page layers, the banner
+  column, the toast, the call, tooltips, the skip link.
+- Behaviour changes to know: a confirmation raised BEFORE another overlay opens is now under it
+  (it used to be pinned above); the call (330) still covers every overlay; the toast (310) covers
+  every overlay including a confirmation.
+- Gates: `layerLadder.test.ts` fails on a `z-(--z-x)` naming a rung that is not on the ladder (a
+  retired one) and on a keyboard-aware overlay without `style:z-index`; `callBarLayer.test.ts`
+  holds the stack's limit under `--z-call`; `shared/overlayLayer.svelte.test.ts` mounts the real
+  components (a dialog over a viewer, a picker in a modal or a drawer, a popover in a nested modal,
+  release on destroy).
 
 **AND A RUNG IS NOT A RESERVATION.** `--z-banner` says what the column paints OVER; it says nothing
 about what the column DISPLACES, and until 2026-09-14 the answer was nothing at all: the column was
@@ -2556,8 +2594,9 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+The two window-scale banners (`MaintenanceAdminBanner`, `MlsFatalErrorBanner`; `EnvironmentBanner` was the first until 2026-11-11, when the test-environment mark became a badge on the logo in `CanariBrand`;
+`OfflineBanner` was the fourth until 2026-11-11, when the connection became a ring on the header avatar -
+[offline-and-weak-network](offline-and-weak-network.md#the-connection-ring-owner-2026-11-11); `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
 its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
 all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-2` (0.5rem on all four sides; it was `m-3`
@@ -3338,7 +3377,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.d/p2-the-tab-swipe-on-a-slow-start-both-causes-fixed-owed-a-real-finger.md)).
+touch must be the one the gesture claims ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.
@@ -3465,3 +3504,13 @@ Section labels, badges, table headers and profile chips were set in capitals wit
 ## The profile header holds its name (2026-11-09)
 
 Owner, on a ~1100 px desktop: the display name wrapped onto two lines and the action row was drawn over the second one. `ProfileHeader` (`lib/components/profile/ProfileHeader.svelte`) is now the header of `/profile/[id]` and `/profile` both: two siblings of a wrapping flex container, the identity (avatar, name, chips; `min-w-0`, basis 26 rem) and the action row (`shrink-0`). When both do not fit on one line the actions drop below at every width, and nothing in the header is positioned absolutely - the own profile's corner settings icon, which reserved `sm:pr-12` on the name, is now a "Parametres" button of the row. The row is 44 px targets: "Suivre"/"Abonne" (primary only while the reader does not follow, then "Message" is the one yellow button), the bell as an icon of its level (`AccountBell iconOnly`, the same Picker menu), and a "..." (`ProfileOverflowMenu`) holding report and block (block stays red). Chips are `whitespace-nowrap` and the row of chips wraps. Below `sm` the identity stays the centred column of 2026-09-14. Guards: `ProfileHeader.svelte.test.ts` (structure), `ProfileOverflowMenu.svelte.test.ts`, the icon-only case of `AccountBell.svelte.test.ts`.
+
+## The PIN gate's banner takes the header's room (2026-11-13, roadmap D063)
+
+On a 390x844 screen a refused PIN draws a three-line banner plus the recover link above the keypad,
+and the `0` key fell below the fold of the scroll region (the unlock button is in the footer, outside
+it). While a returning person's refusal is shown on the keypad, `PinModal` no longer draws the app mark
+and the lead line (`data-pin-mark`, `data-pin-lead`; the title stays), so the banner's height is paid
+by what the person no longer needs, and the keypad keeps its place. Under 700 px of height the keys
+are 52 px (above the 44 px floor). Structure is pinned by `PinModal.exits.svelte.test.ts`; the drawn
+position is owed an iPhone 12 reading with a refused PIN.

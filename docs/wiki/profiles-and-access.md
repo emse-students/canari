@@ -159,6 +159,11 @@ application computed from the same profile, so no application keeps a hard-coded
   formation. Reaching beyond it (an ICM Saint-Etienne association addressing the FSSS) is set by an
   admin on the association, and a nominative permission may WIDEN one post (the rare inter-campus
   case).
+  **AMENDED FOR INSTITUTIONS ONLY (owner, 2026-11-10): an institution CHOOSES the reach of each
+  post** - the spaces it targets, inside the audience the admin gave it (never wider: the server
+  refuses anything else), and the public in them (Tous / Étudiants / Personnel), with no default and
+  editable after publishing both ways. Associations, lists and personal posts keep the rule above
+  ([as built](#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
 - **D20 - A new publishing entity type, "Institution"** (Ecole, ME, Alumni association), beside
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
@@ -1719,6 +1724,34 @@ predicate carries that exclusion once, and moderation reads it (proved in
   the platform admin's edit of another person's post refused), the moderation and lives controller
   specs.
 
+### The agenda's space filter (owner, 2026-11-10)
+
+A reader whose signed-in agenda reaches SEVERAL spaces narrows the VIEW to one campus or one
+formation. It replaced the "Association" select of `/calendar`, which named nothing a reader thinks
+in; an association is still reached from its own page, and a `?association=` deep link keeps working
+(the remembered space is ignored while it is active, and a "show everything" button resets both).
+
+- **Options** come from `GET /api/associations/calendar/spaces` (signed in), `AGENDA_REACHED_SPACES_SQL`
+  (`reader-spaces.ts`): the reader's OWN spaces; the spaces addressed by the rules of an association
+  they are a MEMBER of (D21); and, for a read grant, the spaces of a ticked cell that an association
+  addresses. **The (NULL, NULL) "everyone" rule addresses no space here**, and an association merely
+  visible through its rules adds nothing - otherwise every reader would get every option. So a
+  one-space student reaches one space (filter hidden); a student who joined an association of another
+  space, or staff or an admin with read grants over several spaces, reach those.
+  `agendaSpaceOptions` (`calendar/agendaSpaceFilter.ts`) lists "Tous les espaces", the campuses, then
+  the formations, **drops an axis with a single value (its option would equal "all") and hides the
+  control when fewer than two choices remain**.
+- **An event visible only through membership (D21)** whose association does not address the chosen
+  space is hidden under that filter: the narrowing keeps events by the spaces their association
+  addresses, not by who may read them.
+- **Narrowing** is the feed's existing `campus=` / `formation=` query (`restrictToSelection`,
+  `eventReachesSpaceMatchingSql`), applied on top of `restrictToViewerSpaces`: it can only shrink the
+  answer. It is a view setting and decides nothing about access.
+- **Remembered per reader** in `localStorage` (`ACCOUNT_KEY.agendaSpaceFilter`, swept with the
+  account). The first month is asked with the remembered value; a value the reader's spaces no longer
+  offer is dropped and the month re-read. The subscribe link and the PDF export keep their own
+  selectors (D40) and do not follow this filter.
+
 ### D40 closed - no event is published to an anonymous reader (2026-11-02)
 
 **Decided by the owner (2026-11-02):** only what the student portal shows is public, and it shows no
@@ -1877,9 +1910,208 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 
 Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
 
+### Follow requests, member reposts and visibility between spaces - the decisions of 2026-10-25, all shipped
+
+**Closed 2026-11-11 (backlog triage, batch 11):** WP-F1 to WP-F7 all shipped - F1-F4 in `1.5.1`, F5 in `1.5.4`, F6 in production since `v1.6.1`, F7 done - and the review's open items are built (the three lists page by cursor; a save keeps the categories its build does not know, `unknownDisabled` in `notifications/preferencesApi.ts`; the unblock severs first) or moot (the `minClientVersion` question: the floor is `1.6.6`). The record below is the plan as decided, kept as the history of these sections.
+
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 IN PRODUCTION since `v1.6.1` (#2859, migrations 121 and 123; hardened by #2917, and #2920 made the posts of lists and members-only associations non-repostable).** Today following a person is free and
+silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
+author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
+[profiles-and-access](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
+
+#### The decisions
+
+1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
+   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an
+   association or an institution that addresses at least one space is reposted without asking;
+   never the post of a list or of a members-only association (owner, 2026-11-02). Never an anonymous post. A block
+   applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
+   enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
+   only to readers who NEWLY see the post (the D38 rule).
+2. **Follow requests.** Following a PERSON becomes a request the person accepts or refuses.
+   Associations, lists and institutions stay free to follow, with no acceptance phase. Students are
+   PRIVATE by default (requests to approve), every other profile public (accepted automatically);
+   each user may change their own setting.
+3. **Existing follows are kept**, recorded as accepted. Every user gets a followers list with a
+   "remove follower" action. The processing goes into the register (C5) and the privacy policy.
+4. **Visibility opens to accepted followers.** The user: *"Si on garde le systeme d'acceptation,
+   pas la peine d'avoir des barrieres, meme entre espace, campus, formation etc. On peut ouvrir les
+   vannes de visibilite je pense."* With acceptance in place, a personal post is visible to its
+   author's ACCEPTED followers whatever their space, campus or formation, and the D34-D36 rule
+   "personnel never see a student's personal post"
+   ([profiles-and-access](#d34-d36---who-is-who)) no longer holds for a
+   personnel the student accepted. Read grants (WP7) stay out of the personal branch.
+5. **The opening reaches ONLY accepted followers** (user, 2026-10-25, answering the lead's open
+   question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
+   what the author approved, one person at a time.
+
+#### Follow requests: the four product rules taken on 2026-10-25, all of it still to build
+
+- **Q1 - ALL PERSONAL ACCOUNTS ARE PRIVATE** (user: *"Tous les comptes sont prives alors. Pas besoin
+  de faire de distinctions entre les comptes."*). Following any PERSON is a request the person
+  accepts; there is no public/auto-accept variant, no per-profile default and no setting to switch
+  it. Entities (associations, lists, institutions) stay free to follow. "Private" governs who may
+  FOLLOW; space visibility of the Tout feed is unchanged. This SUPERSEDES decision 2's "students
+  private by default, every other profile public, each user may change it" and removes the setting
+  from WP-F1.
+- **Q2 - A member's repost of an ENTITY post DOES widen its audience** to the reposter's followers
+  (user: "Oui, jusqu'aux abonnes du membre"). The repost still needs no consent from the entity,
+  never covers an anonymous post, and obeys blocks both ways and the hide cascade. WP-F6 and WP-F5
+  must treat it as a disclosure change: Opus security review, and the repost's reach is the
+  reposter's ACCEPTED followers only.
+- **Q3 - Minors: moot.** With one rule for every person, no age-based or profile-based distinction
+  exists to confirm; none is stored or added.
+- **Q4 - A private account stays findable** by name in search and suggestions and can be asked; its
+  posts reach only accepted followers (plus the space rule, per Q1).
+
+#### Confirmed by scenario with the user (2026-10-25) and three ideas that came with it
+
+Checked with four cases: a student asks a student, a staff member asks a student (same rule, no
+exception by profile), two people sharing a space still see each other's posts in the space feed
+without following, and a member's repost (author consent given) reaches the reposter's followers
+even when they do not follow the author. **New, from the same answers:** (a) the "Tout" tab renamed "Mon espace" and (b) the information
+button explaining each tab are BUILT (#2857); (b) now MOVES into guided help as a hint on the tab
+bar, and (c) a broader tutorial on the first open after an update is decided as the "what's new"
+help, both in [guided-help](frontend/guided-help.md#owner-decisions-of-2026-11-03).
+
+#### The work packages, in order: one small pull request each, its starting point and its proof
+
+Planned 2026-10-27 against `main` at `a97e1cea5`. **Releases, not merges, are the unit that
+matters here:** WP-F1 to WP-F4 and WP-F7 reach users in ONE stable - F1 alone would turn every new
+follow into a request nobody can answer - and that stable carries a data migration, so it ships on
+the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages marked DISCLOSURE
+(F5, F6) get an adversarial Opus security review before the lead arms them**; the others get the
+ordinary review.
+
+- **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
+  draft pull request #2589.** Migration 114 adds `user_follows.status` (`pending` / `accepted`, a
+  CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
+  writer that forgets the column fails closed; a partial index on what is pending FOR a person
+  serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
+  `{ ok, status }`; `DELETE` unfollows or withdraws; `GET .../follow-status` answers
+  `{ following, status }` (`following` kept true for a request, for older clients -
+  [legacy-compatibility](legacy-compatibility.md)). NO setting (Q1). Old WP-F2 is folded in, because
+  a pending row read as a follow would be a leak the day F1 merges: the Suivis arm
+  (`getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`), the personal
+  republication's newly-reached rule and the live push (`liveAudienceSql`) all AND ONE fragment,
+  `acceptedFollowSql` (`follows/follow-status.ts`); the erasure and the block severing delete
+  whatever the status. Proof: `user-follow-status.integration.spec.ts` (existing rows accepted,
+  replay a no-op, a status-less insert pending, the CHECK), a pending follower in the reader-spaces,
+  personal-republication and lives PostgreSQL specs - all three fail when the fragment is `TRUE` -
+  and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
+  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
+- **WP-F2 - the request API: inbox, accept, refuse, and the one notification. BUILT, draft pull
+  request #2601, stacked on #2589.** Start:
+  `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
+  queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
+  the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
+  a concurrent withdraw cannot be accepted), `POST .../refuse` (the row is deleted; a refusal tells
+  nobody and does not stop a later ask). A new request notifies ONE person through the existing
+  `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the
+  native renderers, NOT in `MUTABLE_PUSH_TYPES`); an acceptance notifies the requester
+  (`follow_accepted`) - each at most ONCE per pair, from a `user_follow_notices` row (never a
+  clock), and the ask route is throttled per caller. An ask of an id that is not a person is 404
+  `FOLLOW_TARGET_NOT_FOUND`, an ask across a block 403 `FOLLOW_BLOCKED`, both decided inside the one
+  `INSERT ... SELECT`. The block severing deletes both directions whatever the status, and the
+  request bell rows with them: a spec pins it.
+  Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
+  `post-notifications` spec for the two types, and the block case.
+- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked
+  on #2601.** `GET` my ACCEPTED followers (a person sees
+  only their own list), `DELETE` one of them (the row goes, the removed person is told nothing and
+  may ask again), and `GET` my own outgoing requests so a request can be withdrawn from a list.
+  Start: `FollowsService`, the controller. Proof: a spec that a removed follower drops out of the
+  Suivis arm, the announce and the live push at once (the F1 readers), and that one person cannot
+  read another's list.
+- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).
+  BUILT, draft pull request #2616 (stacked on #2605).** As built: the inbox is
+  `/notifications/follow-requests` (banner on `/notifications`, host `follow-requests`); "Mes
+  abonnes" is the profile section `followers`, with the sent requests under it; the push renderers
+  were F2's; a `follows` notification category with its switch; the rig row is FOL-REQ-1 on
+  [cross-client-testing](cross-client-testing.md). The plan as written:
+  The profile button in three states (Suivre / Demande envoyee / Abonne(e)), reading `status`; the
+  request inbox beside the D38b requests in the notifications screen (accept / refuse); "Mes
+  abonnes" with "Retirer" in the profile; the bell rows of `follow_request` / `follow_accepted`
+  and their push renderers (Kotlin, Swift, web). Start:
+  `frontend/src/routes/profile/[id]/+page.svelte:175`, `frontend/src/lib/posts/api.ts:669`.
+  Proof: component tests, `bun run check`, and a rig row (two contexts: ask, see "Demande envoyee",
+  accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
+  until the floor passes this stable.
+  **Left open by the 2026-10-27 review, each owed before the item it names:**
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5 - BUILT 2026-10-31 on the WP-F5 pull
+    request**: cursor paging, server and client ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
+  - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
+    the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
+    through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
+    that saves any switch silently re-enables `follows` - and the same holds for every category
+    added after a build shipped. The server cannot tell what the caller knew: the fix is a client
+    that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
+    builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
+    window is a person who turned `follows` off on a new build and then saves a switch on an old one.
+  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
+    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
+    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
+    leaks - the reader filters are server-side - but the person asked can only answer from a new
+    build. A decision for the user when the stable is cut, with the share of old clients measured
+    from the version header then.
+  - **A row the block severing missed came back when the block was lifted - FIXED 2026-10-31 on
+    the WP-F5 pull request (F2 of its review)**: the unblock severs the pair before lifting the
+    block and is refused while it cannot ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
+  - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
+    one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
+- **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
+  arming). MERGED as #2827, ships in `1.5.4`** (owner reconfirmed 2026-10-31):
+  [as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
+  the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
+  WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
+  cursor; the security review's F2-F6 are fixed on the same pull request; F1 is DECIDED (owner,
+  2026-11-01: *"Ouvrir à tous les abonnés"*): follows made before follow requests existed open
+  across spaces like answered ones. **Still owed before it arms**: the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
+  someone must not unmask what they posted anonymously), never through a read grant, and monotone
+  for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
+  (decision 5). Ships only in a stable AFTER the one carrying F3 and F4, with a one-time notice to
+  every person that their followers will see their posts across spaces, so the grandfathered
+  followers can be pruned first. Proof: an integration matrix (accepted / pending / none x same
+  space / other space x personal / anonymous / association post), the read-grants spec unchanged,
+  and the privacy-policy paragraph in the same pull request.
+- **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
+  review before arming). IN PRODUCTION since `v1.6.1` (#2859, migration 121), hardened by #2917 (migration 123); since #2920 the posts of lists and members-only associations are not repostable**
+  ([as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
+  it changed who sees what, and shipped on the owner's go. The plan as
+  written: The consent setting (per author, per post); the SQL beside the
+  republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
+  on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
+  reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;
+  the cascades (hide, delete, block, erasure); feed placement in Suivis at the repost time; the
+  D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
+  Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
+  notification only for the newly reached, and the policy paragraph in the same pull request.
+- **WP-F7 - the register and the privacy policy for follow requests. DONE 2026-11-02.** The text
+  rode with the code: register C5 and the `/legal/privacy` paragraphs (follows, member reposts,
+  retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
+  the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
+  and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
+  `user_repost_settings`) and found them exact; #2917 and #2920 had already amended C5 and the
+  privacy page in step ("notified, or announced to, through a repost"; lists and members-only
+  associations not repostable), so this package changes neither. The terms (`/legal/cgu`) name followers only for
+  lives and need nothing; the D37-D41 table of
+  [profiles-and-access](#d37-d41---what-each-surface-shows) was the one stale
+  line, now corrected.
+
+#### Risks, and what proves each away
+
+- **Disclosure.** WP-F5 widens who reads a personal post. Grandfathered follows were never
+  consented to, so the predicate change must not land before the followers list and "remove
+  follower" are live, and each user should be told once that followers now see their posts across
+  spaces. Proof: WP-F5's matrix, and the Opus review.
+- **Notification volume.** A follow request is one push to one person; a repost notifies only the
+  newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
+  Proof: the newly-reached spec counting zero for readers who already saw the post.
+
 ### WP-F5 - accepted followers read across spaces, as built (2026-10-31)
 
-Decisions 4 and 5 of the [follow requests](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)
+Decisions 4 and 5 of the [follow requests](#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)
 (user, 2026-10-25, reconfirmed 2026-10-31): a PERSONAL post, and a personal LIVE, are visible to
 the author's ACCEPTED followers whatever their space, campus or formation; the opening reaches
 nobody else.
@@ -1966,7 +2198,7 @@ nobody else.
 
 ### WP-F6 - member reposts with the author's consent, as built (2026-11-01)
 
-Decision 1 and Q2 of the [follow requests](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)
+Decision 1 and Q2 of the [follow requests](#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)
 (user, 2026-10-25); the consent's shape is the owner's of 2026-11-01: a PER-AUTHOR setting
 "Autoriser mes abonnés à republier mes posts", ON by default, plus a per-post override. A PERSON
 republishes a post, reels included, to THEIR OWN accepted followers. A disclosure change: Opus
@@ -2305,8 +2537,17 @@ WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Ca
 
 ### The students-only switch, as built (owner, 2026-11-04)
 
-The owner's eight decisions are in the [backlog entry](backlog.d/p2-a-students-only-switch-on-association-posts.md);
-the rule in one line: an association's or a list's post may be marked "Entre étudiants" when it is
+The owner's decisions (2026-11-04; an audience chosen per post was weighed and turned down as too
+heavy, the association's audience stays the base): (1) one switch when publishing, "Entre
+étudiants", OFF by default, no per-association default; (2) the rule is on WHO READS, never on how
+the post travels - republication, member reposts and pins stay allowed; (3) a student is an
+account with a cursus (a campus and a formation, so a space); (4) it complements the comments
+withheld from named readers, who see nothing of such a post; (5) the author may change it after
+publishing, both ways, at once; (6) the post and its event are independent; (7) associations and
+lists only; (8) a republished post keeps its chip and its rule, with no block or warning. The
+owner's requirement on the result: clear, clean and as user-friendly as possible - one switch, one
+line saying who will and will not see the post, a chip on the card, no new screen.
+The rule in one line: an association's or a list's post may be marked "Entre étudiants" when it is
 published and changed afterwards both ways, and is then read only by STUDENTS and by the MEMBERS
 OF THE ASSOCIATION THAT PUBLISHED IT, whatever the path. Staff without a cursus and named readers
 see nothing of it. OFF by default, for every author.
@@ -2425,4 +2666,165 @@ revisit them:**
   post by id, its comment page and a comment's moderation, the routes a platform admin calls as
   one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
   admin without a cursus cannot act on a post they could not read.
+
+### An institution's reach per post, as built (owner, 2026-11-10)
+
+**The owner's decisions (2026-11-10)**, amending D19 for institutions only:
+
+1. **Spaces.** The institution ticks the spaces (formation x campus) the post targets, with the
+   shortcuts "a whole campus" and "a whole formation" - never wider than the audience the admin
+   gave the institution; the server refuses anything else (typed, at the throw).
+2. **Public**, a second choice: **Tous / Étudiants / Personnel** - everyone in the ticked spaces,
+   only students (an account with a cursus), or only staff (no cursus).
+3. **No default.** Nothing is pre-selected; "Publier" stays disabled until both are chosen.
+4. **Editable after publishing, both ways.** Narrowing withdraws the post from the excluded readers
+   at once, widening gives it back; an edit sends no new notification.
+5. **Everything a post reaches follows the rule** - feed, search, the post by id, comments,
+   reactions, votes, notifications and announcements, trends - so it lives in the ONE visibility
+   predicate. An event announced by the post keeps its own visibility.
+6. "Clair, propre, user-friendly": one compact block.
+
+Shipped in `1.6.10` (#3314); the readings owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else).
+
+The rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
+targets and the public in them (everyone, the students, the staff), with no default, and may change
+both after publishing, both ways. Associations, lists and personal posts keep D19. It is the posts
+half of the reform's C1 / WP-I ([reform section 3](spaces-and-audiences-reform.md#3-per-item-audience-for-institutions-only-c1)).
+
+
+
+**Schema - migration `162_institution_post_reach.sql`, plain (not held).** Two nullable columns on
+`posts`, no new table: `"reachPublic"` (`'all' | 'students' | 'staff'`) and `"reachSpaces"` (a jsonb
+array of `{formation, campus}` pairs). Three CHECKs, added `NOT VALID` then validated (every row is
+NULL): the two are set together or not at all, and only on an entity's post; the public is one of
+the three; the spaces are a non-empty array. NULL on both is every post that is not an
+institution's, and every institution post written before the file - read as the institution's whole
+audience, everyone, which is what it was published to. **No backfill.** Two columns rather than the
+`post_audiences` table section 3 sketched: the reach is written and edited with the row, in its own
+statement, with nothing to keep consistent across tables, and read by containment (`@>`) exactly as
+`users.cursus` is - a malformed value contains nothing, so it fails closed. Concrete pairs rather
+than NULL-wildcard rules: the shortcuts are the composer's, and "a whole campus" is stored as the
+campus's spaces the institution reaches today. Not held: every statement is plainly additive under
+the hold judge (`infrastructure/lib/migration-hold.sh`); the reform's F8 ("every migration held")
+was written for the reform's own schema changes. Decided NOT held by the lead (2026-11-10): a new owner
+decision, an additive schema, and the owner wants it in `1.6.10`.
+
+**The predicate** (`spaces/reader-spaces.ts`), two changes, each read from the row at every query:
+
+- **The public is a gate over every door but the author's**, beside the switch:
+  `institutionReachAdmitsUserSql` admits a reader when the post has no reach, its public is `all`,
+  `students` and the reader is a student (`isStudentSql`, the switch's definition), `staff` and they
+  are not - or they are a member of the publishing institution (D21: an institution's members read
+  everything it publishes). `postPublicAdmitsUserSql` ANDs it with `studentsOnlyAdmitsUserSql`, and
+  it is what `postVisibleToUserSql` narrows every door with, what the two newly-reached rules restate
+  on their "after" side, and (as `postPublicAdmitsViewerSql`) what a repost proposal's text is
+  withheld by. **`students` closes the read-grant door and the browsing admin's by-id door exactly as
+  the switch does** (S1, S2 of the review of #3010): the guard is "not students-only AND public is
+  not `students`". **"Staff" is exactly `NOT isStudentSql`: any account with no space** - staff (a
+  campus and an empty cursus), a student whose campus and formation make no opened space, an account
+  with no campus, and a review account - the SQL and every sentence here mean that set, nothing
+  narrower; the picker's "Personnel" hint names who it reaches in those terms.
+- **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
+  `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
+  `postVisibleToUserSql` passes `postReachHoldsSpaceSql` for the post's own association only. So a
+  reader is reached through a space that BOTH one of the institution's rules reaches AND the post
+  ticked - never wider than the audience, and shrinking with it. A membership is not narrowed (D21),
+  and **a republisher still reaches its own readers** (G4, republication stays the inter-campus
+  mechanism), as do a member's repost and an accepted follow: the public still applies to them.
+  `postReachesSpaceSql` (pins, campus trends, suggested posts) asks the same filter, and **honours
+  the public**: a space's readers are students (they have the space), so a `staff` post reaches no
+  space and never takes a student space's pin slot, trend or suggestion (review of #3314).
+
+Every consumer goes through it: the feed arms and the CanaReels viewer, the search, the post by id
+with every intent (read, react, comment, vote), the comments withheld from a named reader, the
+reactions' answer, the bell (re-asked at every read), the announcement and mentions, the newly-reached
+readers of a republication and a member repost, a pin, a trend, a suggestion, the agenda's link back
+to the post. The public link preview (`PostPreviewService.findShareable`) refuses a post whose public
+is `students` or `staff`, as it refuses "Entre étudiants"; spaces alone narrow an audience as any
+association's does, and leave the preview as it was.
+
+**The write** (`posts/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision):
+`reach: { spaces, public }` on `POST /api/posts` and `PATCH /api/posts/:id`. On a create, an
+institution's post without one is a 400 `institution_reach_required`; on any other post a reach is
+`institution_reach_not_offered` (a live replay too: it keeps its live's audience, D8); a malformed one
+`institution_reach_invalid`; a space the institution's audience does not reach
+`institution_reach_outside_audience`. The spaces are folded and sorted, so two equal choices store
+one value. An edit with no `reach` leaves the stored one alone (an older client never clears it, and a
+legacy post keeps its whole audience until an edit chooses one); a present one replaces it, both ways.
+Every change drops the feed cache (`invalidateListCache`, the generation of #3010), and nothing is
+announced again: a bell row already delivered is re-asked against the predicate at every read, as for
+the switch. The constants equal `libs/contracts/institution-reach.json`, asserted on both sides.
+
+**The options** - `GET /api/posts/reach-options/:associationId` answers `{ spaces }`, the spaces the
+institution's audience reaches, campus then formation: `INSTITUTION_REACH_OPTIONS_SQL`, the SAME
+statement the write checks against, so what is offered and what is accepted cannot disagree. 403 for
+a caller who may not publish as it (`canPostAs`), 400 `institution_reach_not_offered` for an entity
+that is not an institution.
+
+**Served**: every post carries `reach: { spaces, public } | null` (`foldServedReach`), to every
+reader, so the card can say who it is for.
+
+**The client** (`frontend/src/lib/posts/institutionReach.ts`, the contract's mirror):
+`InstitutionReachPicker.svelte`, one block in the composer, the reel publish step and the edit form,
+shown while the identity is an institution: the option spaces grouped by campus, a campus chip that
+ticks or unticks the whole campus, a "Toute une formation" row only for a formation present on
+several campuses, the public as three choices with none selected, and ONE line that says what is
+missing or who will see the post. "Publier" stays disabled until a space and a public are chosen. The
+composer keeps the choice in its draft and hands it to the reel step inside `ComposerReelState`. The
+edit form starts from `post.reach`; a legacy post (`reach: null`) shows the picker empty and saves
+without a reach until a choice is complete. `InstitutionReachChip.svelte` on the card's time line and
+in the CanaReels viewer: the public and the one space, or a count, every space in its title. The four
+codes read as localized sentences (`publishFailure.ts`).
+
+Four rules from the review of #3314: **every reach leaving a component is built by `plainReach`**
+(fresh objects - a `$state` proxy makes IndexedDB's structured clone throw `DataCloneError`, and the
+publish queue stores the payload there; `CreatePostForm.institutionReach.svelte.test.ts` clones the
+enqueued call); **the edit form sends a reach only after the author touched the picker** (`ontouch`) -
+the picker prunes, on its own, a ticked space the audience no longer holds, and that is not a choice;
+**a failed options load offers Retry**, and options on a campus this build does not know are not
+drawn, ACCUSED by a `console.warn` and, when nothing is left, told to the author
+(`post_reach_unknown_campus`); **the four codes are FINAL in the durable publish queue**
+(`retryCannotCure`, `QueuedPostFailure.final`): the queue re-sends the payload it stored, so a Retry
+would be refused word for word - the banner offers Delete alone.
+
+#### Decisions taken in the build, reversible
+
+1. **"Personnel" reaches the staff who already have a door** - the institution's members, named
+   readers whose grant cell meets a ticked space, a republisher's or a reposter's staff readers. A
+   staff account has no space, so the institution's rules never reached one, and the read-grant
+   decision (6) - "staff without a cursus see nothing more by default, the named ones do" - stands.
+   Whether "Personnel" should ALSO open the post to every staff account of a ticked space's campus
+   is parked for the owner ([open-questions](open-questions.md#question---should-an-institutions-personnel-public-reach-every-staff-account-of-its-campuses-2026-11-10)).
+2. **A republication and a member repost keep reaching their own readers** (G4); only the public
+   follows the post there.
+3. **An institution's members read every post of it**, whatever its reach (D21), as the switch lets
+   the publishing association's members in.
+4. **A legacy institution post keeps NULL** (its whole audience, everyone) until an edit gives it a
+   reach; the edit form does not force one.
+5. **An entity's type is not editable today** (`UpdateAssociationDto` has no `type`; only a direct
+   database edit changes it), so a post that carries a reach always belongs to an institution. If the
+   type ever became editable, an ex-institution's post would keep a reach it can no longer change:
+   the options route answers `400 institution_reach_not_offered` (the picker shows its load error)
+   and a PATCH naming a reach is refused the same way - the type change would then have to clear
+   `"reachPublic"`/`"reachSpaces"` on that entity's posts in the same transaction (or the write
+   accept a reach on a post that already has one), and the edit form draw the picker from the
+   served `type` alone (review of #3314, unreachable today, nothing built).
+6. **Events are not touched**: the event a post announces keeps its own visibility. The events half
+   of C1 (`association_calendar_event_audiences`, reform section 3) is not built.
+
+#### Proof
+
+`posts/institution-reach.integration.spec.ts` (real PostgreSQL; ten readers - students of two
+ticked and one unticked space, the institution's member and officer, two named readers, a carrier's
+staff, an outsider, the platform admin - under four reaches: none, one space for everyone, two spaces
+for students, two spaces for staff) over the predicate, the `associations` and `all` feeds
+(`listPostRows`), the search, the post by id (read and comment), the bell and the announcement, a
+republication's newly-reached readers, `postReachesSpaceSql`, a ticked space outside the audience
+(opens nothing), an edit narrowing then widening, the options and the write's four refusals against
+a real audience, and migration 162's CHECKs and re-run. `posts.service.institution-reach.spec.ts`:
+the contract, the create (stored, required, outside, not offered), the edit (narrow and widen with the
+cache dropped, absent leaves it, refused on an association and a replay), the options' refusals, the
+served field; `post-preview.service.spec.ts`, the link preview refused for students or staff and
+kept for everyone. **Break-proof, run 2026-11-10**: with `postReachHoldsSpaceSql` always true, 9 of the 28
+integration tests fail; with `institutionReachAdmitsUserSql` always true, 11.
 

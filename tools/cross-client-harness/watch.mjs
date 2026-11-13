@@ -4362,7 +4362,7 @@ export async function sanity(cx) {
         visibility: document.visibilityState,
         online: navigator.onLine,
         locked: document.body.innerText.indexOf('PIN de chiffrement') !== -1,
-        offlineBanner: document.body.innerText.indexOf('Hors-ligne') !== -1,
+        offlineRing: document.querySelector('[data-connection="offline"]') !== null,
         url: location.pathname
       })`
     )

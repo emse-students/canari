@@ -27,6 +27,7 @@
   import { toggleMyRepost } from '$lib/posts/sharePost';
   import type { PinSpace } from '$lib/posts/api';
   import { campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * Props for the PostActionsMenu component.
@@ -176,6 +177,9 @@
   }: Props = $props();
 
   let open = $state(false);
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'PostActionsMenu');
   let buttonEl: HTMLButtonElement | null = $state(null);
   let menuEl: HTMLDivElement | null = $state(null);
 
@@ -186,7 +190,7 @@
    * (`hover:-translate-y-0.5`), and a `transform` creates a stacking context - silently, per
    * `docs/wiki/durable-rules.md`'s z-index section. The card the menu opens on is exactly the one
    * being hovered, so opening the menu was the one moment its own card became an isolated
-   * context; `z-(--z-popover)` then only won against the OTHER things inside that same context,
+   * context; its z-index then only won against the OTHER things inside that same context,
    * and the whole card - popover included - painted under the next post in the feed, whose plain
    * `z-index: auto` box comes later in DOM order at the same layer. No number fixes a trap that
    * isolates the element the number is on; escaping to `<body>` does, same as `UserAutocomplete`.
@@ -274,7 +278,8 @@
         use:portal
         role="menu"
         tabindex="-1"
-        class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
+        style:z-index={layer.z}
+        class="glass-chrome border-cn-border fixed flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
         transition:slide={{ duration: 150 }}
         onkeydown={(e) => {
           if (e.key === 'Escape') open = false;

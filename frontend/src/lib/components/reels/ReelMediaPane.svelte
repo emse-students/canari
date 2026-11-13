@@ -73,7 +73,9 @@
   /**
    * WHAT A VIDEO SHOWS BEFORE ITS FIRST FRAME IS DECODED (owner, 2026-10-31: never a play glyph on a
    * loading reel): the sharp first frame this device decoded (`reelPosters`), else the publisher's
-   * ThumbHash of it, else nothing - the frame's black. A picture not yet mounted shows its ThumbHash.
+   * ThumbHash of it, else nothing - the frame's black. A PICTURE shows its ThumbHash until its file
+   * is in, mounted or not (owner, 2026-11-11: a photo page was black, a spinner, until its file came;
+   * pictures carry a ThumbHash since then, `publishQueue.svelte.ts`).
    */
   const posterUrl = $derived(
     video
@@ -228,6 +230,7 @@
       {authToken}
       galleryMode
       announceLoading={active}
+      poster={posterUrl}
       onLoaded={active ? onMediaLoaded : undefined}
       onPlaybackBlocked={active ? onPlaybackBlocked : undefined}
     />

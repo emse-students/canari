@@ -5,6 +5,9 @@
   import { isReplay } from '$lib/live/replayTimeline';
   import { fullScreenPageOf } from '$lib/reels/fullScreenPost';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
+  import { NO_FURTHER_REELS } from '$lib/reels/allReels';
+  import { feedReelsContinue } from '$lib/reels/infiniteReels';
+  import { ReelStream } from '$lib/reels/reelStream.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
   import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
@@ -174,6 +177,18 @@
   let reelViewerOpen = $state(false);
   /** The carousel media the CanaReels viewer opens on (the tapped cell); 0 off a carousel. */
   let reelStartIndex = $state(0);
+  /**
+   * Whether the viewer swipes on, read at the tap: on to the CanaReels stream, or nothing after this
+   * post when "Défilement infini des CanaReels" is off (`feedReelsContinue`, owner 2026-11-10).
+   */
+  let reelContinues = $state(true);
+  /**
+   * THE STREAM AFTER THE OPENED VIDEO, IN THE READER'S ORDER AND WITH ITS SWITCH (owner, 2026-11-11):
+   * the CanaReels entry's own implementation (`reels/reelStream.svelte.ts`). A change of order starts
+   * over at the top of the new list, this post still first. Built on the first opening, never with
+   * the card: most cards are never opened full screen.
+   */
+  let reelStream = $state.raw<ReelStream | null>(null);
   /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
   const replay = $derived(isReplay(post));
 
@@ -190,6 +205,8 @@
   function openReelViewer(mediaIndex = 0) {
     Log.d('PostContent.openReelViewer', { postId: post.id, page: fullPage, mediaIndex });
     reelStartIndex = mediaIndex;
+    reelContinues = feedReelsContinue();
+    if (reelContinues) (reelStream ??= new ReelStream()).open();
     reelViewerOpen = true;
   }
 
@@ -199,6 +216,7 @@
    */
   async function closeReelViewer() {
     reelViewerOpen = false;
+    reelStream?.close();
     await tick();
     for (const media of postMedia) endVideoHandBack(media.mediaId);
   }
@@ -366,6 +384,8 @@
     startMediaIndex={reelStartIndex}
     {authToken}
     {likerId}
+    loadPage={reelContinues && reelStream ? reelStream.loader : NO_FURTHER_REELS}
+    orderChoice={reelContinues && reelStream ? reelStream.choice : undefined}
     onClose={closeReelViewer}
   />
 {/if}

@@ -38,6 +38,7 @@ import {
 } from '../common/secret-box';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { assertCotisationModeClearable } from './members-only-gate';
 import { isUUID } from 'class-validator';
 import { In, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
@@ -181,6 +182,7 @@ import {
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
   READER_PROFILE_SQL,
+  AGENDA_REACHED_SPACES_SQL,
   READER_SPACES_SQL,
   campusWideReaderCampus,
   type SpacePair,
@@ -245,6 +247,7 @@ import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 import { announceOpeningToFollowers } from '../openings/opening-reminders';
 import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
+import type { NotificationType } from '../push/notification-client-floor';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -1258,18 +1261,27 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    if (dto.archived !== undefined) {
+    if (dto.archived !== undefined || dto.cotisationMode === null) {
       // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
       // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
       // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      // CLEARING the cotisation mode takes the same lock and counts the members-only rows under it
+      // (`assertCotisationModeClearable`, 409 `COTISATION_MODE_IN_USE`), the order a members-only
+      // save's `FOR SHARE` gate reads the mode in.
       await this.assoRepo.manager.transaction(async (manager) => {
-        await manager.findOne(Association, {
-          where: { id },
-          lock: { mode: 'pessimistic_write' },
-        });
+        if (dto.cotisationMode === null) {
+          await assertCotisationModeClearable(manager, id, this.logger);
+        } else {
+          await manager.findOne(Association, {
+            where: { id },
+            lock: { mode: 'pessimistic_write' },
+          });
+        }
         await manager.update(Association, id, patch);
       });
-      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      if (dto.archived !== undefined) {
+        this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      }
     } else {
       await this.assoRepo.update(id, patch);
     }
@@ -3501,6 +3513,18 @@ export class AssociationsService {
   }
 
   /**
+   * The spaces the reader's agenda reaches (`AGENDA_REACHED_SPACES_SQL`), as pairs: what the
+   * agenda's space filter offers. A view aid; it grants nothing.
+   */
+  async listAgendaReachedSpaces(userId: string): Promise<SpacePair[]> {
+    const rows = (await this.assoRepo.manager.query(AGENDA_REACHED_SPACES_SQL, [
+      userId,
+    ])) as SpacePair[];
+    this.logger.debug(`[AGENDA] ${userId.slice(0, 8)} reaches ${rows.length} space(s)`);
+    return rows;
+  }
+
+  /**
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
    * optionally restricted to one association. Public (same visibility as per-association `/events`).
    * `fromIso`/`toIso` default to `defaultCalendarFeedRange()` when omitted or blank.
@@ -3838,7 +3862,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
@@ -3865,7 +3893,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,

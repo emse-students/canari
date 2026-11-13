@@ -213,6 +213,18 @@ export const DECLARED_GROUPS = [
       'frontend/src/lib/forms/productGridContract.ts',
     ],
   },
+  {
+    what: 'the counter that says a recurring log line once, then at each power of ten (`RepeatCounter`)',
+    compare: 'exact',
+    why: 'chat-gateway and call-service are two crates with no shared library; each counts its refused upgrades with it. A shared crate is the entry docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md.',
+    files: ['apps/chat-gateway/src/log_repeat.rs', 'apps/call-service/src/log_repeat.rs'],
+  },
+  {
+    what: 'which origins a socket upgrade may name (`UpgradeOrigins`)',
+    compare: 'exact',
+    why: 'chat-gateway and call-service are two crates with no shared library, and both sockets must read `ALLOW_ORIGIN` by one rule. Its tests sit in the file, so each crate runs them. A shared crate is the entry docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md.',
+    files: ['apps/chat-gateway/src/origin.rs', 'apps/call-service/src/origin.rs'],
+  },
 ];
 
 /**

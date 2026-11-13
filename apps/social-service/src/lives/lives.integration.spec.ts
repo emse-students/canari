@@ -438,7 +438,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     await q(`CREATE TABLE posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       "authorId" varchar(255) NOT NULL, "associationId" uuid, markdown text NOT NULL DEFAULT '',
       "publishedAt" timestamptz, "feedNotifiedAt" timestamptz,
-      anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false,
+      anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
       "allowReposts" boolean NOT NULL DEFAULT true, "hiddenByModeration" boolean NOT NULL DEFAULT false,
       "scheduledAt" timestamptz)`);
     await q(`CREATE TABLE member_reposts ("postId" uuid, "reposterId" varchar(255))`);
@@ -1561,7 +1561,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           actorName: 'Alice',
           text: '',
           associationLogoMediaId: null,
-          pushData: { liveId: live.id, minAppVersion: '1.5.4' },
+          pushData: { liveId: live.id },
         },
       ]);
 
@@ -1647,7 +1647,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         text: '',
         associationId: ASSO,
         associationLogoMediaId: 'logo1',
-        pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
+        pushData: { liveId: live.id, associationId: ASSO },
       });
 
       // A MEMBER outside the rules' spaces sees the association, so is in its audience - the post

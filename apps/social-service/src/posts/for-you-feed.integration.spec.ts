@@ -38,6 +38,10 @@ import {
   writeRankedSnapshot,
 } from './for-you-feed';
 import { fakeRankedRedis } from './ranked-snapshots.it-fixture';
+import {
+  createNotificationPreferenceTable,
+  turnSuggestionsOffInApp,
+} from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -193,7 +197,7 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
         "createdBy" varchar(255));
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, "durationMs" int,
         markdown text, mentions text, links jsonb, "attachedFormId" uuid,
@@ -234,6 +238,9 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     await q(
       `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('v', 'f', 'accepted')`
     );
+    // "Suggestions dans l'app" is on by default (owner, "Deux niveaux", 2026-11-11): `g` switched it off.
+    await createNotificationPreferenceTable((sql) => q(sql));
+    await turnSuggestionsOffInApp(q, ['g']);
     // `n`: no space at all (not a student), follows f - sees f's posts through the follow only.
     await q(`INSERT INTO users (id, cursus, "firstName", "lastName") VALUES ('n', '[]', 'n', 'X')`);
     await q(
@@ -291,6 +298,12 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     expect(all.filter((r) => r.feedSuggested).map((r) => NAME[r.id])).toEqual(['S1']);
     expect(new Set(all.map((r) => r.feedAsOf)).size).toBe(1);
     expect(all[0].feedAsOf).toMatch(FOR_YOU_AS_OF_PATTERN);
+  });
+
+  it('merges no suggestion for a reader who switched Suggestions off in the app', async () => {
+    const all = await rows('foryou', { limit: 100, offset: 0 }, false, 'g');
+    expect(all.some((r) => r.feedSuggested)).toBe(false);
+    expect(all.map((r) => NAME[r.id])).not.toContain('S1');
   });
 
   it('pages of one ranking neither repeat nor skip, whatever changes between them', async () => {

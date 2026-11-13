@@ -62,7 +62,8 @@ Token is extracted in this priority order:
 1. Cookie `canari_ws_token`
 2. Query parameter `token=`
 
-If the JWT is invalid or absent, the upgrade is refused with HTTP `401`.
+If the JWT is invalid or absent, the upgrade is refused with HTTP `401`. Before that, the request's
+`Origin` is checked ([below](#a-socket-upgrade-must-come-from-an-allowed-origin-2026-11-12)).
 
 **Only an ACCESS token opens a socket** (`decode_access_claims` in `src/models.rs`). core-service
 signs its access token and its refresh token with the same `JWT_SECRET` and HS256, and tells them
@@ -78,6 +79,61 @@ too, with a `warn` naming its kind. [call-service](call-service.md) carries the 
 4. Set Redis `user:online:{userId}:{deviceId}` (TTL 90s, `PRESENCE_TTL_SECS`, above the ~75 s dead-socket detection window).
 5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
 6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
+
+## Admission: one step, two limits (2026-11-12)
+
+A socket's place is counted and registered in ONE step, `AppState::admit`, under the lock of the
+connection map - so two requests arriving together are judged one after the other and neither limit
+can be passed. Two limits, per process:
+
+- **32 per account** (`MAX_CONNECTIONS_PER_ACCOUNT`), all its devices together. It is the ONLY
+  bound on an account: a socket's `device_id` is chosen by its client, so a limit per device would
+  bound nothing. Only the leader tab of a browser connects, so a device is one socket - plus those
+  it has not released: on a flapping link a device can hold three or four that the heartbeat has
+  not declared dead yet (about a minute each). The busiest account measured (2026-09-12) had 6
+  live devices, so 6 x 4 = 24 fits; and 32 covers the 15 devices an account may enrol
+  (chat-delivery's `MAX_DEVICES_PER_USER`; a gateway test reads both numbers) with one socket and
+  its replacement each;
+- **1000 in all** (`MAX_CONNECTIONS`).
+
+**The place is taken BEFORE the upgrade, and a refusal is a `503`.** A client resets its
+reconnection delay when its socket OPENS (`openGatewayConnection`), so a refusal delivered as a
+close frame after the upgrade would be asked again at the shortest delay, forever. A request past a
+limit is therefore never upgraded: the handshake fails, the client's socket never opens, and its
+delay climbs. The account is counted first, so a refusal names the narrower reason.
+
+The place is held by a `ConnectionGuard` that travels inside the upgrade callback (`Admitted`). A
+socket that runs keeps it until its task ends; an upgrade that never completes drops the callback
+unrun, and the place with it. A frame published between admission and upgrade waits in the
+connection's channel. The duplicate-connection rule is unchanged - a new socket of a device is
+added beside its siblings, never replaces them.
+
+**What the count is made of.** `admit` counts the connection map, so the map must hold every live
+socket and nothing else. A socket leaves it through its guard, by its own id. The pub/sub loop
+also prunes (`prune_closed_senders`), and ONLY a sender whose socket is gone: a channel that is
+merely FULL belongs to a live socket that is slow to read, which still holds its place - removing
+it would let its account pass the limit while the socket lives.
+
+The refusal is logged at WARN through `RepeatCounter`: the first one says the sentence, then the
+10th, the 100th... carry the count (`[ws] socket REFUSED for <account> ... - refusal #N of this
+episode`). The subject is the ACCOUNT when an account is at its limit, and `process` when the
+process is full - one line for a full process, not one per account it turned away. A line at #100
+is a client that keeps asking. **An episode ends on a fact, not a delay**: a subject admitted WITH
+ROOM TO SPARE is forgotten, so its next refusal is said as #1 again. "With room to spare" because
+a subject sitting at its limit is admitted each time one of its sockets leaves and refused again
+at once - one episode, not many.
+
+On the client a refused attempt is `[WS] Gateway connection failed` at ERROR, once per rung of the
+reconnection ladder: a browser hides why a WebSocket failed, so the refusal cannot be named there,
+and the line is true - a gateway that answered no.
+
+**Owed reading: the 1000 against a measured peak.** The limit was chosen, not measured. What the
+repository records today suggests roughly 250-350 live sockets at most, so 1000 leaves a wide
+margin; the number that settles it is the census peak of
+`GET /api/admin/presence/history?window=30d`, to be written here once read.
+
+Frame size and per-socket message rate have no limit of the gateway's own yet; the ceiling is to be
+measured before one is built.
 
 ## How a socket ENDED, and why the LEVEL of the line depends on it
 
@@ -170,6 +226,28 @@ days before this measurement, so the longest window that has ever existed since 
 window rather than as a rate per week. The baseline was reachable only because it was taken during
 an unusually long quiet period. Anything wanting a genuinely comparable 7-day count would have to
 name a mechanism that outlives the container, and none is deployed.
+
+## What one connection sent, said once when it ends (2026-11-13)
+
+Each connection carries a `FrameCensus` (`frame_census.rs`), fed by the receive loop, whose `Drop`
+writes one line whichever way the connection ends - a close frame, a reset, or the sender half
+ending first:
+
+```
+[WS FRAMES] <user>:<device> closed after 75s: frames=2 heartbeats=1 bytes=135 largest=120 peakPerMinute=2
+```
+
+`frames` is every inbound text frame, `heartbeats` the application pings among them, `largest` the
+largest frame in bytes. It counts and refuses nothing.
+
+**`peakPerMinute` is the busiest FIXED minute, counted from the open.** A burst that straddles two
+windows is split between them, so the true count over any sixty seconds is at most twice the value
+written. The clock only names the window.
+
+**Why it exists.** A per-connection limit has to sit above what real clients send, and only the
+gateway sees that: the delivery queue holds what is still stored, a sample of what was accepted.
+A week of this line is the distribution the frame limits are sized from
+([entry](../backlog.d/p2-gateway-frame-limits-sized-from-a-week-of-counts.md)).
 
 ## WebSocket message routing
 
@@ -594,6 +672,33 @@ declaration key, for at most 90 s after the device's last pong and gone with the
 clean end - the lifetime and purpose of the presence key it sits beside. The ADMIN's view shrank: it
 no longer shows a list of connected people. The privacy policy needs no change.
 
+## A socket upgrade must come from an allowed origin (2026-11-12)
+
+The rule, in `src/origin.rs`, applied by `admit_origin` (`handlers.rs`) before the token is read:
+
+- an `Origin` header that is **present** must be one of the entries of `ALLOW_ORIGIN`, compared
+  exactly as the CORS layer compares them, or the upgrade is answered `403` and no socket opens;
+- an **absent** `Origin` is accepted. A native client opens its socket outside any page: the Tauri
+  socket plugin builds its request from the URL alone and sends none;
+- **`*` is never a list.** With `ALLOW_ORIGIN=*` there is nothing to match a page against, so every
+  upgrade that names an origin is refused, and the gateway says so at ERROR when it starts. It does
+  not fall back to accepting everything.
+
+So the list below must hold every origin a shipped client's PAGE has: an entry removed costs that
+client its socket. The call signalling socket is opened by the WebView itself, so on a phone its
+origin is the Tauri one.
+
+**The refusal is logged with the origin it refused**, once per distinct value and then at each power
+of ten (`[ws] upgrade REFUSED: origin "..." is not in ALLOW_ORIGIN`). That line is the reading to
+take after a deploy: a client turned away appears there by name, and nowhere else.
+
+The local estate lists the nginx entry, the Vite dev server and the Tauri WebViews
+(`infrastructure/local/docker-compose.yml`); a page served from another address is added through
+`CANARI_LOCAL_ALLOW_ORIGIN`.
+
+Tests: `origin.rs` for the rule, and in `handlers.rs` a real handshake against the served router for
+each side (listed, absent, not listed, `null`, and a wildcard).
+
 ## CORS: the list is a fact about the clients
 
 `ALLOW_ORIGIN` is a comma-separated allowlist, `*` allows all, and `chat_gateway_cors_layer`
@@ -630,16 +735,23 @@ Enumerated in `infrastructure/.env.example`, written by `serve-prod.yml`, and pi
 |---|---|
 | `https://canari-emse.fr` | the deployed site (`FRONTEND_URL`) |
 | `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
-| `http://localhost:1420` | Vite dev server / Tauri desktop dev |
-| `http://127.0.0.1:1420` | the same, spelt as `tauri.conf.json`'s `devUrl` actually spells it |
 | `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
 | `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
 
 The Tauri app calls this gateway **cross-origin** (its page is served from `tauri://localhost`, the
 API from `https://canari-emse.fr`), so dropping a spelling costs that platform `/api/presence` with
-no server-side error to show for it. This list is exact-match where the Nest services accept any
-loopback port, which is why both `localhost` and `127.0.0.1` are spelt out. Keep it in step with
-`TAURI_WEBVIEW_ORIGINS` in `apps/*/src/cors-origins.ts`.
+no server-side error to show for it. Keep it in step with `TAURI_WEBVIEW_ORIGINS` in
+`apps/*/src/cors-origins.ts`.
+
+**The CORS allowlist is exact, here and in the four Nest services; no loopback origin in
+production.** The Vite dev server (`http://localhost:1420`, and `http://127.0.0.1:1420` as
+`tauri.conf.json`'s `devUrl` spells it) is a client of the dev and local estates only, so only
+their lists name it: `compute_allow_origin` in `infrastructure/deploy/render-env.sh` writes the
+pair for dev and not for production, and the local compose file spells it out. The Nest services
+accept an origin on one ground, that a list names it: `FRONTEND_URL`, the three WebView
+spellings, and this same `ALLOW_ORIGIN` on the estates whose compose file hands it to them (dev
+and local; production's does not). Pinned by `deploy-env.test.sh` (both rendered lists), the
+preflight tests in `main.rs` and `cors-origins.spec.ts`.
 
 ### Verifying it, and why the deploy's colour is not the proof
 
@@ -690,5 +802,5 @@ wrong**, and nothing said so for either.
 | `DELIVERY_SERVICE_URL` | yes | - | chat-delivery base, no `/api` (`http://chat-delivery-service:3010`); asked for the conversation half of the presence audience. Unset: every presence read is a 503, logged at boot |
 | `SOCIAL_SERVICE_URL` | yes | - | social-service base, no `/api` (`http://social-service:3014`); asked for the community half. Unset: same |
 | `INTERNAL_SECRET` | yes | - | Sent as `X-Internal-Secret` on both audience questions. Unset: same |
-| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
+| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist, and the origins a socket upgrade may name (`*` admits none of those). `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

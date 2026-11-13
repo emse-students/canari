@@ -90,6 +90,15 @@ describe('the speaker', () => {
     expect(target.querySelector('.glass-video'), 'the rail draws no chip').toBeNull();
   });
 
+  it('is a bare white glyph on a feed card: no chip, no yellow, a 44px target', () => {
+    const target = render(VideoSoundButton, { muted: false, onToggle: vi.fn(), quiet: true });
+    expect(target.querySelector('.glass-video')).toBeNull();
+    const on = target.querySelector('[data-video-sound="on"]')!;
+    expect(on.getAttribute('class')).not.toContain('text-accent');
+    expect(on.getAttribute('class')).toContain('drop-shadow');
+    expect(target.querySelector('button')!.className).toContain('ui-icon-button');
+  });
+
   it('draws its own glass chip alone, and no second blur inside a glass bar', () => {
     const alone = render(VideoSoundButton, { muted: true, onToggle: vi.fn() });
     expect(alone.querySelector('.glass-video')).not.toBeNull();

@@ -32,7 +32,6 @@ import {
 } from './live.constants';
 import { LivesService, liveEnded } from './lives.service';
 import { short } from './live-log';
-import { LIVE_MIN_CLIENT_VERSION } from './live-client-version';
 import { liveMentionRecipientsSql, parseChatMentions } from './live-mention';
 
 /** A message as the poll serves it: ciphertext under the live key, base64 (C12). */
@@ -374,7 +373,8 @@ export class LiveChatService {
         actorId: authorId,
         actorName,
         text: live?.title ?? '',
-        pushData: { liveId, minAppVersion: LIVE_MIN_CLIENT_VERSION },
+        // The key's client floor travels with it (`PushService.notifyContent`).
+        pushData: { liveId },
       });
       this.logger.log(`[LIVE_MENTION] ${liveId} by ${short(authorId)}: ${addressed} notified`);
     } catch (e) {

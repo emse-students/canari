@@ -666,7 +666,19 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
    from the very first paint, before a byte of the video, including the first reel opened. The
    server still makes nothing: a feed reel's blob is AES-GCM ciphertext there (C3).
 3. **Nothing - the frame's black**, for a reel published before 2026-10-31 that this device has not
-   decoded yet. It gets its sharp frame the first time it is preloaded or watched.
+   decoded yet. It gets its sharp frame the first time it is preloaded or watched - and, since
+   2026-11-11, as soon as its HEAD is fetched ahead (below), before the reader reaches it. A
+   single-block video (no `encoding`) has no head: it stays black until its file is in. No
+   backfill is invented for old media: a ThumbHash only a publisher can make.
+
+**A photo page draws its ThumbHash too (owner, 2026-11-11).** Photos were published with NO
+placeholder (`publishQueue.svelte.ts` made one for videos only), so a photo page was the black
+frame and the spinner until its file came. Every post's picture now carries its ThumbHash
+(`preparedMediaPlaceholder` in `reelFirstFrame.ts`, called by the publish queue and the post edit:
+the DTO's `placeholder` field and the `whitelist` pipe already took it for any media), and
+`ReelMediaPane` hands it to the photo's `PostMedia` as its loading picture, on screen or not. A
+photo published before 2026-11-11 has none, and stays black until its file - or its fetch ahead -
+is in. A carousel draws, per media, the same order: sharp frame, ThumbHash, black.
 
 **The play button answers a DECIDED OUTCOME, never a load.** The minimal reel player asks `play()`
 itself (the `autoplay` attribute fails silently) and draws its amber button only when the reader
@@ -725,18 +737,93 @@ language, one label (`video_loading_label`). Pinned by `PostMedia.loading.svelte
 progress figure**: `MediaService.downloadAndDecrypt` reports none (the bytes land decrypted in one
 piece), so a percentage would be invented; adding one means changing the media service, not the page.
 
-**The preload stays behind the settled reel - decided, not changed (2026-11-04).** Starting the next
-reel's fetch beside the current one's was weighed and refused: (1) on one weak link the two downloads
-share the bandwidth, so the reel being watched gets roughly half of it (~110 s instead of ~55 s for
-the same file at 400 kbps) - the cost lands on the reel the reader is looking at, the gain on one they
-may never reach; (2) the swipe's handover is not a clean win either way: `ReelPreload.stop()` only aborts the
-preload's HOLD on the shared load (`mediaBlobCache.ts`); a request already on the wire is kept
-joinable, so a reel read WHOLE (this defect's path) joins the preload's bytes and loses nothing, but a
-STREAMED segmented reel opens its own fetch (`openSegmentedStream`) and the preload's partial bytes
-are dropped; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
-would reopen it: a preload whose bytes the streamed path also joins AND a measurement that the
-reader's dwell on a settled reel is shorter than the next fetch. Neither exists; nothing was measured on
-a device, this is a derivation from the link's arithmetic and the code.
+**The next pages are fetched ahead in parallel - the owner's decision of 2026-11-11, replacing the
+refusal of 2026-11-04.** *Reported:* production `1.6.10`, desktop, a fast link, wheel-scrolling the
+viewer: the stage is black, sometimes with a spinner, for about a second on most pages. The owner
+asked for two things - a first frame or a low-quality picture before the media is ready, and the
+next 2-3 media preloaded in parallel.
+
+*Measured on dev first* (2026-11-11, the W3 harness Chrome driven over CDP, a sampler reading every
+animation frame what the page on screen paints, the ciphertext cache emptied before each run). The
+dev list is 15 pages: one streamed reel with a ThumbHash, 3 photos and 10 reels of ~3 MB read
+whole (`no-codecs`), none of those with a placeholder, and no carousel. The dev link delivers
+~780 KiB/s, so one of those reels takes ~3.5 s whole.
+
+| Wheel step | Build | Black pages (of 15) | of which |
+| --- | --- | --- | --- |
+| 1 s | `1.6.10` (dev) | 11 | 10 reels with no ThumbHash, read whole, preload behind the settle never started (a); 1 photo, 1.8 s (b) |
+| 2 s | `1.6.10` (dev) | 11 | 9 reels never drew, 1 reel 1.6 s, 1 photo 1.3 s |
+| 2 s | this change | 4 | 3 reels never drew, 1 reel 1.7 s; 6 reels drew their sharp frame from the first paint |
+| 1 s | this change | 9 | the heads behind a 3 MB foreground download cannot all arrive at ~780 KiB/s |
+| 2 s | this change + a whole read nobody holds stopped | 3 | 3 reels drew their frame after 0.1-0.6 s; 8 reels drew it from the first paint |
+| 1 s | this change + a whole read nobody holds stopped | 9 | the link, not a missing picture: ~1 MiB per page at ~750 KiB/s |
+
+No black page was a player failing to draw a poster it had (d): every page with a picture drew it
+at once. A warm cache (the ciphertext in the Cache API) showed no black page at all, which is why
+the first runs looked clean. The black came from two facts: (a) a reel with nothing to draw
+reached before its bytes - the one preload starts only once the page on screen PLAYS, which a
+wheel never waits for; (b) photos carried no placeholder.
+
+*What is built* (`reels/reelAhead.ts`, `utils/mediaHeadStore.ts`):
+
+- **The next pages, at once, not behind the settle**: `REEL_AHEAD_FAST` = 3 pages when the
+  link keeps up with the media, 1 when it does not - #3333's verdict (`linkIsSlow`, slow below
+  1x, fast again from 1.15x) on the session's measured rate (`sessionLinkRate`, fed by the same
+  ranged reads as the streams, measured after the gate grants the slot) against the media rate of
+  the reel on screen. Unknown (nothing measured) is slow: one page, whose own read is the first
+  sample. No clock.
+- **Heads, not files**: a segmented video's header and FIRST SEGMENT (1 MiB), one ranged read,
+  decoded at once into its sharp first frame (`reelPosters`). Two segments were tried first and
+  never arrived within a 1 s step on dev (two thirds of a 3 MB reel). A picture is fetched whole
+  (pictures are small). A single-block video gets nothing.
+- **Both read paths JOIN the head - the precondition the 2026-11-04 refusal named**: a streamed
+  reel's segment feed wraps its network source in `headedRangeSource` (a read inside the head is
+  answered from it, in flight or in); a reel read whole (`mediaBlobCache`) takes the head and asks
+  for the rest only (`Range: bytes=N-`), joined only when its `Content-Range` starts where the
+  head ends (anything else is said and the whole file read; `Content-Range` is exposed by the media
+  service so a phone can read it). A head that FAILED is left for good: the stream reads every
+  range itself, the whole read reads the whole file, said once at warn. Pinned by
+  `mediaHeadStore.test.ts`, which counts the requests.
+- **The reel being watched keeps the link**: every byte fetched ahead goes through the gate's
+  BACKGROUND lane (`requestGate.ts`): behind every foreground request, never in the last free slot.
+  When the reader reaches a page whose head or picture is still QUEUED there, the foreground reader
+  that joins it raises it to the foreground lane (`GateRank`), so the bytes on screen never wait
+  behind the pages after them; one already on the wire runs on.
+- **A fast scroll leaves nothing behind**: a page passed is dropped at the update that passed it;
+  its head's last holder aborts it (queued: the gate drops it; on the wire: `fetch` is aborted). The
+  page that becomes the one on screen keeps its head, so its player joins it.
+- **Bounded by its holders, not by a new store**: gap 3's 200 MB store does not exist yet
+  ([slow-link chantier](../../backlog.d/slow-link-local-first-chantier.md)), so the heads live only
+  while held (at most four: the page on screen and three ahead), pictures in the existing decrypted
+  pool (`blobUrlPool`, its byte cap and eviction), posters in `reelPosters` (eight).
+
+The `ReelPreload` behind the settled reel is kept: it reads the next reel whole after the settle,
+and now joins its head.
+
+**A whole read nobody holds is stopped too - the lead's decision of 2026-11-11, reversible.** It
+replaces the 2026-10-05 rule that a load already on the wire stays joinable (`mediaBlobCache.ts`,
+`SharedLoad`): with it, a reel the reader wheeled past kept downloading its whole file, so on a slow
+link a wheel through ten reels downloaded ten files while the one on screen waited. Now the load
+owns the request's signal, and when its LAST holder leaves (counted, like a head's) it is aborted -
+dropped from the gate's queue, or stopped on the wire, `fetch` and body. The decision is taken once
+the current turn is over (a microtask - an ordering, never a clock), so a holder that joins in the
+same turn keeps it: the player of the page becoming current mounts in the same flush that stops its
+`ReelPreload`, and a re-rendered chat row (the 2026-10-05 case) re-joins the same way. A holder
+with no signal - and a visible card or player, which leaves only when it unmounts - never lets it
+go. A partial body is never cached: the Cache API copy is written only from a body read to its end
+(`mediaBlobCache.shared.test.ts` pins all three). Measured on the same cold 1 s wheel (15 pages, 11
+reels): `1.6.10` downloaded 11.4 MiB during the wheel and 6.5 MiB more in the 8 s after it, nine
+requests still open; with the decision, 11.4 MiB and nothing after, every request passed cancelled.
+The link stays saturated during a 1 s wheel either way - what changes is that the bytes go to the
+pages ahead and nothing outlives the wheel. Revert: give `fetchMediaObject` no signal again
+and drop the microtask's abort.
+
+*Left, and said*: (1) The dev reels are fragmented MP4 with no codecs in their
+`mimeType`, so they are read whole instead of streamed (`no-codecs`); a writer naming its codecs
+would let them stream - not changed here. (2) A head is fetched again when the look-ahead count
+drops from three to one and comes back (seen once on the 2 s wheel: half a head cancelled, then the
+whole head re-read); the verdict's hysteresis bounds it, a head store that outlives its holders
+would end it. (3) Owed: the same scroll on production's link, and on both phones.
 
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the
@@ -893,8 +980,8 @@ below; **owed on both phones**
   removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
   the whole thread used to adopt it and collapse.
 - **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
-  (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
-  viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
+  (rungs under the viewer's): since 2026-11-13 the viewer and its dialogs are on the overlay stack
+  (`utils/overlayStack.ts`), so what opens later is above it with no rung or mark.
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
@@ -903,7 +990,7 @@ below; **owed on both phones**
   text kept a post out too until the owner reversed it on 2026-11-06
   ([below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **The list is newest first and nothing else** (lead's
   decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
-  (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
+  (`kind=reel&multiMedia=true` since 2026-11-11, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
 
 - **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
@@ -981,7 +1068,10 @@ the lead's, taken 2026-11-06, reversible.
   `data-backdrop-ignore`, and the slide hands `ReelFrame` the visible index as `sourceKey`, so a
   swipe repaints it - otherwise a neighbour's picture that finished loading last painted the
   backdrop of the one being looked at (seen in the browser, 2026-11-06).
-- **The position** is a row of dots under the top bar, the visible one lit, named "2 sur 5" for
+- **The position** is a row of dots on the media's bottom edge, centred, the FIRST ROW of the caption
+  block just above the author line (owner, 2026-11-11: under the top bar they sat beneath the "Pour toi /
+  Recents" switch). Being in the block's flow they rise with "Voir plus" and never meet the rail or the
+  player's line; the visible one lit, named "2 sur 5" for
   assistive tech (`reels_carousel_position`).
 - **The visible media is kept PER POST** for the viewer's life (`mediaIndexById`): a post scrolled
   away and back opens where the reader left it.
@@ -1028,10 +1118,10 @@ CanaReels, the link tappable in the caption. Until then it stayed out because th
 the link's preview card; the preview is still not drawn - the link itself is, which was the point.
 
 - **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
-  event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
-  ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
-  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
-  post ([legacy-compatibility](../../legacy-compatibility.md)).
+  event still keep a post out. `multiMedia=true` alone brings it since 2026-11-11
+  ([server half](../../services/reels.md#reading)); `withLinks`, which kept it from the builds that
+  could not draw it (every release through `1.6.6-alpha.1`), went when the `1.6.6` floor locked them
+  out ([legacy-compatibility](../../legacy-compatibility.md)).
 - **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
   `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
   that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
@@ -1148,6 +1238,67 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    dropped by the feed's `load` (`retiredFeedKind.ts`, a shim in
    [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
+
+### The order of the stream, and a change of order is a NEW LIST (owner, 2026-11-10; crash fixed 2026-11-11)
+
+"Pour toi" or "Récents" is drawn at the top of the viewer (`orderChoice`, `reels/reelOrder.ts`,
+remembered on the device): "Nos principes", principle 3 - a chronological view must always exist. A
+change reads the first page of the other order, then hands the viewer a new loader, and the viewer
+starts over at the top of the new list. A refused or empty read keeps the stream as it was.
+
+**EVERY OPENER OF THE STREAM SHARES ONE IMPLEMENTATION** (`reels/reelStream.svelte.ts`, `ReelStream`:
+the order, the change, the first page read in it, the loader built from both, the switch handed to
+the viewer):
+
+- **The CanaReels entry** (`ReelsEntryButton`) reads the first page in the remembered order before it
+  opens (an empty stream opens nothing); its `startPost` is that page's first reel, and a change
+  starts over at the new order's first reel.
+- **A feed video opened full screen** (`PostContent`, owner 2026-11-11) continues in the REMEMBERED
+  order - it used to go on in "Pour toi" whatever the reader had chosen, with no switch - and draws
+  the switch too. Its `startPost` is the opened post, kept first on a change: the new list is that
+  post, then the new order's reels (the post itself once, `mergeReelPage`). With "Défilement infini
+  des CanaReels" off (`feedReelsContinue`) the viewer is handed `NO_FURTHER_REELS` and NO switch:
+  there is no list to order ([engagement](../../engagement.md)).
+
+**AN ANSWER BELONGS TO ITS OPENING.** `open` and `close` each start a new opening, and a change's
+read carries the one it was asked in: an answer landing after the viewer closed (or closed and
+reopened on the same card) is dropped and said, never applied - it would reopen the entry's viewer
+by itself, reorder a later opening and remember an order nobody saw. `close` clears nothing the
+loader is built from (only `opened`; `open` replaces the first page), so a closing viewer is never
+handed a new list built only to be torn down.
+
+**THE LIST IS A `$derived` OF THE LOADER** (`reels/reelList.svelte.ts`, `ReelList`): its reels, the
+reel on screen, its pages read, its settle, each carousel's visible media and the track's move all
+live on ONE object, so a new loader is a new list in the same instant the prop changes. Nothing is
+reset afterwards, and anything that outlives its list - a page that lands, a track move that lands -
+writes into the object it was started on, which nothing draws: identity says which list a result
+belongs to, not a generation counter. **And every slide is handed ITS OWN POST** (`mountedReelSlots`:
+the each block iterates `{ post, i }` keyed by the post), never `reels[i]` read again later. The
+comments and share sheets and a held carousel drag are the list's too, so a change of order with the
+comments open gives the reel its full size and the keys back. **A track move in flight at the swap
+is landed explicitly, on its own list** (a close swipe still closes); the transition end the swap
+cancels belongs to no current move and is said at debug, never warned.
+
+**The defect both close (production, 1.6.10, Firefox, 2026-11-11):** opened in Récents, switched to
+Pour toi at the third reel (survived), stepped to the fourth, switched back - and the feed page
+crashed on `can't access property "kind", e is undefined`. The list used to be reset by an `$effect`
+after the new props rendered, and each slide's post was the getter `reels[i]`. The new list tore down
+the slide of the NEXT reel, which had preloaded behind the settled one; its preload's cleanup read its
+`active` prop, whose `{@const role}` re-read the slide's panes, whose post was the NEW list read at
+the OLD index: `undefined`, then `fullScreenPageOf(undefined)`. The first switch survived because the
+reel on screen had not settled, so no preload, so no cleanup read anything. Read on the stack in
+`ReelViewer.order.svelte.test.ts` (`ReelMediaPane` preload teardown -> `role` -> `panes` -> `page`),
+red on 1.6.10.
+
+**A THROW INSIDE THE VIEWER CLOSES THE VIEWER, NOT THE PAGE.** The entry's viewer sits in the feed's
+tab row, outside every card's boundary, so the throw reached the route's boundary (Kit's) and the
+whole feed became the error page. The viewer is a visible feature inside a page, so it takes its own
+`svelte:boundary` ([architecture](../architecture.md#an-uncaught-error-in-the-reactive-graph-is-permanent-until-a-reload-so-boundaries-are-placed-by-blast-radius)):
+`[reel-viewer] the viewer failed in <where>` at error, the toast "Les CanaReels ont rencontré une
+erreur", and the viewer closes once through its history entry - the feed under it never left. A
+boundary in the template cannot see the viewer's OWN effects (the next-page read, the swap, the
+wheel and gesture listeners), so each runs through `guarded`, which closes it the same way. The line
+reads nothing of the list, which may be what threw.
 
 ### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
 

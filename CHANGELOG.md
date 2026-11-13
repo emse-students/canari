@@ -14,6 +14,88 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-11-11
+
+### Fixed - a reply kept when a photo or a file is attached
+
+Replying to a message and attaching a photo sent the photo as a plain message: the reply was consumed at the tap and only the text path read it, and a file message had no place on the wire for it. The first file now carries the reply (`MediaMsg.reply_to`) in direct messages, groups and salons, and the reply is given back if that file is refused ([chat](docs/wiki/frontend/modules/chat.md#a-reply-survives-attaching-a-file-2026-11-10)).
+
+### Fixed - a tap on a full-screen video no longer cuts its sound
+
+In the viewers a tap plays or pauses like Reels and Shorts, turns a muted sound on, and only the speaker or `m` mutes; a refused audible start plays muted with a warning ([video-player](docs/wiki/frontend/modules/video-player.md#a-tap-in-full-screen-never-mutes-owner-2026-11-10)).
+
+### Added - the agenda can be narrowed to one campus or one formation
+
+A reader whose agenda reaches several spaces gets a "Space" filter in place of the useless "Association" select; the choice is remembered per reader and only narrows the view ([profiles-and-access](docs/wiki/profiles-and-access.md#the-agendas-space-filter-owner-2026-11-10)).
+
+### Fixed - the App Store submission waits for its screenshots to finish processing
+
+The `v1.6.9` stable was refused by Apple with `Asset is being processed` because screenshots had been replaced an hour before; `tools/app-store/submit.mjs` now waits on each asset's delivery state like it waits on the build, and refuses one that can never finish ([app-store](tools/app-store/README.md)).
+
+### Fixed - a booking you are only invited to no longer reads "Ma réservation"
+
+In the day planner, a slot the reader is invited to now names its booker (avatar and name) with a small "Invité" mention and keeps the highlight; "Ma réservation" is for a booking the reader made ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - a deploy announced a backlog of campus trends, to builds that could not draw them
+
+The 1.6.9 deploy told 498 readers of five trends in eight minutes. A trend is now announced only on a crossing recorded from durable state, at most once per reader per day, as "Suggestion :" under its own Suggestions switch. No notification type is sent to a build too old to draw it ([engagement](docs/wiki/engagement.md#the-deploy-of-2026-11-10-and-what-it-changed), [legacy-compatibility](docs/wiki/legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)).
+
+### Operations - 75 production posts stamped as trended, under the owner's explicit yes
+
+On 2026-11-10 at about 19:45 Paris time, `UPDATE posts SET "trendAnnouncedAt" = now() WHERE "trendAnnouncedAt" IS NULL AND "publishedAt" > now() - interval '7 days'` stamped 75 posts. 1.6.9's level-based trend at threshold 4 kept announcing each post to about 500 recipients, with three more bursts after 17:00. The write is reversible and deleted no row ([engagement](docs/wiki/engagement.md#the-deploy-of-2026-11-10-and-what-it-changed)).
+
+### Changed - fewer engagement notifications: friends named in a trend, two trends a week, three pushes a day
+
+Friends' activity no longer notifies: a campus trend names one followed person who liked the post ("Suggestion : ... - aimée par Léa et 9 autres"). A reader gets at most two trends a week, and at most three engagement-only pushes a day. Birthdays, association posts, mentions, replies, bookings and messages are not counted, and anything over the cap stays in the bell ([engagement](docs/wiki/engagement.md#the-owners-decisions-of-2026-11-10---quieter-1610)).
+
+### Changed - "Suivre" is a quiet text link, suggested cards leave once followed, and a new feed tab opens at its top
+
+On post headers, directory rows and association cards "Suivre" is plain accent text on the meta line (`19 h · Suggestion · Suivre`), the yellow "Suggestion" badge is gone, the suggestion carousel's button is a neutral secondary one and its card slides out when followed, with a toast; switching between Associations, Pour toi and Campus scrolls back to the top ([engagement](docs/wiki/engagement.md#wp-2---suivre-everywhere-built)).
+
+### Changed - a feed video card is minimal
+
+No expand button (the tap opens full screen), a bare white speaker drawn only while the video plays, a smaller play triangle on the placeholder ([video-player](docs/wiki/frontend/modules/video-player.md)).
+
+### Added - an institution chooses the reach of each post
+
+When publishing as an institution, the author ticks the spaces of the institution's audience the post targets and its public (everyone, students or staff) - mandatory, no default, editable afterwards both ways; the rule lives in the one visibility predicate, so every path follows it at once ([profiles-and-access](docs/wiki/profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
+
+### Fixed - the first MiConnect sign-in drew its campus, status and formation choices in black on the dark page
+
+On a phone or computer in light mode, authentik kept PatternFly's light-theme ink on the radios and checkboxes (1.02:1); the brand now pins authentik's dark theme, and the required asterisk and the field placeholder were brought above 4.5:1 too ([authentik](docs/wiki/infrastructure/authentik.md#login-page-branding)).
+
+### Changed - "Nos principes": suggestions in two levels, "Partager mon activité" off until chosen, and three reading settings
+
+"Suggestions dans l'app" (the follow suggestions, the suggested posts of Pour toi, the trend bell rows) stays on by default and goes off in one gesture; the suggestion push is off until turned on (chat-delivery migration 047); the bell withholds only suggestion and engagement rows (one allowlist); "Partager mon activité" is off unless chosen; Preferences gains "Défilement infini des CanaReels" and "Lecture automatique des vidéos", and CanaReels a "Pour toi / Récents" order ([engagement](docs/wiki/engagement.md#aligned-with-the-charter-owner-2026-11-10)).
+
+### Changed
+
+- The invitation to add a profile photo (and its reminder) is temporarily offered only to ICM accounts at Saint-Etienne, a server setting (`PROFILE_PHOTO_PROMPT_SPACES`) rather than a release: [guided help](docs/wiki/frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07).
+
+### Fixed - fewer repeated reads and false alarms in the feed on a slow link
+
+Today's birthdays are read once per Paris day instead of at every focus, a video scrolled past while its play was pending no longer logs a refusal, and the peer-return history retry and the follow retry run (and speak) only when something is owed. See [birthdays](docs/wiki/birthdays.md).
+
+### Fixed - your own reaction pill under a chat bubble is opaque again
+
+It was see-through since the 1.6.9 accent change (`bg-accent/20` over the bubble edge); it is an opaque tint again ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - the header pill fits its content again, a quiet birthday card, "Organisations", a Games page, a calmer profile header
+
+The conversation title pill adapts to its content once more (the full-width pill of 1.6.9 is reverted); the birthday prompt is a small dismissible feed card instead of a modal and its settings are minimal; the "Associations" tab and directory read "Organisations"; a Games page in the dashboard holds the Minesweeper with an overall and a per-promo ranking; a profile header is a name, one muted line and a rank badge, and the correction request moved to the account information ([minesweeper](docs/wiki/frontend/modules/minesweeper.md), [birthdays](docs/wiki/birthdays.md), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a second browser tab no longer reads "Hors-ligne" while the account is online
+
+The follower's question to the leader tab went out before the account was known and was dropped as another account's; it is now sent when the account becomes known and when the election is decided ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a feed video opens full screen in CanaReels, and every video can be sought again
+
+A tap on a feed video opens the CanaReels viewer on it at the time it had reached, and closing resumes it there; the conversation viewer is a line and a speaker; every uploaded video declared no length (the muxer's `mvhd` said 0), which showed `0:00` and broke seeking - fixed at the container ([video-player](docs/wiki/frontend/modules/video-player.md#the-owners-decisions-of-2026-11-10---full-screen-is-canareels)).
+
+### Fixed - on a weak link, five chains of reads that waited for each other now leave together, and a push registration is no longer refused at a cold start
+
+Key-group status reads at every connection, a person's profile, repeated photo-presence questions and the dismissed-groups read no longer wait in series; push registration was counted in one rate-limit bucket shared by the whole estate and now counts per user ([weak-network-audit-2026-11-10](docs/wiki/frontend/weak-network-audit-2026-11-10.md)).
+
 ## [1.6.9] - 2026-11-10
 
 ### Fixed - scrolling the GIF tab no longer crashes the chat page when KLIPY repeats an item across two pages
@@ -188,7 +270,7 @@ rest stay in the in-app notifications. Nothing that exists today is counted. Eng
 
 When someone you follow reacts to or comments on a post you already see, you are told once ("X a
 réagi à une publication"), within the daily cap; "Partager mon activité" in Settings turns yours off.
-Engagement WP-9 ([engagement](docs/wiki/engagement.md#wp-9---friends-activity-built)).
+Engagement WP-9 ([engagement](docs/wiki/engagement.md#wp-9---friends-activity-built-retired-2026-11-10)).
 
 ### Changed - every vertical video of 90 s or less is a CanaReel, and a CanaReel lives a year
 
@@ -311,7 +393,7 @@ On a phone the last action (delete) wrapped alone onto a second row; the actions
 
 ### Fixed - a member added to a group receives the nicknames set before them, whichever path delivered their Welcome
 
-"Ajouter" and the owed-Welcome drain delivered Welcomes and sent no join push, the one bundle a nickname register is taken from; the push now follows every delivered Welcome, once, addressed and carrying none of the past - to a device connected at that moment only: a newcomer offline at the delivery still gets nothing, and that is [its own entry](docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md) ([defect](docs/wiki/backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md), [chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
+"Ajouter" and the owed-Welcome drain delivered Welcomes and sent no join push, the one bundle a nickname register is taken from; the push now follows every delivered Welcome, once, addressed and carrying none of the past - to a device connected at that moment only: a newcomer offline at the delivery still gets nothing, and that is [its own entry](docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md) ([defect](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), [chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
 
 ### Fixed - messages received as notifications now show at the first open of the conversation
 
@@ -1175,7 +1257,7 @@ The gateway dropped the server time of every live frame, so since `v1.6.0` each 
 
 ### Fixed - the GIF picker of a comment box opens above the comments sheet, not under it
 
-The picker sat on `--z-sheet` while a post's comments sheet (`CommentsDrawer` on a phone, `Modal` on a larger screen) sits on `--z-modal`, so it opened dimmed behind the sheet. A page-level drawer and a `Modal` now mark their subtree like a viewer, and what they open takes `--z-viewer-dialog` ([viewerLayer](frontend/src/lib/utils/viewerLayer.ts)).
+The picker sat on `--z-sheet` while a post's comments sheet (`CommentsDrawer` on a phone, `Modal` on a larger screen) sits on `--z-modal`, so it opened dimmed behind the sheet. A page-level drawer and a `Modal` now mark their subtree like a viewer, and what they open takes `--z-viewer-dialog` ([overlay stack, which replaced the viewerLayer mark on 2026-11-13](frontend/src/lib/utils/overlayStack.ts)).
 
 ### Added - first-time hints for publishing a post, depositing an event and building a form
 
@@ -1366,7 +1448,7 @@ Associations and lists get a governing parent BDE (the owner's validated list, a
 
 ### Changed - the register and the privacy policy re-read against follow requests and member reposts (WP-F7)
 
-Register C5 and the `/legal/privacy` paragraphs were checked against the code, after member reposts reached production (`v1.6.1`, #2859) and were hardened (#2917, #2920, which already amended both in step), and found exact; the backlog, the D37-D41 table and the queue now say so ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+Register C5 and the `/legal/privacy` paragraphs were checked against the code, after member reposts reached production (`v1.6.1`, #2859) and were hardened (#2917, #2920, which already amended both in step), and found exact; the backlog, the D37-D41 table and the queue now say so ([profiles-and-access](docs/wiki/profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)).
 
 ### Changed - a pin is a promotion per space (WP-PIN)
 
@@ -2679,7 +2761,7 @@ Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stabl
 
 ### Documented - the user's decisions on the open pull requests of 2026-10-23
 
-Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---the-night-of-the-open-pull-requests).
+Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Fixed - a declined joiner no longer gets the conversation back as a removed one
 
@@ -3428,7 +3510,7 @@ WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
 
 ### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
 
-A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md).
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22).
 
 ### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
 
@@ -3512,7 +3594,7 @@ The two encryption systems side by side, with the 2026-08-17 sizing premises re-
 
 ### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
 
-Recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-22-what-outlives-the-48-hour-autonomy-w.md).
+Recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
 
 ### Changed - the double tap that likes now logs what reached the card
 
@@ -5225,7 +5307,7 @@ The delegation state and its approval still tested the Stripe account columns, s
 
 ### Changed - the user's 2026-10-11 decisions recorded
 
-Standing release authority for the lead agent, the Docker prune above 75 % (images and build cache only), no native camera, CanaReels in chats starting with RC-0, the Pixel 6a as observation only, and Apple's submission order ([backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
+Standing release authority for the lead agent, the Docker prune above 75 % (images and build cache only), no native camera, CanaReels in chats starting with RC-0, the Pixel 6a as observation only, and Apple's submission order ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
 
 ### Changed - release notes of 1.2.4
 
@@ -7424,7 +7506,7 @@ Three of the refusals that sign a device out left no line at all ([sessions](doc
 ### Fixed - every role of a community is visible in its permissions tab, on a phone as on a desktop
 
 The permissions are one card per role with each permission described, instead of a table whose
-other roles hid behind a sideways scroll ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
+other roles hid behind a sideways scroll ([social-service](docs/wiki/services/social-service.md#roles-membership-and-channel-access)).
 
 ### Fixed - A salon notification is readable on the first banner: the seed travels with the message
 

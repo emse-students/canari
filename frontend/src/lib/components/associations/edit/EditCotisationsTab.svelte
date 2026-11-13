@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onDestroy } from 'svelte';
   import {
@@ -45,6 +46,7 @@
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { tierSaveRefusal } from '$lib/associations/tierKeyRefusal';
+  import { cotisationModeInUseMessage } from '$lib/associations/paymentRefusal';
   import {
     centsToEuros,
     eurosToCents,
@@ -59,7 +61,6 @@
   import TierRiseEditor from './TierRiseEditor.svelte';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
@@ -209,7 +210,7 @@
   });
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 
   function cotisantName(item: CotisantRosterItem): string {
@@ -332,7 +333,7 @@
       asso = updated;
       editingConfig = false;
     } catch (e) {
-      configError = m.asso_cotisations_config_save_error();
+      configError = cotisationModeInUseMessage(e) ?? m.asso_cotisations_config_save_error();
       console.error('[Cotisations] Failed to save config:', e);
     } finally {
       configSaving = false;

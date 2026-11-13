@@ -68,6 +68,8 @@ Two more the same day, after the review of #3299:
 - **B. "Seen up to" (after 1.6.9, not built)**: one server-side date per account syncs the
   "Nouveau" badge across devices, and Pour toi then leads with what is really unseen instead of
   "under 48 h" ([backlog.d](../../backlog.d/seen-up-to-one-date-per-account.md)).
+  **Before it is built, check it against principle 1 of the charter (keep the least data
+  possible, [Nos principes](../../../principes.md)): a per-account server-side date is a new stored datum.**
 
 ### Pour toi - the ranked tab (owner, 2026-11-10)
 
@@ -315,7 +317,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
 ### The composer's layout: full screen, the text taking the height, the actions under the thumb (2026-09-29)
 
 Compared on the Mi 9T with Facebook's and Instagram's composers (the user's decisions C1-C10, and
-the stages still open, are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+the stages still open, are in [reels](reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 What it was: a modal over the feed holding three nested bordered boxes, three titles saying the
 same thing, a full-width "Publier en tant que" select, eight Markdown buttons on two rows above an
 empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it was taken from:
@@ -1798,7 +1800,7 @@ question or an option, a form with a choice - and `isPostComposerDraftWorthKeepi
 for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
 restored. Pinned by `postComposerDraft.test.ts`.
 
-**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Pinned by `postComposerDraft.test.ts`.
+**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Not `canari_pending_direct_peer`: it STARTS a conversation, so it carries the account that asked and is dropped for any other ([chat](chat.md#opening-from-another-page-a-conversation-or-the-dm-with-a-person-fixed-2026-11-11)). Pinned by `postComposerDraft.test.ts`.
 
 ## The blocks preflight erases
 
@@ -2269,7 +2271,9 @@ merges over it.
   `feedPages` object store on IndexedDB, a `feed_pages` table on SQLite (`IStorage.saveFeedPage`,
   `getFeedPage`, `deleteFeedPages`). The payload repeats its owner, and a page naming another
   account is deleted, never drawn. `IStorage.clear()` empties it with the rest; a backup export does
-  not carry it.
+  not carry it. One further slot, `peer-names`, holds the sealed peer-name directory
+  ([offline-and-weak-network](../offline-and-weak-network.md#the-connection-ring-owner-2026-11-11));
+  the four-page bound is the feed pages'.
 - **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
   `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
   `canUnrepublishAs`, `canRequestRepublication`) is removed before the page is sealed, and so is

@@ -460,6 +460,16 @@ export class AssociationsController {
   }
 
   /**
+   * The spaces (formation x campus) the caller's agenda reaches: the options of the agenda's space
+   * filter, which narrows the view and grants nothing (owner, 2026-11-10).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('calendar/spaces')
+  agendaReachedSpaces(@Headers('x-user-id') userId: string) {
+    return this.service.listAgendaReachedSpaces(userId);
+  }
+
+  /**
    * Pending agenda events the caller may see.
    * A global admin sees all; a BDE validator sees those of the associations its spaces reach, plus
    * (like any association admin) those of its own associations. Every event carries `canValidate`.

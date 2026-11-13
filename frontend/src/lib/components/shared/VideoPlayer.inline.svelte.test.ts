@@ -72,18 +72,41 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
   flushSync();
   const root = target.querySelector<HTMLElement>('[data-video-player]')!;
   const video = target.querySelector('video')!;
+  // A FEED CARD HAS NO EXPAND BUTTON (owner, 2026-11-10): its keyboard twin is Enter on the card.
+  // The chat keeps its chip.
   const openButton = () =>
-    target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
+    variant === 'feed'
+      ? {
+          click: () =>
+            root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+        }
+      : target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
   const soundButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_sound_label()}"]`);
   const playButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_play_label()}"]`);
+  /** The video is playing: a feed card draws its speaker only then. */
+  const startPlaying = () => {
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    video.dispatchEvent(new Event('play'));
+    flushSync();
+  };
   /** The first frame is in. */
   const frameIn = () => {
     video.dispatchEvent(new Event('loadeddata'));
     flushSync();
   };
-  return { target, root, video, onOpen, openButton, soundButton, playButton, frameIn };
+  return {
+    target,
+    root,
+    video,
+    onOpen,
+    openButton,
+    soundButton,
+    playButton,
+    frameIn,
+    startPlaying,
+  };
 }
 
 // ------------------------------------------------------------------------------------- the feed
@@ -91,6 +114,7 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
 it('feed: starts at the app answer, and its speaker answers for every video', () => {
   const first = mountVariant('feed');
   const second = mountVariant('feed');
+  first.startPlaying();
   expect(first.video.muted).toBe(true);
   // Without it the Android WebView draws its own grey play button until the first frame.
   expect(first.video.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
@@ -244,15 +268,24 @@ it('feed: a cropped grid cell crops its poster as it will crop its frame', () =>
   expect(poster.getAttribute('class')).not.toContain('object-contain');
 });
 
-it("feed: the speaker is the kit's glass chip, yellow only when the sound is on", () => {
-  const { soundButton, target } = mountVariant('feed');
-  expect(soundButton()!.querySelector('.glass-video')).not.toBeNull();
+it('feed: the speaker is a bare white glyph, drawn only while it plays', () => {
+  const { soundButton, target, startPlaying } = mountVariant('feed');
+  expect(soundButton(), 'nothing on a poster that is not playing').toBeNull();
+  expect(target.querySelector('[data-video-expand]')).toBeNull();
+  startPlaying();
+  expect(soundButton()!.querySelector('.glass-video'), 'no chip').toBeNull();
   expect(target.querySelector('[data-video-sound="off"]')).not.toBeNull();
   soundButton()!.click();
   flushSync();
-  expect(target.querySelector('[data-video-sound="on"]')!.getAttribute('class')).toContain(
+  expect(target.querySelector('[data-video-sound="on"]')!.getAttribute('class')).not.toContain(
     'text-accent'
   );
+});
+
+it('feed: the card carries the open label and has no expand button', () => {
+  const { root, target } = mountVariant('feed');
+  expect(root.getAttribute('aria-label')).toBe('Plein ecran');
+  expect(target.querySelector('button[aria-label="Plein ecran"]')).toBeNull();
 });
 
 it('seeks a decrypted file to its first frame, and hands a stream its URL untouched', () => {
@@ -297,8 +330,9 @@ it('feed: plays while it is on screen and pauses when it leaves', () => {
   expect(pause).toHaveBeenCalledOnce();
 });
 
-it('feed: the expand chip opens the viewer, and the speaker does not', () => {
-  const { openButton, soundButton, onOpen } = mountVariant('feed');
+it('feed: Enter on the card opens the viewer, and the speaker does not', () => {
+  const { openButton, soundButton, onOpen, startPlaying } = mountVariant('feed');
+  startPlaying();
   soundButton()!.click();
   expect(onOpen).not.toHaveBeenCalled();
   openButton().click();

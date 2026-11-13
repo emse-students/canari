@@ -1,17 +1,19 @@
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { deviceWindowMs, parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
 } from '$lib/utils/chat/historyStateKey';
-import { parseReadWatermarks } from '$lib/utils/chat/readState';
+import { parseLocalReadSeed, parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  MergeMessagesOptions,
+  MessageRowStanding,
   OutboxEntry,
   PageKey,
   PendingGroupExit,
@@ -86,7 +88,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 13;
+const IDB_SCHEMA_VERSION = 14;
 
 /** The store of mutations whose message is not here yet (`PendingMutation`), since v13. */
 const PENDING_MUTATIONS = 'pendingMutations';
@@ -257,6 +259,85 @@ function keyStoredRowsProvisionally(tx: IDBTransaction): void {
       }
     }
     cursor.continue();
+  };
+}
+
+/**
+ * THE v13 -> v14 STEP: every conversation's one-time LOCAL READ SEED (`ConversationMeta.localReadSeed`),
+ * decided INSIDE the versionchange transaction - which is exclusive: no tab, no poll, no push-cache
+ * write of this or any other bundle can touch the store until it commits (an older tab gets
+ * `versionchange` and closes, {@link IndexedDbStorage.onVersionChange}; a blocked open is rejected
+ * and logged). So "held before the upgrade" is a property of the store, not of an app-level order.
+ *
+ * PER ROW, from its OWN rows: the newest server time among them, read in the clear from the order
+ * key (`orderAt` is `messageTime` - the server's time when the row knows it, its `sentAt` otherwise,
+ * `messagePayload.ts`). A row whose `orderAt` equals its `timestamp` is undated (or still provisional)
+ * and says nothing about the server's clock, so it is skipped: one phone running fast would otherwise
+ * push the seed past messages not received yet. A conversation with no dated row gets 0 - nothing
+ * held before the upgrade is covered, and everything that arrives counts. A row that already holds a
+ * number keeps it, so the step is a no-op twice. Two walks in sequence, never two cursors at once.
+ */
+export function seedLocalReadPointsInUpgrade(tx: IDBTransaction): void {
+  const names = tx.objectStoreNames;
+  if (!names.contains('messages') || !names.contains('conversations')) {
+    console.info('[IDB] Migration v13->v14: no conversations or no messages - nothing to seed');
+    return;
+  }
+  const newest = new Map<string, number>();
+  const walk = tx.objectStore('messages').openCursor();
+  walk.onerror = () => {
+    console.error('[IDB] Migration v13->v14: message cursor error', walk.error);
+    tx.abort();
+  };
+  walk.onsuccess = () => {
+    const cursor = walk.result;
+    if (cursor) {
+      const row = cursor.value as {
+        conversationId?: unknown;
+        orderAt?: unknown;
+        orderPending?: unknown;
+        timestamp?: unknown;
+      };
+      const at = row.orderAt;
+      const stamped = readStoredTimestampMs(row.timestamp);
+      if (
+        typeof row.conversationId === 'string' &&
+        typeof at === 'number' &&
+        Number.isFinite(at) &&
+        at > 0 &&
+        stamped !== undefined &&
+        at !== stamped &&
+        row.orderPending !== ORDER_PENDING
+      ) {
+        newest.set(row.conversationId, Math.max(newest.get(row.conversationId) ?? 0, at));
+      }
+      cursor.continue();
+      return;
+    }
+    let seeded = 0;
+    let considered = 0;
+    const rows = tx.objectStore('conversations').openCursor();
+    rows.onerror = () => {
+      console.error('[IDB] Migration v13->v14: conversation cursor error', rows.error);
+      tx.abort();
+    };
+    rows.onsuccess = () => {
+      const conv = rows.result;
+      if (!conv) {
+        console.info(
+          `[IDB] Migration v13->v14: local read seed written on ${considered} conversation(s), ${seeded} of them past a dated message`
+        );
+        return;
+      }
+      const value = conv.value as ConversationMeta;
+      if (typeof value.localReadSeed !== 'number') {
+        const localReadSeed = newest.get(value.id) ?? 0;
+        conv.update({ ...value, localReadSeed });
+        considered++;
+        if (localReadSeed > 0) seeded++;
+      }
+      conv.continue();
+    };
   };
 }
 
@@ -439,6 +520,7 @@ export class IndexedDbStorage implements IStorage {
       // Version 10: adds the `feedPages` store (the feed's stored first pages, sealed).
       // Version 11: adds the `byConversationTime` index on messages ([conversationId, timestamp]).
       // Version 13: adds the `pendingMutations` store (mutations whose message is not here yet).
+      // Version 14: writes each conversation's local read seed (`seedLocalReadPointsInUpgrade`).
       const request = indexedDB.open(this.dbName, IDB_SCHEMA_VERSION);
 
       request.onerror = () =>
@@ -630,6 +712,12 @@ export class IndexedDbStorage implements IStorage {
         if (oldVersion < 11 && oldVersion >= 6) normalizeStoredTimestamps(tx, keyProvisionally);
         else keyProvisionally();
 
+        // v13 -> v14: the local read seed, per conversation, inside this exclusive transaction.
+        // Only from v12 on: below it every stored row was just keyed provisionally (its `orderAt` is
+        // its `timestamp`), so there is no dated row to seed from and every conversation reads 0
+        // ("absent" reads as 0 too) - the walk would race the provisional one for nothing.
+        if (oldVersion >= 12 && oldVersion < 14) seedLocalReadPointsInUpgrade(tx);
+
         if (oldVersion < 3 && oldVersion >= 2) {
           // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,
           // and update messages.conversationId accordingly.
@@ -702,7 +790,30 @@ export class IndexedDbStorage implements IStorage {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('conversations', 'readwrite');
-      tx.objectStore('conversations').put(conv);
+      const store = tx.objectStore('conversations');
+      if (typeof conv.localReadSeed === 'number') {
+        store.put(conv);
+      } else {
+        // THE SEED STATE IS KEPT, NOT ERASED, by a caller that does not state it - the same rule as
+        // SQLite's `CONVERSATION_LOCAL_READ_SEED_VALUE`: what the row holds (what the v14 migration
+        // wrote; absent only on a row a backup import or an older build wrote, which covers nothing -
+        // no load seeds a row), or 0 for a row new on this install.
+        const read = store.get(conv.id);
+        read.onsuccess = () => {
+          const held = read.result as ConversationMeta | undefined;
+          const { localReadSeed: _unstated, ...rest } = conv;
+          store.put(
+            held
+              ? {
+                  ...rest,
+                  ...(typeof held.localReadSeed === 'number'
+                    ? { localReadSeed: held.localReadSeed }
+                    : {}),
+                }
+              : { ...rest, localReadSeed: 0 }
+          );
+        };
+      }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -725,6 +836,7 @@ export class IndexedDbStorage implements IStorage {
       serverReadWatermarks: parseReadWatermarks(r.serverReadWatermarks),
       historyFloor: parseHistoryFloor(r.historyFloor),
       awaitingAdmission: r.awaitingAdmission === true,
+      localReadSeed: parseLocalReadSeed(r.localReadSeed),
     };
   }
 
@@ -942,9 +1054,17 @@ export class IndexedDbStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts: MergeMessagesOptions = {}
   ): Promise<Set<string>> {
-    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+    return casMergeMessages(
+      this.revisedRows(),
+      conversationId,
+      ids,
+      merge,
+      deviceKeyB64,
+      opts.foreignExpected === true
+    );
   }
 
   /**
@@ -954,8 +1074,12 @@ export class IndexedDbStorage implements IStorage {
    */
   private revisedRows() {
     return {
-      read: (conversationId: string | null, ids: readonly string[], deviceKeyB64: string) =>
-        this.readRows(conversationId, ids, deviceKeyB64),
+      read: (
+        conversationId: string | null,
+        ids: readonly string[],
+        deviceKeyB64: string,
+        foreignExpected: boolean
+      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
       writeIfUnchanged: async (
         conversationId: string | null,
         writes: ReadonlyArray<RevisedWrite>,
@@ -1003,12 +1127,14 @@ export class IndexedDbStorage implements IStorage {
 
   /**
    * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn.
+   * a row of another conversation is never opened, and is said at warn unless the caller handles it
+   * (`foreignExpected`).
    */
   private async readRows(
     conversationId: string | null,
     ids: readonly string[],
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    foreignExpected = false
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
@@ -1029,7 +1155,7 @@ export class IndexedDbStorage implements IStorage {
     });
     for (const existing of found) {
       if (conversationId !== null && existing.conversationId !== conversationId) {
-        warnForeignRow(existing.id, conversationId);
+        if (!foreignExpected) warnForeignRow(existing.id, conversationId);
         continue;
       }
       try {
@@ -1069,6 +1195,26 @@ export class IndexedDbStorage implements IStorage {
       rows: new Map([...read.rows].map(([id, row]) => [id, row.msg])),
       unreadable: read.unreadable,
     };
+  }
+
+  /** See {@link IStorage.getMessageStanding}: one `get`, one open, nothing said. */
+  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const req = db.transaction('messages', 'readonly').objectStore('messages').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return { kind: 'absent' };
+    try {
+      await decryptData(row.cipherText, row.iv, deviceKeyB64);
+    } catch (e) {
+      if (e instanceof PayloadUnreadableError) {
+        return { kind: 'unreadable', conversationId: row.conversationId };
+      }
+      throw e;
+    }
+    return { kind: 'readable', conversationId: row.conversationId };
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
@@ -1286,6 +1432,40 @@ export class IndexedDbStorage implements IStorage {
       tx.oncomplete = () => resolve(found);
       tx.onerror = () => reject(tx.error);
     });
+    return this.openPendingRows(rows, deviceKeyB64, out, true);
+  }
+
+  /** See {@link IStorage.getPendingMutationsOf}: the conversation's whole key range, then opened. */
+  async getPendingMutationsOf(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const req = db
+        .transaction(PENDING_MUTATIONS, 'readonly')
+        .objectStore(PENDING_MUTATIONS)
+        .getAll(conversationMutationsRange(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // Found by conversation, not by this key's tags: a row that does not open may be under another
+    // key (a reseal in flight), so it is left as it is.
+    return this.openPendingRows(rows, deviceKeyB64, { entries: [], removedUnreadable: 0 }, false);
+  }
+
+  /**
+   * Opens the pending-mutation `rows` read, into `out`. With `removeDead` (rows found under this
+   * key's tags, so written under it) the ones that no longer open are removed in a second
+   * transaction - each only while it still holds the bytes read.
+   */
+  private async openPendingRows(
+    rows: any[],
+    deviceKeyB64: string,
+    out: PendingMutationRead,
+    removeDead: boolean
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
     const dead: any[] = [];
     for (const row of rows) {
       let sealed: Record<string, unknown>;
@@ -1295,8 +1475,8 @@ export class IndexedDbStorage implements IStorage {
           unknown
         >;
       } catch (e) {
-        if (e instanceof PayloadUnreadableError) dead.push(row);
-        else throw e;
+        if (!(e instanceof PayloadUnreadableError)) throw e;
+        if (removeDead) dead.push(row);
         continue;
       }
       const joined = joinPendingMutation(row, sealed);
@@ -1706,8 +1886,9 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
-  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds (this device's window, `deviceWindowMs()`, unless a caller names another); returns the number of deleted rows. */
+  async deleteOldMessages(maxAgeMs: number = deviceWindowMs()): Promise<number> {
+    appendLog(`[GC] deleteOldMessages maxAgeMs=${maxAgeMs}`);
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
@@ -2362,17 +2543,20 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
-  async deleteFeedPages(): Promise<number> {
+  async deleteFeedPages(keyPrefix?: string): Promise<number> {
     const db = this.ensureDb();
     const tx = db.transaction('feedPages', 'readwrite');
     const done = idbCommitted(tx);
     const store = tx.objectStore('feedPages');
+    const range =
+      keyPrefix === undefined ? undefined : IDBKeyRange.bound(keyPrefix, keyPrefix + '￿');
     const counted = new Promise<number>((resolve, reject) => {
-      const req = store.count();
+      const req = store.count(range);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    store.clear();
+    if (range) store.delete(range);
+    else store.clear();
     const [count] = await Promise.all([counted, done]);
     return count;
   }

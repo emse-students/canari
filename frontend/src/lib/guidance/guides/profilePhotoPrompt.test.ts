@@ -20,6 +20,7 @@ vi.mock('$lib/utils/profilePhotoLink', () => ({
 }));
 
 const base = {
+  eligible: true,
   hasPhoto: false,
   firstSeen: false,
   reminderSeen: false,
@@ -80,6 +81,18 @@ describe('profilePhotoPromptStage', () => {
     ).toBeNull();
     expect(profilePhotoPromptStage({ ...base, month: 10 })).toBe('first');
     expect(profilePhotoPromptStage({ ...base, month: 8 })).toBe('first');
+  });
+
+  it('shows nothing to an account the server does not offer it to, first or reminder', () => {
+    expect(profilePhotoPromptStage({ ...base, eligible: false })).toBeNull();
+    expect(
+      profilePhotoPromptStage({
+        ...base,
+        eligible: false,
+        firstSeen: true,
+        firstAgeSeconds: THIRTY_DAYS,
+      })
+    ).toBeNull();
   });
 
   it('does not guess an age the server has not given (first showing still owed)', () => {

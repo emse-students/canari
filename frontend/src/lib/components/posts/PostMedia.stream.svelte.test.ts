@@ -183,9 +183,13 @@ describe('PostMedia - a streamed feed video', () => {
     const dialog = () => document.querySelector('[role="dialog"]');
     expect(dialog()).toBeNull();
 
+    // The feed card has no expand button: its tap opens the viewer, and Enter on the focused card
+    // (which carries the label) is the keyboard twin.
     target
-      .querySelector<HTMLButtonElement>(`button[aria-label="${m.post_fullscreen_label()}"]`)!
-      .click();
+      .querySelector<HTMLElement>(
+        `[data-video-player="feed"][aria-label="${m.post_fullscreen_label()}"]`
+      )!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await settle();
 
     expect(dialog()).not.toBeNull();

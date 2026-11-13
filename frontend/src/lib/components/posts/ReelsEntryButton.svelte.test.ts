@@ -11,6 +11,7 @@ import FeedTabRow from './FeedTabRow.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
+import { settings } from '$lib/stores/settingsStore.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The empty sheet (`Modal`) opens with a transition every case unmounts mid-flight: claimed, see
@@ -125,7 +126,6 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
     multiMedia: true,
-    withLinks: true,
     feed: 'reels',
     ranked: true,
     offset: 0,
@@ -169,4 +169,27 @@ it('a refusal from the server is logged as the defect it is', async () => {
   expect(showToast).toHaveBeenCalledWith(m.posts_reels_open_error(), 'error');
   expect(error).toHaveBeenCalled();
   error.mockRestore();
+});
+
+it('a change of order still being read when the viewer closes is dropped: it stays closed, nothing remembered', async () => {
+  settings.setReelsOrder('ranked');
+  listPosts.mockResolvedValueOnce([{ id: 'newest' }] as PostEntity[]);
+  const { icon } = renderRow();
+  icon.click();
+  await settle();
+  const viewer = () => document.querySelector('[data-reel-viewer-stub]');
+  expect(viewer()).not.toBeNull();
+
+  let answer!: (rows: PostEntity[]) => void;
+  listPosts.mockImplementationOnce(() => new Promise<PostEntity[]>((r) => (answer = r)));
+  document.querySelector<HTMLButtonElement>('[data-reel-viewer-recent]')!.click();
+  await settle();
+  document.querySelector<HTMLButtonElement>('[data-reel-viewer-close]')!.click();
+  await settle();
+  expect(viewer()).toBeNull();
+
+  answer([{ id: 'late' }] as PostEntity[]);
+  await settle();
+  expect(viewer(), 'the late answer does not reopen the viewer').toBeNull();
+  expect(settings.reelsOrder, 'nor is its order remembered').toBe('ranked');
 });

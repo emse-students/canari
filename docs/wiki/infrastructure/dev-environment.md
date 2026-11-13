@@ -347,13 +347,13 @@ files, and asserts the ceiling's verdict agrees with the row.
 
 Two variables, and the split between them is deliberate.
 
-**`VITE_DEPLOY_ENVIRONMENT`** - build-time, frontend. `development` or `dev` renders a "test environment" banner, closable for the session only
-([`EnvironmentBanner.svelte`](../../../frontend/src/lib/components/shared/EnvironmentBanner.svelte)).
-It is build-time so the banner is up before the first request and stays up when the API is
+**`VITE_DEPLOY_ENVIRONMENT`** - build-time, frontend. `development` or `dev` shows a small blue flask badge on the Canari logo of the header, always visible (owner, 2026-11-11; it replaced a banner that cost a row of every screen)
+([`CanariBrand.svelte`](../../../frontend/src/lib/components/navigation/CanariBrand.svelte)).
+It is build-time so the badge is up before the first request and stays up when the API is
 unreachable; it is not derived from the hostname because a hostname rule needs editing for every name
 added and cannot answer at all for the mobile app, whose origin is `tauri://localhost` in every
 environment. **Unset means production, and so does any value nobody planned for** - the failure mode
-of a missing or misspelt variable is then a MISSING banner on a test box, which whoever is looking at
+of a missing or misspelt variable is then a MISSING badge on a test box, which whoever is looking at
 it can see, rather than a banner shown to every member of production. An unrecognised label is never
 rendered raw, because the text is localised.
 

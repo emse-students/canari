@@ -100,7 +100,7 @@
       <button
         type="button"
         class="text-2xs focus-visible:ring-accent/50 flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none active:scale-95 {hasReacted
-          ? 'bg-accent/20 text-accent-text'
+          ? 'bg-accent-tint text-accent-text'
           : 'text-text-muted bg-cn-surface hover:text-text-main'}"
         onclick={(e) => {
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.

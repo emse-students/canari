@@ -7,10 +7,14 @@
  * being watched (`followVideoSound`).
  *
  * HAND-OVER AT THE SWIPE. `stop()` releases the preload's HOLD on the shared load
- * (`mediaBlobCache.ts`), it does not cancel bytes already on the wire: a request that has left the
- * gate's queue stays joinable, so the player's whole-blob read of the same reel joins it and loses
- * nothing. A STREAMED segmented video opens its own fetch (`openSegmentedStream`) instead, so the
- * preload's partial bytes are dropped there. A preload that has finished has its hold given back;
+ * (`mediaBlobCache.ts`). The pane that becomes current mounts its player in the SAME turn, and the
+ * player's whole-blob read of the same reel joins the load before its abandonment is decided, so it
+ * loses nothing. A reel the reader wheels PAST has no player joining: its last holder has left and
+ * the load is stopped on the wire (lead decision, 2026-11-11). A STREAMED segmented video opens its
+ * own fetch (`openSegmentedStream`) instead, so the preload's partial bytes are dropped there - but
+ * its HEAD, fetched ahead by the viewer
+ * (`reelAhead.ts`), is joined by both: this preload asks only for the rest of the file, and the
+ * stream reads its first segments from it. A preload that has finished has its hold given back;
  * the player retained the same cached URL first, and the pool keeps an unheld URL for minutes anyway.
  */
 import {

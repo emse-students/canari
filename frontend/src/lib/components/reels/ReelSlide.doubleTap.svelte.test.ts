@@ -84,7 +84,7 @@ function tapOn(el: Element, detail: number) {
 
 const hearts = (target: HTMLElement) => target.querySelectorAll('[data-double-tap-heart]').length;
 
-it("a single tap is still the player's: the sound, once the double-tap window has passed", () => {
+it("a single tap is still the player's: the sound ON, once the double-tap window has passed", () => {
   vi.useFakeTimers();
   const onLike = vi.fn(() => true);
   const { video } = mountSlide({ onLike });
@@ -95,12 +95,22 @@ it("a single tap is still the player's: the sound, once the double-tap window ha
   vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
   expect(video.muted).toBe(false);
   expect(onLike).not.toHaveBeenCalled();
+
+  // A tap on a video that has its sound never mutes it (owner, 2026-11-10).
+  tapOn(video, 1);
+  vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+  expect(video.muted, 'a single tap never turns the sound off').toBe(false);
+  expect(onLike).not.toHaveBeenCalled();
 });
 
 it('a double tap likes once, draws the heart, and leaves the sound as it was', () => {
   vi.useFakeTimers();
   const onLike = vi.fn(() => true);
   const { target, video } = mountSlide({ onLike });
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play');
+  pause.mockClear();
+  play.mockClear();
 
   tapOn(video, 1);
   tapOn(video, 2);
@@ -109,6 +119,9 @@ it('a double tap likes once, draws the heart, and leaves the sound as it was', (
   expect(onLike).toHaveBeenCalledTimes(1);
   expect(hearts(target)).toBe(1);
   expect(video.muted).toBe(true);
+  // The pair is no single tap: playback is as it was.
+  expect(pause).not.toHaveBeenCalled();
+  expect(play).not.toHaveBeenCalled();
 });
 
 it('a like the viewer refused draws no heart', () => {

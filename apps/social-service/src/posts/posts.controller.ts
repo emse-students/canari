@@ -23,6 +23,8 @@ import { reelLimits } from './reel.constants';
 import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
+import { postPageLimit } from './post-page';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { AssociationsService } from '../associations/associations.service';
 import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
@@ -30,6 +32,7 @@ import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
   CreatePostDto,
   ListPostsQueryDto,
+  SearchPostsQueryDto,
   VotePollDto,
   AddCommentDto,
   ListCommentsQueryDto,
@@ -65,11 +68,22 @@ export class PostsController {
     return { service: 'post-service', status: 'ok', timestamp: new Date().toISOString() };
   }
 
-  /** Returns the notification list for the calling user. */
+  /**
+   * Returns the notification list for the calling user - only the types the caller's build can draw,
+   * read from the build it names in `X-Canari-Client-Version` (`notification-client-floor.ts`).
+   */
   @UseGuards(NginxAuthGuard)
   @Get('notifications')
-  getNotifications(@Headers('x-user-id') xUserId: string, @Query('limit') limit?: string) {
-    return this.notifications.getNotifications(xUserId, bellPageLimit(limit));
+  getNotifications(
+    @Headers('x-user-id') xUserId: string,
+    @Query('limit') limit?: string,
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string
+  ) {
+    return this.notifications.getNotifications(
+      xUserId,
+      bellPageLimit(limit),
+      clientVersionOf(clientVersion)
+    );
   }
 
   /** Marks all notifications as read for the calling user. */
@@ -141,15 +155,14 @@ export class PostsController {
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get('search')
   searchPosts(
-    @Query('q') q: string,
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
+    @Query() query: SearchPostsQueryDto,
     @Headers('x-user-id') xUserId?: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
     // The viewer is carried here for the same reason `listPosts` carries it: every row is stamped
     // with `canManage`, and a search result renders the same card as a feed row.
-    return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0), {
+    const limit = postPageLimit(query.limit, 20);
+    return this.service.searchPosts(query.q ?? '', limit, query.offset ?? 0, {
       viewerUserId: xUserId,
       isAdmin: xGlobalAdmin === 'true',
     });
@@ -168,6 +181,25 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
     return this.service.listSuggestedPosts(xUserId, xGlobalAdmin === 'true');
+  }
+
+  /**
+   * The spaces an INSTITUTION's post may target (owner, 2026-11-10): every space of its own
+   * audience, which the composer offers to tick and the publish checks a reach against. Only for a
+   * caller who may publish as it (403), and only for an institution (400 `institution_reach_not_offered`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('reach-options/:associationId')
+  listInstitutionReachOptions(
+    @Param('associationId', ParseUUIDPipe) associationId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    return this.service.listInstitutionReachOptions(
+      associationId,
+      xUserId,
+      xGlobalAdmin === 'true'
+    );
   }
 
   /** Returns a paginated list of posts for the requested feed. */
@@ -190,7 +222,7 @@ export class PostsController {
       throw new UnauthorizedException(`Authentication required for ${feed} feed`);
     }
     return this.service.listPosts({
-      limit: query.limit ?? 30,
+      limit: postPageLimit(query.limit, 30),
       offset: query.offset ?? 0,
       feed,
       viewerUserId: xUserId,
@@ -198,10 +230,7 @@ export class PostsController {
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
-      singlePhotos: query.singlePhotos === true,
-      singleMedia: query.singleMedia === true,
       multiMedia: query.multiMedia === true,
-      withLinks: query.withLinks === true,
       withReplays: query.withReplays === true,
       ranked: feed === 'reels' && query.ranked === true,
       ...(feed === 'foryou' || (feed === 'reels' && query.ranked === true)

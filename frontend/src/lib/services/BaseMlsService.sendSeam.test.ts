@@ -195,6 +195,8 @@ describe('BaseMlsService.sendMessage - the lead that left during the send', () =
     svc.closeCatchUp();
 
     await expect(inFlight).rejects.toBeInstanceOf(FollowerTabSendError);
+    // Classified at the throw: an expected lead loss, never the routing defect `follower` accuses.
+    await expect(inFlight).rejects.toMatchObject({ refusal: 'lead-lost' });
     expect(svc.encryptCalls).toBe(0);
     expect(svc.trace).toEqual([]);
   });
