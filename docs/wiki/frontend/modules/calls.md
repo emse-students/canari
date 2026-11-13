@@ -2006,7 +2006,11 @@ lands nothing in the app can start or join a group call.
 - **The seat cap is signed into the room token.** `initiate` takes `video`; a group call's binding
   holds `maxSeats` (4 audio, 3 video, D-A) and every token of that room carries `max_seats`, which
   call-service enforces ([the mesh](../../services/call-service.md#the-mesh-wp-gc2-2026-11-13)).
-  The kind is fixed at `initiate`: an audio group call offers no camera later (interim, reversible).
+  The kind is fixed at `initiate` and bound with the cap: a ring announcing another kind is refused
+  (403, before any window opens), so an audio room's 4 seats can never carry video, and `initiate`
+  itself applies `calls_mode = audio` to a video ask. An audio group call offers no camera later
+  (interim, reversible). A group `room-token` checks the review cohort against every participant.
+  A `ring-end` naming no room of its conversation stops only its sender's devices, at WARN.
   A 1:1 call carries no claim and is unchanged.
 - **Past the cap - INTERIM, reversible, 2026-11-13:** the 5th participant of an audio call or the
   4th of a video one is refused by call-service (`Refused { room-full }`), worded

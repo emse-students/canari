@@ -426,6 +426,61 @@ async fn two_users_are_paired_and_their_handshake_crosses_verbatim() {
     assert_eq!(recv(&mut bob).await, json!({ "type": "PeerLeft" }));
 }
 
+/// THE 1:1 WIRE, RAW (review of #3491): the `recv` view strips the mesh fields, so it cannot see
+/// them added. This test reads the frames EXACTLY as written: a 1:1 relay adds only the
+/// server-stamped `from` and the `PeerReady`/`PeerLeft` `peer`, both of which a pre-mesh client
+/// ignores, and never a `to` - and no other field. A new field on the 1:1 path fails here.
+#[tokio::test]
+async fn the_raw_one_to_one_wire_carries_exactly_the_known_fields() {
+    let svc = start().await;
+    let room = "room-raw";
+
+    let mut alice = join(&svc, "alice", room).await;
+    joined(&mut alice, room).await;
+    let mut bob = join(&svc, "bob", room).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "peer": "alice" })
+    );
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "peer": "bob" })
+    );
+
+    // An unaddressed 1:1 offer still reaches the other party, with `from` stamped and no `to`.
+    let sdp = "{\"type\":\"offer\",\"sdp\":\"v=0 alice\"}";
+    send(&mut alice, json!({ "type": "Offer", "sdp": sdp })).await;
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "Offer", "sdp": sdp, "from": "alice" })
+    );
+
+    alice.close(None).await.unwrap();
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerLeft", "peer": "alice" })
+    );
+}
+
+/// An SFU join whose token carries a group call's seat cap is refused until the SFU enforces one
+/// (WP-GC4): admitted, it would hold more participants than the cap it was signed with.
+#[tokio::test]
+async fn an_sfu_join_with_a_seat_cap_is_refused() {
+    let svc = start().await;
+    let room = "room-sfu-cap";
+    let mut alice = connect(&svc, "alice").await;
+    send(
+        &mut alice,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token_with_seats("alice", room, 4) }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "Refused", "reason": "seats-refused" })
+    );
+}
+
 #[tokio::test]
 async fn a_third_user_is_refused_with_a_reason() {
     let svc = start().await;

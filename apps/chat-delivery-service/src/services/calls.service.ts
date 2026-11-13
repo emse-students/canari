@@ -20,7 +20,8 @@ import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
-import { blocksAmong, isBlockedBetween } from '../utils/user-blocks';
+import { isBlockedBetween } from '../utils/user-blocks';
+import { blocksAmong } from '../utils/user-blocks-among';
 import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
@@ -134,6 +135,12 @@ interface CallRoomBinding {
    * two), exactly as before group calls - so a 1:1 call is unchanged for every client.
    */
   maxSeats?: number;
+  /**
+   * A GROUP call's kind, fixed at `initiate` with its seat cap (3 in video, 4 in audio): the ring
+   * must announce the same kind, or a 4-seat audio room would ring as a video call and become a
+   * 4-person video mesh past the video cap. Present exactly when `maxSeats` is.
+   */
+  video?: boolean;
 }
 
 /** A room token's claims: `max_seats` only for a group call (see {@link CallRoomBinding.maxSeats}). */
@@ -357,7 +364,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     groupCallVersion?: unknown
   ): Promise<InitiateCallResponse> {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId} video=${video}`);
-    await this.assertCallsOpen(`initiate group=${groupId}`, userId);
+    // The kind asked for is checked here, not only at the ring: an audio-only server refuses a
+    // video call before any room is bound for it.
+    await this.assertCallsOpen(`initiate group=${groupId}`, userId, video);
 
     await this.assertMembership(userId, groupId, 'calls');
 
@@ -391,7 +400,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // The window is NOT opened here: see `callAnswerByKey` and `ringGroup`.
     await this.redis.set(
       callRoomKey(roomId),
-      JSON.stringify({ groupId, callerId: userId, maxSeats } satisfies CallRoomBinding),
+      JSON.stringify(
+        (group
+          ? { groupId, callerId: userId, maxSeats, video }
+          : { groupId, callerId: userId }) satisfies CallRoomBinding
+      ),
       'EX',
       CALL_ROOM_BINDING_TTL_SEC
     );
@@ -442,6 +455,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     if (binding.maxSeats !== undefined) {
       this.assertSpeaksTheMesh(userId, groupCallVersion, `join-token room=${roomId}`);
+      // The review cohort's boundary, as at `initiate` and `ring`: every participant the joiner
+      // would be paired with, the caller included.
+      this.refuseAcrossReviewCohort(
+        userId,
+        [binding.callerId, ...(await this.otherMemberIds(groupId, userId))],
+        `join-token room=${roomId}`
+      );
       // A GROUP call: a member in a block with any other member is DROPPED - never given a token,
       // so never paired with anyone in the mesh, whose legs expose each address (D4).
       await this.refuseDroppedMember(
@@ -551,10 +571,21 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const value = parsed as Partial<CallRoomBinding> | null;
     if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
       if (value.maxSeats === undefined) return { groupId: value.groupId, callerId: value.callerId };
-      if (typeof value.maxSeats === 'number' && Number.isInteger(value.maxSeats)) {
-        return { groupId: value.groupId, callerId: value.callerId, maxSeats: value.maxSeats };
+      if (
+        typeof value.maxSeats === 'number' &&
+        Number.isInteger(value.maxSeats) &&
+        typeof value.video === 'boolean'
+      ) {
+        return {
+          groupId: value.groupId,
+          callerId: value.callerId,
+          maxSeats: value.maxSeats,
+          video: value.video,
+        };
       }
-      this.logger.error(`[call] room binding for ${roomId} has an unusable seat cap - refused`);
+      this.logger.error(
+        `[call] room binding for ${roomId} has an unusable seat cap or kind - refused`
+      );
       return null;
     }
     if (typeof value?.groupId === 'string') {
@@ -848,7 +879,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     let calleeIds = others;
     // A GROUP call is what `initiate` bound as one (a seat cap), never a member count read again
     // here: the room's kind was decided once. A missing binding is refused by `openRingWindow`.
-    const group = (await this.readRoomBinding(callId))?.maxSeats !== undefined;
+    const bound = await this.readRoomBinding(callId);
+    const group = bound?.maxSeats !== undefined;
+    if (group && bound?.video !== hasVideo) {
+      // The seat cap was chosen from the kind at `initiate`: a different kind here would carry a
+      // video call in an audio room's seats. Refused before any window opens or anyone is rung.
+      this.logger.warn(
+        `[ring] REFUSED call=${callId} caller=${callerId}: rung as ${hasVideo ? 'video' : 'audio'}, opened as ${bound?.video ? 'video' : 'audio'}`
+      );
+      throw new ForbiddenException('This call was opened as another kind of call');
+    }
     if (group) {
       // A group call: one block drops that member - not rung - and never refuses the call (WP-C11's
       // decision, 2026-11-13, docs/wiki/frontend/modules/calls.md#group-calls-the-mesh-wp-gc2-2026-11-13).
@@ -947,22 +987,27 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
     await this.assertMembership(userId, groupId, 'ring-end');
     const binding = await this.readRoomBinding(callId);
+    // A ring-end for a room this service cannot read as THIS conversation's (expired, never bound,
+    // or another group's) tells it nothing about the other members: it stops only the sender's
+    // devices, and says so - never everyone's on a guess.
+    const unbound = binding === null || binding.groupId !== groupId;
+    if (unbound) {
+      this.logger.warn(
+        `[ring] ring-end call=${callId} reason=${reason} user=${userId} names no room of group=${groupId} - their own devices only`
+      );
+    }
     // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
     // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
-    const ownOnly =
-      binding !== null &&
-      binding.groupId === groupId &&
-      binding.maxSeats !== undefined &&
-      binding.callerId !== userId;
-    if (ownOnly) {
-      this.logger.log(
-        `[ring] ring-end call=${callId} reason=${reason} by a member of a group call - their own devices only`
-      );
-    } else {
+    const ownOnly = unbound || (binding.maxSeats !== undefined && binding.callerId !== userId);
+    if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
       // a Redis failure here is logged and never keeps them from leaving.
       await this.markRingEnded(groupId, callId, reason).catch((e: unknown) =>
         this.logger.error(`[ring-end] call=${callId} could not be marked ended`, e as Error)
+      );
+    } else if (!unbound) {
+      this.logger.log(
+        `[ring] ring-end call=${callId} reason=${reason} by a member of a group call - their own devices only`
       );
     }
 
