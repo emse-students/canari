@@ -3,9 +3,10 @@
 // got. A POST on purpose - it is the request nginx may NOT replay once a byte has been sent, so it is
 // the one a careless replacement turns into a 502 ("Echec de l'envoi").
 //
-// Prints {statuses, versions, maxMs, failed, lastFailedSent}: `failed` holds the first 20 non-200
-// answers with the moment each was sent, so a failure can be placed in the deploy's timeline, and
-// `lastFailedSent` the moment the LAST failing one was sent (null when none failed).
+// Prints {statuses, versions, maxMs, failed, lastFailedSent, lastOkSent}: `failed` holds the first 20
+// non-200 answers with the moment each was sent, so a failure can be placed in the deploy's timeline;
+// `lastFailedSent` and `lastOkSent` the moment the LAST failing and the last answered one were sent
+// (null when there was none).
 //
 // ALSO ONE SERVICE CALLING ANOTHER (2026-11-07): run inside the fixture's `caller` container, against
 // the mesh or the API's own name. With `keepalive` it pools its connections as a service's `fetch`
@@ -27,6 +28,7 @@ const versions = new Map();
 let maxMs = 0;
 const failed = [];
 let lastFailedSent = null;
+let lastOkSent = null;
 
 async function worker() {
   while (!existsSync(stopFile)) {
@@ -58,6 +60,9 @@ async function worker() {
       const sent = new Date(started).toISOString();
       failed.push({ key, sent, ms: Date.now() - started });
       if (lastFailedSent === null || sent > lastFailedSent) lastFailedSent = sent;
+    } else {
+      const sent = new Date(started).toISOString();
+      if (lastOkSent === null || sent > lastOkSent) lastOkSent = sent;
     }
     statuses.set(key, (statuses.get(key) ?? 0) + 1);
   }
@@ -71,5 +76,6 @@ console.log(
     maxMs,
     failed: failed.slice(0, 20),
     lastFailedSent,
+    lastOkSent,
   })
 );

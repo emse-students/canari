@@ -794,7 +794,10 @@ first enumeration also missed four calls made by CODE DEFAULTS that no compose f
 media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`). **And the callers held the address longer than
 Docker did** (2026-11-07 review): the services run on Bun, whose `fetch` keeps a resolved address
 30 s by default, so a caller went on dialling a replica's address after Docker had stopped naming
-it - a large part, probably, of the control's failures below.
+it. That is most of the control's failures below: with the 2 s cache the callers now keep, the same
+calls by DNS saw no failure in one CI run (2026-11-13). The mesh stays, because the race it closes by
+construction - a call queued on a replica that DNS still names as it stops - is not shown gone by one
+clean run (the control is run with Bun's 30 s, as the services had it before).
 
 **The fix: one more proxy in the rotation, `mesh`** (`infrastructure/edge/mesh.conf`):
 
@@ -838,7 +841,10 @@ through the mesh, 4,872 pooled and 5,160 unpooled calls, all `200`, both version
 4,008 `200` beside 2,609 refused and 12 hung to the client's 10 s bound; the storm, 41,281 calls
 through the mesh, all `200`. Case 2d recreates the mesh itself under two callers: the one keeping an
 address the resolver lifetime sends nothing that fails once the new mesh has settled (healthy, plus
-that lifetime and a second); the control, on Bun's 30 s default, still fails after that moment.
+that lifetime and a second), and is answered after it. A caller on Bun's 30 s default beside it is
+printed, not asserted: on CI the stale address refused at once and Bun re-resolved (0.13 s of
+failures for both), on the review's workstation it swallowed the connection and the gap lasted 30 s -
+a property of the Docker host, which is why the setting is held by a test rather than measured.
 
 **The count stays.** `rolling.sh` (`transport_resets`) reads each retiring replica's log before its
 `docker rm`, and one sweep at the end of `replace_services` reads every running container of every
