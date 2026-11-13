@@ -40,9 +40,14 @@
     allowMultipleSubmissions: boolean;
     /**
      * Whether a respondent with an account may change their own answer while the form is open, the
-     * price-affecting questions locked (migration 164). Shut on an anonymous form.
+     * price-affecting questions locked (migration 166). Shut on an anonymous form.
      */
     allowAnswerEdit: boolean;
+    /**
+     * Whether this estate serves the change of an answer (`formAnswerEdit` in `/api/version`): an
+     * older server would drop the switch, so it is not drawn there (`answerEditGate.ts`).
+     */
+    answerEditAvailable?: boolean;
     /** Whether answers are stored without their author. */
     anonymous: boolean;
     /** True once the form exists: anonymity is fixed at creation and shown, not offered. */
@@ -84,6 +89,7 @@
     maxSubmissions = $bindable(),
     allowMultipleSubmissions = $bindable(),
     allowAnswerEdit = $bindable(),
+    answerEditAvailable = false,
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
@@ -163,12 +169,14 @@
 
     <!-- An anonymous answer names nobody who could reopen it: the switch is shut beside anonymity,
          with the reason as its hint (the shared option rule, `FORM_ANONYMOUS_ANSWER_EDIT`). -->
-    <Toggle
-      bind:checked={allowAnswerEdit}
-      disabled={answerEditBlocker != null}
-      label={m.form_answer_edit_label()}
-      hint={answerEditBlocker ?? m.form_answer_edit_hint()}
-    />
+    {#if answerEditAvailable}
+      <Toggle
+        bind:checked={allowAnswerEdit}
+        disabled={answerEditBlocker != null}
+        label={m.form_answer_edit_label()}
+        hint={answerEditBlocker ?? m.form_answer_edit_hint()}
+      />
+    {/if}
 
     <!-- Anonymity is a promise about what is STORED, so it is chosen once: turning it on later would
          promise it to answers already written with a name. Said in the hint, not left to a refusal. -->

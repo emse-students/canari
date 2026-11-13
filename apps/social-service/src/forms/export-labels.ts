@@ -49,7 +49,7 @@ export interface ExportLabels {
    */
   guest?: string;
   /**
-   * Header of the "last changed" column (migration 164): when the respondent last changed their
+   * Header of the "last changed" column (migration 166): when the respondent last changed their
    * answer, blank on an answer never changed. Optional HERE, required by `exportSubmissions` when the
    * column is written - on a form that allows changes, or holding an answer that was changed.
    */

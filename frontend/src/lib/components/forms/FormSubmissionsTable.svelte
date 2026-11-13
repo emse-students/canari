@@ -200,7 +200,7 @@
 <!-- The submitter, and a GUEST's answer (a public form's link, no account) marked as one: its name
      is what the guest typed when the form asked (owner, 2026-11-06), ALWAYS beside the reference it
      was given when it paid and the badge, so a typed name never passes for an account's. -->
-<!-- When the respondent changed their answer afterwards (migration 164): the date of the last
+<!-- When the respondent changed their answer afterwards (migration 166): the date of the last
      change, under the date it was sent. No history is kept, only the last moment. -->
 {#snippet editedMark(sub: Submission)}
   {#if sub.editedAt}

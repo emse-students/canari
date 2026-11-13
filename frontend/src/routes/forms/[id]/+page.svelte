@@ -85,6 +85,8 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import { offersAnswerEdit } from '$lib/forms/answerEditGate';
+  import { serverFormAnswerEdit } from '$lib/stores/appVersionCheck.svelte';
   import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
@@ -362,7 +364,7 @@
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
         void reminder.load();
       }
-      if (f.allowAnswerEdit && !f.anonymous && userId) void loadEditableAnswers(f.id);
+      if (offersAnswerEdit(f, !!userId, serverFormAnswerEdit())) void loadEditableAnswers(f.id);
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);

@@ -338,7 +338,7 @@ export class CreateFormDto {
 
   /**
    * Whether a respondent with an account may change their own answer while the form is open
-   * (migration 164, owner 2026-11-13). Absent keeps the stored value on an edit; refused on an
+   * (migration 166, owner 2026-11-13). Absent keeps the stored value on an edit; refused on an
    * anonymous form (`FORM_ANONYMOUS_ANSWER_EDIT`).
    */
   @IsBoolean()
@@ -531,7 +531,7 @@ export class SubmitFormDto {
 }
 
 /**
- * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 164): the answers
+ * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 166): the answers
  * as the fill page holds them, validated like a submit's (`IsValidAnswers`). Nothing about payment
  * travels here - an edit never charges, refunds or re-prices (`answer-edit.ts`).
  */

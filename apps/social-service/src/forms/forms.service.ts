@@ -141,7 +141,7 @@ import {
   answerLocked,
   answerNotEditable,
   answerNotFound,
-  editLockedItemIds,
+  rowLockedItemIds,
   sameAnswer,
 } from './answer-edit';
 import {
@@ -2857,7 +2857,7 @@ export class FormsService {
 
   /**
    * The caller's own answers to a form that lets them be changed, each with the questions an edit
-   * may not touch (`editLockedItemIds`) - what the fill page reopens. Empty when the form does not
+   * may not touch (`rowLockedItemIds`) - what the fill page reopens. Empty when the form does not
    * allow it, is anonymous, or is not open: nothing could be changed, so nothing is offered. Every
    * row that IS an answer (`answerHoldingWhere`) is listed, newest first: one on a single-answer
    * form, each separately on a form taking several.
@@ -2878,7 +2878,7 @@ export class FormsService {
     });
     return rows.map((row) => ({
       ...toSubmitterView(row),
-      lockedItemIds: [...editLockedItemIds(form, row.cotisationGrantedAt != null)],
+      lockedItemIds: [...rowLockedItemIds(form, row)],
     }));
   }
 
@@ -2893,7 +2893,7 @@ export class FormsService {
    *   an absent one does (404 `FORM_ANSWER_NOT_FOUND`).
    * - **When**: while the form is open (`assertFormOpen`), and while the row IS an answer
    *   (`answerHoldingWhere`: not cancelled, expired or refunded).
-   * - **What**: every question that touches the price is LOCKED (`editLockedItemIds`): the stored
+   * - **What**: every question that touches the price is LOCKED (`rowLockedItemIds`): the stored
    *   answer stays, a payload may repeat or omit it, and one that changes it is 409
    *   `FORM_ANSWER_LOCKED` naming the question.
    * - **Admission**: only the ANSWER criterion of `submitCondition` is judged again. Who the person
@@ -2950,7 +2950,7 @@ export class FormsService {
       // The invariant, on the row as it is NOW: every locked answer is written back unchanged. A
       // retry that re-priced the row, or a grant that locked one more question, since the read above
       // is seen here and refuses rather than overwrites.
-      for (const itemId of editLockedItemIds(form, row.cotisationGrantedAt != null)) {
+      for (const itemId of rowLockedItemIds(form, row)) {
         if (!sameAnswer(stored[itemId], row.answers?.[itemId])) {
           this.logger.warn(`[FORM_EDIT] refused ${tag}: locked ${itemId} moved under the edit`);
           throw answerLocked(itemId);
@@ -2987,7 +2987,7 @@ export class FormsService {
     tag: string
   ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
     const items = form.items ?? [];
-    const locked = editLockedItemIds(form, row.cotisationGrantedAt != null);
+    const locked = rowLockedItemIds(form, row);
     const sent = withNormalisedGridAnswers(items, answersIn);
     const merged: Record<string, unknown> = { ...sent };
     for (const itemId of locked) {
@@ -4122,7 +4122,7 @@ export class FormsService {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
       headers.push({ header: labels.status, key: 'status', width: 14 });
     }
-    // When the respondent last changed the answer (migration 164): on a form that allows it, or
+    // When the respondent last changed the answer (migration 166): on a form that allows it, or
     // holding an answer changed while it did. Blank on an answer never changed. No history is kept.
     const editedColumn = form.allowAnswerEdit || submissions.some((s) => s.editedAt != null);
     if (editedColumn) {

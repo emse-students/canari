@@ -1,4 +1,4 @@
-import { editLockedItemIds, sameAnswer, type EditLockForm } from './answer-edit';
+import { editLockedItemIds, rowLockedItemIds, sameAnswer, type EditLockForm } from './answer-edit';
 
 /** A form with one of each kind of question the lock rule reads. */
 function form(over: Partial<EditLockForm> = {}): EditLockForm {
@@ -80,6 +80,42 @@ describe('editLockedItemIds', () => {
   it('a text question carrying a priced option is not a price (the TYPE decides)', () => {
     const items = [{ id: 'q', type: 'short_text', options: [{ id: 'o', priceModifier: 900 }] }];
     expect(editLockedItemIds(form({ items }), false).size).toBe(0);
+  });
+});
+
+describe('rowLockedItemIds', () => {
+  it('keeps locked what the row was priced on, even once the form no longer prices it', () => {
+    // The grid the row was charged on is now a plain text question; its dependant is free today.
+    const items = [
+      { id: 'q-root', type: 'single_choice', options: [{ id: 'r', priceModifier: 0 }] },
+      {
+        id: 'q-was-grid',
+        type: 'short_text',
+        showIf: { answer: { questionId: 'q-root', optionIds: ['r'] } },
+      },
+      { id: 'q-free', type: 'long_text' },
+    ];
+    const today = form({ items });
+    expect(editLockedItemIds(today, false).size).toBe(0);
+    const locked = rowLockedItemIds(today, {
+      cotisationGrantedAt: null,
+      lines: [{ itemId: 'q-was-grid' }],
+    });
+    // The question named by the row's lines, and the one that shows it.
+    expect([...locked].sort()).toEqual(['q-root', 'q-was-grid']);
+  });
+
+  it('reads the grant from the row', () => {
+    const granting = form({
+      grantsCotisation: true,
+      submitCondition: { answer: { questionId: 'q-text', optionIds: ['x'] } },
+    });
+    expect(
+      rowLockedItemIds(granting, { cotisationGrantedAt: new Date(), lines: null }).has('q-text')
+    ).toBe(true);
+    expect(
+      rowLockedItemIds(granting, { cotisationGrantedAt: null, lines: null }).has('q-text')
+    ).toBe(false);
   });
 });
 

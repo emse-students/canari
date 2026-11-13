@@ -109,7 +109,7 @@ export interface CreateFormPayload {
   allowMultipleSubmissions?: boolean;
   /**
    * A respondent with an account may change their own answer while the form is open, the questions
-   * that touch the price excepted (migration 164). Refused beside `anonymous`.
+   * that touch the price excepted (migration 166). Refused beside `anonymous`.
    */
   allowAnswerEdit?: boolean;
   /**
@@ -550,7 +550,7 @@ export interface Submission {
   /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
   lines?: ProductGridLine[] | null;
   createdAt: string;
-  /** When the respondent last changed the answer (migration 164); null if never. */
+  /** When the respondent last changed the answer (migration 166); null if never. */
   editedAt?: string | null;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;

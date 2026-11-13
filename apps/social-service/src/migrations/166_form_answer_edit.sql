@@ -1,4 +1,4 @@
--- Migration 164 : a respondent may change their own answer, when the form allows it (owner, 2026-11-13).
+-- Migration 166 : a respondent may change their own answer, when the form allows it (owner, 2026-11-13).
 --
 -- docs/wiki/frontend/modules/forms.md, "A respondent changes their own answer". A new per-form
 -- setting, "Autoriser la modification de la reponse", OFF by default: when on, a respondent with an

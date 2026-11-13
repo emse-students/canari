@@ -171,7 +171,7 @@ export class Submission {
   guestEmail: string | null;
 
   /**
-   * When the respondent last changed this answer (migration 164, `FormsService.editAnswer`); NULL
+   * When the respondent last changed this answer (migration 166, `FormsService.editAnswer`); NULL
    * for an answer never changed. Not `updatedAt`, which every payment status move rewrites: the
    * managers read this one as "modifiee le".
    */

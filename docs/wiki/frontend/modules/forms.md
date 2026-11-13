@@ -1189,7 +1189,7 @@ the price is only as good as the answer it is computed from:
 ## A respondent changes their own answer (owner, 2026-11-13)
 
 A per-form switch, **"Autoriser la modification de la réponse"** (`forms.allowAnswerEdit`, OFF by
-default, migration 164), lets a respondent WITH AN ACCOUNT reopen their own answer and change it.
+default, migration 166), lets a respondent WITH AN ACCOUNT reopen their own answer and change it.
 The owner's decisions are final; the reasons below are why the code holds them.
 
 **Who and when.**
@@ -1220,6 +1220,17 @@ what is charged is LOCKED:
   today (the tier is the form's `cotisationVariantKey`), and every granting form charges, so its
   priced questions are locked already; this line only closes "change the answer that let me buy".
   To reverse it, drop the `grantMade` branch in `editLockedItemIds`.
+- **the lead's REVERSIBLE decision (2026-11-13), what the ROW says**: the lock set of an answer is
+  today's rule UNITED with every question its stored `lines` names (`rowLockedItemIds`, closed under
+  visibility like the rest), so a grid a manager later unprices, retypes or removes still holds on
+  the rows charged with it. No schema change: `lines` is what the row already keeps of its price
+  (migration 137). **Its limit, stated:** `lines` records the priced GRIDS only. An option supplement
+  leaves no trace on the row (`totalPaid` is a sum, naming no option), so a supplement a manager
+  REMOVES after answers were priced with it unlocks that question on those rows: the respondent may
+  then change the option while `totalPaid` keeps the old amount (still no top-up, no refund - only
+  the answer and the money disagree). Closing it needs either a snapshot of the locked ids at submit
+  (a column) or refusing to lower a supplement on a form whose answers hold it - not built, a
+  decision. To reverse the union, call `editLockedItemIds` without its third argument.
 
 **When does the lock start - the unpaid-but-requested decision.** The owner preferred "locked as
 soon as a payment request exists". The rule is STRICTER: the price-affecting questions are locked
@@ -1253,6 +1264,10 @@ seat, the cotisation grant. It never reaches the payment provider.
    non-empty cells), so a retry, a payment or a grant committed meanwhile refuses rather than
    overwrites; then `answers` and `editedAt = now()` - nothing else.
 
+**Version skew.** The client offers the switch and "Modifier ma réponse", and asks the routes below,
+only on an estate whose `/api/version` says `formAnswerEdit: true`; an editor older than the switch
+saving a form keeps the stored value ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-answer-editor-newer-than-its-server---formansweredit-2026-11-13)).
+
 `GET /api/forms/:id/my-answers` lists the caller's rows that may be changed, newest first, each with
 its `lockedItemIds`; empty when the switch is off, the form anonymous or not open. The fill page
 reads it, offers "Modifier ma réponse" under the sent answer (or a "Vos réponses" list on a form
@@ -1284,11 +1299,11 @@ le" column - present when the form allows changes or any row was changed. No not
 **Logs**: `[FORM_EDIT]` at entry, at each refusal (with its reason) and at the write (status, files
 claimed); the fill page logs under `FormView`.
 
-**Schema**: migration 164 (`164_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
+**Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
 `forms."allowAnswerEdit" boolean NOT NULL DEFAULT false` and `submissions."editedAt" timestamptz
 NULL`. Reverse: drop the two columns (written in the file).
 
-**Tests**: `answer-edit.spec.ts` (the lock rule and `sameAnswer`), `answer-edit.integration.spec.ts`
+**Tests**: `answer-edit.spec.ts` (the lock rule, the row's own `lines` united with it, and `sameAnswer`), `answerEditGate.test.ts` and `appVersion.test.ts` (the capability gate), `forms.service.public.spec.ts` (an older editor's save keeps the switch), `answer-edit.integration.spec.ts`
 against PostgreSQL (CI's `test-social-integration`): an edit done in place, a locked question refused
 on a paid answer, pending cash locked too, a full form keeping its seat, a hidden answer dropped, a
 closed form, an anonymous form and a switch-off form refused, another person's answer 404, a

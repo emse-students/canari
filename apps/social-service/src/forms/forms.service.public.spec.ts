@@ -1,7 +1,9 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { OTHERS_BUCKET_ID } from '../pricing/audience';
+import { plainToInstance } from 'class-transformer';
 import { FORM_GRID_MULTIPLE_CHOICE_SPLIT } from './answer-bounds';
+import { CreateFormDto } from './dto/form.dto';
 
 /**
  * A PUBLIC FORM IS ANSWERED BY SOMEBODY WITH NO ACCOUNT, AND EVERY RULE HERE FOLLOWS FROM THAT.
@@ -994,6 +996,54 @@ describe('FormsService - public forms', () => {
           'FORM_ANONYMOUS_COTISATION_GRANT'
         );
       });
+    });
+  });
+
+  // VERSION SKEW (forms.md, "A respondent changes their own answer"): an editor of 1.6.6 to 1.6.11
+  // knows nothing of the switch, and its save must not turn it off behind the manager's back.
+  describe('the answer-edit switch across an older editor', () => {
+    /** What an older editor's save carries, as the ValidationPipe hands it on: no `allowAnswerEdit`. */
+    const olderEditorSave = () =>
+      plainToInstance(CreateFormDto, {
+        title: 'Inscription au gala',
+        description: 'Ouvert a tous',
+        basePrice: 0,
+        priceMatrix: null,
+        submitCondition: null,
+        currency: 'eur',
+        items: [{ id: 'q1', label: 'Nom prenom', required: true, type: 'short_text' }],
+        allowMultipleSubmissions: false,
+        isPublic: false,
+        guestFields: [],
+        requiresPayment: false,
+      });
+
+    function stored() {
+      const { service, formRepo } = makeService({
+        form: baseForm({ isPublic: false, allowMultipleSubmissions: false, allowAnswerEdit: true }),
+      });
+      return { service, formRepo };
+    }
+
+    it('keeps the stored switch when the save does not carry it', async () => {
+      const { service, formRepo } = stored();
+      await service.update('f1', olderEditorSave(), 'u-owner', false);
+      expect(formRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ allowAnswerEdit: true })
+      );
+    });
+
+    it('turns it off only when a save says so', async () => {
+      const { service, formRepo } = stored();
+      await service.update(
+        'f1',
+        plainToInstance(CreateFormDto, { ...olderEditorSave(), allowAnswerEdit: false }),
+        'u-owner',
+        false
+      );
+      expect(formRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ allowAnswerEdit: false })
+      );
     });
   });
 });

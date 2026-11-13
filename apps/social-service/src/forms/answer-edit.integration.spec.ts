@@ -1,10 +1,10 @@
 /**
- * A RESPONDENT CHANGES THEIR OWN ANSWER, against a REAL PostgreSQL (migration 164, owner 2026-11-13).
+ * A RESPONDENT CHANGES THEIR OWN ANSWER, against a REAL PostgreSQL (migration 166, owner 2026-11-13).
  *
  * `FormsService.editAnswer` runs for real - the form lock, the row lock, the submit's checks - over
  * rows the real `submit`, `markPaid` and `validateCashPayment` wrote. core-service is the
  * `axios.post` mock (a request is issued, then Lydia is never asked again). What only a database
- * shows: migration 164 as written, the row updated in place (never a second one), the locked price
+ * shows: migration 166 as written, the row updated in place (never a second one), the locked price
  * question refused on a paid and on a cash answer, the seat kept on a full form, and an edit queued
  * behind a cash validation holding the row - neither losing the other's write.
  *
@@ -90,7 +90,7 @@ async function refusal(promise: Promise<unknown>): Promise<{ status: number; cod
   throw new Error('expected a refusal, the call succeeded');
 }
 
-maybe('a respondent changes their own answer, against PostgreSQL (migration 164)', () => {
+maybe('a respondent changes their own answer, against PostgreSQL (migration 166)', () => {
   const schema = `answer_edit_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -111,11 +111,11 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 164)
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
-    // Migration 164 from tables WITHOUT its columns, twice: `synchronize` built them from the entities.
+    // Migration 166 from tables WITHOUT its columns, twice: `synchronize` built them from the entities.
     await ds.query(`ALTER TABLE forms DROP COLUMN "allowAnswerEdit"`);
     await ds.query(`ALTER TABLE submissions DROP COLUMN "editedAt"`);
     const migration = readFileSync(
-      join(__dirname, '../migrations/164_form_answer_edit.sql'),
+      join(__dirname, '../migrations/166_form_answer_edit.sql'),
       'utf8'
     );
     await ds.query(migration);
@@ -217,7 +217,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 164)
       (await ds.query(`SELECT count(*) AS n FROM submissions WHERE "formId" = $1`, [formId]))[0].n
     );
 
-  it('migration 164 adds both columns as declared, and is idempotent', async () => {
+  it('migration 166 adds both columns as declared, and is idempotent', async () => {
     const columns = await ds.query(
       `SELECT table_name, column_name, data_type, is_nullable, column_default
          FROM information_schema.columns

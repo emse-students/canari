@@ -79,6 +79,12 @@ describe('VersionService', () => {
     expect(out.rankedFeeds).toBe(true);
   });
 
+  it('says its estate lets a respondent change their answer, so a client offers it only then', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formAnswerEdit).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 

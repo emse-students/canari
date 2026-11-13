@@ -116,6 +116,8 @@ export type ServerVersionInfo = {
   formDrafts: boolean;
   /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
   rankedFeeds: boolean;
+  /** Whether this estate lets a respondent change their answer - see {@link AppVersionCheckResult}. */
+  formAnswerEdit: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -171,6 +173,14 @@ export type AppVersionCheckResult = {
    * production deploys. `false` for every server older than the field.
    */
   rankedFeeds: boolean;
+  /**
+   * Whether this estate's social-service lets a respondent change their own answer
+   * (`formAnswerEdit`, migration 166). An older one answers the answer routes `404` and strips the
+   * form's switch from a save - and a store build reaches phones before production deploys, so the
+   * switch and "Modifier ma reponse" are offered only when this is true. `false` for every server
+   * older than the field.
+   */
+  formAnswerEdit: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -240,6 +250,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     publishQueue?: unknown;
     formDrafts?: unknown;
     rankedFeeds?: unknown;
+    formAnswerEdit?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -257,6 +268,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
     rankedFeeds: obj.rankedFeeds === true,
+    formAnswerEdit: obj.formAnswerEdit === true,
   };
 }
 
@@ -279,6 +291,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   publishQueue: boolean;
   formDrafts: boolean;
   rankedFeeds: boolean;
+  formAnswerEdit: boolean;
 } {
   return {
     version: info.version,
@@ -293,6 +306,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
     rankedFeeds: info.rankedFeeds,
+    formAnswerEdit: info.formAnswerEdit,
   };
 }
 /**
@@ -480,6 +494,7 @@ export function buildAppVersionCheckResult(
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
+    formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
   };
 }
 

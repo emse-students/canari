@@ -142,7 +142,7 @@ export class Form {
 
   /**
    * When true, a respondent WITH AN ACCOUNT may change their own answer while the form is open
-   * (migration 164, owner 2026-11-13), the questions that touch the price excepted
+   * (migration 166, owner 2026-11-13), the questions that touch the price excepted
    * (`answer-edit.ts`). Off by default; refused beside `anonymous` (`form-option-rules.ts`): an
    * anonymous answer names nobody who could reopen it.
    */
