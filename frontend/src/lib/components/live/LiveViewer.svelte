@@ -56,6 +56,7 @@
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     live: LiveListItem;
@@ -69,6 +70,9 @@
   }
 
   let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'LiveViewer');
 
   /**
    * THE VIEWER TURNS WITH THE PHONE for its whole mount (owner, 2026-11-09; screen-orientation.md): a
@@ -320,7 +324,8 @@
   <div
     use:coversScreen
     use:focusTrap
-    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
+    style:z-index={layer.z}
+    class="fixed inset-0 overflow-hidden bg-black text-white"
     role="dialog"
     aria-modal="true"
     aria-label={m.live_viewer_label({ name })}

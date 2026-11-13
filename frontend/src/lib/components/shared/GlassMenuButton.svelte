@@ -22,6 +22,7 @@
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * A ROUND GLASS BUTTON THAT GROWS INTO ITS OPTIONS - the Liquid Glass menu, in CSS (user,
@@ -92,6 +93,9 @@
 
   let ownOpen = $state(false);
   const open = $derived(controlledOpen ?? ownOpen);
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'GlassMenuButton');
 
   /** The one place the menu's openness changes: reported in controlled mode, held here otherwise. */
   function setOpen(next: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') {
@@ -169,7 +173,8 @@
       use:portal
       role="menu"
       tabindex="-1"
-      class="glass-menu-panel {panelSkin} fixed z-(--z-popover) flex w-max min-w-44 flex-col gap-0.5 p-1.5 {alignEnd
+      style:z-index={layer.z}
+      class="glass-menu-panel {panelSkin} fixed flex w-max min-w-44 flex-col gap-0.5 p-1.5 {alignEnd
         ? 'glass-menu-end'
         : 'glass-menu-start'}"
       transition:scale={{ duration: 180, start: 0.35, easing: cubicOut }}

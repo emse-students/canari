@@ -980,8 +980,8 @@ below; **owed on both phones**
   removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
   the whole thread used to adopt it and collapse.
 - **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
-  (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
-  viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
+  (rungs under the viewer's): since 2026-11-13 the viewer and its dialogs are on the overlay stack
+  (`utils/overlayStack.ts`), so what opens later is above it with no rung or mark.
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a

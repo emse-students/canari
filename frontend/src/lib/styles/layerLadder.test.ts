@@ -32,6 +32,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allMarkup } from './markupSources';
+import { OVERLAY_Z_BASE, OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cssPath = join(src, 'app.css');
@@ -87,8 +88,6 @@ describe('the layer ladder', () => {
     for (const [scrim, panel] of [
       ['nav-scrim', 'nav-rail'],
       ['nav-drawer-scrim', 'nav-drawer'],
-      ['popover-scrim', 'popover'],
-      ['side-panel-scrim', 'side-panel'],
     ] as const) {
       expect(by(scrim), `${scrim} must exist`).toBeDefined();
       expect(by(panel), `${panel} must exist`).toBeDefined();
@@ -96,13 +95,32 @@ describe('the layer ladder', () => {
     }
   });
 
-  it('puts a sheet the reader opened above the ambient banner, not under it', () => {
+  it('puts the overlay stack above the ambient banner and under the toast', () => {
     // The inversion this ladder was written for: a full-screen scrim with a banner painted through
-    // it reads as a rendering fault, and the sheet is the thing the reader just asked for.
-    const banner = ladder.find((r) => r.name === 'banner')!.value;
-    const sheet = ladder.find((r) => r.name === 'sheet')!.value;
+    // it reads as a rendering fault, and an overlay is the thing the reader just asked for. The
+    // overlays take their z-index from the stack (`utils/overlayStack.ts`), not from a rung, so the
+    // range is what is asserted: above the banner, below the toast that answers what was done in it.
+    const by = (name: string) => ladder.find((r) => r.name === name)!.value;
 
-    expect(sheet).toBeGreaterThan(banner);
+    expect(OVERLAY_Z_BASE).toBeGreaterThan(by('banner'));
+    expect(OVERLAY_Z_LIMIT).toBeLessThanOrEqual(by('toast'));
+  });
+
+  it('keeps no overlay on the ladder: every rung named in markup exists, and none is a retired one', () => {
+    // THE RUNGS OVERLAYS USED TO TAKE WERE RETIRED ON 2026-11-13. A component that names one again
+    // would compile to nothing and sit at `auto`; naming it here makes that a failure.
+    const known = new Set(ladder.map((r) => r.name));
+    const offenders: string[] = [];
+    for (const { file, body } of markup) {
+      for (const match of body.matchAll(/z-\(--z-([a-z-]+)\)/g)) {
+        if (!known.has(match[1])) offenders.push(`${file}: ${match[0]}`);
+      }
+    }
+
+    expect(
+      offenders,
+      'An overlay takes no rung: `useOverlayLayer` (utils/overlayLayer.svelte.ts) gives it a z-index by open order.'
+    ).toEqual([]);
   });
 
   /**
@@ -178,21 +196,21 @@ describe('the layer ladder', () => {
     expect(keyboardAwareOverlays().length).toBeGreaterThanOrEqual(3);
   });
 
-  it('portals every keyboard-aware overlay and puts it on a NAMED rung', () => {
+  it('portals every keyboard-aware overlay and gives it a z-index from the overlay stack', () => {
     // `[data-keyboard-aware-overlay]` IS `position: fixed` over the whole window - `app.css` gives
     // it that box - but it spells none of it in a class, so the `fixed inset-0` branch above never
     // saw it. Two such overlays sat at a raw `z-50` without a portal: written inside
     // `.page-scroll-wrap` (a containing block and stacking context, `will-change: transform`), the
     // Lydia e-mail prompt scrolled with the form and the form's own sticky `z-50` submit bar, written
     // later, painted over its hint and its field (dev, 2026-10-07). Both halves are needed: the
-    // portal takes it out of the page's context, the rung places it against everything else there.
+    // portal takes it out of the page's context, the overlay stack places it against everything else there.
     const offenders = keyboardAwareOverlays()
-      .filter(({ tag, portalled }) => !portalled || !/\bz-\(--z-[a-z-]+\)/.test(tag))
+      .filter(({ tag, portalled }) => !portalled || !/style:z-index=\{[^}]*\}/.test(tag))
       .map(({ file, tag }) => `${file}: ${tag}`);
 
     expect(
       offenders,
-      'A keyboard-aware overlay covers the window: portal it (`use:portal`) and give it a rung by name, z-(--z-<rung>).'
+      'A keyboard-aware overlay covers the window: portal it (`use:portal`) and register it on the overlay stack: style:z-index={layer.z} (useOverlayLayer).'
     ).toEqual([]);
   });
 

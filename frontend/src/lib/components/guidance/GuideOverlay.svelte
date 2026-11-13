@@ -42,6 +42,7 @@
   } from '$lib/guidance/guidePlacement';
   import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE ONE RENDERER OF EVERY GUIDED TOUR AND FIRST-TIME HINT (docs/wiki/frontend/guided-help.md):
@@ -101,6 +102,7 @@
   const view = $derived(guideEngine.view);
   /** On screen: a step to draw and a quiet app. Hidden otherwise - suspended, never ended. */
   const visible = $derived(view !== null && blocker === null);
+  const layer = useOverlayLayer(() => visible, 'GuideOverlay');
   // A modal step's backdrop is on screen: the iOS native tab bar, drawn above the WebView, must
   // take no touch meanwhile (`modalWebLayer`, read by `NativeTabBar`).
   $effect(() => {
@@ -418,7 +420,8 @@
   {@const Icon = view.step.icon}
   <div
     use:portal
-    class="fixed inset-0 z-(--z-guide) {view.modal ? '' : 'pointer-events-none'}"
+    style:z-index={layer.z}
+    class="fixed inset-0 {view.modal ? '' : 'pointer-events-none'}"
     data-guide-overlay={view.guide.id}
     data-guide-step={view.step.id}
     data-motion={reducedMotion ? 'reduced' : 'full'}
