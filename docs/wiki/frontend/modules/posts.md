@@ -2119,7 +2119,7 @@ bar keep their taps, the mute and failure lines, signed out, a viewer like reach
 `postReaction.test.ts`, and on the reel side `ReelSlide.doubleTap` and `ReelViewer.like`. **Owed on
 the Mi 9T and the iPhone 12:** [device-verification](../../device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones).
 
-## Scheduled posts: where they show, and the event picker order (2026-10-06, reshaped 2026-11-13)
+## Scheduled posts: where they show, and the event picker order (2026-10-06)
 
 **Owner, 2026-11-13: a scheduled post no longer just disappears until its time.** It is drawn as a REAL
 `PostCard` at the very top of `/posts`, above the first post, **on EVERY feed tab (Associations,
