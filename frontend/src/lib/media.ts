@@ -148,6 +148,15 @@ export interface MediaRef {
    * authority and a 410 is the truth.
    */
   expiresAtMs?: number;
+  /**
+   * A video's or a voice note's sound as its AUTHOR'S DEVICE measured it at send (`loudnessMeter.ts`:
+   * BS.1770 integrated LUFS and sample peak, `MediaMsg.loudness`, a post's media JSON): what a
+   * reader's player normalises to (`loudnessPlayback.ts`, owner 2026-11-11; voice notes through
+   * `recordingLoudness.ts`, 2026-11-12). The file itself is never altered. Absent on everything
+   * sent before it, on a silent one and on a live replay: those play exactly as they always did. An
+   * older client ignores it and plays the media as it is.
+   */
+  loudness?: MediaLoudness;
 }
 
 /** The intents a client can name; see {@link MediaRef.intent}. */
@@ -173,6 +182,14 @@ export interface PendingMediaFile {
   placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
+  /**
+   * A prepared video's length in whole ms, measured by its preparation and DECLARED with the
+   * message (`MediaRef.durationMs`, `MediaMsg.duration_ms`): a reader's player knows it before a
+   * byte arrives, and a stream can be sought in before it is whole (owner, 2026-11-10).
+   */
+  durationMs?: number;
+  /** A prepared video's or a recording's measured sound - see {@link MediaRef.loudness}. */
+  loudness?: MediaLoudness;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */
@@ -212,6 +229,7 @@ import {
   requestBodyBytes,
 } from '$lib/utils/mediaRequestLimits';
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
 import {
@@ -382,13 +400,17 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
  * strip with a grey band under it. The size now comes from the encoder's own output, rotation
  * already applied.
  *
+ * A video also reports its prepared LENGTH (`durationMs`): the publish queue reads it with the frame
+ * to decide whether the post is a CanaReel (owner, 2026-11-09, `reels/reelRule.ts`), and its
+ * measured LOUDNESS (`MediaRef.loudness`), which the post's media carries to every reader's player.
+ *
  * @param video The bounds, progress and cancel for a video; ignored for anything else.
  * @throws {VideoPrepareError} when a video cannot be prepared - typed, so the screen names why.
  */
 export async function preparePostMedia(
   file: File,
   video: PrepareVideoOptions = {}
-): Promise<{ file: File; dims?: ImageDimensions }> {
+): Promise<{ file: File; dims?: ImageDimensions; durationMs?: number; loudness?: MediaLoudness }> {
   if (file.type.startsWith('image/')) {
     const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
     const compressed = await compressImage(file, maxWidth, maxHeight, quality);
@@ -396,7 +418,12 @@ export async function preparePostMedia(
   }
   if (file.type.startsWith('video/')) {
     const prepared = await prepareVideoForUpload(file, video);
-    return { file: prepared.file, dims: { width: prepared.width, height: prepared.height } };
+    return {
+      file: prepared.file,
+      dims: { width: prepared.width, height: prepared.height },
+      durationMs: Math.round(prepared.durationSeconds * 1000),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
+    };
   }
   return { file };
 }
@@ -1119,9 +1146,10 @@ export class MediaService {
    * for three at a time rather than starving the request the reader is actually waiting for.
    *
    * @param ref        The `MediaRef` extracted from the MLS message.
-   * @param signal     Abandons the request WHILE IT IS STILL QUEUED - a row scrolled past never
-   *                   asks at all. A download already started runs to completion, because the
-   *                   fetch behind it is shared with every other holder of the same object.
+   * @param signal     This holder leaving. The download is shared with every other holder of the
+   *                   same object, so it is abandoned only when the LAST one has left and nobody
+   *                   rejoined it in the same turn: dropped from the queue (a row scrolled past
+   *                   never asks at all), or stopped on the wire (`mediaBlobCache.ts`, `SharedLoad`).
    * @returns          A cached object URL (`blob:…`). Call
    *                   `releaseDecryptedMediaBlobUrl(ref)` when the element unmounts.
    */

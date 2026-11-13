@@ -95,7 +95,7 @@ describe('invalidatePostListCacheFor', () => {
       limit: 20,
       offset,
       kind: feed === 'followed' ? 'reel' : undefined,
-      singleMedia: feed === 'followed' ? 'photos' : undefined,
+      singleMedia: feed === 'followed' ? 'carousel-links' : undefined,
     });
 
   /** A Redis whose SCAN honours the prefix glob and hands every match to the selector. */
@@ -145,7 +145,7 @@ describe('invalidatePostListCacheFor', () => {
   it('builds the key the feed has always used, so a deploy orphans no live entry', () => {
     expect(page('7f1e0a44')).toBe(`${POST_LIST_CACHE_PREFIX}all:7f1e0a44:-:-:20:0:-`);
     expect(page(undefined, 'followed')).toBe(
-      `${POST_LIST_CACHE_PREFIX}followed:anon:-:-:20:0:reel+photos`
+      `${POST_LIST_CACHE_PREFIX}followed:anon:-:-:20:0:reel+carousel-links`
     );
   });
 
@@ -161,15 +161,49 @@ describe('invalidatePostListCacheFor', () => {
         kind: 'reel',
         singleMedia,
       });
-    expect(
-      new Set([key(undefined), key('photos'), key('media'), key('carousel'), key('carousel-links')])
-        .size
-    ).toBe(5);
+    expect(new Set([key(undefined), key('carousel-links')]).size).toBe(2);
+    // The key every client since 1.6.6 already used: the collapse of 2026-11-11 kept it.
     expect(key('carousel-links')).toBe(
       `${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel-links`
     );
-    expect(key('media')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
-    expect(key('carousel')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel`);
+  });
+
+  it('keys a page with live replays apart, and leaves the key without them as it was', () => {
+    const key = (withReplays: boolean | undefined) =>
+      postListCacheKey({
+        feed: 'reels',
+        viewerUserId: 'u',
+        promo: undefined,
+        formation: undefined,
+        limit: 10,
+        offset: 0,
+        kind: 'reel',
+        singleMedia: 'carousel-links',
+        withReplays,
+      });
+    expect(key(undefined)).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel-links`);
+    expect(key(false)).toBe(key(undefined));
+    expect(key(true)).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel-links+replays`);
+  });
+
+  it('keys two rankings and two tail cursors of one list apart (for-you-feed.ts)', () => {
+    const key = (asOf?: string, cursor?: string) =>
+      postListCacheKey({
+        feed: 'foryou',
+        viewerUserId: 'u',
+        promo: undefined,
+        formation: undefined,
+        limit: 10,
+        offset: 12,
+        kind: undefined,
+        singleMedia: undefined,
+        asOf,
+        cursor,
+      });
+    expect(key()).toBe(`${POST_LIST_CACHE_PREFIX}foryou:u:-:-:10:12:-`);
+    expect(key('T1')).not.toBe(key('T2'));
+    expect(key('T1', 'C1')).not.toBe(key('T1', 'C2'));
+    expect(key('T1', 'C1')).not.toBe(key('T1'));
   });
 });
 

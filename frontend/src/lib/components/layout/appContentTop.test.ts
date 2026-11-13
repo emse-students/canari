@@ -56,12 +56,7 @@ const NAVBAR = read('../navigation/Navbar.svelte');
 const POSTS_PANEL = read('../posts/ConversationsMiniPanel.svelte');
 
 /** Everything that announces an app-wide fact, in the order the shell column renders them. */
-const WINDOW_SCALE_BANNERS = [
-  'EnvironmentBanner',
-  'MaintenanceAdminBanner',
-  'MlsFatalErrorBanner',
-  'OfflineBanner',
-];
+const WINDOW_SCALE_BANNERS = ['MaintenanceAdminBanner', 'MlsFatalErrorBanner'];
 
 describe('--app-content-top - the one answer to "where does the content start"', () => {
   it('is the only thing in app.css that adds the bar height to an offset', () => {
@@ -152,7 +147,7 @@ describe('the window-scale banners sit above the shell row', () => {
   it('insets the banner equally on all four sides', () => {
     const root = BANNER.slice(BANNER.indexOf('<div\n'));
     const classes = root.slice(root.indexOf('class="'), root.indexOf('role='));
-    expect(classes).toContain('m-3 ');
+    expect(classes).toContain('m-2 ');
     // A per-side margin is how the 108/12 asymmetry was written in the first place.
     expect(classes).not.toMatch(/\bm[xytblr]-\d/);
   });

@@ -275,7 +275,7 @@
     {#if loading}
       <div class="flex items-center justify-center py-20">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error && !list}
@@ -314,7 +314,7 @@
       {#if editSection === 'documents' && rights.documents}
         <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
           <div>
-            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
               <FolderLock size={20} />
               {m.asso_doc_vault_title()}
             </h2>

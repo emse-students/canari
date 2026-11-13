@@ -11,6 +11,7 @@
   import { m } from '$lib/paraglide/messages';
   import { slide } from 'svelte/transition';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
 
   /**
@@ -33,6 +34,9 @@
    * dismissed by a `clickOutside` that sees through the portal.
    */
   let open = $state(false);
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'EcosystemLauncher');
   let buttonEl: HTMLButtonElement | null = $state(null);
   let panelEl: HTMLDivElement | null = $state(null);
 
@@ -83,7 +87,8 @@
       role="menu"
       tabindex="-1"
       aria-label={m.ecosystem_launcher_label()}
-      class="glass-chrome border-cn-border fixed z-(--z-popover) grid w-64 grid-cols-2 gap-1 rounded-xl p-2"
+      style:z-index={layer.z}
+      class="glass-chrome border-cn-border fixed grid w-64 grid-cols-2 gap-1 rounded-xl p-2"
       transition:slide={{ duration: 150 }}
       onkeydown={(e) => {
         if (e.key === 'Escape') {
@@ -113,7 +118,7 @@
             e.preventDefault();
             openEcosystemSite(site.id);
           }}
-          class="text-text-main flex flex-col items-center gap-2 rounded-lg px-1 py-3 text-sm font-medium transition-colors hover:bg-amber-500/10"
+          class="text-text-main hover:bg-accent/10 flex flex-col items-center gap-2 rounded-lg px-1 py-3 text-sm font-medium transition-colors"
         >
           <img src={site.logo} alt="" width="48" height="48" class="size-12" />
           <span class="max-w-full truncate">{site.label()}</span>

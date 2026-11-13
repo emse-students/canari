@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Conversation } from '$lib/types';
-import { missingPeerNameIds, shareCandidates } from './shareDestinations';
+import { forwardPickerOrder, missingPeerNameIds, shareCandidates } from './shareDestinations';
 
 /**
  * One list of destinations for both pickers: the "Envoyer a..." picker searches it alphabetically,
@@ -88,5 +88,13 @@ describe('shareCandidates', () => {
 describe('missingPeerNameIds', () => {
   it('names no group and no salon - only a DM peer can be unknown', () => {
     expect(missingPeerNameIds(LIST, ME)).toEqual([]);
+  });
+});
+
+describe('the "Envoyer a..." picker order (lead, 2026-11-12)', () => {
+  it('leads with the most recent conversation, and reads alphabetically once a search is typed', () => {
+    expect(forwardPickerOrder('')).toBe('recent');
+    expect(forwardPickerOrder('   ')).toBe('recent');
+    expect(forwardPickerOrder('ali')).toBe('alphabetical');
   });
 });

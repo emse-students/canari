@@ -43,8 +43,18 @@
  * The refusals, all typed: `leader-gone`, `leader-unavailable`, `not-delegable` (no Web Locks in
  * this engine, or a leader signed in to ANOTHER account - the lock is per browser), `failed` (an
  * executor threw instead of answering, the visible end of a defect).
+ *
+ * ONE TAB'S REQUESTS RUN IN THE ORDER IT MADE THEM (review of #3371): a record carries an order key
+ * that only grows in its tab and the tab it came from; the follower writes its records one after
+ * another, and the drain sorts on the key and holds a tab's later records back while an earlier one
+ * waits. A call's hangup never overtakes its invitation; two salon messages typed quickly keep their
+ * order.
  */
 import type { MemberRemovalOutcome } from '$lib/utils/chat/groupActions';
+import type { SealedChannelMessage } from '$lib/utils/graine/channelSeal';
+import type { GraineSealUnavailableReason } from '$lib/utils/graine/sealUnavailable';
+import type { SalonGateRefusal } from '$lib/utils/graine/salonSendGate';
+import type { AskReason } from '$lib/utils/graine/repair';
 import type { BulkAdditionOutcome, ConversationOutcome } from '$lib/utils/chat/groupCreation';
 import {
   postTabCommitEvent,
@@ -73,7 +83,34 @@ export type DelegatedCommitOp =
   /** The community's Graine key group (`ensureCommunityDistributionGroup`). */
   | { kind: 'enter-community-key-group'; workspaceId: string }
   /** A salon's own key group, entered by a member who has access (`enterPrivateSalonGroup`). */
-  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean };
+  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean }
+  /**
+   * One MLS application frame, sent by the leader (`mls-client/frameFromAnyTab.ts`). The frame's
+   * plaintext is SEALED under the device key in the record ({@link HandedOverBytes}): a record is
+   * IndexedDB, and nothing a member wrote rests there in clear.
+   */
+  | {
+      kind: 'emit-frame';
+      groupId: string;
+      frame: HandedOverBytes;
+      messageId?: string;
+      delivery: HandedFrameDelivery;
+    }
+  /**
+   * One salon message, SEALED by the leader under its Graine session (`channelSeal.ts`): only the
+   * leader reserves an outbound index, mints or distributes a seed, and writes the Graine store. The
+   * payload rests sealed under the device key, like a frame's.
+   */
+  | { kind: 'seal-salon-message'; channelId: string; payload: HandedOverBytes }
+  /**
+   * The Graine seeds of one channel a follower could not open rows for, asked for by the leader
+   * (`repair.ts`): one record per channel for every seed named while the previous one was in flight.
+   */
+  | {
+      kind: 'note-missing-seeds';
+      channelId: string;
+      seeds: Array<{ sessionId: string; senderId: string; sentAt?: number; reason: AskReason }>;
+    };
 
 export type DelegatedCommitKind = DelegatedCommitOp['kind'];
 
@@ -95,7 +132,42 @@ interface DelegatedCommitResults {
   remove: DelegatedRemovalResult;
   'enter-community-key-group': 'entered';
   'enter-salon-group': 'entered';
+  /**
+   * The server's acceptance time of the frame, `null` when it answered none (`SentFrame`) - or, as
+   * an answer and not a failure, `unopened`: the device key changed between the follower's seal and
+   * the leader's open, nothing was sent.
+   */
+  'emit-frame': { receivedAt: number | null } | { unopened: HandoverUnopened };
+  /**
+   * The sealed message; the typed reason the leader could not seal for that salon; the reason the
+   * leader's OWN salon gate refused it (`whenSalonSendable`, waited on before the seal exactly as a
+   * single tab waits); or `unopened`, as for a frame.
+   */
+  'seal-salon-message':
+    | { sealed: SealedChannelMessage }
+    | { unavailable: GraineSealUnavailableReason }
+    | { gate: SalonGateRefusal }
+    | { unopened: HandoverUnopened };
+  'note-missing-seeds': 'noted';
 }
+
+/** Why the leader could not open what a follower sealed: the device key changed in between. */
+export type HandoverUnopened = 'device-key-changed';
+
+/**
+ * Bytes a follower hands to the leader, sealed under the account's device key (`encryption.ts`
+ * `sealBytes`), base64 so a structured clone and JSON both carry them.
+ */
+export interface HandedOverBytes {
+  iv: string;
+  cipherText: string;
+}
+
+/**
+ * The delivery class of a handed frame, BY NAME: a `FrameDelivery` is compared by identity
+ * (`DELIVERY.visible`), which a record cannot carry, and an addressed delivery is never handed.
+ */
+export type HandedFrameDelivery = 'visible' | 'mutation' | 'transport';
 
 /** Why the leader did not answer the gesture itself (see the module comment). */
 export type DelegationRefusal = 'leader-gone' | 'leader-unavailable' | 'not-delegable' | 'failed';
@@ -117,6 +189,18 @@ export interface DelegationRecord {
   id: string;
   /** The account of the follower that asked: the store is that account's. */
   account: string;
+  /**
+   * Where the request stands among the others: a key that only grows in the tab that wrote it
+   * ({@link createOrderKeys}). The drain runs the records in this order, never in the store's key
+   * order - an id is random. Absent from a record written before 2026-11-11: read as the first.
+   */
+  order?: string;
+  /**
+   * The document that asked ({@link DelegationEnv.documentId}): its records run one after another,
+   * and a later one never overtakes an earlier one still waiting. Absent before 2026-11-11: the
+   * record is its own requester.
+   */
+  requester?: string;
   op: DelegatedCommitOp;
   state: 'pending' | 'running' | 'done';
   outcome?: DelegatedOutcome<DelegatedCommitKind>;
@@ -159,6 +243,10 @@ export interface DelegationEnv {
   wiped(account: string): boolean;
   readiness(): DelegationReadiness;
   newId(): string;
+  /** The next order key of this document ({@link createOrderKeys}). */
+  orderKey(): string;
+  /** This document's identity, the same for every request it makes. */
+  documentId(): string;
   /** `warn` for a line that ACCUSES (a refusal, a death), `error` for a defect; info otherwise. */
   log(message: string, level?: 'warn' | 'error'): void;
 }
@@ -180,7 +268,38 @@ function describe(op: DelegatedCommitOp): string {
       return `key group of ${op.workspaceId.slice(0, 8)}...`;
     case 'enter-salon-group':
       return `salon group ${op.channelId.slice(0, 8)}...`;
+    case 'emit-frame':
+      return `frame in ${op.groupId.slice(0, 8)}... (${op.delivery})`;
+    case 'seal-salon-message':
+      return `salon message for ${op.channelId.slice(0, 8)}...`;
+    case 'note-missing-seeds':
+      return `${op.seeds.length} missing seed(s) of ${op.channelId.slice(0, 8)}...`;
   }
+}
+
+/**
+ * A source of order keys that ONLY GROW in one document: the time, never allowed to go back (a clock
+ * set back reuses the last value), then a counter for the requests made in the same millisecond.
+ * Fixed width, so they compare as strings. Between two documents the time orders them; one document
+ * never sees its own requests reordered.
+ */
+export function createOrderKeys(now: () => number): () => string {
+  let lastTime = -1;
+  let counter = 0;
+  return () => {
+    const time = Math.max(Math.floor(now()), lastTime);
+    counter = time === lastTime ? counter + 1 : 0;
+    lastTime = time;
+    return `${time.toString().padStart(16, '0')}.${counter.toString().padStart(9, '0')}`;
+  };
+}
+
+/** The order the drain runs records in: their order key, the id breaking a tie between two documents. */
+function byOrder(a: DelegationRecord, b: DelegationRecord): number {
+  const left = a.order ?? '';
+  const right = b.order ?? '';
+  if (left !== right) return left < right ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 /** Whether nobody holds `name` - taken and released at once when free. */
@@ -201,6 +320,12 @@ interface InFlight {
  */
 export function createDelegationClient(env: DelegationEnv) {
   const inFlight = new Map<string, InFlight>();
+  /**
+   * THE RECORDS ARE WRITTEN IN THE ORDER THE GESTURES WERE MADE: each put waits for the previous
+   * one to be committed (or to have failed), so no drain can ever see a later request of this
+   * document without the earlier one - a hangup is never stored before its invitation.
+   */
+  let lastStored: Promise<void> = Promise.resolve();
 
   function delegate<K extends DelegatedCommitKind>(
     op: Extract<DelegatedCommitOp, { kind: K }>
@@ -220,6 +345,11 @@ export function createDelegationClient(env: DelegationEnv) {
     }
     const store = env.storeFor(account);
     const id = env.newId();
+    // Both taken NOW, in the caller's order, before any await.
+    const order = env.orderKey();
+    const prior = lastStored;
+    let stored: () => void = () => {};
+    lastStored = new Promise<void>((done) => (stored = done));
     return new Promise<DelegatedOutcome<K>>((resolve) => {
       // THE REQUESTER LOCK IS TAKEN BEFORE THE RECORD EXISTS, so no drain can ever see the record
       // with the lock free while this document is alive and waiting.
@@ -282,8 +412,17 @@ export function createDelegationClient(env: DelegationEnv) {
                 if (event.type === 'tab_commit_settled' && event.id === id) check();
               });
               // THE SIGNAL LEAVES ONLY ONCE THE RECORD IS COMMITTED: whoever hears it can read it.
-              store
-                .put({ id, account, op, state: 'pending' })
+              void prior
+                .then(() =>
+                  store.put({
+                    id,
+                    account,
+                    op,
+                    state: 'pending',
+                    order,
+                    requester: env.documentId(),
+                  })
+                )
                 .then(() => {
                   env.log(
                     `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} handed to the leader tab`
@@ -296,10 +435,12 @@ export function createDelegationClient(env: DelegationEnv) {
                     'warn'
                   );
                   finish({ status: 'refused', reason: 'failed' }, true);
-                });
+                })
+                .finally(stored);
             })
         )
         .catch((e: unknown) => {
+          stored();
           env.log(
             `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)}: the requester lock failed - nothing handed over: ${String(e)}`,
             'warn'
@@ -482,10 +623,10 @@ export function createDelegationServer(env: DelegationEnv) {
     locks: DelegationLocks,
     store: TabCommitStore<DelegationRecord>,
     record: DelegationRecord
-  ): Promise<void> {
+  ): Promise<Verdict> {
     if (record.state === 'done') {
       await answerOrForget(locks, store, record);
-      return;
+      return 'settled';
     }
     const verdict = await decide(locks, store, record.id);
     if (verdict === 'busy') {
@@ -501,6 +642,7 @@ export function createDelegationServer(env: DelegationEnv) {
           env.log(`[TAB-COMMIT] the wait on a run lock failed: ${String(e).slice(0, 120)}`, 'warn')
         );
     }
+    return verdict;
   }
 
   /** The accounts whose requests this document has heard of, its own included. */
@@ -531,13 +673,29 @@ export function createDelegationServer(env: DelegationEnv) {
         );
         continue;
       }
+      // ONE DOCUMENT'S REQUESTS RUN IN THE ORDER IT MADE THEM, one at a time: sorted on the order
+      // key, and a request still waiting (its run lock held elsewhere, this leader not ready) holds
+      // back every LATER request of the same document until a drain finds it settled - a hangup
+      // never overtakes its invitation, a salon message never overtakes the one typed before it.
+      records.sort(byOrder);
+      const heldBack = new Set<string>();
       for (const record of records) {
-        // Isolated per record: one that fails to be served must not strand the ones after it.
-        try {
-          await serve(locks, store, record);
-        } catch (e) {
+        const requester = record.requester ?? record.id;
+        if (record.state !== 'done' && heldBack.has(requester)) {
           env.log(
-            `[TAB-COMMIT] ${record.id.slice(0, 8)}... could not be served: ${String(e)}`,
+            `[TAB-COMMIT] ${record.id.slice(0, 8)}... ${describe(record.op)} waits: an earlier request of the same tab is not settled yet`
+          );
+          continue;
+        }
+        // Isolated per document: a record that fails to be served holds back the later records of
+        // its own document, never another document's.
+        try {
+          const verdict = await serve(locks, store, record);
+          if (verdict === 'busy' || verdict === 'waits') heldBack.add(requester);
+        } catch (e) {
+          heldBack.add(requester);
+          env.log(
+            `[TAB-COMMIT] ${record.id.slice(0, 8)}... could not be served - the later requests of its tab wait for the next drain: ${String(e)}`,
             'warn'
           );
         }
@@ -598,6 +756,13 @@ export function createDelegationServer(env: DelegationEnv) {
 const localHandlers = new Set<(event: TabCommitEvent) => void>();
 const stores = new Map<string, IdbTabCommitStore<DelegationRecord>>();
 let readiness: DelegationReadiness = 'starting';
+const nextOrderKey = createOrderKeys(() => Date.now());
+/** Made at the first request: `crypto.randomUUID` exists wherever a request can be made. */
+let thisDocument: string | null = null;
+function documentId(): string {
+  thisDocument ??= crypto.randomUUID();
+  return thisDocument;
+}
 
 function productionEnv(): DelegationEnv {
   return {
@@ -634,6 +799,8 @@ function productionEnv(): DelegationEnv {
     answers: answersFollowerCommits,
     readiness: () => readiness,
     newId: () => crypto.randomUUID(),
+    orderKey: nextOrderKey,
+    documentId,
     log: (message, level) =>
       level === 'error'
         ? console.error(message)

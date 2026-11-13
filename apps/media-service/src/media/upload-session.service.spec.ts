@@ -589,7 +589,7 @@ describe('over real HTTP: the controller reads Content-Length and pipes the requ
       require('./media.controller') as typeof import('./media.controller');
     process.env.JWT_SECRET = 'test-secret';
     const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
-    const signed = `${b64({ alg: 'HS256' })}.${b64({ sub: 'alice' })}`;
+    const signed = `${b64({ alg: 'HS256' })}.${b64({ sub: 'alice', exp: 4_000_000_000 })}`;
     const token = `${signed}.${crypto.createHmac('sha256', 'test-secret').update(signed).digest('base64url')}`;
 
     const r = rig();

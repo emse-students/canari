@@ -19,6 +19,7 @@ describe('HelpSeenController', () => {
       ageSeconds: { 'welcome-tour': 5 },
     })),
     markSeen: jest.fn(async () => undefined),
+    profilePhotoPromptEligible: jest.fn(async () => true),
   };
   const controller = new HelpSeenController(service as unknown as HelpSeenService);
 
@@ -31,7 +32,9 @@ describe('HelpSeenController', () => {
     await expect(controller.list(' ABC-User ')).resolves.toEqual({
       seen: ['welcome-tour'],
       ageSeconds: { 'welcome-tour': 5 },
+      profilePhotoPromptEligible: true,
     });
+    expect(service.profilePhotoPromptEligible).toHaveBeenCalledWith('abc-user');
     expect(service.seenWithAges).toHaveBeenCalledWith('abc-user');
   });
 

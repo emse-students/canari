@@ -126,7 +126,7 @@
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
-              class="bg-cn-yellow text-cn-dark flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
+              class="bg-accent text-on-accent flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
               onclick={() => void startEdit(row)}
             >
               <UserPen size={14} />
@@ -170,7 +170,7 @@
     >
       <p class="text-text-muted text-sm">{m.profile_corrections_refuse_help()}</p>
       <textarea
-        class="bg-cn-surface min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+        class="bg-cn-surface focus:ring-accent/50 min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm outline-none focus:ring-2 dark:border-white/10"
         bind:value={note}
         maxlength={CORRECTION_NOTE_MAX}
         placeholder={m.profile_corrections_note_placeholder()}></textarea>

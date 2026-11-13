@@ -107,7 +107,7 @@ describe('a video picked in the chat', () => {
     expect(options.maxBytes).toBeGreaterThan(SERVER_MAX_BYTES - 1024);
     expect(options.maxBytes).toBeLessThan(SERVER_MAX_BYTES);
     expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([
-      { file: prepared, width: 720, height: 1280 },
+      { file: prepared, width: 720, height: 1280, durationMs: 20_000 },
     ]);
     expect(fractionSeen).toBe(0.4);
     expect(messaging.videoPreparation.fraction).toBeNull();
@@ -134,7 +134,7 @@ describe('a video picked in the chat', () => {
 
     expect(messaging.pendingMediaFilesFor('another-conversation')).toEqual([]);
     expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([
-      { file: prepared, width: 720, height: 1280 },
+      { file: prepared, width: 720, height: 1280, durationMs: 2_000 },
     ]);
     // ...and that conversation's Send takes only its own staging.
     messaging.removePendingMediaFile('another-conversation', 0);

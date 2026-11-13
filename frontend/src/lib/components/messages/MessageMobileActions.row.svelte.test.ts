@@ -79,11 +79,16 @@ describe('MessageMobileActions action row', () => {
     expect(row?.className).toContain('max-w-96');
   });
 
-  it('drops Edit for a media message and keeps Delete', () => {
-    const { buttons } = open({ ...all, isOwn: true, hasMedia: true });
+  it('offers Edit on an own message whatever it carries - a media message edits its caption', () => {
+    const { buttons } = open({ ...all, isOwn: true });
     const names = buttons.map((b) => b.getAttribute('aria-label'));
-    expect(names).not.toContain(m.common_edit_label());
+    expect(names).toContain(m.common_edit_label());
     expect(names).toContain(m.common_delete_button());
+  });
+
+  it('drops Edit when the bubble says the message cannot be edited (a poll, a deleted row)', () => {
+    const { buttons } = open({ ...all, isOwn: true, canEdit: false });
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).not.toContain(m.common_edit_label());
   });
 
   it('offers Delete to a moderator on a received message', () => {
@@ -96,7 +101,7 @@ describe('MessageMobileActions action row', () => {
     const onClose = vi.fn();
     const { buttons } = open({ ...all, onPin, onClose, pinned: true });
     const pin = buttons.find((b) => b.getAttribute('aria-label') === m.msg_unpin_label())!;
-    expect(pin.className).toContain('text-amber-600');
+    expect(pin.className).toContain('text-accent-text');
     pin.click();
     expect(onPin).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();

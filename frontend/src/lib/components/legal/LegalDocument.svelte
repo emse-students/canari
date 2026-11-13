@@ -96,7 +96,7 @@
            nothing. Below it the same list renders as a closed `<details>` above the text. -->
       <nav class="hidden w-56 shrink-0 xl:block" aria-label={m.legal_toc_heading()}>
         <div class="sticky top-8">
-          <p class="text-text-muted text-2xs mb-3 font-semibold tracking-widest uppercase">
+          <p class="text-text-muted text-2xs mb-3 font-semibold">
             {m.legal_toc_heading()}
           </p>
           <ul class="space-y-0.5 text-xs">
@@ -107,7 +107,7 @@
                   aria-current={activeId === section.id ? 'true' : undefined}
                   class="block border-l-2 py-1 pl-3 transition-colors pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center {activeId ===
                   section.id
-                    ? 'border-cn-yellow text-text-main font-semibold'
+                    ? 'border-accent-icon text-text-main font-semibold'
                     : 'text-text-muted hover:text-text-main border-transparent'}"
                 >
                   {section.label}
@@ -129,10 +129,10 @@
   </button>
 
   <header class="border-cn-border mb-8 border-b pb-8">
-    <p class="text-text-muted text-2xs mb-2 font-semibold tracking-widest uppercase">
+    <p class="text-text-muted text-2xs mb-2 font-semibold">
       {m.legal_eyebrow()}
     </p>
-    <h1 class="text-text-main text-3xl font-bold tracking-tight text-balance">{title}</h1>
+    <h1 class="text-text-main text-3xl font-bold text-balance">{title}</h1>
     <p class="text-text-muted mt-2 text-base">{subtitle}</p>
     <p class="text-text-muted text-2xs mt-4">{m.legal_last_updated({ date: updated })}</p>
   </header>
@@ -173,12 +173,12 @@
       {#each siblings as doc (doc.href)}
         <a
           href={doc.href}
-          class="border-cn-border hover:border-cn-yellow group flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
+          class="border-cn-border hover:border-accent-icon group flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
         >
           <span class="text-text-main text-sm font-semibold">{doc.label()}</span>
           <ChevronRight
             size={16}
-            class="text-text-muted group-hover:text-cn-yellow transition-colors"
+            class="text-text-muted group-hover:text-accent-text transition-colors"
           />
         </a>
       {/each}
@@ -213,7 +213,6 @@
     font-size: var(--text-xl);
     line-height: var(--text-xl--line-height);
     font-weight: 700;
-    letter-spacing: -0.01em;
     margin-bottom: 1rem;
   }
 
@@ -258,7 +257,7 @@
   }
 
   .legal-prose :global(a) {
-    color: var(--cn-yellow);
+    color: var(--accent-text);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -366,8 +365,8 @@
   }
 
   .legal-prose :global(.legal-note) {
-    border-color: color-mix(in srgb, var(--cn-yellow) 30%, transparent);
-    background: color-mix(in srgb, var(--cn-yellow) 6%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
   }
 
   .legal-prose :global(.legal-alert) {
@@ -376,7 +375,7 @@
   }
 
   .legal-prose :global(.legal-note > .legal-callout-title) {
-    color: var(--cn-yellow);
+    color: var(--accent-text);
   }
 
   .legal-prose :global(.legal-alert > .legal-callout-title) {

@@ -6,6 +6,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE "EXPORTER" MENU OF ONE FORM (WP-G4): the workbook, and - on a form with a priced grid - its
@@ -27,6 +28,7 @@
   let { formId, title, hasProductGrid }: Props = $props();
 
   let open = $state(false);
+  const layer = useOverlayLayer(() => open, 'FormExportMenu');
   let busy = $state<SubmissionsExportFormat | null>(null);
   let opener = $state<HTMLButtonElement | null>(null);
 
@@ -100,7 +102,7 @@
     disabled={busy !== null}
     aria-haspopup="menu"
     aria-expanded={open}
-    class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors disabled:opacity-50"
+    class="ui-icon-button border-cn-border text-text-main hover:border-accent/40 rounded-xl border-2 bg-(--cn-surface) transition-colors disabled:opacity-50"
     aria-label={m.form_list_export_button()}
     title={m.form_list_export_button()}
     data-testid="form-export-menu"
@@ -110,7 +112,8 @@
   {#if open}
     <div
       role="menu"
-      class="bg-cn-popover absolute top-full right-0 z-(--z-popover) mt-2 flex w-72 flex-col rounded-lg p-1.5 shadow-lg"
+      style:z-index={layer.z}
+      class="bg-cn-popover absolute top-full right-0 mt-2 flex w-72 flex-col rounded-lg p-1.5 shadow-lg"
     >
       {#each entries as entry (entry.format)}
         <button

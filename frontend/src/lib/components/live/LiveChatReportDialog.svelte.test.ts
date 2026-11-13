@@ -87,13 +87,13 @@ afterEach(() => {
 });
 
 describe('LiveChatReportDialog', () => {
-  it('is closed with no line, and open on the critical layer, naming the line, with one', async () => {
+  it('is closed with no line, and open on the overlay stack, naming the line, with one', async () => {
     await render(null);
     expect(dialog()).toBeNull();
     unmount(mounted.pop()!);
     await render(LINE);
     expect(dialog()!.getAttribute('aria-label')).toBe(m.live_chat_report_dialog_title());
-    expect(dialog()!.parentElement!.className).toContain('z-(--z-critical)');
+    expect(Number(dialog()!.parentElement!.style.zIndex)).toBeGreaterThan(0);
     expect(dialog()!.textContent).toContain('a rude line');
   });
 

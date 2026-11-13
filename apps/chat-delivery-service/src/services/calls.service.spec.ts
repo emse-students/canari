@@ -781,6 +781,8 @@ describe('CallsService', () => {
       expect(ios.apns.payload.groupId).toBe('group-1');
       expect(ios.apns.payload.callId).toBe('call-1');
       expect(ios.apns.payload.aps['mutable-content']).toBe(1);
+      // Canari's own ring, never the system tone (sounds.md, the C1 ring on every surface).
+      expect(ios.apns.payload.aps.sound).toBe('canari_ring_callkit.wav');
       expect(ios.apns.headers['apns-push-type']).toBe('alert');
       expect(ios.apns.headers['apns-collapse-id']).toBe('call-1');
       expect(ios.apns.headers['apns-expiration']).toBe('1000000060');

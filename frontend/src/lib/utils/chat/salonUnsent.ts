@@ -78,6 +78,12 @@ export interface UnsentSalonText {
   replyTo?: { id: string; senderId: string; preview: string };
   /** The page life that wrote it; absent on an entry written before owners existed. */
   owner?: string;
+  /**
+   * "NOT NOW" answers (502, 503, 504) in a row since it was recorded or last retried by hand: the
+   * durable count `messaging.ts` bounds at `MAX_UNAVAILABLE_ANSWERS` (R05, review of #3189). Only
+   * the server's row - which removes the entry - or the member's Retry ends the run.
+   */
+  unavailableAnswers?: number;
 }
 
 function keyFor(userId: string): string {
@@ -109,6 +115,28 @@ export function recordUnsentSalonText(userId: string, entry: UnsentSalonText): v
   claimOwnerLock();
   const owned = { ...entry, owner: SALON_UNSENT_PAGE_LIFE };
   writeAll(userId, [...readAll(userId).filter((e) => e.messageId !== entry.messageId), owned]);
+}
+
+/**
+ * Counts one more "not now" answer on `messageId`'s entry and returns the run, or `null` when the
+ * ledger holds no entry for it (its write failed, and said so then).
+ */
+export function countUnavailableAnswer(userId: string, messageId: string): number | null {
+  const all = readAll(userId);
+  const entry = all.find((e) => e.messageId === messageId);
+  if (!entry) return null;
+  entry.unavailableAnswers = (entry.unavailableAnswers ?? 0) + 1;
+  writeAll(userId, all);
+  return entry.unavailableAnswers;
+}
+
+/** The member retried `messageId` by hand: its run of "not now" answers starts again. */
+export function resetUnavailableAnswers(userId: string, messageId: string): void {
+  const all = readAll(userId);
+  const entry = all.find((e) => e.messageId === messageId);
+  if (!entry?.unavailableAnswers) return;
+  entry.unavailableAnswers = 0;
+  writeAll(userId, all);
 }
 
 /** Forgets one entry: the server answered, or the member gave the message up. */

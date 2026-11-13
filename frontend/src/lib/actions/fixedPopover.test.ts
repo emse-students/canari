@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
 import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { bindFixedPopover, computeFixedPopoverPosition } from './fixedPopover';
+import { initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+
+/** The OS the keyboard store asks about - a desktop has no on-screen keyboard, so no band. */
+const platform = vi.hoisted(() => ({ os: 'linux' }));
+vi.mock('$lib/mls-client/mlsPlatform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/mlsPlatform')>()),
+  detectRuntimeDeviceOs: () => platform.os,
+}));
 
 describe('computeFixedPopoverPosition', () => {
   beforeEach(() => {
@@ -56,6 +64,34 @@ describe('computeFixedPopoverPosition', () => {
     const pos = computeFixedPopoverPosition(anchor, panel, { dockBottom: true });
     expect(pos.top + 360).toBe(600 - 8);
     expect(pos.left).toBe(40);
+  });
+
+  it('lays out in what the keyboard leaves of the viewport, not under it', () => {
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 380,
+        bottom: 420,
+        left: 40,
+        right: 180,
+        width: 140,
+        height: 40,
+        x: 40,
+        y: 380,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 320, offsetHeight: 200 } as HTMLElement;
+
+    // 600 tall, a 240 px keyboard: 360 visible. Docked, the panel rests on the keyboard's top edge;
+    // anchored, the anchor itself is under the keyboard (380 > 360), so the panel opens above it and
+    // is slid up until its bottom clears the keyboard's edge - never left hanging behind it.
+    const docked = computeFixedPopoverPosition(anchor, panel, { dockBottom: true }, 240);
+    expect(docked.top + 200).toBe(360 - 8);
+    const anchored = computeFixedPopoverPosition(anchor, panel, {}, 240);
+    expect({ side: anchored.side, bottom: anchored.top + 200 }).toEqual({
+      side: 'top',
+      bottom: 360 - 8,
+    });
   });
 
   it('opens downward when there is room below', () => {
@@ -497,5 +533,44 @@ describe('an anchor with no box', () => {
       warned: 0,
     });
     unbind();
+  });
+  it('follows the keyboard from the visual viewport, before the layout viewport catches up', () => {
+    // Mi 9T, 2026-11-10, the reaction picker's search focused: the visual viewport shrank to 588 at
+    // +357 ms, `innerHeight` stayed 945 until +1000 ms (one frame of it the double report, 588 over
+    // 230), then both read 588. The panel must be above the keyboard from the FIRST of those events.
+    platform.os = 'android';
+    vi.stubGlobal('innerHeight', 945);
+    const vv = Object.assign(new EventTarget(), { height: 945, offsetTop: 0, scale: 1 });
+    vi.stubGlobal('visualViewport', vv);
+    const teardown = initKeyboardViewport();
+    const panel = panelNode();
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(300, 40), dockBottom: true });
+    const tops: string[] = [panel.style.top];
+
+    vv.height = 588;
+    vv.dispatchEvent(new Event('resize'));
+    tops.push(panel.style.top);
+
+    // The double report: the layout viewport gave the keyboard up, the visual one reads it twice.
+    vi.stubGlobal('innerHeight', 588);
+    vv.height = 230;
+    vv.offsetTop = 15;
+    window.dispatchEvent(new Event('resize'));
+    tops.push(panel.style.top);
+
+    vv.height = 588;
+    vv.offsetTop = 0;
+    vv.dispatchEvent(new Event('resize'));
+    tops.push(panel.style.top);
+
+    expect(tops).toEqual([
+      `${945 - 8 - 360}px`,
+      `${588 - 8 - 360}px`,
+      `${588 - 8 - 360}px`,
+      `${588 - 8 - 360}px`,
+    ]);
+    unbind();
+    teardown();
+    platform.os = 'linux';
   });
 });

@@ -66,7 +66,11 @@ import {
   setDelegationReadiness,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
-import { publishLeaderLink, startLeaderLink } from '$lib/mls-client/tabLeaderLink.svelte';
+import {
+  leadershipChanged,
+  publishLeaderLink,
+  startLeaderLink,
+} from '$lib/mls-client/tabLeaderLink.svelte';
 import { rememberSelectionForReload } from '$lib/utils/chat/selectionAcrossReload';
 import { installJoinPush } from '$lib/utils/chat/joinPush';
 import { appendLog } from '$lib/utils/sessionLog';
@@ -331,6 +335,7 @@ export function useChatSession() {
   // (`promotedSinceLoad`) right before going live and takes {@link reloadForPromotion} itself, so
   // no copy loaded as a follower ever goes live as the leader.
   setTabLeaderPromotedHandler(() => {
+    leadershipChanged();
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
@@ -342,6 +347,7 @@ export function useChatSession() {
   // WebSocket and restart in follower mode (MLS ratchet must never advance in two
   // tabs simultaneously).
   setTabLeaderDemotedHandler(() => {
+    leadershipChanged();
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);

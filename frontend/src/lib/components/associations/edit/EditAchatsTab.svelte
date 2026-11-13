@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import {
@@ -23,7 +24,6 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { productLabel, purchaseItemLabel } from '$lib/associations/productLabel';
   import { formatAmount } from '$lib/forms/fillAnswers';
@@ -308,7 +308,7 @@
 <div class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
   <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <UsersIcon size={20} />
         {m.asso_achats_title()}
       </h2>
@@ -427,7 +427,7 @@
   {#if purchasesLoading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if filteredPurchases.length === 0}
@@ -435,7 +435,7 @@
   {:else}
     <div class="border-cn-border/70 overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
-        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase">
+        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold">
           <tr>
             <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
             <th class="px-4 py-3">{m.asso_achats_col_buyer()}</th>
@@ -449,7 +449,7 @@
           {#each filteredPurchases as purchase (purchase.id)}
             <tr class="bg-cn-bg/20 hover:bg-cn-bg">
               <td class="text-text-muted px-4 py-3 whitespace-nowrap">
-                {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
+                {new Date(purchase.paidAt).toLocaleString(intlLocale())}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
               <td class="text-text-main px-4 py-3">
@@ -466,9 +466,7 @@
                       class="bg-cn-bg text-text-muted ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
                       title={purchase.closedAt
                         ? m.asso_achats_closed_hint({
-                            date: new Date(purchase.closedAt).toLocaleString(
-                              getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                            ),
+                            date: new Date(purchase.closedAt).toLocaleString(intlLocale()),
                           })
                         : undefined}
                     >

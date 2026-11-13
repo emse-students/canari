@@ -117,7 +117,7 @@
       type="button"
       onclick={add}
       disabled={!canAdd}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex shrink-0 items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      class="border-cn-border text-text-main hover:border-accent/40 inline-flex shrink-0 items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     >
       <Plus size={13} />
       {m.form_promo_add()}
@@ -125,7 +125,7 @@
   </div>
 
   {#if showError}
-    <p class="text-xs font-semibold text-amber-900 dark:text-amber-100">
+    <p class="text-accent-text text-xs font-semibold">
       {m.form_promo_invalid({ first: FIRST_PROMO_YEAR, last: lastPromoYear() })}
     </p>
   {/if}

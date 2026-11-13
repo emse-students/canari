@@ -20,8 +20,6 @@
     isOwn: boolean;
     /** When true, hides reply and edit/delete actions. */
     isDeleted: boolean;
-    /** When true, hides the edit action (media messages cannot be edited). */
-    hasMedia: boolean;
     /** When true, keeps the toolbar fully visible (the full emoji picker is open). */
     showEmojiPicker: boolean;
     /** Called when the reply button is clicked. Omit to hide the button. */
@@ -53,7 +51,6 @@
   let {
     isOwn,
     isDeleted,
-    hasMedia,
     showEmojiPicker,
     onReply,
     onForward,
@@ -72,7 +69,8 @@
   /** The overflow menu, opened by the ellipsis. Mutually exclusive with the quick bar. */
   let menuOpen = $state(false);
 
-  const canEdit = $derived(!isDeleted && isOwn && !hasMedia && !!onEdit);
+  // A media message's edit is its caption's, so it is offered too (owner, 2026-11-11).
+  const canEdit = $derived(!isDeleted && isOwn && !!onEdit);
   const canDelete = $derived(!isDeleted && (isOwn || canModerate) && !!onDelete);
   const hasMenu = $derived(!!onForward || !!onPin || canEdit || canDelete);
 
@@ -322,7 +320,7 @@
               closeAll();
             }}
             class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none transition-transform hover:scale-125 active:scale-95 {isActive
-              ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+              ? 'bg-accent/20 ring-accent-icon ring-1'
               : 'hover:bg-black/5 dark:hover:bg-white/10'}"
             aria-label={m.msg_react_with_emoji({ emoji })}
             aria-pressed={isActive}

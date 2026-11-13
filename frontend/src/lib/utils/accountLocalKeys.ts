@@ -51,6 +51,8 @@ export const ACCOUNT_KEY = {
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `calendar/agendaSpaceFilter.ts`: the space the account last narrowed its agenda view to. */
+  agendaSpaceFilter: (userId: string) => `canari_agenda_space_filter:v1:${userId}`,
   /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
   postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
   /** `postCommentDraft.ts`: the account's unsent comment on one post. */
@@ -135,6 +137,11 @@ export const ACCOUNT_KEY = {
    * sign-out enumerates to end EVERY account's epoch.
    */
   feedStoreEpoch: (userId: string) => `canari_feed_store_epoch:v1:${userId}`,
+  /**
+   * `peerNameDirectory.ts`: the sealed peer-name directory's OWN epoch (not the feed's), ended by a
+   * sign-out or a change of account. Called with `''` it is the prefix `endPeerNames` enumerates.
+   */
+  peerNamesEpoch: (userId: string) => `canari_peer_names_epoch:v1:${userId}`,
   /** `hex.ts`: the MLS state of builds that kept it in `localStorage`, read once and migrated. */
   legacyMlsAutosave: (userId: string) => `mls_autosave_${userId}`,
   /**
@@ -170,6 +177,18 @@ export const ACCOUNT_KEY = {
    * truth; this is the optimistic copy that keeps a help from replaying offline.
    */
   seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
+  /**
+   * `birthdays/birthdaysToday.svelte.ts`: whether the account has entered a birthday - one boolean
+   * about the account itself, never the date - so the feed's prompt card is decided before the
+   * session refresh answers (slow-link chantier, gap 1).
+   */
+  ownBirthdayKnown: (userId: string) => `canari_own_birthday:v1:${userId}`,
+  /**
+   * `stores/announcement.svelte.ts`: the platform announcement the server last said was waiting for
+   * this account, with the client version it was asked for - drawn at the next opening before the
+   * session refresh answers, and only by that same client version.
+   */
+  pendingAnnouncement: (userId: string) => `canari_announcement:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /**
@@ -178,6 +197,12 @@ export const ACCOUNT_KEY = {
    */
   conversationNicknames: (userId: string, groupId: string) =>
     `canari_nicknames:v1:${userId}:${groupId}`,
+  /**
+   * `pinStore.svelte.ts`: one conversation's pin register - message ids and dates, never a
+   * message's text. Per account, so two accounts sharing a conversation on one install never share it.
+   */
+  conversationPins: (userId: string, conversationId: string) =>
+    `canari_pins:v1:${userId}:${conversationId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -236,6 +261,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.agendaSpaceFilter(userId),
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
@@ -251,9 +277,12 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.deviceNotices(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
+    ACCOUNT_KEY.peerNamesEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.seenHelps(userId),
+    ACCOUNT_KEY.ownBirthdayKnown(userId),
+    ACCOUNT_KEY.pendingAnnouncement(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
@@ -266,6 +295,7 @@ function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
     ACCOUNT_KEY.conversationNicknames(userId, ''),
+    ACCOUNT_KEY.conversationPins(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),
@@ -285,6 +315,7 @@ const ID_NAMING_KEYS = [
   ACCOUNT_KEY.deviceKeyEpoch,
   ACCOUNT_KEY.seenCipherIndex,
   ACCOUNT_KEY.feedStoreEpoch,
+  ACCOUNT_KEY.peerNamesEpoch,
 ] as const;
 
 /**

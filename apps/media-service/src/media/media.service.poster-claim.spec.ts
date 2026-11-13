@@ -190,3 +190,21 @@ describe('the poster classes and the sweep', () => {
     expect(internals.survivesAccountDeletion(upload({ retentionClass: 'poster' }))).toBe(false);
   });
 });
+
+describe('ownedBy', () => {
+  it("lists the uploader's own objects and refuses every other, without changing anything", () => {
+    const items: Record<string, Entry> = {
+      [id(1)]: upload({ retentionClass: 'archive' }),
+      [id(2)]: upload({ ownerId: BOB }),
+      [id(3)]: upload({ ownerId: undefined }),
+      [id(4)]: upload({ purgedAt: NOW }),
+      [id(5)]: upload({ publicAsset: true }),
+    };
+    const { service, persisted } = serviceWith(items);
+    const answer = service.ownedBy([id(1), id(2), id(3), id(4), id(5), id(6), 'not-a-uuid'], ALICE);
+    expect(answer.owned).toEqual([id(1)]);
+    expect(answer.refused).toEqual([id(2), id(3), id(4), id(5), id(6), 'not-a-uuid']);
+    expect(persisted).toHaveLength(0);
+    expect(items[id(1)].retentionClass).toBe('archive');
+  });
+});

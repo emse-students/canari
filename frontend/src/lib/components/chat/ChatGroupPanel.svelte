@@ -338,7 +338,7 @@
         disabled={imageUploading}
         aria-label={m.chat_group_change_photo_label()}
         title={m.chat_group_change_photo_label()}
-        class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
+        class="group/avatar squircle focus-visible:ring-accent-icon relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60"
       >
         <GroupAvatar id={groupId} {imageMediaId} name={effectiveDisplayName} fill />
         <span
@@ -358,9 +358,7 @@
       <div class="text-text-main mb-1 truncate text-base font-bold">
         <EmojiText text={effectiveDisplayName} />
       </div>
-      <div
-        class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold tracking-wider uppercase"
-      >
+      <div class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold">
         <!--
                 UNCONDITIONAL, BECAUSE IT STATES A FACT ABOUT THE CONVERSATION AND NOT ABOUT THIS
                 DEVICE. It used to fork on `isReady` and show an amber "not joined" line, which is
@@ -388,7 +386,7 @@
     >
       <label
         for="group-rename-input"
-        class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold tracking-wider uppercase"
+        class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold"
       >
         <PencilLine size={14} />
         {m.chat_group_name_label()}
@@ -399,7 +397,7 @@
           type="text"
           bind:value={renameInput}
           onkeydown={handleRenameKey}
-          class="text-text-main bg-cn-surface min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+          class="text-text-main bg-cn-surface focus:border-accent/50 focus:ring-accent/50 min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 dark:border-white/10"
         />
         <Button onclick={submitRename} aria-label={m.chat_group_validate_rename_label()}>
           <Check size={16} strokeWidth={3} />
@@ -463,9 +461,7 @@
     <div
       class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm @md:p-5 dark:border-white/10"
     >
-      <span
-        class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-      >
+      <span class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold">
         <Link2 size={14} />
         {m.chat_group_invite_link_title()}
       </span>
@@ -489,7 +485,7 @@
           type="button"
           onclick={generateShareLink}
           disabled={shareLoading}
-          class="text-2xs self-start rounded-xl bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+          class="text-2xs bg-accent/10 text-accent-text hover:bg-accent/20 self-start rounded-xl px-3 py-1.5 font-bold transition-colors disabled:opacity-50"
         >
           {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
         </button>
@@ -504,9 +500,7 @@
   {#if isGroupConversation}
     <div class="flex flex-col gap-3">
       <div class="flex items-center justify-between gap-2 px-1">
-        <span
-          class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-        >
+        <span class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold">
           <Users size={14} />
           {m.chat_group_members_count_label({ count: groupMembers.length })}
         </span>
@@ -515,7 +509,7 @@
           onclick={() => {
             showInviteModal = true;
           }}
-          class="text-2xs inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
+          class="text-2xs bg-accent/10 text-accent-text hover:bg-accent/20 focus-visible:ring-accent-icon inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition-colors outline-none focus-visible:ring-2"
         >
           <UserPlus size={14} strokeWidth={2.5} />
           {m.common_add_button()}
@@ -549,7 +543,7 @@
                   />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span
-                      class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
+                      class="text-2xs bg-accent/10 text-accent-text shrink-0 rounded-md px-1.5 py-0.5 font-bold"
                       >{m.common_you_label()}</span
                     >
                   {/if}
@@ -598,7 +592,7 @@
                   />
                 </div>
                 <span
-                  class="text-2xs shrink-0 animate-pulse rounded-md bg-amber-500/10 px-2 py-0.5 font-bold text-amber-500"
+                  class="text-2xs bg-accent/10 text-accent-text shrink-0 animate-pulse rounded-md px-2 py-0.5 font-bold"
                   >{m.chat_group_invite_pending_label()}</span
                 >
               </li>
@@ -636,7 +630,7 @@
 
       {#if confirmLeave}
         <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-          <p class="text-center text-xs font-bold tracking-wider text-orange-500 uppercase">
+          <p class="text-center text-xs font-bold text-orange-500">
             {m.chat_group_leave_confirm_question()}
           </p>
           <div class="flex gap-3">
@@ -678,7 +672,7 @@
           </Button>
         {:else}
           <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-            <p class="text-center text-xs font-bold tracking-wider text-red-500 uppercase">
+            <p class="text-center text-xs font-bold text-red-500">
               {m.chat_group_delete_confirm_question()}
             </p>
             <div class="flex gap-3">

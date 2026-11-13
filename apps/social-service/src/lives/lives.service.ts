@@ -39,6 +39,12 @@ import {
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
   LIVE_RETAINED_SEGMENTS,
+  LIVE_REPLAY_MAX_MS,
+  LIVE_REPLAY_MIN_MS,
+  LIVE_REPLAY_PAGE,
+  LIVE_REPLAY_RETENTION_DAYS,
+  LIVE_REPLAY_EVICTION_KEEP_DAYS,
+  liveReplayTotalMaxBytes,
   LIVE_TRIM_BATCH,
   LIVE_RULES_VERSION,
   LIVE_SEAT_LEASE_MS,
@@ -68,13 +74,16 @@ import {
   isLiveKeySealingConfigured,
   LIVE_KEY_ENCRYPTION_SECRET_ENV,
   LiveKeyUnavailableError,
-  openLiveKey,
   openLiveKeyOr503,
   sealLiveKey,
   storedLiveKeyColumns,
   type StoredLiveKey,
 } from './live-key-at-rest';
-import { derivePosterKey } from './live-poster-key';
+import { closePosterKeyOutage, posterAgeMsSql, servedPoster } from './live-poster-key';
+import { readLiveReplaysMode } from './live-replays-mode';
+import { readPostOpenVerdict } from '../posts/post-openable';
+import { invalidatePostListCache } from '../posts/post-list-cache';
+import { RedisService } from '../common/redis';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -87,6 +96,11 @@ export interface LiveView {
   key: string;
   /** The live's optional title (owner, 2026-11-07), plain text, or null. */
   title: string | null;
+  /**
+   * Whether this live is kept three days as a replay at its end (docs/wiki/live-replays.md), fixed
+   * at its start from `live_replays_mode`: the broadcaster's end screen and a viewer can say so.
+   */
+  keepsReplay: boolean;
 }
 
 /**
@@ -151,7 +165,8 @@ export interface LiveListItem {
    * The PREVIEW key (`derivePosterKey`: HKDF of the live key), served WITH a poster and only then. It
    * opens that image and nothing else - never a segment, never the chat - so the seated
    * `GET /api/lives/:id` stays the only route the live key leaves by. `null` with no poster, or when
-   * the stored key does not open (reported once per outage, the card then draws no picture).
+   * the stored key does not open (reported once per outage by `posterKeyOf`, the card then draws no
+   * picture).
    */
   posterKey: string | null;
 }
@@ -246,8 +261,18 @@ export interface LiveRulesStatus {
   acceptedAt: Date | null;
 }
 
-/** The outcome of deleting an ended live's segments and row. */
-export type LivePurgeOutcome = 'deleted' | 'kept';
+/**
+ * The outcome of deleting an ended live's segments and row: `replayed` is a live whose replay this
+ * call published instead (docs/wiki/live-replays.md) - kept, and counted apart in the sweep's report.
+ */
+export type LivePurgeOutcome = 'deleted' | 'kept' | 'replayed';
+
+/** One replay the total cap ended early ({@link LivesService.enforceReplayCap}). */
+export interface LiveReplayEviction {
+  liveId: string;
+  bytes: number;
+  totalBytes: number;
+}
 
 /** What one pass of the orphan reaper did ({@link LivesService.reapOrphans}). */
 export interface LiveOrphanReport {
@@ -262,6 +287,32 @@ type IngestStep =
   | { kind: 'repeat'; result: LiveIngestResult }
   | { kind: 'ended'; endedAt: Date | null; endReason: LiveEndReason }
   | { kind: 'reserved'; name: string };
+
+/** One segment of a replay: the manifest's fields, and its place on the replay's time line. */
+export interface LiveReplaySegment {
+  index: number;
+  name: string;
+  bytes: number;
+  /** `createdAt` minus the first kept segment's, on the database clock: the seek map. */
+  atMs: number;
+}
+
+/**
+ * One page of a replay (`GET /api/lives/:id/replay`, docs/wiki/live-replays.md section 2 step 4).
+ * `key` is the live key, opened by `openLiveKey` and never copied into the post; `serverNow` is the
+ * database clock the time left is computed against, never the phone's; `nextFrom` is null on the last
+ * page.
+ */
+export interface LiveReplayPage {
+  liveId: string;
+  postId: string;
+  key: string;
+  durationMs: number;
+  expiresAt: Date;
+  serverNow: Date;
+  segments: LiveReplaySegment[];
+  nextFrom: number | null;
+}
 
 /** What the confirm step decided: the segment was recorded, or the live had ended meanwhile. */
 type ConfirmOutcome =
@@ -279,10 +330,30 @@ interface LiveRow extends StoredLiveKey {
   endedAt: Date | null;
   endReason: LiveEndReason | null;
   title: string | null;
+  keepsReplay: boolean;
 }
 
 const LIVE_COLUMNS = `id, "broadcasterId", "associationId", ${storedLiveKeyColumns()}, "startedAt",
-  "lastSegmentAt", "nextIndex", "endedAt", "endReason", "title"`;
+  "lastSegmentAt", "nextIndex", "endedAt", "endReason", "title", "keepsReplay"`;
+
+/**
+ * What an end line says of the live it ends - how long it lasted (start to its last segment, the
+ * database's clock), how many segments it sent and how many bytes it holds - so lives per day and
+ * their length are measurable from the log BEFORE any replay is kept (WP-R1; nothing else keeps a
+ * record of a past live). An `UPDATE ... RETURNING` list, read by {@link endFacts}.
+ */
+const END_FACTS_SQL = `(EXTRACT(EPOCH FROM (COALESCE("lastSegmentAt", "startedAt") - "startedAt")) * 1000)::bigint AS "durationMs",
+  "nextIndex" AS segments, "storedBytes" AS "storedBytes", "keepsReplay" AS "keepsReplay"`;
+
+/** The end line's tail, from the columns {@link END_FACTS_SQL} returns. */
+function endFacts(r: {
+  durationMs: string | number;
+  segments: number;
+  storedBytes: string | number;
+  keepsReplay: boolean;
+}): string {
+  return `duration=${Math.round(Number(r.durationMs) / 1000)}s segments=${r.segments} stored=${Number(r.storedBytes)}B replay=${r.keepsReplay ? 'kept' : 'none'}`;
+}
 
 /** How many plaintext keys one query of the backfill takes; it loops until none is left. */
 const PLAINTEXT_KEY_BATCH = 100;
@@ -326,6 +397,12 @@ export class LivesService implements OnModuleDestroy {
   /** The trim running for each live right now: at most ONE per live in this process. */
   private readonly trimming = new Map<string, Promise<void>>();
 
+  /**
+   * The replays' total cap (decision D5), read ONCE at construction: an invalid
+   * `LIVE_REPLAY_TOTAL_MAX_GB` stops the service at boot instead of meaning "no cap".
+   */
+  private readonly replayCapBytes = liveReplayTotalMaxBytes();
+
   constructor(
     @InjectDataSource() private readonly db: DataSource,
     @Inject(LIVE_SEGMENT_STORE) private readonly store: LiveSegmentStore,
@@ -333,7 +410,8 @@ export class LivesService implements OnModuleDestroy {
     private readonly moderation: ModerationService,
     private readonly seats: LiveSeats,
     private readonly announcer: LiveAnnouncer,
-    private readonly notifications: PostNotificationsService
+    private readonly notifications: PostNotificationsService,
+    private readonly redis: RedisService
   ) {}
 
   /**
@@ -395,6 +473,8 @@ export class LivesService implements OnModuleDestroy {
       await this.assertAssociationNotArchived(broadcasterId, associationId);
     }
     await this.assertRulesAccepted(broadcasterId, input.acceptedRulesVersion);
+    // FIXED HERE, ON THE ROW, for the live's whole life: a flip mid-live never makes half a replay.
+    const keepsReplay = (await readLiveReplaysMode(this.db.manager, this.logger)) === 'on';
     let row: LiveRow;
     try {
       row = await this.db.transaction(async (tx) => {
@@ -436,9 +516,17 @@ export class LivesService implements OnModuleDestroy {
         const id = randomUUID();
         const sealed = sealLiveKey(id, key);
         const rows: LiveRow[] = await tx.query(
-          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion", "title")
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${LIVE_COLUMNS}`,
-          [id, broadcasterId, associationId, sealed.liveKeyCiphertext, sealed.liveKeyVersion, title]
+          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion", "title", "keepsReplay")
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${LIVE_COLUMNS}`,
+          [
+            id,
+            broadcasterId,
+            associationId,
+            sealed.liveKeyCiphertext,
+            sealed.liveKeyVersion,
+            title,
+            keepsReplay,
+          ]
         );
         await tx.query(`INSERT INTO live_starts ("broadcasterId") VALUES ($1)`, [broadcasterId]);
         return rows[0];
@@ -452,7 +540,7 @@ export class LivesService implements OnModuleDestroy {
     }
     // The title's length, never its text: a log line is no place for what a member wrote.
     this.logger.log(
-      `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}`
+      `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}, replay ${keepsReplay ? 'kept' : 'none'}`
     );
     // The broadcaster's own key, just sealed: answered as received, nothing to open.
     return toView(row, key);
@@ -541,8 +629,7 @@ export class LivesService implements OnModuleDestroy {
       await this.db.query(
         `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt", l."title",
               ${bdeModeratesContentSql('$1', 'l."associationId"', 'l."broadcasterId"')} AS "viewerModerates",
-              l."posterName",
-              floor(extract(epoch FROM now() - l."posterAt") * 1000)::float8 AS "posterAgeMs",
+              l."posterName", ${posterAgeMsSql('l')} AS "posterAgeMs",
               ${storedLiveKeyColumns('l')}
          FROM lives l
         WHERE l."endedAt" IS NULL
@@ -560,18 +647,18 @@ export class LivesService implements OnModuleDestroy {
       const { posterName, posterAgeMs, liveKey, liveKeyCiphertext, liveKeyVersion, ...rest } = r;
       // The DERIVED preview key, never the live key: it opens the picture and nothing else. A key
       // that does not open leaves THIS live without a picture (reported once per outage).
-      const posterKey =
-        posterName !== null
-          ? this.posterKeyFor(r.id, { liveKey, liveKeyCiphertext, liveKeyVersion })
-          : null;
+      const { poster, posterKey } = servedPoster(r.id, {
+        posterName,
+        posterAgeMs,
+        liveKey,
+        liveKeyCiphertext,
+        liveKeyVersion,
+      });
       return {
         ...rest,
         viewerModerates: rest.viewerModerates === true,
         viewers: counts?.get(r.id) ?? null,
-        poster:
-          posterName !== null && posterKey !== null
-            ? { name: posterName, ageMs: Math.max(0, Number(posterAgeMs)) }
-            : null,
+        poster,
         posterKey,
       };
     });
@@ -676,6 +763,91 @@ export class LivesService implements OnModuleDestroy {
       segments,
       viewers,
       chatWithheld: row.chatWithheld,
+    };
+  }
+
+  /**
+   * One page of a live's REPLAY for one viewer (docs/wiki/live-replays.md). NO SEAT: a replay is
+   * uncapped like a reel. The gate is the replay POST's own (`readPostOpenVerdict`, the one predicate
+   * every path that acts on a post asks): its audience - the live's, with the viewers the broadcaster
+   * removed taken out (`postVisibleToUserSql`) - moderation, a block with a personal author. A replay
+   * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
+   * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
+   */
+  async replay(viewerId: string, liveId: string, from = 0): Promise<LiveReplayPage> {
+    const rows: (StoredLiveKey & {
+      postId: string;
+      authorId: string;
+      associationId: string | null;
+      anonymous: boolean;
+      hiddenByModeration: boolean;
+      scheduledAt: Date | null;
+      expiresAt: Date;
+      durationMs: number;
+      serverNow: Date;
+    })[] = await this.db.query(
+      `SELECT p.id AS "postId", p."authorId", p."associationId", p.anonymous, p."hiddenByModeration",
+              p."scheduledAt", p."expiresAt", p."durationMs", now() AS "serverNow",
+              ${storedLiveKeyColumns('l')}
+         FROM posts p JOIN lives l ON l.id = p."liveId"
+        WHERE p."liveId" = $1 AND p.kind = 'replay' AND p."expiresAt" > now()`,
+      [liveId]
+    );
+    const found = rows[0];
+    if (!found) {
+      this.logger.debug(`[LIVE_REPLAY] ${liveId}: no replay alive for ${short(viewerId)}`);
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
+    const verdict = await readPostOpenVerdict(
+      this.db.manager,
+      {
+        id: found.postId,
+        authorId: found.authorId,
+        associationId: found.associationId,
+        anonymous: found.anonymous,
+        hiddenByModeration: found.hiddenByModeration,
+        scheduledAt: found.scheduledAt,
+        kind: 'replay',
+        expiresAt: found.expiresAt,
+      },
+      { viewerId },
+      'READ_OR_REACT'
+    );
+    if (verdict.refusal !== null) {
+      this.logger.debug(`[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`);
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
+    const key = openLiveKeyOr503(liveId, found);
+    const listed: { index: number; name: string; bytes: number; atMs: string }[] =
+      await this.db.query(
+        `SELECT s."index", s.name, s.bytes,
+                (EXTRACT(EPOCH FROM (s."createdAt" - first."createdAt")) * 1000)::bigint AS "atMs"
+           FROM live_segments s
+           CROSS JOIN LATERAL (SELECT min(f."createdAt") AS "createdAt"
+                                 FROM live_segments f WHERE f."liveId" = $1) first
+          WHERE s."liveId" = $1 AND s."index" >= $2
+          ORDER BY s."index" ASC
+          LIMIT $3`,
+        [liveId, from, LIVE_REPLAY_PAGE + 1]
+      );
+    const page = listed.slice(0, LIVE_REPLAY_PAGE);
+    this.logger.debug(
+      `[LIVE_REPLAY] ${liveId} page from ${from} for ${short(viewerId)}: ${page.length} segment(s)`
+    );
+    return {
+      liveId,
+      postId: found.postId,
+      key,
+      durationMs: found.durationMs,
+      expiresAt: found.expiresAt,
+      serverNow: found.serverNow,
+      segments: page.map((r) => ({
+        index: r.index,
+        name: r.name,
+        bytes: r.bytes,
+        atMs: Number(r.atMs),
+      })),
+      nextFrom: listed.length > LIVE_REPLAY_PAGE ? listed[LIVE_REPLAY_PAGE].index : null,
     };
   }
 
@@ -1008,15 +1180,27 @@ export class LivesService implements OnModuleDestroy {
    * BEST EFFORT FOR THE INGEST: a failure is logged at `warn` and never fails the segment that was
    * just stored - the end's purge deletes the whole prefix whatever this left, so correctness never
    * rests on this pass; only the bound does, and it is re-asked by every segment.
+   *
+   * A LIVE THAT KEEPS A REPLAY (`keepsReplay`, fixed at its start) keeps its last
+   * {@link LIVE_REPLAY_MAX_MS} instead (owner, 2026-11-09, D1): a segment goes only when it is behind
+   * the window AND older than three hours before the newest segment, both by the segments' own
+   * `createdAt` (the database clock), so what such a live stores is bounded by three hours, never by
+   * how long it lasts.
    */
   private async trim(liveId: string): Promise<void> {
     try {
+      // A live that keeps a replay keeps its last LIVE_REPLAY_MAX_MS too (D1): a segment goes only
+      // when it is BOTH behind the window and older than three hours before the newest segment, by
+      // the segments' own database times.
       const rows: { index: number; name: string }[] = await this.db.query(
         `SELECT s."index", s.name
            FROM live_segments s JOIN lives l ON l.id = s."liveId"
           WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2
+            AND (NOT l."keepsReplay" OR s."createdAt" < (
+              SELECT max(newest."createdAt") FROM live_segments newest WHERE newest."liveId" = $1
+            ) - $4 * interval '1 millisecond')
           ORDER BY s."index" ASC LIMIT $3`,
-        [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH]
+        [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH, LIVE_REPLAY_MAX_MS]
       );
       if (rows.length === 0) return;
       const answer = await this.store.deleteSegments(
@@ -1391,10 +1575,18 @@ export class LivesService implements OnModuleDestroy {
     const [rows] = (await this.db.query(
       `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster'
         WHERE id = $1 AND "broadcasterId" = $2 AND "endedAt" IS NULL
-        RETURNING id, "endedAt", "endReason"`,
+        RETURNING id, "endedAt", "endReason", ${END_FACTS_SQL}`,
       [liveId, broadcasterId]
-    )) as [{ id: string; endedAt: Date; endReason: LiveEndReason }[], number];
-    let ended = rows[0];
+    )) as [
+      ({ id: string; endedAt: Date; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[],
+      number,
+    ];
+    const first = rows[0];
+    let ended: { id: string; endedAt: Date; endReason: LiveEndReason } | undefined = first && {
+      id: first.id,
+      endedAt: first.endedAt,
+      endReason: first.endReason,
+    };
     if (!ended) {
       const current: LiveRow[] = await this.db.query(
         `SELECT ${LIVE_COLUMNS} FROM lives WHERE id = $1`,
@@ -1419,7 +1611,7 @@ export class LivesService implements OnModuleDestroy {
       ended = { id: row.id, endedAt: row.endedAt!, endReason: row.endReason! };
       this.logger.debug(`[LIVE] end of ${liveId} repeated (${row.endReason})`);
     } else {
-      this.logger.log(`[LIVE] ${liveId} ended by its broadcaster`);
+      this.logger.log(`[LIVE] ${liveId} ended by its broadcaster, ${endFacts(first)}`);
     }
     await this.purgeBestEffort(liveId, 'at end');
     return ended;
@@ -1506,7 +1698,9 @@ export class LivesService implements OnModuleDestroy {
     this.logger.debug(`[LIVE_CUT] ${liveId} asked by ${short(reviewerId)}`);
     const { reason, details } = parseModerationNote(input);
 
+    let replayEnded = false;
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
+      replayEnded = false;
       // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
       // never wait on each other in a cycle. The broadcaster is read unlocked to name the lock: it
       // only ever changes to the erased tombstone, which the locked read below refuses anyway.
@@ -1582,6 +1776,10 @@ export class LivesService implements OnModuleDestroy {
         ]
       );
       const newlyCut = inserted.length > 0;
+      // A cut of a live already published as a replay ends the replay in the same transaction
+      // (docs/wiki/live-replays.md: a CUT of the live stays a cut, with its strike; a deletion of the
+      // replay POST by staff is not one - D7). The worker deletes the post, then the sweep the live.
+      replayEnded = await this.expireReplay(liveId, 'removed', tx);
       const cut = newlyCut
         ? { reason: reason as LiveCutReason, cutAt: inserted[0].cutAt, strike: inserted[0].strike }
         : (await this.cutOf(tx, liveId))!;
@@ -1616,6 +1814,7 @@ export class LivesService implements OnModuleDestroy {
       );
       await this.notifyCut(result);
     }
+    if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');
     return result;
   }
@@ -1704,6 +1903,67 @@ export class LivesService implements OnModuleDestroy {
     if (!own && (await isBlockedBetween(manager, callerId, cut.broadcasterId))) return;
     this.logger.debug(`[LIVE] ${liveId} answered as cut to ${short(callerId)}`);
     throw liveEnded(cut.liveEndedAt, cut.liveEndReason);
+  }
+
+  /**
+   * THE REPLAYS' TOTAL CAP (owner, 2026-11-09, decision D5; docs/wiki/live-replays.md): while the
+   * bytes of every replay still showing pass `capBytes` (`LIVE_REPLAY_TOTAL_MAX_GB`, default 20 GB),
+   * the OLDEST - the smallest `expiresAt`, then the post id - is ended now ({@link expireReplay},
+   * `cap`), recorded in `live_replay_cap_evictions` for the admin storage panel, and reported at WARN
+   * under the stable tag `[LIVE_REPLAY_CAP]`: a cap reached is the admins' signal, never a silent loss.
+   *
+   * TERMINATION FROM A PROOF: each round ends one replay still showing, so the set strictly shrinks
+   * and the loop stops at or under the cap. ONE ROUND AT A TIME across replicas: each round runs under
+   * one transaction-scoped advisory lock, so two sweeps never evict two replays for one excess. The
+   * bytes are the live's `storedBytes`, the counter every store and trim moves in its own transaction.
+   */
+  async enforceReplayCap(capBytes = this.replayCapBytes): Promise<LiveReplayEviction[]> {
+    const evicted: LiveReplayEviction[] = [];
+    for (;;) {
+      const round = await this.db.transaction(async (tx) => {
+        await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended('live_replay_cap', 0))`);
+        // The window sum is taken over every replay showing BEFORE the LIMIT keeps the oldest one.
+        const rows: { liveId: string; bytes: string; totalBytes: string }[] = await tx.query(
+          `SELECT l.id AS "liveId", l."storedBytes" AS bytes,
+                  sum(l."storedBytes") OVER () AS "totalBytes"
+             FROM posts p JOIN lives l ON l.id = p."liveId"
+            WHERE p.kind = 'replay' AND p."expiresAt" > now()
+            ORDER BY p."expiresAt" ASC, p.id ASC
+            LIMIT 1`
+        );
+        const oldest = rows[0];
+        if (!oldest || Number(oldest.totalBytes) <= capBytes) return null;
+        const eviction: LiveReplayEviction = {
+          liveId: oldest.liveId,
+          bytes: Number(oldest.bytes),
+          totalBytes: Number(oldest.totalBytes),
+        };
+        await this.expireReplay(eviction.liveId, 'cap', tx);
+        await tx.query(
+          `INSERT INTO live_replay_cap_evictions ("liveId", bytes, "totalBytes", "capBytes")
+           VALUES ($1, $2, $3, $4)`,
+          [eviction.liveId, eviction.bytes, eviction.totalBytes, capBytes]
+        );
+        return eviction;
+      });
+      if (!round) break;
+      await this.replayFeedsChanged(round.liveId, 'the cap ended its replay');
+      this.logger.warn(
+        `[LIVE_REPLAY_CAP] ${round.liveId}: replay ended early, ${round.bytes}B of ${round.totalBytes}B over the ${capBytes}B cap`
+      );
+      evicted.push(round);
+    }
+    return evicted;
+  }
+
+  /** Deletes the cap evictions older than {@link LIVE_REPLAY_EVICTION_KEEP_DAYS}: the record's lifetime. */
+  async pruneReplayEvictions(): Promise<number> {
+    const [, affected] = (await this.db.query(
+      `DELETE FROM live_replay_cap_evictions WHERE "evictedAt" <= now() - $1 * interval '1 day'`,
+      [LIVE_REPLAY_EVICTION_KEEP_DAYS]
+    )) as [unknown, number];
+    if (affected > 0) this.logger.log(`[LIVE_GC] ${affected} replay cap eviction record(s) pruned`);
+    return affected;
   }
 
   /** Deletes the cuts older than {@link LIVE_CUT_RETENTION_MS} - the record's whole lifetime. */
@@ -1877,11 +2137,13 @@ export class LivesService implements OnModuleDestroy {
               "endReason" = 'dropped'
         WHERE "endedAt" IS NULL
           AND COALESCE("lastSegmentAt", "startedAt") + $1 * interval '1 millisecond' <= now()
-        RETURNING id, "endReason"`,
+        RETURNING id, "endReason", ${END_FACTS_SQL}`,
       [LIVE_RECONNECT_WINDOW_MS]
-    )) as [{ id: string; endReason: LiveEndReason }[], number];
-    for (const r of rows) this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}`);
-    return rows;
+    )) as [({ id: string; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[], number];
+    for (const r of rows) {
+      this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}, ${endFacts(r)}`);
+    }
+    return rows.map((r) => ({ id: r.id, endReason: r.endReason }));
   }
 
   /**
@@ -1943,13 +2205,20 @@ export class LivesService implements OnModuleDestroy {
     }
   }
 
-  /** The ended lives still holding a row, oldest end first, minus the ones a run already kept. */
+  /**
+   * The ended lives still holding a row, oldest end first, minus the ones a run already kept - and
+   * minus the lives WAITING FOR THEIR REPLAY POST (docs/wiki/live-replays.md): such a live has nothing
+   * to do until the post is gone, so it is not re-read every 30 s for three days. The one exception
+   * is a replay whose broadcaster was erased since and whose post still runs: the purge ends it.
+   */
   async endedLiveIds(exclude: string[], limit: number): Promise<string[]> {
     const rows: { id: string }[] = await this.db.query(
       `SELECT id FROM lives
         WHERE "endedAt" IS NOT NULL AND id <> ALL($1::uuid[])
+          AND NOT EXISTS (SELECT 1 FROM posts rp WHERE rp."liveId" = lives.id
+            AND NOT (lives."broadcasterId" = $3 AND rp."expiresAt" > now()))
         ORDER BY "endedAt" ASC LIMIT $2`,
-      [exclude, limit]
+      [exclude, limit, DELETED_ACCOUNT]
     );
     return rows.map((r) => r.id);
   }
@@ -1984,6 +2253,12 @@ export class LivesService implements OnModuleDestroy {
    *   can have been renewed since, and every one has lapsed - the database's clock says so and Redis
    *   is not asked (an outage of it never holds media past the lease);
    * - otherwise the seats are read; one held, or a count that cannot be read, keeps the live.
+   *
+   * A LIVE WITH A REPLAY (docs/wiki/live-replays.md) is never purged while its replay post exists: the
+   * post's deletion - the hourly worker at its `expiresAt`, its author, staff - is what releases the
+   * segments. A live that keeps a replay and has not published one publishes it here, after the drain
+   * and once nothing is storing ({@link publishReplay}, `'replayed'`); one too short, cut or erased is
+   * purged as before. A cut or an erasure met here ends a replay still showing ({@link expireReplay}).
    * THROWS on a transport failure, which the callers log and leave to the next sweep.
    */
   async purgeEnded(liveId: string): Promise<LivePurgeOutcome> {
@@ -1992,19 +2267,36 @@ export class LivesService implements OnModuleDestroy {
       removed: boolean;
       withinLease: boolean | null;
       storeInFlight: boolean | null;
+      replayDue: boolean;
+      replayPostId: string | null;
+      replayLive: boolean | null;
     }[] = await this.db.query(
       `SELECT l."endedAt" IS NOT NULL AS ended,
               (l."broadcasterId" = $4
                  OR EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id)) AS removed,
               l."endedAt" + $3 * interval '1 millisecond' > now() AS "withinLease",
               (l."pendingAt" + $2 * interval '1 millisecond' > now()
-                 OR l."posterPendingAt" + $2 * interval '1 millisecond' > now()) AS "storeInFlight"
-         FROM lives l WHERE l.id = $1`,
+                 OR l."posterPendingAt" + $2 * interval '1 millisecond' > now()) AS "storeInFlight",
+              (l."keepsReplay" AND l."replayPostedAt" IS NULL) AS "replayDue",
+              rp.id AS "replayPostId", rp."expiresAt" > now() AS "replayLive"
+         FROM lives l LEFT JOIN posts rp ON rp."liveId" = l.id
+        WHERE l.id = $1`,
       [liveId, LIVE_RESERVATION_TTL_MS, LIVE_SEAT_LEASE_MS, DELETED_ACCOUNT]
     );
     const row = rows[0];
     if (row && !row.ended) {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
+      return 'kept';
+    }
+    if (row?.replayPostId) {
+      // THE PURGE WAITS FOR THE REPLAY POST, AND FOR NOTHING ELSE (docs/wiki/live-replays.md): its
+      // deletion - by the hourly worker at its expiry, by its author or staff - releases the segments.
+      // A cut or an erasure ends the replay NOW, by its own column: every read refuses a post past its
+      // `expiresAt` at once, and the worker deletes it (comments' media included) at its next tick.
+      if (row.removed && row.replayLive && (await this.expireReplay(liveId, 'removed'))) {
+        await this.replayFeedsChanged(liveId, 'its broadcaster was removed');
+      }
+      this.logger.debug(`[LIVE_GC] ${liveId} kept: its replay post ${row.replayPostId} exists`);
       return 'kept';
     }
     if (row && !row.removed && row.withinLease) {
@@ -2032,6 +2324,9 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment or its poster is still storing`);
       return 'kept';
     }
+    // The drain is over and nothing is storing: a live that keeps a replay publishes it here, once,
+    // instead of being purged. A live too short for one, or removed, is purged as before.
+    if (row?.replayDue && !row.removed && (await this.publishReplay(liveId))) return 'replayed';
     const result = await this.store.purge(liveId);
     if (result.failed > 0 || result.remaining > 0) {
       this.logger.warn(
@@ -2043,13 +2338,153 @@ export class LivesService implements OnModuleDestroy {
       await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
     }
     this.closeArrivalOutages(liveId);
-    this.closePosterKeyOutage(liveId);
+    closePosterKeyOutage(liveId);
     // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
     await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
       this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
     });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
+  }
+
+  /**
+   * PUBLISHES A FINISHED LIVE'S REPLAY (docs/wiki/live-replays.md, section 2 step 2): ONE transaction
+   * under the live's row lock - the lock a cut takes - that re-reads every fact deciding it, inserts
+   * the `kind = 'replay'` post, stamps `replayPostedAt`, and deletes the live's chat (the chat is not
+   * replayed; a REPORTED line is in its own table, under its own rule). Returns true when the live is
+   * now a replay (published here or before), false when it must be purged as before.
+   *
+   * IDEMPOTENT FROM DURABLE STATE: `replayPostedAt` answers "already published" for ever, so a replay
+   * that expired or was deleted is never published twice; the unique index on `posts."liveId"` makes
+   * two replicas racing here insert one post. The facts:
+   * - ended, `keepsReplay`, not yet posted;
+   * - not removed: no `live_cuts` row, a broadcaster that is not {@link DELETED_ACCOUNT} - a cut that
+   *   commits first wins, one that commits after finds the replay and ends it ({@link purgeEnded});
+   * - long enough: `lastSegmentAt - startedAt >= LIVE_REPLAY_MIN_MS` (D4) and a segment stored.
+   *
+   * The post: the broadcaster as author, the live's association, its title as the text, `publishedAt`
+   * = the end, `expiresAt` = the end + {@link LIVE_REPLAY_RETENTION_DAYS} days (the database clock,
+   * written once), `durationMs` from the first to the last kept segment, never "Entre étudiants" (D8),
+   * no member repost, and `feedNotifiedAt` set so the announcement sweep never pushes it (no push,
+   * lead decision). The arrival keys are forgotten after the commit, as at a purge.
+   */
+  private async publishReplay(liveId: string): Promise<boolean> {
+    const outcome = await this.db.transaction(
+      async (tx): Promise<'published' | 'already' | 'ineligible'> => {
+        const rows: {
+          broadcasterId: string;
+          associationId: string | null;
+          title: string | null;
+          endedAt: Date | null;
+          keepsReplay: boolean;
+          posted: boolean;
+          cut: boolean;
+          longEnough: boolean;
+          spanMs: string | null;
+        }[] = await tx.query(
+          `SELECT l."broadcasterId", l."associationId", l.title, l."endedAt", l."keepsReplay",
+                  l."replayPostedAt" IS NOT NULL AS posted,
+                  EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id) AS cut,
+                  COALESCE(l."lastSegmentAt" - l."startedAt" >= $2 * interval '1 millisecond', false)
+                    AS "longEnough",
+                  (SELECT (EXTRACT(EPOCH FROM (max(s."createdAt") - min(s."createdAt"))) * 1000)::bigint
+                     FROM live_segments s WHERE s."liveId" = l.id) AS "spanMs"
+             FROM lives l WHERE l.id = $1 FOR UPDATE OF l`,
+          [liveId, LIVE_REPLAY_MIN_MS]
+        );
+        const live = rows[0];
+        if (!live || !live.endedAt || !live.keepsReplay) return 'ineligible';
+        if (live.posted) return 'already';
+        if (live.cut || live.broadcasterId === DELETED_ACCOUNT) return 'ineligible';
+        if (!live.longEnough || live.spanMs === null) {
+          this.logger.log(
+            `[LIVE_REPLAY] ${liveId}: no replay - the live lasted under ${LIVE_REPLAY_MIN_MS / 1000}s or stored nothing`
+          );
+          return 'ineligible';
+        }
+        const spanMs = Math.min(Number(live.spanMs), 2_147_483_647);
+        const inserted: { id: string; expiresAt: Date }[] = await tx.query(
+          `INSERT INTO posts ("authorId", "associationId", markdown, kind, "durationMs", "expiresAt",
+                              "liveId", "publishedAt", "feedNotifiedAt", anonymous, "studentsOnly",
+                              "allowReposts")
+           SELECT $2, $3, $4, 'replay', GREATEST($5::int, 1),
+                  l."endedAt" + $6 * interval '1 day', l.id, l."endedAt", now(), false, false, false
+             FROM lives l WHERE l.id = $1
+           ON CONFLICT ("liveId") WHERE "liveId" IS NOT NULL DO NOTHING
+           RETURNING id, "expiresAt"`,
+          [
+            liveId,
+            live.broadcasterId,
+            live.associationId,
+            live.title ?? '',
+            spanMs,
+            LIVE_REPLAY_RETENTION_DAYS,
+          ]
+        );
+        await tx.query(`UPDATE lives SET "replayPostedAt" = now() WHERE id = $1`, [liveId]);
+        await tx.query(`DELETE FROM live_chat_messages WHERE "liveId" = $1`, [liveId]);
+        await tx.query(`DELETE FROM live_reaction_bursts WHERE "liveId" = $1`, [liveId]);
+        const post = inserted[0];
+        if (post) {
+          this.logger.log(
+            `[LIVE_REPLAY] ${liveId} published as post ${post.id}, ${Math.round(spanMs / 1000)}s, expires ${new Date(post.expiresAt).toISOString()}`
+          );
+        } else {
+          this.logger.debug(`[LIVE_REPLAY] ${liveId}: its replay post was inserted by another run`);
+        }
+        return 'published';
+      }
+    );
+    if (outcome === 'ineligible') return false;
+    if (outcome === 'published') {
+      await this.replayFeedsChanged(liveId, 'its replay was published');
+      this.closeArrivalOutages(liveId);
+      await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
+        this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
+      });
+    }
+    return true;
+  }
+
+  /**
+   * A replay post appeared or ended outside `PostsService`: the cached feed pages (up to 30 s old)
+   * are invalidated as every post write does (`invalidatePostListCache`), so a cut, an eviction or a
+   * publication is on the next read, not a TTL later. After the commit; a failure is logged and
+   * leaves the pages to their TTL - the reads themselves refuse an expired replay meanwhile.
+   */
+  private async replayFeedsChanged(liveId: string, why: string): Promise<void> {
+    try {
+      await invalidatePostListCache(this.redis);
+      this.logger.debug(`[LIVE_REPLAY] ${liveId}: feed pages invalidated (${why})`);
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_REPLAY] ${liveId}: feed pages NOT invalidated (${why}), stale up to their TTL: ${String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Ends a live's replay NOW by its own column - `posts."expiresAt" = now()` - so every read refuses
+   * it from this statement on and the hourly worker deletes it (comments, their media, notifications)
+   * by its one per-row path; the live sweep then purges the segments. The ONE early end of a replay,
+   * for a cut or an erasure (`removed`) and for the total cap (`cap`). Never lengthens: a replay
+   * already past its time is left as it is. Returns whether a replay was ended by this call.
+   */
+  private async expireReplay(
+    liveId: string,
+    why: 'removed' | 'cap',
+    tx: EntityManager = this.db.manager
+  ): Promise<boolean> {
+    const [rows] = (await tx.query(
+      `UPDATE posts SET "expiresAt" = now()
+        WHERE "liveId" = $1 AND kind = 'replay' AND "expiresAt" > now()
+        RETURNING id`,
+      [liveId]
+    )) as [{ id: string }[], number];
+    if (rows.length > 0) {
+      this.logger.log(`[LIVE_REPLAY] ${liveId}: replay ${rows[0].id} ended early (${why})`);
+    }
+    return rows.length > 0;
   }
 
   /**
@@ -2173,53 +2608,6 @@ export class LivesService implements OnModuleDestroy {
     this.arrivalOutages[op].delete(liveId);
     this.logger.log(
       `[LIVE_ARRIVAL] ${liveId}: the arrival ${op} answers again after ${failed} failed call(s)`
-    );
-  }
-
-  /**
-   * A live whose stored key would not open for the FEED LIST, with how many list reads met it since.
-   * The list reads every open live on every reader's refresh, so an unreadable key would otherwise
-   * log one ERROR per live per reader per refresh: it is logged once when it starts and once when it
-   * ends (the next read that opens it, or the live's purge) - an outage, not a clock.
-   *
-   * IN MEMORY AND PER REPLICA, not durable: each social-service replica keeps its own map, so an
-   * outage is reported once PER REPLICA that met it, a restart forgets it (the next read on that
-   * replica reports it again), and an entry is closed at purge only on the replica that runs the
-   * purge - on another replica it stays until that replica restarts, one number per live.
-   */
-  private readonly posterKeyOutages = new Map<string, number>();
-
-  /** The poster key of one listed live, or null when its stored key does not open (reported once). */
-  private posterKeyFor(liveId: string, stored: StoredLiveKey): string | null {
-    let liveKey: string;
-    try {
-      liveKey = openLiveKey(liveId, stored, false);
-    } catch (e) {
-      if (!(e instanceof LiveKeyUnavailableError)) throw e;
-      const seen = this.posterKeyOutages.get(liveId);
-      if (seen === undefined) {
-        this.logger.error(
-          `[LIVE_KEY] ${liveId}: the key does not open (${e.reason}) - its card shows no picture until it does`
-        );
-      }
-      this.posterKeyOutages.set(liveId, (seen ?? 0) + 1);
-      return null;
-    }
-    const failed = this.posterKeyOutages.get(liveId);
-    if (failed !== undefined) {
-      this.posterKeyOutages.delete(liveId);
-      this.logger.log(`[LIVE_KEY] ${liveId}: the key opens again after ${failed} list read(s)`);
-    }
-    return derivePosterKey(liveKey, liveId);
-  }
-
-  /** At the live's purge: an outage still open is closed, and said. */
-  private closePosterKeyOutage(liveId: string): void {
-    const failed = this.posterKeyOutages.get(liveId);
-    if (failed === undefined) return;
-    this.posterKeyOutages.delete(liveId);
-    this.logger.warn(
-      `[LIVE_KEY] ${liveId}: purged with its key still unreadable (${failed} list read(s))`
     );
   }
 
@@ -2425,6 +2813,7 @@ function toView(row: LiveRow, key: string): LiveView {
     nextIndex: row.nextIndex,
     key,
     title: row.title,
+    keepsReplay: row.keepsReplay,
   };
 }
 

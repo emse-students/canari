@@ -14,7 +14,7 @@ import { Log } from './Log';
 function payloadOf(spy: ReturnType<typeof vi.spyOn>): string {
   expect(spy).toHaveBeenCalledTimes(1);
   const first = String(spy.mock.calls[0][0]);
-  return first.replace(/^\[[^\]]+\] \[[^\]]+\] ?/, '');
+  return first.replace(/^\[[^\]]+\] ?/, '');
 }
 
 describe('Log.d', () => {
@@ -32,6 +32,11 @@ describe('Log.d', () => {
     expect(payloadOf(debug)).toBe('{"userId":"abc","blocked":false}');
     // The regression itself: nothing may reach a reader as the bare word `Object`.
     expect(debug.mock.calls[0].join(' ')).not.toContain('[object Object]');
+  });
+
+  it('writes no timestamp of its own - the console stamps the line', () => {
+    Log.d('CHANNEL', 'x');
+    expect(String(debug.mock.calls[0][0])).toBe('[CHANNEL] x');
   });
 
   it('passes a string payload through unchanged', () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -23,7 +24,6 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   /** Beneficiary preselected on arrival: in practice a Cercle balance belongs to Le Cercle. */
   const CERCLE_SLUG = 'cercle';
@@ -191,7 +191,7 @@
   }
 
   function formatMoment(iso: string): string {
-    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleString(intlLocale());
   }
 
   /**
@@ -255,9 +255,7 @@
 {#if ready}
   <div class="space-y-6">
     <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-      >
+      <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
         <Wallet size={20} />
       </span>
       <div>
@@ -275,7 +273,7 @@
     {#if loading}
       <div class="flex justify-center py-10">
         <div
-          class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
@@ -288,7 +286,7 @@
           value={selectedAssoId}
           options={assoOptions}
           label={m.admin_cercle_asso_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-md items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-md items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             selectedAssoId = v;
             void loadProduct();
@@ -425,7 +423,7 @@
             <button
               type="submit"
               disabled={saving}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+              class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
             >
               {saving
                 ? m.admin_cercle_saving()
@@ -445,7 +443,7 @@
 
       {#if webhookFailures.length > 0}
         <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
-          <h3 class="text-amber-warn flex items-center gap-2 text-sm font-bold">
+          <h3 class="text-amber-warn-text flex items-center gap-2 text-sm font-bold">
             <TriangleAlert size={16} />
             {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
           </h3>
@@ -482,7 +480,9 @@
                     needs no decision, an exhausted one is the only kind that does.
                   -->
                   <p
-                    class="text-xs {delivery.nextAttemptAt ? 'text-text-muted' : 'text-amber-warn'}"
+                    class="text-xs {delivery.nextAttemptAt
+                      ? 'text-text-muted'
+                      : 'text-amber-warn-text'}"
                   >
                     {delivery.nextAttemptAt
                       ? m.admin_cercle_webhook_next_attempt({

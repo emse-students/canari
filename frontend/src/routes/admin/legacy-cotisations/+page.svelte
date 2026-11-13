@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -15,7 +16,6 @@
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { RefreshCw, Search, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   const PAGE_SIZE = 50;
   const SEARCH_DEBOUNCE_MS = 300;
@@ -118,7 +118,7 @@
   });
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 
   /** The claimant's own name, which is what tells a homonym apart from the source's spelling. */
@@ -140,7 +140,7 @@
     {#snippet actions()}
       <button
         onclick={() => void load(0, true)}
-        class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
+        class="border-cn-border text-text-muted hover:border-accent-icon hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
       >
         <RefreshCw size={14} />
         {m.common_refresh_button()}
@@ -170,13 +170,13 @@
       type="text"
       bind:value={search}
       placeholder={m.admin_legacy_search_placeholder()}
-      class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
+      class="border-cn-border focus:border-accent/60 focus:ring-accent/45 w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:ring-2"
     />
   </div>
 
   {#if tab === 'collisions' && counts.collisions > 0}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
     >
       <TriangleAlert size={16} class="mt-0.5 shrink-0" />
       <span>{m.admin_legacy_collision_hint()}</span>
@@ -186,7 +186,7 @@
   {#if loading}
     <div class="flex justify-center py-10">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if items.length === 0}
@@ -196,7 +196,7 @@
       <table class="w-full text-sm">
         <thead>
           <tr
-            class="border-cn-border text-text-muted border-b bg-(--surface-elevated) text-xs font-semibold tracking-wide uppercase"
+            class="border-cn-border text-text-muted border-b bg-(--surface-elevated) text-xs font-semibold"
           >
             <th class="px-4 py-2.5 text-left">{m.admin_legacy_col_source()}</th>
             <th class="px-4 py-2.5 text-left">{m.admin_legacy_col_association()}</th>
@@ -208,7 +208,7 @@
           {#each items as row (row.id)}
             <tr
               class="border-cn-border border-b transition-colors last:border-0 {row.keyRowCount > 1
-                ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_6%,var(--cn-surface))]'
+                ? 'bg-[color-mix(in_srgb,var(--accent)_6%,var(--cn-surface))]'
                 : 'bg-(--cn-surface) hover:bg-(--surface-elevated)'}"
             >
               <td class="px-4 py-3">
@@ -247,7 +247,7 @@
     {#if loadingMore}
       <div class="flex justify-center py-3">
         <div
-          class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {/if}

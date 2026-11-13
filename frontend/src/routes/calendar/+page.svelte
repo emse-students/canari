@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
@@ -9,6 +10,7 @@
   import { page } from '$app/state';
   import {
     listAggregatedCalendarFeed,
+    listAgendaReachedSpaces,
     listAssociations,
     listPendingCalendarEvents,
     listMyAssociations,
@@ -28,7 +30,19 @@
     listEventCoOrganisers,
     getEventWriteSide,
   } from '$lib/associations/api';
-  import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
+  import {
+    isGlobalAdmin,
+    isAssociationSuperAdmin,
+    fetchMyProfile,
+    getSavedUserId,
+  } from '$lib/stores/user';
+  import {
+    agendaSpaceOptions,
+    coerceAgendaSpaceValue,
+    narrowingOf,
+    readRememberedSpaceValue,
+    rememberSpaceValue,
+  } from '$lib/calendar/agendaSpaceFilter';
   import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
   import {
     defaultAgendaSelection,
@@ -47,7 +61,6 @@
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import EventFormModal from '$lib/components/calendar/EventFormModal.svelte';
   import {
@@ -73,7 +86,16 @@
   import { m } from '$lib/paraglide/messages';
 
   let associations = $state<Association[]>([]);
+  /** Set only by a deep link (`?association=`); no control sets it any more. */
   let filterAssociationId = $state('');
+  /**
+   * The space the VIEW is narrowed to ({@link agendaSpaceOptions} values), remembered per reader.
+   * A view setting: the server restricts the feed to what the reader may see regardless.
+   */
+  let spaceValue = $state('');
+  let reachedSpaces = $state<{ formation: string; campus: string }[]>([]);
+  /** Empty - and the filter not drawn - unless the reader's agenda reaches several spaces. */
+  const spaceOptions = $derived<PickerOption[]>(agendaSpaceOptions(reachedSpaces));
 
   /**
    * The month itself - shared with an association's calendar tab, which draws the same thing from
@@ -83,14 +105,57 @@
    * submitters, BDE admins and global admins.
    */
   const agenda = createAgendaMonth({
-    load: ({ from, to }) =>
-      listAggregatedCalendarFeed({
+    load: ({ from, to }) => {
+      // A deep-linked association is asked for whole: the remembered space is ignored meanwhile.
+      const { campus, formation } = narrowingOf(filterAssociationId ? '' : spaceValue);
+      return listAggregatedCalendarFeed({
         from,
         to,
         associationId: filterAssociationId || undefined,
+        campus: campus || undefined,
+        formation: formation || undefined,
         includePending: true,
-      }),
+      });
+    },
   });
+
+  /**
+   * The options arrive after the first month was asked for with the REMEMBERED choice. A choice the
+   * reader's spaces no longer offer (or any choice, for a one-space reader) is dropped and the month
+   * re-read, so what is drawn always matches what the control says.
+   */
+  async function loadReachedSpaces() {
+    try {
+      reachedSpaces = await listAgendaReachedSpaces();
+    } catch (err) {
+      Log.d('calendar.spaceFilter: spaces unavailable, filter hidden', err);
+      reachedSpaces = [];
+    }
+    const coerced = coerceAgendaSpaceValue(spaceValue, spaceOptions);
+    if (coerced !== spaceValue) {
+      spaceValue = coerced;
+      void agenda.reload();
+    }
+  }
+
+  function onSpaceChange(value: string) {
+    Log.d(`calendar.spaceFilter: narrowed to "${value || 'all'}"`);
+    spaceValue = value;
+    rememberSpaceValue(getSavedUserId(), value);
+    agenda.selectedDay = null;
+    void agenda.reload();
+  }
+
+  /** Leaves a deep-linked association: back to the whole agenda (the space filter still applies). */
+  function clearAssociationFilter() {
+    filterAssociationId = '';
+    // Both reset: back to the whole agenda, the remembered space forgotten too.
+    spaceValue = '';
+    rememberSpaceValue(getSavedUserId(), '');
+    agenda.selectedDay = null;
+    void goto(resolve('/calendar'), { replace: true, reset: false });
+    void agenda.reload();
+  }
 
   async function loadAssociations() {
     try {
@@ -102,28 +167,6 @@
     } catch {
       associations = [];
     }
-  }
-
-  function applyFilterToUrl() {
-    if (filterAssociationId.trim()) {
-      void goto(resolve(`calendar?association=${encodeURIComponent(filterAssociationId.trim())}`), {
-        replace: true,
-        reset: false,
-      });
-    } else {
-      void goto(resolve('/calendar'), { replace: true, reset: false });
-    }
-  }
-
-  const filterOptions = $derived<PickerOption[]>([
-    { value: '', label: m.calendar_filter_all() },
-    ...associationPickerOptions(associations),
-  ]);
-
-  function onFilterSelectChange() {
-    agenda.selectedDay = null;
-    applyFilterToUrl();
-    void agenda.reload();
   }
 
   /**
@@ -202,7 +245,11 @@
      * exist - neither is the page, and on a bad link the reader watched a spinner through both.
      * Nothing below depends on anything beside it, so nothing below awaits anything beside it.
      */
+    // The REMEMBERED choice is applied to the first month at once; `loadReachedSpaces` drops it if
+    // this reader's spaces no longer offer it.
+    spaceValue = readRememberedSpaceValue(getSavedUserId());
     void agenda.reload();
+    void loadReachedSpaces();
     void loadAssociations();
     // The only one of the three with no catch of its own - and a permission probe that throws
     // leaves controls hidden, which looks exactly like not being allowed to use them.
@@ -561,7 +608,7 @@
           type="button"
           onclick={openDeposit}
           use:guideAnchor={'calendar.deposit'}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.calendar_deposit_button()}
@@ -576,18 +623,16 @@
         href={resolve('/admin/agenda')}
         class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
-        <span
-          class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
-        >
-          <ShieldAlert size={18} />
+        <span class="text-accent-text flex min-w-0 items-center gap-2 text-sm font-semibold">
+          <ShieldAlert size={18} class="shrink-0" />
           {m.calendar_moderate_label()}
           {#if pendingCount > 0}
-            <span class="text-2xs text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 font-bold">
+            <span class="text-2xs text-on-accent bg-accent rounded-full px-2 py-0.5 font-bold">
               {pendingCount}
             </span>
           {/if}
         </span>
-        <span class="text-xs text-amber-800/80 dark:text-amber-200/80"
+        <span class="text-accent-text shrink-0 text-xs whitespace-nowrap"
           >{m.calendar_moderate_open()} →</span
         >
       </a>
@@ -621,21 +666,29 @@
       </div>
     {/snippet}
 
-    {#snippet associationFilter()}
-      <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
-        <label for="calendar-association-filter">{m.calendar_filter_label()}</label>
-        <Picker
-          id="calendar-association-filter"
-          value={filterAssociationId}
-          options={filterOptions}
-          label={m.calendar_filter_label()}
-          triggerClass="border-cn-border text-text-main flex items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2 text-left text-sm font-medium"
-          onValueChange={(v) => {
-            filterAssociationId = v;
-            onFilterSelectChange();
-          }}
-        />
-      </div>
+    <!-- THE SPACE FILTER NARROWS THE VIEW AND NOTHING ELSE (owner, 2026-11-10), and exists only for a
+         reader whose agenda reaches several spaces: for one space it would be a control that changes
+         nothing. A deep-linked association (`?association=`) has no select any more, so it gets a
+         way out instead. -->
+    {#snippet agendaFilters()}
+      {#if spaceOptions.length > 0 && !filterAssociationId}
+        <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
+          <label for="calendar-space-filter">{m.calendar_space_filter_label()}</label>
+          <Picker
+            id="calendar-space-filter"
+            value={spaceValue}
+            options={spaceOptions}
+            label={m.calendar_space_filter_label()}
+            triggerClass="border-cn-border text-text-main flex items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2 text-left text-sm font-medium"
+            onValueChange={onSpaceChange}
+          />
+        </div>
+      {/if}
+      {#if filterAssociationId}
+        <Button variant="secondary" onclick={clearAssociationFilter} class="max-w-full">
+          {m.calendar_association_filter_active()}
+        </Button>
+      {/if}
     {/snippet}
 
     <!-- THESE ACTIONS MAY WRAP THEIR LABEL, AND ARE NEVER SHRINK-0 (nor is the deposit button above).
@@ -657,7 +710,7 @@
         type="button"
         onclick={() => (showSubscribeModal = true)}
         data-calendar-subscribe
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}
@@ -686,7 +739,11 @@
            FIRST window - an append that fails leaves the rows it already drew and offers a retry
            at the foot, because those rows are still exactly what they claim to be. -->
       <Card class="space-y-4 p-4 sm:p-5">
-        {@render associationFilter()}
+        {#if spaceOptions.length > 0 || filterAssociationId}
+          <div class="flex flex-col gap-3">
+            {@render agendaFilters()}
+          </div>
+        {/if}
         <!-- THE ROW ALWAYS HAS SOMETHING UNDER ITS RULE, SO IT HAS NO BREAKPOINT OF ITS OWN.
 
              It used to be `hidden sm:flex` for a reader without the PDF right, because the
@@ -733,9 +790,13 @@
         >
           {@render monthNav()}
 
-          <hr class="border-cn-border/60" />
+          {#if spaceOptions.length > 0 || filterAssociationId}
+            <hr class="border-cn-border/60" />
 
-          {@render associationFilter()}
+            <div class="flex flex-col gap-3">
+              {@render agendaFilters()}
+            </div>
+          {/if}
 
           <hr class="border-cn-border/60" />
 

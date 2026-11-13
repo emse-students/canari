@@ -253,6 +253,24 @@ describe('writing', () => {
     warn.mockRestore();
   });
 
+  it('sends the accounts a line mentions beside the sealed text, the same ones on a retry', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const CARA = 'c'.repeat(64);
+    deps.postMessage.mockRejectedValueOnce(new TransportFailureError('offline'));
+    const s = session();
+    const text = `hi @[${CARA}] and @[${CARA}] again`;
+    expect(await s.send(text)).toBe('network');
+    expect(await s.retry(lines[0].clientId)).toBeNull();
+    expect(deps.postMessage.mock.calls.map((c) => c[3])).toEqual([[CARA], [CARA]]);
+    warn.mockRestore();
+  });
+
+  it('a line with no mention sends an empty list', async () => {
+    const s = session();
+    expect(await s.send('plain')).toBeNull();
+    expect(deps.postMessage.mock.calls[0][3]).toEqual([]);
+  });
+
   it('discards a failed line', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     deps.postMessage.mockRejectedValueOnce(refusal('rate-limited', 429, 'LIVE_MESSAGE_TOO_FAST'));

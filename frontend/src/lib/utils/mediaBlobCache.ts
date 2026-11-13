@@ -14,9 +14,12 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  resolveMediaCredential,
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
-import { mediaRequestGate } from './requestGate';
+import { GateRank, mediaRequestGate, type GateLane } from './requestGate';
+import { declareMp4Duration, isMp4Type } from './mp4Duration';
+import { joinMediaHead, readAfterHead } from './mediaHeadStore';
 
 /** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
 export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -27,7 +30,7 @@ const inflightDecrypted = new Map<string, SharedLoad>();
 const inflightRaw = new Map<string, SharedLoad>();
 
 /**
- * ONE DOWNLOAD, MANY HOLDERS - AND IT IS ABANDONED ONLY WHEN THE LAST ONE LEAVES.
+ * ONE DOWNLOAD, MANY HOLDERS - AND IT IS ABANDONED WHEN THE LAST ONE LEAVES, ON THE WIRE OR NOT.
  *
  * Every row that wants the same object joins the load already running for it. That load used to be
  * bound to the signal of whoever STARTED it, so when the starter was torn down while the request was
@@ -39,27 +42,34 @@ const inflightRaw = new Map<string, SharedLoad>();
  * (user, 2026-10-02, on every video uploaded in the chat).
  *
  * So the load owns its OWN `AbortController`, and each holder - the starter included - only counts.
- * The controller fires when the count reaches zero, which is exactly "nobody wants this any more";
- * an entry abandoned that way leaves the map at once, so a caller arriving a moment later starts a
- * fresh load instead of joining one that is already doomed.
  *
- * A LOAD ALREADY ON THE WIRE CANNOT BE ABANDONED, SO IT STAYS JOINABLE (user, 2026-10-05: a sent
- * picture drawn as its blurred placeholder and its file name - an `<img>` on a dead URL - until a
- * reload). The gate cancels a QUEUED request only; once the fetch has started it runs to completion
- * whatever the signal says. Dropping such a load from the map left it running unseen, and the
- * re-rendered row started a second download of the same object: the first was pooled, and the
- * second one's URL was revoked by the pool and handed to the row anyway. So `started` is set the
- * moment the request leaves the queue, and from then on the entry stays until it settles.
+ * A LOAD NOBODY HOLDS IS STOPPED, ON THE WIRE TOO (lead decision, 2026-11-11, reversible; it
+ * replaces "a load already on the wire stays joinable" of 2026-10-05). Measured on dev: a reader
+ * wheeling through ten CanaReels of ~3 MB kept downloading every reel it had passed, so on a slow
+ * link the reel being watched shared the link with ten it would never see. The request is now given
+ * the load's signal, so the abort reaches `fetch` and its body, and the decision is taken ONCE THE
+ * CURRENT TURN IS OVER (a microtask, an ordering - never a clock): a row re-rendered in the same
+ * turn - torn down, mounted again, the 2026-10-05 case of a sent picture - joins before it is
+ * decided, keeps the load and is served by the one request. A row arriving after the abort starts
+ * afresh: the abandoned entry has left the map, and its bytes never reached the pool, so no URL it
+ * minted can be handed out revoked.
+ *
+ * A holder with no signal never leaves, so a load it holds is never abandoned. A partial download
+ * is never cached: the Cache API copy is written only from a body read to its end.
  */
 interface SharedLoad {
   promise: Promise<string>;
   controller: AbortController;
   holders: number;
-  /** The request has left the gate's queue: an abort can no longer stop it. */
+  /** The request has left the gate's queue: an abort stops it on the wire (said in the log). */
   started: boolean;
+  /** The load has settled: there is nothing left to abandon. */
+  settled: boolean;
+  /** Its lane in the gate: a foreground holder joining a load fetched ahead raises it. */
+  rank: GateRank;
 }
 
-/** Registers one more holder of `entry`; when the last one's signal aborts, the load is abandoned. */
+/** Registers one more holder of `entry`; when the last one leaves, the load is abandoned. */
 function holdSharedLoad(
   map: Map<string, SharedLoad>,
   key: string,
@@ -72,13 +82,17 @@ function holdSharedLoad(
   const leave = () => {
     entry.holders -= 1;
     if (entry.holders > 0) return;
-    if (entry.started) {
-      // Nothing to abandon: the bytes are coming, and the next row to ask joins them.
-      console.debug(`[mediaBlobCache] ${key}: last holder left a load on the wire - kept joinable`);
-      return;
-    }
-    if (map.get(key) === entry) map.delete(key);
-    entry.controller.abort(signal.reason);
+    // Decided once this turn is over: a holder joining in the same turn (a re-render) keeps it.
+    queueMicrotask(() => {
+      if (entry.holders > 0 || entry.settled) return;
+      if (map.get(key) === entry) map.delete(key);
+      // The media id only: a decrypted entry's key also carries the media's AES key and IV.
+      const mediaId = key.split(':')[0];
+      console.debug(
+        `[mediaBlobCache] ${mediaId}: abandoned by its last holder - ${entry.started ? 'stopped on the wire' : 'stopped before its request started'}`
+      );
+      entry.controller.abort(signal.reason);
+    });
   };
   if (signal.aborted) {
     leave();
@@ -103,13 +117,16 @@ async function sharedPooledLoad(
   map: Map<string, SharedLoad>,
   key: string,
   signal: AbortSignal | undefined,
-  load: (signal: AbortSignal, onStart: () => void) => Promise<PooledBlob>
+  lane: GateLane,
+  load: (signal: AbortSignal, onStart: () => void, rank: GateRank) => Promise<PooledBlob>
 ): Promise<string> {
   const cached = pool.tryRetain(key);
   if (cached) return cached;
 
   const pending = map.get(key);
   if (pending) {
+    // A page fetched ahead that the reader has reached: its bytes are no longer background work.
+    if (lane === 'foreground') pending.rank.promote();
     holdSharedLoad(map, key, pending, signal);
     const url = await pending.promise;
     return pool.tryRetain(key) ?? url;
@@ -121,10 +138,20 @@ async function sharedPooledLoad(
     controller,
     holders: 0,
     started: false,
+    settled: false,
+    rank: new GateRank(lane),
   };
   entry.promise = (async () => {
-    const { url, bytes } = await load(controller.signal, () => (entry.started = true));
-    return pool.retain(key, url, bytes);
+    try {
+      const { url, bytes } = await load(
+        controller.signal,
+        () => (entry.started = true),
+        entry.rank
+      );
+      return pool.retain(key, url, bytes);
+    } finally {
+      entry.settled = true;
+    }
   })();
   map.set(key, entry);
   holdSharedLoad(map, key, entry, signal);
@@ -166,25 +193,42 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
  * rejects from the gate with its own `AbortError`, which the caller ignores and must keep seeing.
  *
  * @param onStart Called when the request leaves the gate's queue - the moment an abort stops counting.
+ * @param options.from Asks only for the bytes from this offset on (`Range: bytes=N-`): the rest of a
+ *   media whose head is already held (`mediaHeadStore.ts`). A `416` - the file ends exactly there -
+ *   is then an answer, returned as is.
+ * @param options.lane The gate's lane: `background` for a picture fetched ahead (`reelAhead.ts`), or
+ *   the load's {@link GateRank}, which a foreground joiner raises.
  */
 async function fetchMediaObject(
   mediaId: string,
   baseUrl: string,
   signal?: AbortSignal,
-  onStart?: () => void
+  onStart?: () => void,
+  options: { from?: number; lane?: GateLane | GateRank } = {}
 ): Promise<Response> {
+  const { from, lane } = options;
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
-  const res = await mediaRequestGate.run(async () => {
-    // Out of the queue: from here the gate no longer honours an abort (see `SharedLoad`).
-    onStart?.();
-    const headers = { Authorization: `Bearer ${await getToken()}` };
-    try {
-      return await fetch(url, { headers });
-    } catch (err) {
-      throw new MediaUnreachableError(err);
-    }
-  }, signal);
+  const res = await mediaRequestGate.run(
+    async () => {
+      // Out of the queue: from here the abort reaches the request itself (see `SharedLoad`).
+      onStart?.();
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${await resolveMediaCredential(getToken)}`,
+      };
+      if (from !== undefined) headers.Range = `bytes=${from}-`;
+      try {
+        return await fetch(url, { headers, signal });
+      } catch (err) {
+        // An abandoned load is not an unreachable link: its own abort goes up unchanged.
+        if (signal?.aborted) throw err;
+        throw new MediaUnreachableError(err);
+      }
+    },
+    signal,
+    lane
+  );
   if (res.ok) return res;
+  if (from !== undefined && res.status === 416) return res;
   if (res.status === 410) throw new MediaPurgedError();
   if (res.status === 404) throw new MediaNotFoundError();
   throw new MediaDownloadError(res.status);
@@ -234,7 +278,8 @@ async function fetchCiphertext(
   mediaId: string,
   baseUrl: string,
   signal?: AbortSignal,
-  onStart?: () => void
+  onStart?: () => void,
+  options: DownloadOptions = {}
 ): Promise<ArrayBuffer> {
   const cacheKey = cipherCacheKey(baseUrl, mediaId);
 
@@ -260,8 +305,7 @@ async function fetchCiphertext(
   // THE CACHE LOOKUP ABOVE IS FREE AND IS NOT GATED; ONLY THE BYTES ARE. An object already held
   // answers instantly whatever else is in flight, which is what makes the cap invisible to a
   // reader scrolling back through media they have seen.
-  const res = await fetchMediaObject(mediaId, baseUrl, signal, onStart);
-  const ciphertext = await res.arrayBuffer();
+  const ciphertext = await downloadCiphertext(mediaId, baseUrl, signal, onStart, options);
 
   if (typeof caches !== 'undefined' && ciphertext.byteLength > 0) {
     try {
@@ -276,6 +320,43 @@ async function fetchCiphertext(
   }
 
   return ciphertext;
+}
+
+/** How a ciphertext is downloaded. */
+interface DownloadOptions {
+  /** The ref is `segmented-v1`: a head fetched ahead may be joined. */
+  segmented?: boolean;
+  /** The load's rank in the gate ({@link GateRank}). */
+  lane?: GateRank;
+}
+
+/**
+ * The ciphertext from the network. A SEGMENTED media whose head the reel viewer fetched ahead
+ * (`mediaHeadStore.ts`) joins that head - in flight or in - and asks only for the rest: the bytes
+ * fetched ahead are never fetched again (owner, 2026-11-11).
+ */
+async function downloadCiphertext(
+  mediaId: string,
+  baseUrl: string,
+  signal: AbortSignal | undefined,
+  onStart: (() => void) | undefined,
+  { segmented = false, lane }: DownloadOptions
+): Promise<ArrayBuffer> {
+  const whole = () => fetchMediaObject(mediaId, baseUrl, signal, onStart, { lane });
+  // A read for the foreground raises the head it joins (`GateRank`); one fetched ahead does not.
+  const head = segmented ? joinMediaHead(mediaId, lane?.lane ?? 'foreground') : null;
+  if (!head) return (await whole()).arrayBuffer();
+  console.debug(`[mediaBlobCache] ${mediaId}: joins the head fetched ahead, asks for the rest`);
+  try {
+    return await readAfterHead(
+      head,
+      (from) => fetchMediaObject(mediaId, baseUrl, signal, onStart, { from, lane }),
+      whole,
+      signal
+    );
+  } finally {
+    head.release();
+  }
 }
 
 /**
@@ -303,15 +384,20 @@ async function decryptByEncoding(ref: MediaRef, ciphertext: ArrayBuffer): Promis
 function loadDecryptedBlobUrl(
   ref: MediaRef,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lane?: GateLane
 ): Promise<string> {
   return sharedPooledLoad(
     decryptedPool,
     inflightDecrypted,
     decryptedKey(ref),
     signal,
-    async (loadSignal, onStart) => {
-      const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart);
+    lane ?? 'foreground',
+    async (loadSignal, onStart, rank) => {
+      const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart, {
+        segmented: ref.encoding === SEGMENTED_MEDIA_ENCODING,
+        lane: rank,
+      });
       let plaintext: ArrayBuffer;
       try {
         plaintext = await decryptByEncoding(ref, ciphertext);
@@ -326,30 +412,62 @@ function loadDecryptedBlobUrl(
         await evictCiphertext(ref.mediaId, baseUrl);
         throw new MediaDecryptError(err);
       }
+      declareVideoDuration(ref, plaintext);
       return pooledBlob(new Blob([plaintext], { type: ref.mimeType }));
     }
   );
 }
 
+/**
+ * A VIDEO UPLOADED BEFORE ITS WRITER DECLARED ITS LENGTH (`mp4Duration.ts`, owner 2026-11-10) is
+ * given it here, in place, before the engine sees a byte: its `mvhd` said 0, so the player read
+ * 0/Infinity and could not seek. Read from the file's own fragments - deterministic, no probe. A file
+ * whose header already says it (every upload since the fix) is left as it is.
+ */
+export function declareVideoDuration(
+  ref: Pick<MediaRef, 'mediaId' | 'mimeType' | 'type'>,
+  plaintext: ArrayBuffer
+): void {
+  if (ref.type !== 'video' || !isMp4Type(ref.mimeType)) return;
+  const outcome = declareMp4Duration(new Uint8Array(plaintext));
+  if (outcome.kind === 'written') {
+    // A file from before the writer's fix: expected while such files exist, counted by this line.
+    console.info(
+      `[media] ${ref.mediaId}: undeclared movie duration (${outcome.was} s) - ${outcome.seconds.toFixed(2)} s read from its fragments`
+    );
+  }
+}
+
 function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal): Promise<string> {
-  return sharedPooledLoad(rawPool, inflightRaw, mediaId, signal, async (loadSignal, onStart) => {
-    const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
-    return pooledBlob(await res.blob());
-  });
+  return sharedPooledLoad(
+    rawPool,
+    inflightRaw,
+    mediaId,
+    signal,
+    'foreground',
+    async (loadSignal, onStart) => {
+      const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
+      return pooledBlob(await res.blob());
+    }
+  );
 }
 
 /**
  * Returns a blob URL for decrypted post/chat media, reusing cached ciphertext and
  * decrypted blobs when possible.
  *
- * @param signal Drops the request from `mediaRequestGate`'s queue if it has not started yet.
+ * @param signal This holder leaving: when it was the last, the load is abandoned - dropped from
+ *   `mediaRequestGate`'s queue, or stopped on the wire (`SharedLoad`).
+ * @param lane   The gate's lane: `background` for media fetched ahead of the reader. A load already
+ *   running keeps the lane it started in.
  */
 export async function acquireDecryptedMediaBlobUrl(
   ref: MediaRef,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lane?: GateLane
 ): Promise<string> {
-  return loadDecryptedBlobUrl(ref, baseUrl, signal);
+  return loadDecryptedBlobUrl(ref, baseUrl, signal, lane);
 }
 
 /**
@@ -390,7 +508,8 @@ export function releaseDecryptedMediaBlobUrl(ref: MediaRef): void {
 /**
  * Returns a blob URL for raw (unencrypted) media such as group avatars.
  *
- * @param signal Drops the request from `mediaRequestGate`'s queue if it has not started yet.
+ * @param signal This holder leaving: when it was the last, the load is abandoned - dropped from
+ *   `mediaRequestGate`'s queue, or stopped on the wire (`SharedLoad`).
  */
 export async function acquireRawMediaBlobUrl(
   mediaId: string,

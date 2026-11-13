@@ -5,7 +5,8 @@
  * entry that Back, Escape, the X and a tap above it close - before the viewer, never with it - the
  * send on the post menu's share, and a post of one picture drawn as a page with the same rail.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { beforeAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { setEmojiStyle } from '$lib/utils/emojiStyle';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelViewer from './ReelViewer.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
@@ -123,6 +124,10 @@ async function render(startPost: PostEntity, likerId?: string) {
 }
 
 import { videoSound } from '$lib/stores/videoSound.svelte';
+
+// These read the emoji PICTURE (`img.emoji`), so they run under the "Canari" emoji setting; both
+// modes are pinned in `EmojiText.svelte.test.ts`.
+beforeAll(() => setEmojiStyle('canari'));
 
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel);
 
@@ -532,4 +537,45 @@ it('Back closes the drawer as a history entry of its own, and leaves the viewer 
 
   expect(q('[data-reel-rail-drawer]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
+});
+
+it('a change of order with the comments open closes them: the reel is full size and the keys work', async () => {
+  const props = $state({
+    startPost: post('a', { comments: [comment('c1')] }),
+    loadPage: (async () => []) as (offset: number, limit: number) => Promise<PostEntity[]>,
+  });
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  mounted.push(
+    mount(ReelViewer, {
+      target,
+      props: {
+        get startPost() {
+          return props.startPost;
+        },
+        get loadPage() {
+          return props.loadPage;
+        },
+        authToken: 'tok',
+        onClose: vi.fn(),
+        likerId: 'alice',
+      },
+    })
+  );
+  await settle();
+  await click('[data-reel-rail-comments]');
+  expect(q('[data-reel-card]')!.getAttribute('data-reel-card'), 'shrunk above the sheet').toBe(
+    'true'
+  );
+
+  // The order changes: a new loader and a new first reel.
+  props.startPost = post('b');
+  props.loadPage = async (offset) => (offset === 0 ? [post('b'), post('c')] : []);
+  await settle();
+
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
+  expect(q('[data-reel-card]')!.getAttribute('data-reel-card')).toBe('false');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+  await settle();
+  expect(q('[data-post-media-stub]')!.getAttribute('data-post-media-stub')).toBe('m-c');
 });

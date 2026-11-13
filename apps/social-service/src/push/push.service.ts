@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
+import { MIN_APP_VERSION_DATA_KEY, PUSH_KEY_MIN_CLIENT } from './notification-client-floor';
 import { pushContentData, type PushContent } from './push-content';
 import { socialDeepLink } from './push-target';
 
@@ -29,16 +30,23 @@ export class PushService {
    * built before 2026-08-19 that read those fields and know nothing of `contentKey`. When that shim
    * is removed this method stops passing them and `notify` below can take an empty title and body,
    * exactly as the MESSAGE push path already does.
+   *
+   * THE KEY'S FLOOR IS WRITTEN HERE, and only here (`notification-client-floor.ts`): the first build
+   * whose native tables compose `content.key` travels as `minAppVersion`, and chat-delivery skips a
+   * device registered below it - so no caller can ring a phone too old to compose its push, and no
+   * caller has to remember to say so. It is written AFTER `data`: a caller cannot lower it.
    */
   async notifyContent(
     userId: string,
     content: PushContent,
     data: Record<string, string> = {}
   ): Promise<void> {
+    const floor = PUSH_KEY_MIN_CLIENT[content.key];
     await this.notify(userId, content.legacyTitle, content.legacyBody, {
       // The tap target, written once here: iOS opens only what the payload names (see push-target).
       deepLink: socialDeepLink(data),
       ...data,
+      ...(floor ? { [MIN_APP_VERSION_DATA_KEY]: floor } : {}),
       ...pushContentData(content),
     });
   }

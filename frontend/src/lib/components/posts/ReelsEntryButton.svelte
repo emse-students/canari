@@ -1,23 +1,25 @@
 <script lang="ts">
   /**
    * THE CANAREELS ENTRY, AN ICON AT THE RIGHT END OF THE FEED'S TAB ROW (user, 2026-10-16, in the
-   * spirit of the old IGTV button). A tap goes STRAIGHT INTO the full-screen reel viewer at the
-   * newest reel the member may see, whatever tab is open (`reels/allReels.ts`); the viewer covers
+   * spirit of the old IGTV button). A tap goes STRAIGHT INTO the full-screen reel viewer at the top
+   * of the list of every reel the member may see, ranked like Pour toi since 1.6.9, whatever tab is
+   * open (`reels/allReels.ts`); the viewer covers
    * the whole screen (`coversScreen`) and its close returns to the feed exactly as it was, since the
    * feed never left. It replaces the 2026-10-15 filter bar ("Tous les posts" / "CanaReels"), whose
    * filtered-feed mode is gone (docs/wiki/frontend/modules/reels.md, "The CanaReels entry").
    *
    * The first page is read BEFORE the viewer opens, because an empty viewer is no answer: with no
    * reel yet, a small sheet says so and offers the camera (`ReelsEmptyState`). That page is then
-   * the viewer's own first page, not a second request (`reelsAfterFirstPage`).
+   * the viewer's own first page, not a second request (`allReelsLoader(firstPage)`).
    */
   import { Clapperboard } from '@lucide/svelte';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import ReelsEmptyState from './ReelsEmptyState.svelte';
-  import type { PostEntity } from '$lib/posts/api';
-  import { REEL_PAGE, listAllReels, reelsAfterFirstPage } from '$lib/reels/allReels';
+  import { listAllReels } from '$lib/reels/allReels';
+  import { preferredReelOrder } from '$lib/reels/reelOrder';
+  import { ReelStream } from '$lib/reels/reelStream.svelte';
   import { expandFrom, type ExpandOrigin } from '$lib/reels/expandFrom';
   import { showToast } from '$lib/stores/toast.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -32,19 +34,24 @@
   let { authToken }: Props = $props();
 
   let opening = $state(false);
-  let firstPage = $state<PostEntity[] | null>(null);
+  /**
+   * The stream in the reader's order, and its switch - the one implementation every opener of the
+   * stream shares (`reels/reelStream.svelte.ts`).
+   */
+  const stream = new ReelStream();
   let emptyOpen = $state(false);
   let entry = $state<HTMLButtonElement | null>(null);
   /** Where the viewer grows from when the View Transitions API is absent (`expandFrom`). */
   let expandOrigin = $state<ExpandOrigin | null>(null);
 
   async function open() {
-    if (opening || firstPage) return;
+    if (opening || stream.opened) return;
     opening = true;
     let handedOff = false;
-    console.debug('[reels-entry] opening the viewer at the newest reel');
+    console.debug('[reels-entry] opening the viewer at the top of the reels list');
     try {
-      const page = await listAllReels(0, REEL_PAGE);
+      const order = preferredReelOrder();
+      const page = await listAllReels(undefined, order);
       if (page.length === 0) {
         console.debug('[reels-entry] no reel yet - the empty sheet');
         emptyOpen = true;
@@ -56,7 +63,7 @@
       handedOff = true;
       const commit = (origin: ExpandOrigin | null) => {
         expandOrigin = origin;
-        firstPage = opened;
+        stream.open(opened, order);
         opening = false;
       };
       if (entry) expandFrom(entry, commit);
@@ -86,21 +93,22 @@
   aria-haspopup="dialog"
   aria-busy={opening}
   onclick={open}
-  class="glass-chrome ui-icon-button text-text-muted hover:text-text-main rounded-full focus-visible:ring-2 focus-visible:ring-amber-500 {opening
+  class="glass-chrome ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-full focus-visible:ring-2 {opening
     ? 'opacity-60'
     : ''}"
 >
   <Clapperboard size={18} aria-hidden="true" />
 </button>
 
-{#if firstPage}
+{#if stream.opened && stream.firstPage}
   <ReelViewer
-    startPost={firstPage[0]}
+    startPost={stream.firstPage[0]}
     {authToken}
-    loadPage={reelsAfterFirstPage(firstPage)}
+    loadPage={stream.loader}
     likerId={currentUserId() ?? undefined}
     {expandOrigin}
-    onClose={() => (firstPage = null)}
+    orderChoice={stream.choice}
+    onClose={() => stream.close()}
   />
 {/if}
 

@@ -4,7 +4,7 @@
  * Read on the Mi 9T and the iPhone: with the new-post composer or its camera open, the call bar was
  * under that layer - `elementFromPoint` at its hang-up returned the camera's video - so the call
  * could not be ended until the layer closed. The bar is a row of the banner column (`--z-banner`,
- * 120) and those layers sit at 280-320.
+ * 120) and those layers sit on the overlay stack (200-309), under the call.
  *
  * The rule (calls.md, "The bar is never under a layer"): while a call bar is up, the column takes
  * `--z-call`, and every covering surface pushes its top inset below the column. This file holds the
@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { svelteFiles, withoutComments } from './markupSources';
+import { OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 // A Windows checkout reads CRLF, and every pattern below is written in LF.
@@ -49,18 +50,15 @@ function coveringRungs(): { file: string; name: string }[] {
 }
 
 describe('the call bar and the layers that cover the screen', () => {
-  it('every rung a covering surface uses is below --z-call, the one the bar takes', () => {
+  it('every rung a covering surface uses is below --z-call, and the overlay stack ends below it', () => {
     const call = rung('call');
     const found = coveringRungs();
-    // Modals, viewers, sheets and confirmations are all here; the camera is a viewer.
-    expect(found.map((f) => f.name)).toEqual(
-      expect.arrayContaining(['modal', 'viewer', 'critical'])
-    );
     const above = found.filter((f) => f.name !== 'call' && rung(f.name) >= call);
     expect(above, 'a covering surface at or above the call bar would hide its hang-up').toEqual([]);
-    // The two covering classes positioned in app.css rather than in markup.
-    expect(rung('side-panel')).toBeLessThan(call);
-    expect(rung('sheet')).toBeLessThan(call);
+    // Modals, sheets, viewers, drawers and confirmations take no rung: they sit on the overlay
+    // stack (`utils/overlayStack.ts`), whose whole range must end below the call.
+    expect(OVERLAY_Z_LIMIT).toBeLessThanOrEqual(call);
+    expect(OVERLAY_Z_LIMIT).toBeGreaterThan(rung('banner'));
   });
 
   it('lifts the banner column to --z-call while a call bar is up', () => {
@@ -80,9 +78,18 @@ describe('the call bar and the layers that cover the screen', () => {
     );
   });
 
-  it('gives the camera tab its status-bar padding back while a call bar is up', () => {
+  it('gives the camera tab its status-bar padding back while a call bar is up, and only once', () => {
+    // The padding reads the ROOT's inset, and the subtree's inset is zeroed: the camera's controls,
+    // already below the padded bar, would otherwise add the status bar a second time.
+    expect(css).toMatch(/:root \{[^}]*--app-status-top: var\(--safe-area-inset-top, 0px\);[^}]*\}/);
     expect(css).toMatch(
-      /:root\.fullscreen-place-open\[data-call-bar\] \.app-shell \{\s*padding-top: var\(--safe-area-inset-top, 0px\);\s*\}/
+      /:root\.fullscreen-place-open\[data-call-bar\] \.app-shell \{\s*padding-top: var\(--app-status-top\);\s*--safe-area-inset-top: 0px;\s*\}/
+    );
+  });
+
+  it('a full-screen place pads none of its sides in the shell - its controls do', () => {
+    expect(css).toMatch(
+      /\.fullscreen-place-open \.app-shell \{\s*padding-top: 0;\s*padding-left: 0;\s*padding-right: 0;\s*\}/
     );
   });
 

@@ -270,7 +270,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
         "createdBy" varchar(255));
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, markdown text,
         "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now(),
@@ -285,7 +285,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
       CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
-        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar);
+        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar,
+        meta jsonb);
     `);
     // Only what the erasure's association lock reads (`LOCK_ONLY`): no statement runs against them.
     await q(`
@@ -400,7 +401,12 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     const moderation = {
       isUserMuted: (id: string) => muted(id),
     } as unknown as ModerationService;
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService;
+    // What `invalidatePostListCache` calls after a republication changes: the generation's
+    // increment, then the sweep.
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as unknown as RedisService;
     proposals = new ProposalsService(ds.getRepository(Proposal), associations);
     republications = new RepublicationsService(
       ds.getRepository(PostRepublication),

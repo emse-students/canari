@@ -85,8 +85,8 @@
         aria-describedby={popupReactionType === reactionType ? panelId : undefined}
         class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
-          ? 'bg-cn-yellow/15'
-          : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
+          ? 'bg-accent/15'
+          : 'hover:bg-accent/10 bg-(--cn-surface)'}"
       >
         <span class="text-lg"><EmojiText text={reaction?.emoji ?? '😊'} /></span>
         <span class="text-text-main text-sm font-bold">{count}</span>

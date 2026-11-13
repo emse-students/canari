@@ -1,8 +1,8 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { Clock, Trash2 } from '@lucide/svelte';
   import type { ScheduledPost } from '$lib/posts/api';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { pendingRingStyle } from '$lib/calendar/feedEvents';
 
   /**
@@ -21,7 +21,7 @@
 
   /** Formats a UTC ISO string into a short French locale date+time string. */
   function formatScheduled(iso: string): string {
-    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    return new Date(iso).toLocaleString(intlLocale(), {
       dateStyle: 'short',
       timeStyle: 'short',
     });
@@ -30,9 +30,9 @@
 
 <div class="border-cn-border bg-cn-surface mb-5 overflow-hidden rounded-2xl border">
   <!-- Panel header -->
-  <div class="border-cn-border flex items-center gap-2 border-b bg-amber-500/5 px-4 py-2.5">
-    <Clock size={14} class="shrink-0 text-amber-500" />
-    <span class="text-xs font-bold tracking-wider text-amber-600 uppercase dark:text-amber-400">
+  <div class="border-cn-border bg-accent/5 flex items-center gap-2 border-b px-4 py-2.5">
+    <Clock size={14} class="text-accent-text shrink-0" />
+    <span class="text-accent-text text-xs font-bold">
       {m.post_scheduled_panel_title({ count: posts.length })}
     </span>
   </div>
@@ -42,7 +42,7 @@
       <li class="flex items-center gap-3 px-4 py-3">
         <!-- Not published yet: the agenda's proposed-event vocabulary (dimmed row, dashed ring). -->
         <span
-          class="h-2.5 w-2.5 shrink-0 rounded-full text-amber-500"
+          class="text-accent-text h-2.5 w-2.5 shrink-0 rounded-full"
           style={pendingRingStyle('currentColor')}
           aria-hidden="true"
         ></span>

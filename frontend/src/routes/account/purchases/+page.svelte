@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -10,7 +11,6 @@
   import type { UserTag } from '$lib/associations/api';
   import CotisationTagRow from '$lib/components/shared/CotisationTagRow.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface PurchaseRecord {
     id: string;
@@ -78,7 +78,7 @@
     return status === 'paid'
       ? 'bg-emerald-100 text-emerald-700'
       : status === 'pending_cash' || status === 'paid_not_granted'
-        ? 'bg-amber-100 text-amber-700'
+        ? 'bg-amber-warn/15 text-amber-warn-text'
         : 'bg-cn-surface-alt text-text-muted';
   }
 
@@ -103,7 +103,7 @@
     {:else if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
+          class="border-cn-border border-t-accent-icon h-8 w-8 animate-spin rounded-full border-4"
         ></div>
       </div>
     {:else if error}
@@ -113,7 +113,7 @@
       {#if data.activeTags.length > 0}
         <section class="space-y-3">
           <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
-            <Tag size={18} class="text-cn-accent" />
+            <Tag size={18} class="text-accent-text" />
             {m.purchases_active_tags_heading()}
           </h2>
           <ul class="space-y-2">
@@ -139,7 +139,7 @@
       <!-- Purchase history -->
       <section class="space-y-3">
         <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
-          <ShoppingBag size={18} class="text-cn-accent" />
+          <ShoppingBag size={18} class="text-accent-text" />
           {m.purchases_history_heading({ count: data.purchases.length })}
         </h2>
 
@@ -148,7 +148,7 @@
             <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
             <a
               href="/shop"
-              class="text-cn-accent mt-3 inline-flex items-center gap-2 text-sm font-semibold hover:underline"
+              class="text-accent-text mt-3 inline-flex items-center gap-2 text-sm font-semibold hover:underline"
             >
               {m.purchases_explore_shop()}
             </a>
@@ -176,14 +176,11 @@
                     </span>
                   </div>
                   <p class="text-text-muted mt-1 text-xs">
-                    {new Date(purchase.paidAt).toLocaleDateString(
-                      getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                      {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      }
-                    )}
+                    {new Date(purchase.paidAt).toLocaleDateString(intlLocale(), {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })}
                     ·
                     {purchase.paymentMethod === 'cash'
                       ? m.purchases_payment_cash()
