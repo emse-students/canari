@@ -132,6 +132,19 @@ describe('FormsService - public forms', () => {
 
     // An allowlist: a guest is served exactly these keys. Control: answer `{ ...form, formFull }`
     // and this fails on `ownerId`, `associationId` and every other stored column.
+    // The link preview of a shared form (frontend serverSeo.ts) reads THIS answer, with no identity:
+    // title, description and image are what its card needs, so they must stay in the allowlist.
+    it('carries what a shared link card needs: title, description and image', async () => {
+      const { service } = makeService({
+        form: baseForm({ imageUrl: '/api/media/forms/f1/cover.jpg' }),
+      });
+      expect(await service.getPublic('f1')).toMatchObject({
+        title: 'Inscription au gala',
+        description: 'Ouvert a tous',
+        imageUrl: '/api/media/forms/f1/cover.jpg',
+      });
+    });
+
     it('serves exactly the allowlisted fields, the price included', async () => {
       const { service } = makeService({
         form: baseForm({ basePrice: 1200, allowCashPayment: true, grantsCotisation: false }),
