@@ -37,6 +37,7 @@ afterEach(() => {
   while (mounted.length) mounted.pop()!();
   stopHistoryStack();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.innerHTML = '';
 });
 
@@ -213,14 +214,14 @@ describe('ChangePinModal - the submit does not scroll either', () => {
 
   it('a refusal banner takes the header room, so the keypad does not move down (390 x 844)', () => {
     // The keypad (and so the compact header) is the touch shape: report a coarse pointer.
-    window.matchMedia = ((q: string) => ({
+    vi.stubGlobal('matchMedia', (q: string) => ({
       matches: q.includes('coarse'),
       media: q,
       addEventListener: () => {},
       removeEventListener: () => {},
       addListener: () => {},
       removeListener: () => {},
-    })) as unknown as typeof window.matchMedia;
+    }));
     raiseGate({ externalError: m.auth_pin_mismatch(), onRecoverPin: vi.fn() });
     flushSync();
 
