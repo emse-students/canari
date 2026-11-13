@@ -82,6 +82,7 @@
     FileDown,
   } from '@lucide/svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -248,7 +249,16 @@
     // The REMEMBERED choice is applied to the first month at once; `loadReachedSpaces` drops it if
     // this reader's spaces no longer offer it.
     spaceValue = readRememberedSpaceValue(getSavedUserId());
-    void agenda.reload();
+    // A post's event chip names the POST: resolve it first so the first load is the event's month
+    // (one load, no race), and fall back to the plain agenda when it opens nothing.
+    const fromPost = fromPostOf(page.url);
+    if (fromPost) {
+      void openEventLinkedToPost(agenda, fromPost, { showItsMonth: true }).then((opened) => {
+        if (!opened) void agenda.reload();
+      });
+    } else {
+      void agenda.reload();
+    }
     void loadReachedSpaces();
     void loadAssociations();
     // The only one of the three with no catch of its own - and a permission probe that throws
