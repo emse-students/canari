@@ -53,6 +53,13 @@ export interface CallTransformOptions {
    * Absent = not known: the worker fails closed and frames whole.
    */
   videoCodec?: string;
+  /**
+   * A GROUP call's RECEIVER transform: the user id (lowercased) of the participant whose frames it
+   * carries, so the worker opens them with that sender's key (`utils/callKeys.ts`,
+   * `deriveGroupCallKeys`). Absent on a 1:1 call and on every sender transform: the worker then uses
+   * its one 1:1 receive key, or its one send key.
+   */
+  peer?: string;
 }
 
 /**
