@@ -623,6 +623,17 @@ it always did.
   MEASURED 2026-10-18 over 144 GIFs (trending and searches): `sm` max 2.9 MB; `md` median 1.1 MB,
   p90 4.4 MB, max 11.7 MB. **Ceiling 12 MiB** (`GIF_MEDIA_MAX_BYTES`), checked on the declared
   length (413 before a byte is read) and on the bytes (the stream is cut, logged `too-large`).
+  **The picker never offers a rendition over it, and never retries a 413 (2026-11-13).** A 413 was
+  re-sent by the grid tile a moment later (an `<img>` cannot read the status) and the search could
+  hand out a rendition above the ceiling. Now the search carries the `bytes` KLIPY declared per
+  rendition (`klipy.ts`, `rendition()`), `mapKlipyItems` passes over any whose declared size exceeds
+  `GIF_MEDIA_MAX_BYTES` (imported from where it is defined; md -> sm -> xs, never the other way, and a
+  result with nothing that fits is left out and counted `oversized`), the client's `pickGridRendition`
+  and `commentGifRendition` apply the same test (`fitsRelay`), and `GifTileImage` fails a rendition
+  declared over the ceiling at once instead of asking twice. **Only a declared size is acted on**: a
+  rendition whose size KLIPY did not state is offered as before, and whether KLIPY states one for
+  every rendition is not measured here (no production access when this was written) - the debug line
+  `[GIF_SEARCH] N of M results had a rendition over the relay ceiling` counts how often it matters.
 - **One host, no query.** `static.klipy.com`, https, no credentials, no explicit port, and NO query
   (400 `query-not-allowed`: KLIPY's paths are content-addressed, and `?x=N` would make every request
   a new cache key) (`parseKlipyCdnUrl`), then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
