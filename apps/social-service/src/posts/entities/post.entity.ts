@@ -7,7 +7,7 @@ import {
   Index,
 } from 'typeorm';
 import type { StoredPostKind } from '../reel.constants';
-import type { InstitutionReachPublic, InstitutionReachSpace } from '../institution-reach';
+import type { InstitutionReachPublic, InstitutionReachSpace } from '../../spaces/institution-reach';
 
 /** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')

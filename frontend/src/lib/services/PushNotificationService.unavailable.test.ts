@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JWT_AUTH } from '../../test/pushAuth';
 
 /**
  * The device that cannot get a push token, and the report that says so.
@@ -64,7 +65,7 @@ describe('a device the OS never gives a push token', { timeout: 30_000 }, () => 
     // work.
     vi.useFakeTimers();
     try {
-      const started = startPushService('https://api', 'jwt', 'dev-1');
+      const started = startPushService('https://api', JWT_AUTH, 'dev-1');
       // Covers the 30 s token poll plus all six 5 s retries, each with a poll of its own.
       await vi.advanceTimersByTimeAsync(300_000);
       await started;
@@ -98,7 +99,7 @@ describe('a device the OS never gives a push token', { timeout: 30_000 }, () => 
 
     vi.useFakeTimers();
     try {
-      const started = freshStart('https://api', 'jwt', 'dev-1');
+      const started = freshStart('https://api', JWT_AUTH, 'dev-1');
       await vi.advanceTimersByTimeAsync(300_000);
       await started;
 
@@ -125,7 +126,7 @@ describe('a device the OS never gives a push token', { timeout: 30_000 }, () => 
     tauriInvokeStub.mockImplementation((cmd?: string) =>
       Promise.resolve(cmd === 'get_fcm_token' ? 'tok-1' : null)
     );
-    await freshStart('https://api', 'jwt', 'dev-1');
+    await freshStart('https://api', JWT_AUTH, 'dev-1');
     expect(
       vi
         .mocked(globalThis.fetch)
@@ -139,7 +140,7 @@ describe('a device the OS never gives a push token', { timeout: 30_000 }, () => 
     );
     vi.useFakeTimers();
     try {
-      const started = freshStart('https://api', 'jwt', 'dev-1');
+      const started = freshStart('https://api', JWT_AUTH, 'dev-1');
       await vi.advanceTimersByTimeAsync(60_000);
       await started;
     } finally {
@@ -166,7 +167,7 @@ describe('a device the OS never gives a push token', { timeout: 30_000 }, () => 
 
     vi.useFakeTimers();
     try {
-      const started = freshStart('https://api', 'jwt', 'dev-1');
+      const started = freshStart('https://api', JWT_AUTH, 'dev-1');
       await vi.advanceTimersByTimeAsync(300_000);
       await started;
     } finally {

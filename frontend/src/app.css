@@ -503,14 +503,20 @@
      it opens the full frame in the viewer.
      `svh` and not `dvh`: the SMALL viewport is the stable one, so the cap does not re-layout the
      feed every time the mobile URL bar collapses. Deliberately NOT `--app-viewport-height`, which
-     tracks the soft keyboard - a picture must not resize because someone started typing. */
+     tracks the soft keyboard - a picture must not resize because someone started typing.
+     BUT IN THE APP `svh` TRACKS THE KEYBOARD TOO: Android pads the WebView by the IME inset and iOS
+     shrinks its frame, so the LAYOUT viewport shrinks and every viewport unit with it (`lvh`
+     included). Mi 9T, 2026-11-13: 567 px closed, 353 px with the keyboard up, a chat screenshot
+     cropped top and bottom. `--keyboard-free-viewport-height` is the height before the keyboard,
+     written by `keyboardViewport.svelte.ts` only while a keyboard holds the layout viewport, and
+     absent otherwise - so a browser, a desktop resize and a rotation keep plain `svh`. */
   /* 60, NOT 80 (user, 2026-09-08: *"c'est peut-etre un peu beaucoup pour bien naviguer dans l'app"*).
      At 80svh a single portrait photo is the whole screen, so a feed is read one post per scroll and
      the next post's header never appears to pull the reader on. 60svh keeps a tall picture large
      while leaving the top of what follows visible, which is what makes a feed feel navigable.
      For reference the tallest media measured on the Facebook group page was 735px in a 945px
      viewport - 78% - but that was an uncropped portrait document, not the shape a feed is browsed at. */
-  --media-max-height: 60svh;
+  --media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6);
   /* The tallest a medium drawn at its OWN size may be - a GIF in a message, a GIF panel tile
      (`MediaFrame sizing="intrinsic"`). 16rem is the `max-h-64` the inline GIF always had, so a GIF
      is the size it was; it is now that size BEFORE it loads. */

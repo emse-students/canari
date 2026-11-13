@@ -2420,7 +2420,7 @@ why the component takes classes rather than dimensions:
 | the caller | what it knows | what it passes |
 | --- | --- | --- |
 | a feed post | the aspect it reserved before the bytes arrive | `imgClass="h-full"` - the picture fills the reserved shape |
-| the event modal | nothing; it is a modal | `imgClass="max-h-[60svh]"` - a CEILING, and the contained picture sets its own height |
+| the event modal | nothing; it is a modal | `imgClass="max-h-(--media-max-height)"` - a CEILING (the same 60svh, held while a keyboard is up), and the contained picture sets its own height |
 | the shared-link card | a band, chosen by the card | `imgClass="h-full"` inside `h-56 sm:h-64` |
 
 The `<img>` stays in flow for the middle row alone: an absolutely positioned one collapses a box
