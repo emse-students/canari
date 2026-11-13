@@ -19,7 +19,9 @@
 export function frameCount(name, raw) {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
-    throw new Error(`--${name} must be a whole number of frames, at least 1 (got ${JSON.stringify(raw)})`);
+    throw new Error(
+      `--${name} must be a whole number of frames, at least 1 (got ${JSON.stringify(raw)})`
+    );
   }
   return n;
 }
