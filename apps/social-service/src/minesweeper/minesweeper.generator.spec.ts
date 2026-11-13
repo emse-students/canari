@@ -1,16 +1,18 @@
 /**
- * MINESWEEPER GENERATOR VERSION (owner, 2026-11-13): a challenge names the generator it is replayed with.
+ * MINESWEEPER GENERATOR VERSION (owner, 2026-11-13): a challenge names the generator it is replayed with,
+ * and ranked is open only to a client that can make the latest one.
  *
  * What these cases are built to catch, in the order a regression would hurt:
- *  - a build that predates versions (it sends nothing) being issued a generator it cannot make,
- *    which would reject every honest solve it submits;
- *  - a client asking for a generator this server does not know being issued one anyway;
+ *  - a build that predates versions (it sends nothing) being ranked on the older, easier boards, which
+ *    would give it faster times than the harder ones everyone else plays;
+ *  - a refusal that still expired the challenge the refused client was holding;
+ *  - a client asking for a newer generator than this server knows being issued one anyway;
  *  - the replay ignoring the challenge's version, judging a v2 board on v1's mines (or the reverse);
  *  - a challenge stored with a version nobody can replay being judged on another's board.
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
-import { chooseGeneratorVersion, MinesweeperService } from './minesweeper.service';
+import { issuedGeneratorVersion, MinesweeperService } from './minesweeper.service';
 import { CHALLENGE, createBoard, revealCell } from './engine/game';
 import type { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import type { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
@@ -37,15 +39,14 @@ function build() {
 
 describe('the generator a challenge is issued with', () => {
   it.each([
-    [undefined, 1],
-    [1, 1],
+    [undefined, null],
+    [0, null],
+    [1, null],
     [2, 2],
     [3, 2],
     [999, 2],
-    [0, 1],
-    [-4, 1],
-  ])('a client that asks for %s is issued %s', (requested, issued) => {
-    expect(chooseGeneratorVersion(requested)).toBe(issued);
+  ])('a client that can make %s is issued %s', (requested, issued) => {
+    expect(issuedGeneratorVersion(requested)).toBe(issued);
   });
 
   it('records the version on the row and returns it', async () => {
@@ -57,10 +58,22 @@ describe('the generator a challenge is issued with', () => {
     expect(response.generatorVersion).toBe(2);
   });
 
-  it('issues generator 1 to a client that says nothing', async () => {
-    const { service } = build();
-    expect((await service.startChallenge('user-1')).generatorVersion).toBe(1);
-  });
+  it.each([undefined, 1])(
+    'refuses a client that can make %s with 426 and a code the screen can read',
+    async (requested) => {
+      const { service, challenges } = build();
+      const refusal = await service.startChallenge('user-1', requested).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(HttpException);
+      expect((refusal as HttpException).getStatus()).toBe(426);
+      expect((refusal as HttpException).getResponse()).toMatchObject({
+        code: 'generator_update_required',
+        latestGeneratorVersion: 2,
+      });
+      // Nothing was issued, and the challenge the client already held was not expired.
+      expect(challenges.create).not.toHaveBeenCalled();
+      expect(challenges.createQueryBuilder).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('the replay honours the challenge version', () => {

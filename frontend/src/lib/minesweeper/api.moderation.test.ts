@@ -12,12 +12,14 @@ const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => '' }));
 
+import { LATEST_GENERATOR_VERSION } from './game';
 import {
   banMinesweeperUser,
   fetchMinesweeperBans,
   fetchMinesweeperLeaderboard,
   fetchMinesweeperStats,
   MinesweeperBannedError,
+  MinesweeperUpdateRequiredError,
   removeMinesweeperScore,
   startMinesweeperChallenge,
   unbanMinesweeperUser,
@@ -107,5 +109,28 @@ describe('minesweeper leaderboard and stats client', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/minesweeper/stats');
     apiFetch.mockResolvedValue(refused(500));
     await expect(fetchMinesweeperStats()).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('starting a ranked game', () => {
+  it('names the newest generator this build can make, so the server can decide whether to rank it', async () => {
+    apiFetch.mockResolvedValue(ok({ challengeId: 'c1', seed: 's', generatorVersion: 2 }));
+    await startMinesweeperChallenge();
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/minesweeper/challenges', {
+      method: 'POST',
+      body: JSON.stringify({ maxGeneratorVersion: LATEST_GENERATOR_VERSION }),
+    });
+  });
+
+  it('turns a 426 into the TYPED update-required error, never a message to be parsed', async () => {
+    apiFetch.mockResolvedValue(refused(426));
+    await expect(startMinesweeperChallenge()).rejects.toBeInstanceOf(
+      MinesweeperUpdateRequiredError
+    );
+  });
+
+  it('keeps a ban and an update-required apart', async () => {
+    apiFetch.mockResolvedValue(refused(403));
+    await expect(startMinesweeperChallenge()).rejects.toBeInstanceOf(MinesweeperBannedError);
   });
 });

@@ -3598,6 +3598,7 @@
   "minesweeper_submit_action": "Sending the score",
   "minesweeper_empty_leaderboard": "No verified times yet.",
   "minesweeper_banned": "You are banned from the leaderboard: this game will not be ranked.",
+  "minesweeper_update_required": "Update the app to play the ranking: this game will not be ranked.",
   "minesweeper_admin_remove_score": "Remove this score",
   "minesweeper_admin_ban": "Ban this player",
   "minesweeper_admin_confirm_remove": "Remove {name}'s score ({time}) from the leaderboard?",

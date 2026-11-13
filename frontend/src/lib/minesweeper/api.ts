@@ -110,6 +110,18 @@ export class MinesweeperBannedError extends Error {
   }
 }
 
+/**
+ * A `426` on starting a ranked game: this build cannot make the generator the ranking now needs
+ * (`generator_update_required`). Typed at the throw, like the ban, so the modal can tell the player to
+ * update instead of dropping them into an unranked game without a word.
+ */
+export class MinesweeperUpdateRequiredError extends Error {
+  constructor() {
+    super('this app version cannot play the ranked minesweeper');
+    this.name = 'MinesweeperUpdateRequiredError';
+  }
+}
+
 /** Base path for minesweeper API on social-service (same-origin via nginx when unset). */
 function minesweeperBase(): string {
   const base = socialUrl();
@@ -126,6 +138,7 @@ export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeR
     body: JSON.stringify({ maxGeneratorVersion: LATEST_GENERATOR_VERSION }),
   });
   if (res.status === 403) throw new MinesweeperBannedError();
+  if (res.status === 426) throw new MinesweeperUpdateRequiredError();
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to start challenge');
   }

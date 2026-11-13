@@ -18,6 +18,7 @@
     submitMinesweeperChallenge,
     formatDurationMs,
     MinesweeperBannedError,
+    MinesweeperUpdateRequiredError,
   } from '$lib/minesweeper/api';
   import {
     ANIMATION_SPEEDS,
@@ -419,6 +420,10 @@
           if (err instanceof MinesweeperBannedError) {
             submitError = true;
             submitMessage = m.minesweeper_banned();
+          } else if (err instanceof MinesweeperUpdateRequiredError) {
+            // The ranking now needs a generator this build cannot make: say so, and play unranked.
+            submitError = true;
+            submitMessage = m.minesweeper_update_required();
           }
           startCasualBoard();
         }

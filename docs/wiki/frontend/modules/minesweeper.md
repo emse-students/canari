@@ -282,14 +282,19 @@ proven to leave every deduction unchanged (240 solves compared field by field): 
 numbers next to a changed cell, and a component's enumeration is cached by its own constraints - valid across
 swaps because it depends on nothing else. Tier 2 indexed by cell and swapping with nearby cells gained nothing.
 
-**Versioning and compatibility.** The challenge carries `"generatorVersion"` (migration 164, `DEFAULT 1`, so
-every challenge issued before it replays as generator 1). `POST /minesweeper/challenges` accepts
-`maxGeneratorVersion`; the server issues `min(requested, latest)` and answers with `generatorVersion`; a client
-that sends nothing - every build before this one - is issued 1, so it is never asked to play a board its engine
-cannot make ([legacy-compatibility](../../legacy-compatibility.md#removal-when-the-floor-passes-generator-versions---a-challenge-issued-to-a-client-that-names-no-generator-2026-11-13)).
-A stored version the server does not know rejects the submit and says so (`unknown_generator`) rather than
-judging an honest solve on another board. A casual (unranked) game uses the latest generator: nothing is
-submitted, so nothing needs replaying.
+**Versioning, and who may be ranked (owner, 2026-11-13: *"le classe devrait etre reserve aux clients avec la
+derniere version du generateur"*).** The challenge carries `"generatorVersion"` (migration 164, `DEFAULT 1`, so
+every challenge issued before it replays as generator 1). `POST /minesweeper/challenges` takes
+`maxGeneratorVersion`, and **ranked is open only to a client that can make the server's latest generator**: a
+time is comparable with another only on a board of the same difficulty, and letting an older build into the
+same ranking would give it faster times for less reasoning. Any other client - including every build before
+this one, which sends nothing - is refused `426` with `code: generator_update_required` and the latest
+version, BEFORE its open challenge is expired. The screen reads the typed `MinesweeperUpdateRequiredError`,
+says so (`minesweeper_update_required`) and plays an unranked game; it never reads a message. A challenge
+already issued with generator 1 is still replayed with generator 1, for its two hours, and a stored version
+the server does not know rejects the submit and says so (`unknown_generator`) rather than judging an honest
+solve on another board. A casual (unranked) game uses the latest generator: nothing is submitted, so nothing
+needs replaying ([legacy-compatibility](../../legacy-compatibility.md#a-tolerated-degradation-ranked-minesweeper-for-a-build-older-than-generator-2-owner-2026-11-13)).
 
 **What is open.** Generation is still synchronous on the main thread (the screen paints the pressed cell first);
 a worker would keep the interface alive for the ~0.3 s a phone spends, and is not built. The one board in 600 that
