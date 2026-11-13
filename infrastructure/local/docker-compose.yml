@@ -134,6 +134,9 @@ services:
     ports:
       - "3010:3010"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
@@ -256,6 +259,9 @@ services:
     ports:
       - "3011:3011"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3011"
       NODE_ENV: development
       # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
@@ -309,6 +315,9 @@ services:
     ports:
       - "3012:3012"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
       NODE_ENV: development
       # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
@@ -394,6 +403,9 @@ services:
     ports:
       - "3014:3014"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
       NODE_ENV: development
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
