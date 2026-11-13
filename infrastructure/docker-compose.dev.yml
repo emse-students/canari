@@ -372,6 +372,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
       # which this service accepts on no other ground (cors-origins.ts). Production passes none.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}

@@ -175,6 +175,11 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.
 
+**One optional value that is not a secret, read from `infrastructure/.env` on each estate:**
+`MEDIA_MEMBER_DAILY_UPLOAD_BYTES`, what one member may upload per rolling 24 hours, in bytes. Unset
+(the state of both estates), media-service uses its default, 2 GB
+([media-service](../docs/wiki/services/media-service.md)). The three compose files forward it.
+
 ## 3bis. Repository settings that are not secrets, and that no file in the tree carries
 
 **A SETTING NO FILE CARRIES IS REPRODUCED FROM NOWHERE ON A FORK OR A REBUILD**, and these three

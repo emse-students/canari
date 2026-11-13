@@ -267,6 +267,8 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
       # which this service accepts on no other ground (cors-origins.ts).
       ALLOW_ORIGIN: *local-origins
