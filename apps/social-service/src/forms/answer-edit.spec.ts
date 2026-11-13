@@ -1,4 +1,10 @@
-import { editLockedItemIds, rowLockedItemIds, sameAnswer, type EditLockForm } from './answer-edit';
+import {
+  editLockedItemIds,
+  priceSnapshot,
+  rowLockedItemIds,
+  sameAnswer,
+  type EditLockForm,
+} from './answer-edit';
 
 /** A form with one of each kind of question the lock rule reads. */
 function form(over: Partial<EditLockForm> = {}): EditLockForm {
@@ -103,6 +109,31 @@ describe('rowLockedItemIds', () => {
     });
     // The question named by the row's lines, and the one that shows it.
     expect([...locked].sort()).toEqual(['q-root', 'q-was-grid']);
+  });
+
+  it('keeps locked what the row snapshot says the price depended on, once the supplement is gone', () => {
+    const priced = form();
+    const snapshot = priceSnapshot(priced);
+    expect(snapshot).toEqual(['q-grid', 'q-meal']);
+    // The manager removes the meal supplement: today's rule frees q-meal, the snapshot does not.
+    const items = (priced.items ?? []).map((item: any) =>
+      item.id === 'q-meal'
+        ? { ...item, options: item.options.map((o: any) => ({ ...o, priceModifier: 0 })) }
+        : item
+    );
+    const today = form({ items });
+    expect(editLockedItemIds(today, false).has('q-meal')).toBe(false);
+    expect(
+      rowLockedItemIds(today, {
+        cotisationGrantedAt: null,
+        lines: null,
+        priceLockedItemIds: snapshot,
+      })
+    ).toEqual(new Set(['q-grid', 'q-meal']));
+    // A row older than the snapshot (null): today's rule only - the residual for old rows.
+    expect(
+      rowLockedItemIds(today, { cotisationGrantedAt: null, lines: null, priceLockedItemIds: null })
+    ).toEqual(new Set(['q-grid']));
   });
 
   it('reads the grant from the row', () => {

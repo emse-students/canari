@@ -142,6 +142,7 @@ import {
   answerLocked,
   answerNotEditable,
   answerNotFound,
+  priceSnapshot,
   rowLockedItemIds,
   sameAnswer,
 } from './answer-edit';
@@ -2420,6 +2421,9 @@ export class FormsService {
       throw productGridOrderEmpty();
     }
     const lines = gridLines.length > 0 ? gridLines : null;
+    // What the price depends on NOW, kept with the row it prices (migration 166): an answer change
+    // reads it, so a supplement removed later still locks its question here (`rowLockedItemIds`).
+    const priceLockedItemIds = priceSnapshot(form);
     if (lines) {
       const gridCents = productGridTotalCents(lines);
       totalCents += gridCents;
@@ -2635,6 +2639,7 @@ export class FormsService {
             ...guestIdentity,
             answers: storedAnswers,
             lines,
+            priceLockedItemIds,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -2649,6 +2654,7 @@ export class FormsService {
         existingPending.answers = storedAnswers;
         // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
         existingPending.lines = lines;
+        existingPending.priceLockedItemIds = priceLockedItemIds;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -2675,6 +2681,7 @@ export class FormsService {
           ...guestIdentity,
           answers: storedAnswers,
           lines,
+          priceLockedItemIds,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,

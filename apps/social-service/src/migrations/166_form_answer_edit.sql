@@ -12,10 +12,17 @@
 --    NULL on every answer never changed (every existing row). NOT `updatedAt`: that column moves on
 --    every payment status change (`markPaid`, a cash validation, the expiry job), so it cannot say
 --    whether the RESPONDENT changed anything.
+-- 3. `submissions."priceLockedItemIds"`: jsonb NULL - the ids of the questions the price depended on
+--    WHEN THE ANSWER WAS PRICED (submit, and a retry that re-prices it), so a supplement a manager
+--    removes later still locks its question on the rows priced with it. NULL on every row written
+--    before this migration: those keep today's rule united with their `lines` (the residual for
+--    old rows only).
 --
--- ADDITIVE and plain (not held): two new columns, no backfill, no constraint. Idempotent for CD
--- (IF NOT EXISTS). Reversible: `ALTER TABLE forms DROP COLUMN "allowAnswerEdit"` and
--- `ALTER TABLE submissions DROP COLUMN "editedAt"` undo it, losing only the setting and the dates.
+-- ADDITIVE and plain (not held): three new columns, no backfill, no constraint. Idempotent for CD
+-- (IF NOT EXISTS). Reversible: `ALTER TABLE forms DROP COLUMN "allowAnswerEdit"`,
+-- `ALTER TABLE submissions DROP COLUMN "editedAt"` and
+-- `ALTER TABLE submissions DROP COLUMN "priceLockedItemIds"` undo it, losing only the setting, the
+-- dates and the snapshots.
 -- LOCKS: ACCESS EXCLUSIVE on each table for the catalogue change alone (no scan), released at
 -- COMMIT; the migration gives up after 5 s rather than queue behind a long transaction.
 
@@ -25,5 +32,6 @@ BEGIN;
 
 ALTER TABLE forms ADD COLUMN IF NOT EXISTS "allowAnswerEdit" boolean NOT NULL DEFAULT false;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "editedAt" timestamptz NULL;
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "priceLockedItemIds" jsonb NULL;
 
 COMMIT;

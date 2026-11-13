@@ -48,6 +48,11 @@ export interface EditLockRow {
   cotisationGrantedAt: Date | null;
   /** The priced grid lines AS CHARGED (migration 137): each names the question it priced. */
   lines: readonly { itemId: string }[] | null;
+  /**
+   * The questions the price depended on when the answer was priced (migration 166, written by
+   * `submit`); null on a row older than it.
+   */
+  priceLockedItemIds?: readonly string[] | null;
 }
 
 /**
@@ -102,15 +107,26 @@ export function editLockedItemIds(
 
 /**
  * The locked questions of ONE stored answer: today's rule over the form, united with what the row
- * itself recorded of its price (`lines`) and its grant (`cotisationGrantedAt`). The one call every
+ * itself recorded of its price - its `lines`, and the snapshot taken when it was priced
+ * (`priceLockedItemIds`, migration 166) - and its grant (`cotisationGrantedAt`). The one call every
  * reader of the lock makes - the list the fill page draws, the judgement, and the write's re-check.
+ * A row older than the snapshot (null) keeps today's rule and its `lines`: the residual, for old
+ * rows only, is a supplement removed after they were priced.
  */
 export function rowLockedItemIds(form: EditLockForm, row: EditLockRow): Set<string> {
-  return editLockedItemIds(
-    form,
-    row.cotisationGrantedAt != null,
-    (row.lines ?? []).map((line) => line.itemId)
-  );
+  return editLockedItemIds(form, row.cotisationGrantedAt != null, [
+    ...(row.lines ?? []).map((line) => line.itemId),
+    ...(row.priceLockedItemIds ?? []),
+  ]);
+}
+
+/**
+ * What a row stores as its price snapshot when it is PRICED (`submit`, and a retry that re-prices
+ * it): the questions today's rule says the price depends on, before any grant. Sorted, so the same
+ * form gives the same snapshot.
+ */
+export function priceSnapshot(form: EditLockForm): string[] {
+  return [...editLockedItemIds(form, false)].sort();
 }
 
 /**

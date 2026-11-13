@@ -1220,17 +1220,18 @@ what is charged is LOCKED:
   today (the tier is the form's `cotisationVariantKey`), and every granting form charges, so its
   priced questions are locked already; this line only closes "change the answer that let me buy".
   To reverse it, drop the `grantMade` branch in `editLockedItemIds`.
-- **the lead's REVERSIBLE decision (2026-11-13), what the ROW says**: the lock set of an answer is
-  today's rule UNITED with every question its stored `lines` names (`rowLockedItemIds`, closed under
-  visibility like the rest), so a grid a manager later unprices, retypes or removes still holds on
-  the rows charged with it. No schema change: `lines` is what the row already keeps of its price
-  (migration 137). **Its limit, stated:** `lines` records the priced GRIDS only. An option supplement
-  leaves no trace on the row (`totalPaid` is a sum, naming no option), so a supplement a manager
-  REMOVES after answers were priced with it unlocks that question on those rows: the respondent may
-  then change the option while `totalPaid` keeps the old amount (still no top-up, no refund - only
-  the answer and the money disagree). Closing it needs either a snapshot of the locked ids at submit
-  (a column) or refusing to lower a supplement on a form whose answers hold it - not built, a
-  decision. To reverse the union, call `editLockedItemIds` without its third argument.
+- **the lead's REVERSIBLE decisions (2026-11-13), what the ROW says**: the lock set of an answer is
+  today's rule UNITED with every question the row recorded of its price (`rowLockedItemIds`, closed
+  under visibility like the rest): the `itemId`s of its stored `lines` (migration 137), and its
+  SNAPSHOT `submissions."priceLockedItemIds"` (migration 166), written by `submit` - and by a retry
+  that re-prices the row - with the questions today's rule says the price depends on at that moment
+  (`priceSnapshot`). So a grid unpriced, or a supplement REMOVED, after answers were priced with it
+  still locks its question on those rows (`answer-edit.integration.spec.ts`, "keeps a question
+  locked on a row priced with its supplement, after the supplement is removed"). **The residual, for
+  rows written before migration 166 only** (snapshot NULL): today's rule and `lines`, so a supplement
+  removed after such a row was priced unlocks that question there - the answer may then disagree
+  with `totalPaid`, never the money with what was charged. To reverse: drop the third argument of
+  `editLockedItemIds` (and stop writing the snapshot).
 
 **When does the lock start - the unpaid-but-requested decision.** The owner preferred "locked as
 soon as a payment request exists". The rule is STRICTER: the price-affecting questions are locked
@@ -1241,7 +1242,7 @@ thing that may not exist. One rule for every status is also one rule a reader ca
 answer to a form whose priced questions are all 0 EUR still has them locked; the hint in the editor
 says so.
 
-What an edit therefore NEVER writes: `totalPaid`, `lines`, `paymentStatus`, the payment ids, the
+What an edit therefore NEVER writes: `totalPaid`, `lines`, `priceLockedItemIds`, `paymentStatus`, the payment ids, the
 seat, the cotisation grant. It never reaches the payment provider.
 
 **The server enforces it; the client only draws it.** `FormsService.editAnswer`
@@ -1300,8 +1301,9 @@ le" column - present when the form allows changes or any row was changed. No not
 claimed); the fill page logs under `FormView`.
 
 **Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
-`forms."allowAnswerEdit" boolean NOT NULL DEFAULT false` and `submissions."editedAt" timestamptz
-NULL`. Reverse: drop the two columns (written in the file).
+`forms."allowAnswerEdit" boolean NOT NULL DEFAULT false`, `submissions."editedAt" timestamptz
+NULL` and `submissions."priceLockedItemIds" jsonb NULL` (the price snapshot above). Reverse: drop the
+three columns (written in the file).
 
 **Tests**: `answer-edit.spec.ts` (the lock rule, the row's own `lines` united with it, and `sameAnswer`), `answerEditGate.test.ts` and `appVersion.test.ts` (the capability gate), `forms.service.public.spec.ts` (an older editor's save keeps the switch), `answer-edit.integration.spec.ts`
 against PostgreSQL (CI's `test-social-integration`): an edit done in place, a locked question refused

@@ -114,6 +114,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     // Migration 166 from tables WITHOUT its columns, twice: `synchronize` built them from the entities.
     await ds.query(`ALTER TABLE forms DROP COLUMN "allowAnswerEdit"`);
     await ds.query(`ALTER TABLE submissions DROP COLUMN "editedAt"`);
+    await ds.query(`ALTER TABLE submissions DROP COLUMN "priceLockedItemIds"`);
     const migration = readFileSync(
       join(__dirname, '../migrations/166_form_answer_edit.sql'),
       'utf8'
@@ -217,14 +218,15 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       (await ds.query(`SELECT count(*) AS n FROM submissions WHERE "formId" = $1`, [formId]))[0].n
     );
 
-  it('migration 166 adds both columns as declared, and is idempotent', async () => {
+  it('migration 166 adds its columns as declared, and is idempotent', async () => {
     const columns = await ds.query(
       `SELECT table_name, column_name, data_type, is_nullable, column_default
          FROM information_schema.columns
         WHERE table_schema = $1
           AND ((table_name = 'forms' AND column_name = 'allowAnswerEdit')
-            OR (table_name = 'submissions' AND column_name = 'editedAt'))
-        ORDER BY table_name`,
+            OR (table_name = 'submissions'
+                AND column_name IN ('editedAt', 'priceLockedItemIds')))
+        ORDER BY table_name, column_name`,
       [schema]
     );
     expect(columns).toEqual([
@@ -242,7 +244,56 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
         is_nullable: 'YES',
         column_default: null,
       },
+      {
+        table_name: 'submissions',
+        column_name: 'priceLockedItemIds',
+        data_type: 'jsonb',
+        is_nullable: 'YES',
+        column_default: null,
+      },
     ]);
+  });
+
+  it('keeps a question locked on a row priced with its supplement, after the supplement is removed', async () => {
+    const formId = await makeForm();
+    const sent: any = await service.submit(formId, {
+      userId: ALICE,
+      paymentMethod: 'cash',
+      answers: { 'q-name': 'Avant', 'q-meal': 'm-yes' },
+    } as any);
+    // The snapshot taken when the answer was priced.
+    const [{ priceLockedItemIds }] = await ds.query(
+      `SELECT "priceLockedItemIds" FROM submissions WHERE id = $1`,
+      [sent.submissionId]
+    );
+    expect(priceLockedItemIds).toEqual(['q-meal']);
+
+    // The manager removes the supplement: today's rule no longer prices q-meal.
+    const unpriced = ITEMS.map((item: any) =>
+      item.id === 'q-meal'
+        ? { ...item, options: item.options.map((o: any) => ({ ...o, priceModifier: 0 })) }
+        : item
+    );
+    await ds.getRepository(Form).update(formId, { items: unpriced as any });
+
+    const mine = await service.myEditableAnswers(formId, ALICE);
+    expect(mine[0].lockedItemIds).toEqual(['q-meal']);
+    await expect(
+      service.editAnswer(formId, sent.submissionId, ALICE, {
+        'q-name': 'Apres',
+        'q-meal': 'm-none',
+      })
+    ).rejects.toMatchObject({ response: { code: FORM_ANSWER_LOCKED, itemId: 'q-meal' } });
+    expect((await row(sent.submissionId)).answers).toEqual({
+      'q-name': 'Avant',
+      'q-meal': 'm-yes',
+    });
+
+    // A row from before migration 166 (no snapshot) keeps today's rule only: the stated residual.
+    await ds.query(`UPDATE submissions SET "priceLockedItemIds" = NULL WHERE id = $1`, [
+      sent.submissionId,
+    ]);
+    expect((await service.myEditableAnswers(formId, ALICE))[0].lockedItemIds).toEqual([]);
   });
 
   it('changes a free answer IN PLACE: one row, the date set, the single-answer guard intact', async () => {
