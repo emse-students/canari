@@ -16,6 +16,19 @@ earliest version, as a checklist.
 
 ## 1.7.0
 
+**P1 - security, or a user-facing path that is broken**
+
+- [P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)](backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md)
+- [P1 - the cause of a REVOKED device's partial restore is not established](backlog.d/p1-the-cause-of-a-revoked-device-s-partial-restore-is-not-established.md)
+- [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
+- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
+- [P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
+- [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
+- [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
+- [P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)](backlog.d/p1-the-ledgers-that-must-follow-the-mls-state-live-in-localstorage-which-an.md)
+- [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
+- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
+
 **Chantiers, decisions and questions (no severity)**
 
 - [The iPhone 12 re-enrolled with a rig account and recorded in the accounts file](backlog.d/reading-owed-the-iphone-12-re-enrolled-with-a-rig-account-after-the-2026-10-22.md)
@@ -229,19 +242,6 @@ earliest version, as a checklist.
 - [ ] [a live that seemed to stay up after 'Terminer' on the iPhone, when seen again](backlog.d/what-the-readings-of-1-6-8-alpha-3-filed.md)
 
 ## 1.8.0
-
-**P1 - security, or a user-facing path that is broken**
-
-- [P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)](backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md)
-- [P1 - the cause of a REVOKED device's partial restore is not established](backlog.d/p1-the-cause-of-a-revoked-device-s-partial-restore-is-not-established.md)
-- [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
-- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
-- [P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
-- [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
-- [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
-- [P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)](backlog.d/p1-the-ledgers-that-must-follow-the-mls-state-live-in-localstorage-which-an.md)
-- [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
-- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 
 **Chantiers, decisions and questions (no severity)**
 

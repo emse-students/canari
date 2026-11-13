@@ -1,6 +1,6 @@
 ## P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)
 
-target: 1.8.0
+target: 1.7.0
 
 HEAL-repair heals 3 times in 10 because the server elects a random online member, one of three holds
 the messages, and the walk stops on a peer's AGREEMENT. Open: specify the state the fix remembers

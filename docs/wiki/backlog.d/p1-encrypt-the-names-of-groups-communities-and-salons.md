@@ -1,6 +1,6 @@
 ## P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)
 
-target: 1.8.0
+target: 1.7.0
 
 Names are in the clear on the server: `dm_groups.name`, `channel_workspaces.name`, `channels.name` and
 the community `slug` are plaintext columns, and push notifications carry sender and group names to

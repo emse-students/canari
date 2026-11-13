@@ -1,6 +1,6 @@
 ## P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)
 
-target: 1.8.0
+target: 1.7.0
 
 **Re-read 2026-11-11.** The client now classifies the two start refusals (`live/api.ts`:
 `suspended`, `withdrawn`) and reads the member's standing with the limits (`liveBroadcast.svelte.ts`).
