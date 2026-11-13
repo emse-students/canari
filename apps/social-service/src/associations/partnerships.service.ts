@@ -10,7 +10,7 @@ import { In, IsNull, Not, Repository } from 'typeorm';
 import { PartnershipCard, PartnershipClaimMode } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
-import { assertMembersOnlyGateable } from './members-only-gate';
+import { assertMembersOnlyGateable, lockAndAssertMembersOnlyGateable } from './members-only-gate';
 import {
   assertReviewerReachesAssociation,
   associationsReachedByReviewer,
@@ -240,7 +240,33 @@ export class PartnershipsService {
       membersOnly: dto.membersOnly ?? false,
       badgeText: dto.badgeText?.trim() || null,
     });
+    if (card.membersOnly) return this.saveGated(card);
     return this.cardRepo.save(card);
+  }
+
+  /**
+   * Saves a members-only card judged AGAIN under the association row's SHARE lock, in the same
+   * transaction: a clear of the cotisation mode cannot slip between the gate and the write
+   * (`assertCotisationModeClearable`, the other half of the order).
+   */
+  private saveGated(card: PartnershipCard): Promise<PartnershipCard> {
+    return this.cardRepo.manager.transaction(async (manager) => {
+      const asso = await lockAndAssertMembersOnlyGateable(
+        manager,
+        card.associationId,
+        true,
+        null,
+        this.logger,
+        'partnership card'
+      );
+      if (!asso) {
+        throw new NotFoundException({
+          code: PARTNERSHIP_ERROR_CODES.ASSOCIATION_NOT_FOUND,
+          message: 'Association not found',
+        });
+      }
+      return manager.save(PartnershipCard, card);
+    });
   }
 
   /** Updates a partnership card's mutable fields. `claimMode` cannot change - see the DTO's doc comment. Requires MANAGE_PARTNERSHIPS. */
@@ -255,11 +281,10 @@ export class PartnershipsService {
     // Only a TRANSITION to members-only is asked, not a save that repeats it: the editor sends
     // `membersOnly` on every update, so an old card left ticked by a since-cleared mode can still be
     // renamed, and unticking it is what clears it.
-    if (dto.membersOnly === true && !card.membersOnly) {
-      await this.assertMembersOnlyGateable(associationId, true);
-    }
+    const turnsGateOn = dto.membersOnly === true && !card.membersOnly;
+    if (turnsGateOn) await this.assertMembersOnlyGateable(associationId, true);
     Object.assign(card, dto);
-    return this.cardRepo.save(card);
+    return turnsGateOn ? this.saveGated(card) : this.cardRepo.save(card);
   }
 
   /** The shared members-only rule (`members-only-gate.ts`), on the card's association re-read. */

@@ -4325,7 +4325,13 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   `select-text` beats the bubble's `select-none`, which let iOS select a word under the sheet);
   "Copier" is the touch way to copy.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
-  reader's head and a double check sit under the sender's own last read message. **In a group or a
+  reader's "Lu" marker sits under the NEWEST message of the conversation the peer has read, which must
+  be the viewer's own (`dmReadAnchorId`, owner, 2026-11-13, the Messenger placement - it reuses
+  `seenByAnchors`, so a DM and a group agree on "the last thing they saw"): everything read puts it
+  under the conversation's last message, a peer behind by N keeps it N rows up, a system line at the
+  bottom never carries it, and a peer's reply below the last read own message removes it (the reply
+  is the proof; the old rule left "Lu" on that older message). Computed over every row in
+  `ChatArea`, passed down as `dmReadAnchor`. **In a group or a
   salon, each member's head sits under the LAST message THEY read, whoever wrote it** (user,
   2026-10-02, the Messenger placement): `seenByAnchors` in `utils/chat/readState.ts` places them over
   the WHOLE sorted conversation (a render window ending above a reader's anchor would pin the head
