@@ -31,6 +31,7 @@ import {
   parseGroupCallVersion,
   readGroupCallsMode,
 } from '../utils/group-calls-mode';
+import { readCallRelay, RELAY_SEATS } from '../utils/call-relay';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -117,6 +118,26 @@ export interface InitiateCallResponse {
    * relays it in the MLS invite, so both ends ring for the window THIS server enforces.
    */
   ringTimeoutMs: number;
+  /**
+   * `sfu` when this GROUP call goes through call-service's relay (`platform_config.call_relay`,
+   * WP-GC4): the client joins with `Join { mode: "sfu" }`, and call-service refuses any other mode
+   * (the room token signs it). Absent: a group call is the mesh, a 1:1 call peer to peer, as before.
+   */
+  mode?: 'sfu';
+}
+
+/** What `room-token` answers: the token, and the mode the room carries its call in (see `initiate`). */
+export interface RoomTokenResponse {
+  roomToken: string;
+  /** `sfu` for a group call through the relay; absent otherwise (see {@link InitiateCallResponse.mode}). */
+  mode?: 'sfu';
+}
+
+/** What the group-call gate decided at `initiate`: the seat cap, and the relay when one carries it. */
+interface GroupCallPath {
+  maxSeats: number;
+  /** `sfu`: call-service's relay carries the call from the start (interim, until WP-GC5). */
+  mode?: 'sfu';
 }
 
 /**
@@ -134,17 +155,26 @@ interface CallRoomBinding {
    * two), exactly as before group calls - so a 1:1 call is unchanged for every client.
    */
   maxSeats?: number;
+  /**
+   * `sfu` for a GROUP call through call-service's relay (WP-GC4), signed into every room token as
+   * `mode` so call-service refuses a Join in another mode. Absent on the mesh and on a 1:1 call.
+   */
+  mode?: 'sfu';
 }
 
-/** A room token's claims: `max_seats` only for a group call (see {@link CallRoomBinding.maxSeats}). */
+/**
+ * A room token's claims: `max_seats` only for a group call (see {@link CallRoomBinding.maxSeats}),
+ * `mode` only for one through the relay (see {@link CallRoomBinding.mode}).
+ */
 function roomClaims(
   roomId: string,
   userId: string,
   groupId: string,
-  maxSeats: number | undefined
+  binding: Pick<CallRoomBinding, 'maxSeats' | 'mode'>
 ): Record<string, unknown> {
   const claims: Record<string, unknown> = { room_id: roomId, sub: userId, group_id: groupId };
-  if (maxSeats !== undefined) claims.max_seats = maxSeats;
+  if (binding.maxSeats !== undefined) claims.max_seats = binding.maxSeats;
+  if (binding.mode !== undefined) claims.mode = binding.mode;
   return claims;
 }
 
@@ -365,9 +395,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // A conversation of more than two members is a GROUP call (WP-GC2): its own switch, a seat cap
     // signed into the token, and a block that drops a member rather than the call.
     const group = others.length >= 2;
-    let maxSeats: number | undefined;
+    let path: GroupCallPath | undefined;
     if (group) {
-      maxSeats = await this.assertGroupCallsOpen(userId, groupId, video);
+      path = await this.assertGroupCallsOpen(userId, groupId, video);
       this.assertSpeaksTheMesh(userId, groupCallVersion, `initiate group=${groupId}`);
       this.refuseAcrossReviewCohort(userId, others, `initiate group=${groupId}`);
     } else {
@@ -381,17 +411,23 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const roomId = crypto.randomUUID();
-    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, maxSeats), roomSecret, {
-      expiresIn: '5m',
-      algorithm: 'HS256',
-    });
+    const maxSeats = path?.maxSeats;
+    const mode = path?.mode;
+    const roomToken = jwt.sign(
+      roomClaims(roomId, userId, groupId, { maxSeats, mode }),
+      roomSecret,
+      {
+        expiresIn: '5m',
+        algorithm: 'HS256',
+      }
+    );
 
     // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
     // binding does not yet name.
     // The window is NOT opened here: see `callAnswerByKey` and `ringGroup`.
     await this.redis.set(
       callRoomKey(roomId),
-      JSON.stringify({ groupId, callerId: userId, maxSeats } satisfies CallRoomBinding),
+      JSON.stringify({ groupId, callerId: userId, maxSeats, mode } satisfies CallRoomBinding),
       'EX',
       CALL_ROOM_BINDING_TTL_SEC
     );
@@ -399,9 +435,15 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
     this.logger.log(
-      `[call] invite room=${roomId} user=${userId} group=${groupId}${group ? ` kind=group seats=${maxSeats} video=${video}` : ''}`
+      `[call] invite room=${roomId} user=${userId} group=${groupId}${group ? ` kind=group seats=${maxSeats} video=${video} path=${mode ?? 'mesh'}` : ''}`
     );
-    return { roomId, roomToken, ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000 };
+    const response: InitiateCallResponse = {
+      roomId,
+      roomToken,
+      ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000,
+    };
+    if (mode !== undefined) response.mode = mode;
+    return response;
   }
 
   /**
@@ -417,7 +459,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     groupId: string,
     roomId: string,
     groupCallVersion?: unknown
-  ): Promise<{ roomToken: string }> {
+  ): Promise<RoomTokenResponse> {
     this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
     await this.assertCallsOpen(`join-token room=${roomId}`, userId);
 
@@ -483,15 +525,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new GoneException('This call is over');
     }
 
-    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, binding.maxSeats), roomSecret, {
+    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, binding), roomSecret, {
       expiresIn: '5m',
       algorithm: 'HS256',
     });
 
     // The answer half: a callee asking for a token is a callee about to join the SFU. Paired
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
-    this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
-    return { roomToken };
+    this.logger.log(
+      `[call] join-token room=${roomId} user=${userId} group=${groupId}${binding.mode ? ` path=${binding.mode}` : ''}`
+    );
+    return binding.mode === undefined ? { roomToken } : { roomToken, mode: binding.mode };
   }
 
   /**
@@ -550,9 +594,19 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     const value = parsed as Partial<CallRoomBinding> | null;
     if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
+      if (value.mode !== undefined && value.mode !== 'sfu') {
+        this.logger.error(`[call] room binding for ${roomId} names an unknown mode - refused`);
+        return null;
+      }
       if (value.maxSeats === undefined) return { groupId: value.groupId, callerId: value.callerId };
       if (typeof value.maxSeats === 'number' && Number.isInteger(value.maxSeats)) {
-        return { groupId: value.groupId, callerId: value.callerId, maxSeats: value.maxSeats };
+        const binding: CallRoomBinding = {
+          groupId: value.groupId,
+          callerId: value.callerId,
+          maxSeats: value.maxSeats,
+        };
+        if (value.mode !== undefined) binding.mode = value.mode;
+        return binding;
       }
       this.logger.error(`[call] room binding for ${roomId} has an unusable seat cap - refused`);
       return null;
@@ -1066,15 +1120,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The group-call gate (WP-GC2): `group_calls_mode` must be `mesh`, and the answer is the seat cap
-   * the room's tokens will carry - the mesh's, by the call's kind (D-A: 4 in audio, 3 in video).
-   * Past it call-service refuses the user (`room-full`) until a relay leg exists (WP-GC3/GC4).
+   * The group-call gate (WP-GC2): `group_calls_mode` must be `mesh`, and the answer is the path the
+   * room's tokens will carry. With `call_relay = none`, the mesh's seat cap by the call's kind (D-A:
+   * 4 in audio, 3 in video), past which call-service refuses the user (`room-full`). With
+   * `call_relay = call-service` (WP-GC4), the relay from the start - `mode: sfu` and the relay's own
+   * cap - an INTERIM rule until WP-GC5 moves a mesh to the relay mid-call.
    */
   private async assertGroupCallsOpen(
     userId: string,
     groupId: string,
     video: boolean
-  ): Promise<number> {
+  ): Promise<GroupCallPath> {
     const mode = await readGroupCallsMode(this.groupMemberRepo.manager, this.logger);
     if (mode === 'off') {
       this.logger.log(
@@ -1085,7 +1141,14 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         message: 'Group calls are not available on this server.',
       });
     }
-    return video ? MESH_SEATS_VIDEO : MESH_SEATS_AUDIO;
+    const relay = await readCallRelay(this.groupMemberRepo.manager, this.logger);
+    if (relay === 'call-service') {
+      this.logger.log(
+        `[call] initiate group=${groupId} user=${userId}: through call-service's relay (call_relay=call-service, seats=${RELAY_SEATS})`
+      );
+      return { maxSeats: RELAY_SEATS, mode: 'sfu' };
+    }
+    return { maxSeats: video ? MESH_SEATS_VIDEO : MESH_SEATS_AUDIO };
   }
 
   /**

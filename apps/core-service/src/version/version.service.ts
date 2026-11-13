@@ -8,6 +8,7 @@ import type {
   LivesMode,
   LiveReplaysMode,
   GroupCallsMode,
+  CallRelay,
 } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
@@ -40,6 +41,13 @@ export type AppVersionResponse = {
      * unknown value as `off`. `mode = off` still closes everything.
      */
     groupMode: GroupCallsMode;
+    /**
+     * Which relay carries a group call (`platform_config.call_relay`, WP-GC4): `none` - the mesh,
+     * refused past its cap; `call-service` - our SFU, from the start. ENFORCED BY
+     * CHAT-DELIVERY-SERVICE, which signs the mode into the room tokens; a client reads it to say
+     * what a group call will be, and reads an absent or unknown value as `none`.
+     */
+    relay: CallRelay;
   };
   /**
    * The server's kill switch for lives (`platform_config.lives_mode`). Clients hide the live card,
@@ -146,7 +154,11 @@ export class VersionService {
         enabled: platform.maintenanceEnabled,
         message: platform.maintenanceMessage,
       },
-      calls: { mode: platform.callsMode, groupMode: platform.groupCallsMode },
+      calls: {
+        mode: platform.callsMode,
+        groupMode: platform.groupCallsMode,
+        relay: platform.callRelay,
+      },
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },

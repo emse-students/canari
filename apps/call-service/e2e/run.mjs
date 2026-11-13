@@ -6,9 +6,10 @@
  *
  *   bun apps/call-service/e2e/run.mjs                       # the 1:1 SFU call, host candidates
  *   bun apps/call-service/e2e/run.mjs --scenario mesh       # the 3-party p2p mesh (WP-GC2)
+ *   bun apps/call-service/e2e/run.mjs --scenario sfu-group  # a 5-party call through the SFU (WP-GC4)
  *   bun apps/call-service/e2e/run.mjs --turn "turn:<ip>:3478?transport=udp" --turn-user u --turn-credential p
  *
- * `--scenario pair|mesh` (default `pair`), `--bin <path>` (default: the crate's debug build),
+ * `--scenario pair|mesh|sfu-group` (default `pair`), `--bin <path>` (default: the crate's debug build),
  * `--chrome <path>` (default: this machine's Chrome), `--frames <n>` (default 250, five seconds of
  * 20 ms Opus), `--keep` (keep the profiles and the logs, named at the end).
  *
@@ -39,6 +40,17 @@
  *   to open and none opening after the first failure: the per-leg verdict is not vacuous;
  * - the service's record: three `session start ... mode=p2p seats=3`, and after the hangups three
  *   `session end ... mode=p2p disposition=client-close` whose `paired_ms` is a number.
+ *
+ * WHAT `sfu-group` PROVES - five browsers through the SFU (WP-GC4), one key per sender:
+ *
+ * - EVERY ONE of the 20 directed legs: each receiver opened at least `--frames` frames of each of the
+ *   4 other senders under THAT sender's key, the sender read from the forwarded track's stream id
+ *   (the SFU sets it to the sender's user id), with zero frames that failed and zero dropped for want
+ *   of a key; with `--turn`, relay to relay on every browser, and the SFU relay-only;
+ * - a SIXTH user is refused `room-full` by the SFU's own seat cap, signed into the token;
+ * - THE NEGATIVE, as in `mesh`: a wrong key for one sender fails that leg and only that leg;
+ * - the SFU's record: `ice connected` and an audio `track published` for all five, then five
+ *   `session end ... disposition=client-close` lines whose `connected_ms` is a number.
  *
  * NO CLOCK DECIDES ANYTHING. Every wait - the launch and every page call included - ends on a proof
  * of success or on a proof of failure: the service or a browser exiting, a page or its encryption
@@ -105,8 +117,8 @@ function say(msg) {
   console.log(`[call-e2e:${SCENARIO}] ${msg}`);
 }
 
-if (!['pair', 'mesh'].includes(SCENARIO)) {
-  say(`ERROR unknown --scenario ${SCENARIO} (pair | mesh)`);
+if (!['pair', 'mesh', 'sfu-group'].includes(SCENARIO)) {
+  say(`ERROR unknown --scenario ${SCENARIO} (pair | mesh | sfu-group)`);
   process.exit(2);
 }
 
@@ -649,6 +661,85 @@ async function runMesh(ctx) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Scenario `sfu-group`: five browsers through the SFU, one key per sender (`setGroupKeys`)
+// -------------------------------------------------------------------------------------------------
+
+/** The relay's group call: five participants, past the mesh cap of 4 (D-A), in a room of 5 seats. */
+const SFU_GROUP_SEATS = 5;
+
+async function runSfuGroup(ctx) {
+  const { port, iceServers, ask, launch } = ctx;
+  const roomId = randomUUID();
+  const groupId = randomUUID();
+  // Lowercase, as the key contexts name a participant; the SFU's stream id carries it as signed.
+  const users = [0, 1, 2, 3, 4].map((i) => `e2e-sfu-${i}-${randomUUID()}`);
+  const exporterSecret = randomBytes(32).toString('hex');
+  const configOf = (user) => ({
+    ws: `ws://127.0.0.1:${port}/ws`,
+    token: hs256({ sub: user, exp: exp() }, JWT_SECRET),
+    roomId,
+    // `mode: sfu` as chat-delivery-service signs a relayed group call's tokens (WP-GC4).
+    roomToken: hs256(
+      {
+        room_id: roomId,
+        sub: user,
+        group_id: groupId,
+        max_seats: SFU_GROUP_SEATS,
+        mode: 'sfu',
+        exp: exp(),
+      },
+      ROOM_SECRET
+    ),
+    groupId,
+    self: user,
+    participants: users,
+    exporterSecret,
+    iceServers,
+    iceTransportPolicy: TURN ? 'relay' : 'all',
+    mode: 'sfu',
+  });
+  for (const user of users) {
+    await launch(user, 'group.html');
+    await ask(user, `e2e.start(${JSON.stringify(configOf(user))})`);
+    say(`${user} joined room ${roomId}`);
+  }
+
+  const room = `room=${roomId}`;
+  const disconnects = new Set();
+  await proveEveryLeg(ask, users, () => {
+    checkSfuIce(room, disconnects);
+    return [];
+  });
+  await provePastTheCap(ctx, roomId, groupId, 'sfu', SFU_GROUP_SEATS);
+  await proveWrongKeyFails(ask, users, users[0], users[1]);
+
+  // ---- The SFU's own record of the call ----
+  const connected = linesOf('[call] ice connected').filter((l) => l.includes(room));
+  const published = linesOf('[call] track published').filter(
+    (l) => l.includes(room) && l.includes('kind=audio')
+  );
+  if (connected.length < users.length)
+    throw new Error(
+      `the SFU logged ${connected.length} 'ice connected' line(s) for the room, ${users.length} owed`
+    );
+  if (published.length < users.length)
+    throw new Error(
+      `the SFU logged ${published.length} audio 'track published' line(s), ${users.length} owed`
+    );
+  if (TURN && !linesOf('SFU using TURN_URL env').length)
+    throw new Error('the SFU never said it uses TURN_URL - it ran without the relay');
+
+  for (const u of users) await ask(u, 'e2e.expectEnd()');
+  for (const u of users) await ask(u, 'e2e.hangup()');
+  await awaitClosed(ask, users);
+  for (const l of await awaitSessionEnds(room, users.length)) {
+    if (!l.includes('disposition=client-close'))
+      throw new Error(`a session ended with another disposition than client-close: ${l}`);
+    if (/connected_ms=-/.test(l)) throw new Error(`a session ended with connected_ms=-: ${l}`);
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
 
 async function main() {
   OUT = mkdtempSync(join(tmpdir(), 'canari-call-e2e-'));
@@ -700,6 +791,7 @@ async function main() {
   let verdict = null;
   try {
     if (SCENARIO === 'mesh') await runMesh(ctx);
+    else if (SCENARIO === 'sfu-group') await runSfuGroup(ctx);
     else await runPair(ctx);
     verdict = 'PASS';
   } catch (e) {

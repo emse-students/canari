@@ -45,6 +45,8 @@ describe('CallsService', () => {
   let callsMode: string | undefined = 'audio_video';
   /** What `platform_config.group_calls_mode` holds (WP-GC2); off, the production default. */
   let groupCallsMode = 'off';
+  /** What `platform_config.call_relay` holds (WP-GC4); none, the production default. */
+  let callRelay = 'none';
   /**
    * The database as the service reads it with plain SQL: the kill switch's row, and nothing else
    * (no block, no group name) unless a test says otherwise. `undefined` = no platform_config row.
@@ -52,7 +54,7 @@ describe('CallsService', () => {
   const baseQuery = (sql: string): Promise<unknown[]> =>
     Promise.resolve(
       sql.includes('platform_config') && callsMode !== undefined
-        ? [{ calls_mode: callsMode, group_calls_mode: groupCallsMode }]
+        ? [{ calls_mode: callsMode, group_calls_mode: groupCallsMode, call_relay: callRelay }]
         : []
     );
   const groupMemberRepo = {
@@ -97,6 +99,7 @@ describe('CallsService', () => {
     redisStore.clear();
     callsMode = 'audio_video';
     groupCallsMode = 'off';
+    callRelay = 'none';
     groupMemberRepo.manager.query.mockImplementation((sql: string) => baseQuery(sql));
     turnMeter.monthEgressBytes.mockImplementation(() => Promise.resolve(0));
     // The room every ring test rings: opened by `caller` in `group-1`, its window not yet open.
@@ -1457,6 +1460,69 @@ describe('CallsService', () => {
         expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!).maxSeats).toBe(seats);
       }
     );
+
+    it('without a relay, a group call is the mesh: no mode claim, none in the binding or the answer', async () => {
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const answer = await service.initiateCall('caller', 'group-1', false, 1);
+
+      expect(answer).not.toHaveProperty('mode');
+      expect(claimsOf(answer.roomToken)).not.toHaveProperty('mode');
+      expect(JSON.parse(redisStore.get(`call:room:${answer.roomId}`)!)).not.toHaveProperty('mode');
+    });
+
+    it.each([false, true])(
+      'with call_relay=call-service a group call goes through the SFU from the start (video=%s): mode sfu and the relay cap, signed for every member',
+      async (video) => {
+        groupCallsMode = 'mesh';
+        callRelay = 'call-service';
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+        const answer = await service.initiateCall('caller', 'group-1', video, 1);
+
+        expect(answer.mode).toBe('sfu');
+        expect(claimsOf(answer.roomToken)).toMatchObject({ max_seats: 8, mode: 'sfu' });
+        expect(JSON.parse(redisStore.get(`call:room:${answer.roomId}`)!)).toMatchObject({
+          maxSeats: 8,
+          mode: 'sfu',
+        });
+        expect(captured(log)).toContain('path=sfu');
+
+        groupMemberRepo.find.mockResolvedValue(members('caller'));
+        await service.ringGroup('caller', 'group-1', answer.roomId, false);
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+        groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+        const joined = await service.requestRoomToken('c', 'group-1', answer.roomId, '1');
+
+        expect(joined.mode).toBe('sfu');
+        expect(claimsOf(joined.roomToken)).toMatchObject({ sub: 'c', max_seats: 8, mode: 'sfu' });
+      }
+    );
+
+    it('the relay setting never touches a 1:1 call', async () => {
+      groupCallsMode = 'mesh';
+      callRelay = 'call-service';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'callee'));
+
+      const answer = await service.initiateCall('caller', 'group-1');
+
+      expect(answer).not.toHaveProperty('mode');
+      expect(claimsOf(answer.roomToken)).not.toHaveProperty('mode');
+      expect(claimsOf(answer.roomToken)).not.toHaveProperty('max_seats');
+    });
+
+    it('an unknown call_relay value is never guessed: initiate throws and binds no room', async () => {
+      groupCallsMode = 'mesh';
+      callRelay = 'cloudflare';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      await expect(service.initiateCall('caller', 'group-1', false, 1)).rejects.toThrow(
+        'platform_config.call_relay holds an unknown value: cloudflare'
+      );
+      expect(redis.set).not.toHaveBeenCalled();
+    });
 
     it('signs the same cap into a joining member token', async () => {
       groupCallsMode = 'mesh';

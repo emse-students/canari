@@ -113,12 +113,28 @@ export type GroupCallsMode = 'off' | 'mesh';
  */
 export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
 
+/**
+ * Which relay carries a group call (`platform_config.call_relay`, published by `/api/version` as
+ * `calls.relay`, WP-GC4): `none` - the mesh, refused past its cap; `call-service` - our SFU carries
+ * the group call from the start (the server signs `mode: sfu` into its room tokens). An absent or
+ * unknown value reads `none`.
+ */
+export type CallRelay = 'none' | 'call-service';
+
+/**
+ * Every value of {@link CallRelay}. Five copies of these strings exist (the SQL CHECK, core's
+ * entity, chat-delivery's reader, this, the admin page through this) and `callRelaysAgree.test.ts`
+ * fails the day one of them drifts.
+ */
+export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
   groupCallsMode: GroupCallsMode;
+  callRelay: CallRelay;
   livesMode: LivesMode;
   liveReplaysMode: LiveReplaysMode;
   checkpointSkipMode: CheckpointSkipMode;
@@ -148,6 +164,8 @@ export type AppVersionCheckResult = {
   callsMode: CallsMode;
   /** Whether a group conversation may call (`calls.groupMode`); `off` until a server has said otherwise. */
   groupCallsMode: GroupCallsMode;
+  /** Which relay carries a group call (`calls.relay`); `none` until a server has said otherwise. */
+  callRelay: CallRelay;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
   /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
@@ -237,6 +255,15 @@ function normalizeGroupCallsMode(raw: unknown): GroupCallsMode {
 }
 
 /**
+ * The call relay a `/api/version` body carries (`calls.relay`). ABSENT OR UNKNOWN READS AS `none`:
+ * a server that predates it has no relay for group calls.
+ */
+function normalizeCallRelay(raw: unknown): CallRelay {
+  const relay = raw && typeof raw === 'object' ? (raw as { relay?: unknown }).relay : undefined;
+  return CALL_RELAYS.find((known) => known === relay) ?? 'none';
+}
+
+/**
  * The lives mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`, for the reason
  * {@link normalizeCallsMode} gives: a kill switch that cannot be read fails closed.
  */
@@ -292,6 +319,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
     groupCallsMode: normalizeGroupCallsMode(obj.calls),
+    callRelay: normalizeCallRelay(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
     liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
@@ -314,7 +342,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
-  calls: { mode: CallsMode; groupMode: GroupCallsMode };
+  calls: { mode: CallsMode; groupMode: GroupCallsMode; relay: CallRelay };
   lives: { mode: LivesMode };
   liveReplays: { mode: LiveReplaysMode };
   checkpointSkip: { mode: CheckpointSkipMode };
@@ -329,7 +357,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     version: info.version,
     minClientVersion: info.minClientVersion,
     maintenance: info.maintenance,
-    calls: { mode: info.callsMode, groupMode: info.groupCallsMode },
+    calls: { mode: info.callsMode, groupMode: info.groupCallsMode, relay: info.callRelay },
     lives: { mode: info.livesMode },
     liveReplays: { mode: info.liveReplaysMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
@@ -519,6 +547,7 @@ export function buildAppVersionCheckResult(
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
     groupCallsMode: serverInfo?.groupCallsMode ?? 'off',
+    callRelay: serverInfo?.callRelay ?? 'none',
     livesMode: serverInfo?.livesMode ?? 'off',
     liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',

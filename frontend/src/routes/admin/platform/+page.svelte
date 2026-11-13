@@ -16,10 +16,12 @@
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     CALLS_MODES,
+    CALL_RELAYS,
     CHECKPOINT_SKIP_MODES,
     GROUP_CALLS_MODES,
     LIVES_MODES,
     LIVE_REPLAYS_MODES,
+    type CallRelay,
     type CallsMode,
     type CheckpointSkipMode,
     type GroupCallsMode,
@@ -41,6 +43,7 @@
     checkpointSkipMode: CheckpointSkipMode;
     liveReplaysMode: LiveReplaysMode;
     groupCallsMode: GroupCallsMode;
+    callRelay: CallRelay;
   };
 
   /**
@@ -68,6 +71,7 @@
   let checkpointSkipMode = $state<CheckpointSkipMode>('off');
   let liveReplaysMode = $state<LiveReplaysMode>('off');
   let groupCallsMode = $state<GroupCallsMode>('off');
+  let callRelay = $state<CallRelay>('none');
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -119,6 +123,14 @@
   };
   const GROUP_CALLS_MODE_OPTIONS: PickerOption[] = $derived(
     GROUP_CALLS_MODES.map((mode) => ({ value: mode, label: GROUP_CALLS_MODE_LABELS[mode]() }))
+  );
+  /** One label per call relay, typed so a new relay cannot reach the picker unlabelled. */
+  const CALL_RELAY_LABELS: Record<CallRelay, () => string> = {
+    none: m.admin_platform_call_relay_none,
+    'call-service': m.admin_platform_call_relay_call_service,
+  };
+  const CALL_RELAY_OPTIONS: PickerOption[] = $derived(
+    CALL_RELAYS.map((relay) => ({ value: relay, label: CALL_RELAY_LABELS[relay]() }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -257,6 +269,7 @@
     checkpointSkipMode = data.checkpointSkipMode;
     liveReplaysMode = data.liveReplaysMode;
     groupCallsMode = data.groupCallsMode;
+    callRelay = data.callRelay;
   }
 
   /**
@@ -277,6 +290,7 @@
       checkpointSkipMode,
       liveReplaysMode,
       groupCallsMode,
+      callRelay,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -606,6 +620,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_group_calls_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="call-relay" class="text-text-main text-sm font-bold">
+          {m.admin_platform_call_relay_label()}
+        </label>
+        <Picker
+          id="call-relay"
+          value={callRelay}
+          options={CALL_RELAY_OPTIONS}
+          label={m.admin_platform_call_relay_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const relay = CALL_RELAYS.find((known) => known === v);
+            if (relay) callRelay = relay;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_call_relay_hint()}
         </p>
       </div>
 

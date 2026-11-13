@@ -49,6 +49,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
       groupCallsMode: 'off' as const,
+      callRelay: 'none' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -66,6 +67,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
       groupCallsMode: 'off' as const,
+      callRelay: 'none' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -85,6 +87,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
     });
 
     await service.ensureDefaults();
@@ -139,6 +142,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ groupCallsMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with NO relay - a group call stays a mesh until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ callRelay: 'none' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -153,6 +165,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -206,6 +219,7 @@ describe('PlatformService', () => {
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
         groupCallsMode: 'off',
+        callRelay: 'none',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -281,6 +295,7 @@ describe('PlatformService', () => {
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
         groupCallsMode: 'off',
+        callRelay: 'none',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -341,6 +356,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -365,6 +381,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -471,6 +488,22 @@ describe('PlatformService', () => {
     expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { groupCallsMode: 'mesh' });
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
       'groupCallsMode off -> mesh by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the call relay, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.groupCallsMode = 'mesh';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ callRelay: 'call-service' }, ADMIN);
+
+    expect(result.callRelay).toBe('call-service');
+    expect(result.groupCallsMode).toBe('mesh');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { callRelay: 'call-service' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'callRelay none -> call-service by=aaaaaaaa'
     );
     warn.mockRestore();
   });

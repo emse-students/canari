@@ -71,7 +71,7 @@ All frames are JSON-encoded `SignalMessage`:
 | `Join { room_id, room_token, mode? }` | Client → Server | Join a room. `room_token` is a short-lived HS256 JWT issued by chat-delivery-service (`/api/calls/initiate`) proving group membership; always required (`CALL_ROOM_SECRET` is mandatory at boot). `mode` is `"p2p"` or `"sfu"`; absent means `"sfu"`. |
 | `PeerReady { initiator, peer? }` | Server → Client | P2P only: a pair is formed; `initiator` offers, the other is the polite side. Re-sent to the remaining peer when the other's device is replaced. `peer` names the other party's peer id (always sent; a 1:1 client ignores it, a mesh client keys its leg on it). |
 | `PeerLeft { peer? }` / `PeerAway { peer? }` | Server → Client | P2P only: that party's socket ended (or went away for a resume), or THIS device was replaced by a sibling (`PeerLeft` without `peer`). |
-| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, the seat cap is reached), `group-mismatch` (P2P, the token names another group than the seated peers'), `seats-mismatch` (P2P, the token's seat cap differs from the room's), `seats-refused` (P2P, a `max_seats` claim outside 2..=4) or `mode-mismatch` (the room id exists in the other mode). |
+| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (the seat cap is reached, P2P and SFU), `group-mismatch` (P2P, the token names another group than the seated peers'), `seats-mismatch` (the token's seat cap differs from the room's, P2P and SFU), `seats-refused` (a `max_seats` claim outside 2..=4 in P2P, 2..=8 in SFU), `mode-mismatch` (the room id exists in the other mode, or the token's `mode` claim names the other mode) or `room-unavailable` (SFU, the room's seat lock is poisoned - a panic elsewhere, logged at ERROR). |
 | `Joined { room_id }` | Server → Client | Room join acknowledged; client is now ready to send `Offer`. |
 | `Offer { sdp }` | Server → Client | Renegotiation offer when tracks are added to a room. |
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
@@ -232,9 +232,60 @@ negotiated through this service exactly as a 1:1 call is, and no media ever reac
   in `tests/p2p_signalling.rs`. The 1:1 tests read every frame through a view that strips `peer`
   and `from`, which is the proof that a two-seat room speaks the pre-mesh wire.
 
+## The relay for a group call (WP-GC4, 2026-11-13)
+
+Owner decision D2: our Rust relay carries a group call past the mesh cap, E2E transforms in the path
+throughout, so no clear frame ever crosses it. The SFU mode needed three things for that, all in
+`src/sfu_seats.rs` and `src/main.rs`:
+
+- **The seat cap, reserved atomically.** chat-delivery signs `max_seats` (8 for a relayed group
+  call) and `mode: "sfu"` into the room token; a token without `max_seats` is two seats (a 1:1 call).
+  The relay holds `2..=8` (`MAX_SFU_SEATS`: every participant's frames go to every other one, so
+  egress grows with the square of the room - 56 Opus streams, ~2.8 Mbit/s at 8); a claim outside is
+  `Refused { seats-refused }`. The seat is RESERVED IN ONE SYNCHRONOUS STEP while the room map's
+  entry is held (`state.rooms.entry(...)`, then `SfuSeats::reserve` under the room's `std` mutex) -
+  never a count checked and a peer inserted across an await, which two simultaneous joins could both
+  pass. The user past the cap is `Refused { room-full }`, a token with another cap than the room's
+  `Refused { seats-mismatch }`. A second device of a seated user takes ITS seat (one device per user,
+  as before). A seat is freed only by the peer holding it (`SfuSeats::release`), so a device replaced
+  by a sibling frees nothing, and the room is removed when no seat is held, under the same entry lock
+  (`remove_if`), so a seat taken a moment ago is never orphaned in a removed room.
+- **The sender of every forwarded track.** A group call's media is keyed per sender (WP-GC1), so a
+  receiver must know whose frames a track carries. The SFU says it in the STREAM id: every track it
+  forwards from the peer `<user_id>:<device>` has the stream id `<user_id>`
+  (`forwarded_stream_id`); a browser reads it in `ontrack` as `streams[0].id` and names it as its
+  receiver transform's `peer`. Not the peer id: the device is nobody's key, and `:` is not a
+  character an `a=msid` identifier may hold (RFC 8830). The track id is unchanged.
+- **Every forwarded track reaches a late joiner.** A participant joining a room that already
+  forwards tracks offers its own m-lines only, so the tracks the answer could not place wait on
+  transceivers with no mid; the SFU now renegotiates them right after its answer
+  (`unnegotiated_tracks`). A client sends on a SEND-ONLY transceiver (`e2e/group-page.ts`), so no
+  forwarded track is ever answered on the client's own transceiver - whose receiver transform was
+  made before anyone knew whose frames it would carry - and every one arrives on a transceiver of its
+  own, armed in `ontrack`.
+- **The mode is signed.** A token carrying `mode` (`sfu` | `p2p`) is refused for a `Join` in the
+  other mode (`mode-mismatch`), so a client cannot take a relayed group call into a mesh or the
+  reverse. Tokens without the claim (1:1 calls, the mesh, every token older than WP-GC4) leave the
+  choice to the `Join`, as before.
+- **Opaque frames, unchanged.** The forwarding loop copies RTP packets from the publisher's track to
+  each subscriber's (`write_rtp`) and never reads the payload, which is E2E-encrypted by the clients'
+  transforms: the relay holds no key and learns nothing it could open.
+
+Pinned by the `sfu_seats.rs` unit tests (the cap, a sibling's seat, release by the holder only, a
+token with another cap, the 2..=8 bound, the stream id is the user id and a valid msid identifier)
+and, in `tests/p2p_signalling.rs`, `an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user`,
+`racing_joins_never_seat_more_than_the_cap` (eight joins sent before any answer is read: exactly
+three seated), `an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked` and
+`a_token_signing_a_mode_refuses_a_join_in_the_other`; end to end by the `sfu-group` scenario below.
+
+**What chooses it** is `platform_config.call_relay` (`none` | `call-service`, core migration 023,
+`/admin/platform`, published as `calls.relay`), read by chat-delivery at a group call's `initiate`
+([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13)). Production stays `none`;
+the dev seed writes `call-service`.
+
 ## Room lifecycle
 
-- Rooms are created on first `Join` and evicted when the last peer leaves.
+- Rooms are created on first `Join` and evicted when the last seat is freed.
 - Stale rooms (no signal activity > 30 minutes) are cleaned up by a background tokio task (every 5 minutes).
 - **Every path that drops a peer calls `RTCPeerConnection::close()` first** — the ordinary hangup,
   sibling eviction and the stale-room reaper alike. webrtc-rs holds the ICE agent and its TURN
@@ -476,6 +527,29 @@ leg. Then three more proofs, in order:
 The same no-clock rule holds; a `PeerLeft` or `PeerAway` before the driver says the call is ending is
 a fault. First measured on a Windows dev box (Chrome, no TURN, 2026-11-13): PASS, 293 to 302 frames
 opened per leg, the fourth user `room-full`, the negative leg 269 frames refused.
+
+### The relayed group scenario (WP-GC4, 2026-11-13)
+
+`run.mjs --scenario sfu-group` is the relay's group call, the job's third step on the same coturn:
+FIVE browsers (past the mesh cap of 4) in ONE SFU room whose tokens sign `max_seats: 5` and
+`mode: "sfu"`, each with one peer connection to the SFU - its microphone on a send-only transceiver,
+its sender transform naming itself - and one receiver transform per forwarded track, naming the
+sender read from the track's stream id. Keys as in `mesh`: the app's `deriveGroupCallKeys`, the
+worker keyed with `setGroupKeys`; relay-only through coturn with `--turn`, the SFU relay-only too.
+
+**It passes only on proof that EVERY ONE of the 20 directed legs** - each receiver, each of the 4
+other senders - opened at least `--frames` (250) frames under that sender's key (the worker's
+`byPeer`), with 0 failed and 0 `droppedNoKey`, at least as many packets on that sender's inbound
+track, and, under TURN, a `relay` -> `relay` pair; the SFU's `ice Failed` for the room fails the run
+as in `pair`. Then: a SIXTH user is refused `room-full` by the SFU's own cap; the negative of `mesh`
+(a wrong key fails that leg and only that leg); the SFU's record - `ice connected` and an audio
+`track published` for all five, `SFU using TURN_URL env` under TURN, then five
+`session end ... disposition=client-close` lines whose `connected_ms` is a number.
+
+First measured on a Windows dev box (Chrome, no TURN, 2026-11-13): PASS - every one of the 20 legs
+at 254 to 516 frames opened, the sixth user `room-full`, the negative leg 273 frames refused, the
+last joiner's record `offer_out=1 answer_in=1 tracks_sub=4` (its four tracks came by the
+renegotiation that follows its own offer).
 
 **The readiness of coturn is read from the KERNEL** (`ss -lun` shows its UDP socket on the
 runner's address), never from a line of coturn's log: the first two runs waited for good on that

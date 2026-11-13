@@ -2021,6 +2021,28 @@ lands nothing in the app can start or join a group call.
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
 
+### The relay leg (WP-GC4, 2026-11-13)
+
+**Built on the server, behind a setting that is `none` in production.** Owner decision D2: one
+server-side setting picks the relay of a group call. `platform_config.call_relay` (`none` |
+`call-service`, core migration 023, `/admin/platform`, published by `GET /api/version` as
+`calls.relay`) is read by chat-delivery at a group call's `initiate`, never cached
+(`utils/call-relay.ts`). With `none` the mesh and its past-the-cap refusal stand. With
+`call-service`, **INTERIM and reversible (2026-11-13): a group call goes through the relay FROM THE
+START** - its binding and every room token say `mode: "sfu"` and carry the relay's cap (8,
+`RELAY_SEATS`), and `initiate` and `room-token` answer `mode: "sfu"` - until WP-GC5's mid-call switch
+from the mesh exists (D1). call-service refuses a `Join` in another mode than the token signs. The
+dev seed writes `call-service`. `cloudflare` joins the list with its leg (WP-GC3).
+
+The relay never sees a clear frame: each client keeps its per-sender keys and transforms (WP-GC1),
+and learns the sender of every forwarded track from its stream id, which the SFU sets to the sender's
+user id ([call-service](../../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
+Proven by a 5-party encrypted call through the SFU in CI
+([the scenario](../../services/call-service.md#the-relayed-group-scenario-wp-gc4-2026-11-13)). The
+app's own SFU leg (the client, against this protocol) is the client pull request's, as is reading
+`mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
+`callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
+
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 
 **The decision (owner, D-B, 2026-10-31).** The call microphone goes through RNNoise, ON by

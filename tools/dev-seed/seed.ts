@@ -590,6 +590,9 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev seeds group calls on `mesh` (core migration 022) so the peer-to-peer group call is read
         // on the bench phones without a click; production's row defaults to `off`.
         group_calls_mode: 'mesh',
+        // Dev seeds the relay on `call-service` (core migration 023) so a group call through our SFU
+        // is read on the bench phones without a click; production's row defaults to `none`.
+        call_relay: 'call-service',
       },
     ],
     users,

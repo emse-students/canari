@@ -82,6 +82,7 @@ describe('parseServerVersionInfo', () => {
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -236,6 +237,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
       groupCallsMode: 'mesh',
+      callRelay: 'none',
       livesMode: 'on',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -261,6 +263,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -334,6 +337,7 @@ describe('fetchServerAppVersionReliable', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -543,5 +547,31 @@ describe('the group calls switch of /api/version (calls.groupMode)', () => {
     expect(parseServerVersionInfo(cached)).toEqual(info);
     expect(info?.groupCallsMode).toBe('mesh');
     expect(info?.callsMode).toBe('audio');
+  });
+});
+
+describe('the call relay of /api/version (calls.relay)', () => {
+  it.each(['none', 'call-service'] as const)('reads %s', (relay) => {
+    expect(
+      parseServerVersionInfo({
+        version: '1.2.3',
+        calls: { mode: 'audio', groupMode: 'mesh', relay },
+      })?.callRelay
+    ).toBe(relay);
+  });
+  it.each([undefined, 'call-service', { mode: 'audio' }, { relay: 'cloudflare' }, { relay: 1 }])(
+    'reads %j as none - a server without the setting has no relay',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', calls: raw })?.callRelay).toBe('none');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      calls: { mode: 'audio', groupMode: 'mesh', relay: 'call-service' },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.callRelay).toBe('call-service');
   });
 });

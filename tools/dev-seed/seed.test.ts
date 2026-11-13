@@ -248,6 +248,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "group_calls_mode IN ('off', 'mesh')",
     holds: oneOf('group_calls_mode', ['off', 'mesh']),
   },
+  CHK_platform_config_call_relay: {
+    sql: "call_relay IN ('none', 'call-service')",
+    holds: oneOf('call_relay', ['none', 'call-service']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),
