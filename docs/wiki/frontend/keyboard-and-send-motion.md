@@ -311,13 +311,13 @@ On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the 
 And on the iPhone 12, a pre-release carrying both PRs (the store build cannot be inspected, so the
 MJPEG stream and the syslog are the instruments, as in section 5):
 
-5. Keyboard open in a DM, five times: syslog `keyboard overlap=301 -> webview height 543, handed to
+6. Keyboard open in a DM, five times: syslog `keyboard overlap=301 -> webview height 543, handed to
    the page first` then `keyboard rise #n: the page's keyboard layout is on screen after N ms`, and
    never an `ERROR` line. In the frames, the web composer above the keyboard on every frame from the
    first one that moves (no frame where it is hidden or the page is drawn lower), the native "+"
    beside its web twin, no band, no cropped frame. N, five values: the two readings that would prove
    the proof insufficient are above.
-6. Keyboard close in a DM resting on its last message, five times: syslog `keyboard fall (N ms, curve
+7. Keyboard close in a DM resting on its last message, five times: syslog `keyboard fall (N ms, curve
    7): the page rides it` and the page's `keyboard fall ridden over N ms: D, D px`. In the frames, the
    gap from the field's centre to the keyboard's top near-constant through the fall, like Messenger's
    ~58 pt (a gap that grows then closes means the curve-7 stand-in leads or lags the keys), the thread
@@ -328,9 +328,9 @@ MJPEG stream and the syslog are the instruments, as in section 5):
    (`D px`, one value); a thread scrolled up a screen - the same; once with Reduce Motion on - no ride,
    the page full height at once, no WARN. And a tap on the thread during a fall: the ride ends, the
    pieces at their places, nothing left translated.
-7. Open, then switch to the emoji keyboard and back (a height change while open), then close before
+8. Open, then switch to the emoji keyboard and back (a height change while open), then close before
    the rise lands (tap the field and the thread at once): the frame always ends at the keyboard's
    edge, `ended WITHOUT its proof` when a rise was overtaken (never confused with a slow one), never a
    ride left half way, and one settled report per change, never two.
-8. The composer's dimensions and the send motion, which apply there unchanged, and the composer in
+9. The composer's dimensions and the send motion, which apply there unchanged, and the composer in
    landscape clear of the notch.
