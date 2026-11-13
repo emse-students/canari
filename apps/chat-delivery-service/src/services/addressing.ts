@@ -76,7 +76,9 @@ export function declaresAddressedHistory(caps: string | undefined | null): boole
  *
  * KEYS: the presence key, the sessions hash. ARGV: channel (empty = check only), payload,
  * capability, sessions marker. Returns 1 when every session of the device declared the capability
- * (and the frame was published, when a channel was given), 0 otherwise. Redis runs a script alone,
+ * (and the frame was published, when a channel was given), 2 when the device has NO presence key
+ * (it is offline: nothing was published), 0 otherwise - an online device with a session that did
+ * not declare, or an older gateway's presence value. Redis runs a script alone,
  * so a session the gateway records after this ran is one the frame was already published before -
  * and the gateway's edge filter keeps it from that session anyway.
  *
@@ -85,7 +87,9 @@ export function declaresAddressedHistory(caps: string | undefined | null): boole
  * capability in a hash of its own ({@link JOIN_ASK_PUBLISH_LUA}).
  */
 export const ADDRESSABLE_PUBLISH_LUA = `
-if redis.call('GET', KEYS[1]) ~= ARGV[4] then return 0 end
+local presence = redis.call('GET', KEYS[1])
+if presence == false then return 2 end
+if presence ~= ARGV[4] then return 0 end
 local declared = redis.call('HVALS', KEYS[2])
 if #declared == 0 then return 0 end
 for _, value in ipairs(declared) do
@@ -104,7 +108,9 @@ return 1
  * the device gets no frame rather than a session that cannot route it.
  */
 export const JOIN_ASK_PUBLISH_LUA = `
-if redis.call('GET', KEYS[1]) ~= ARGV[4] then return 0 end
+local presence = redis.call('GET', KEYS[1])
+if presence == false then return 2 end
+if presence ~= ARGV[4] then return 0 end
 local sessions = redis.call('HKEYS', KEYS[2])
 if #sessions == 0 then return 0 end
 for _, field in ipairs(sessions) do
@@ -120,16 +126,22 @@ export interface EvalCapable {
 }
 
 /**
- * Whether every session of the device declared `capability` now and, when `publish` is given, the
- * frame published in the same atomic step. True only when the script answered 1.
+ * What the check-and-publish found for one device: `addressable` (every session declared, and the
+ * frame was published when asked), `offline` (no presence key at all) or `undeclared` (online, but a
+ * session did not declare, or an older gateway holds it). The two refusals want different words in a
+ * log and the same behaviour in the code, so the script itself says which it was: nothing is
+ * classified by reading Redis a second time.
  */
-export async function publishIfAddressable(
+export type Addressability = 'addressable' | 'offline' | 'undeclared';
+
+/** The atomic check-and-publish of {@link publishIfAddressable}, with the reason for a refusal. */
+export async function addressabilityOf(
   redis: EvalCapable,
   userId: string,
   deviceId: string,
   publish?: { channel: string; payload: string },
   capability: SessionCapability = ADDRESSED_HISTORY_CAPABILITY
-): Promise<boolean> {
+): Promise<Addressability> {
   const args = [publish?.channel ?? '', publish?.payload ?? '', capability, PRESENCE_SESSIONS];
   const answer =
     capability === JOIN_ASK_CAPABILITY
@@ -148,5 +160,20 @@ export async function publishIfAddressable(
           addressingSessionsKey(userId, deviceId),
           ...args
         );
-  return Number(answer) === 1;
+  const code = Number(answer);
+  return code === 1 ? 'addressable' : code === 2 ? 'offline' : 'undeclared';
+}
+
+/**
+ * Whether every session of the device declared `capability` now and, when `publish` is given, the
+ * frame published in the same atomic step. True only when the script answered 1.
+ */
+export async function publishIfAddressable(
+  redis: EvalCapable,
+  userId: string,
+  deviceId: string,
+  publish?: { channel: string; payload: string },
+  capability: SessionCapability = ADDRESSED_HISTORY_CAPABILITY
+): Promise<boolean> {
+  return (await addressabilityOf(redis, userId, deviceId, publish, capability)) === 'addressable';
 }

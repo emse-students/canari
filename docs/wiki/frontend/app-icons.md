@@ -39,7 +39,7 @@ drawn by hand per surface.
 | Generator | Writes |
 | --- | --- |
 | `gen-android-icons.mjs` | adaptive foreground and THEMED (monochrome) layers, legacy square and round icons, the gradient background drawable, the status-bar icon |
-| `gen-web-icons.mjs` | `apple-touch-icon.png` (opaque), `favicon.ico` |
+| `gen-web-icons.mjs` | `apple-touch-icon.png` (opaque) and its byte-identical twin `apple-touch-icon-precomposed.png` (the older name probed by Safari and crawlers, a 404 on production until 2026-11-13; a copy in `static/`, served like the other icons), `favicon.ico` |
 | `gen-native-icons.mjs` | the desktop set (`.icns`, `.ico`, Windows tiles) and `src-tauri/icons/ios`, through `tauri icon` |
 | `gen-ios-icon.mjs` | `gen/apple/AppIcon.icon`, the Icon Composer document the app actually ships (the old `appiconset` is deleted) |
 | `gen-icon-layers.mjs` | `store/icons/` (the store icons, the layers for an icon editor, the perch mark), `og-canari.png` and `src-tauri/icons/Canari.png` |

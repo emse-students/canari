@@ -45,6 +45,16 @@ describe('the icons app.html declares', () => {
     for (const p of paths) expect(() => readFileSync(p)).not.toThrow();
   });
 
+  it('ships apple-touch-icon-precomposed.png, the older name Safari and crawlers probe, as a twin', () => {
+    // It answered 404 on production (2026-11-13). It is the SAME bytes, so it can never be a
+    // different picture from the declared icon.
+    expect(
+      readFileSync('static/apple-touch-icon-precomposed.png').equals(
+        readFileSync('static/apple-touch-icon.png')
+      )
+    ).toBe(true);
+  });
+
   it('ships favicon.ico, which nothing declares and everything asks for', () => {
     expect(() => readFileSync('static/favicon.ico')).not.toThrow();
   });

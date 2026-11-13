@@ -227,6 +227,23 @@ window rather than as a rate per week. The baseline was reachable only because i
 an unusually long quiet period. Anything wanting a genuinely comparable 7-day count would have to
 name a mechanism that outlives the container, and none is deployed.
 
+## Per-frame lines: a typing frame is DEBUG (2026-11-13)
+
+Production's gateway logged every typing frame three times at INFO (`Received WS JSON frame`,
+`[WS RX]`, `[ROUTE]`), the last carrying the group's whole member list and costing a Redis
+`SMEMBERS` per frame. A line is moved to DEBUG only when its own code says it is the ordinary path,
+and a typing frame is: `EPHEMERAL_FRAMES` (`ws_dispatch.rs`, today `typing` alone) names the frames
+sent many times a minute that mean nothing a minute later, and the three lines are DEBUG for those.
+Every other frame keeps INFO, one line per message being the trace of a delivery. `[ROUTE]` no longer
+lists members (nor asks Redis for them): who is online is what presence says.
+
+## The heartbeat close is INFO (2026-11-13)
+
+`[heartbeat] No pong ... closing dead connection` was a WARN, about as often as `Client went away
+without a closing handshake` and for the same reason: a phone that lost its network or a laptop that
+slept never answers, so the missed pongs ARE the ordinary end of most sessions. It sits beside that
+line at the same level, as the two are one event (a session ended) differing in how it was noticed.
+
 ## What one connection sent, said once when it ends (2026-11-13)
 
 Each connection carries a `FrameCensus` (`frame_census.rs`), fed by the receive loop, whose `Drop`

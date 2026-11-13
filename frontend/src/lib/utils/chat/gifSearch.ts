@@ -1,6 +1,7 @@
 import { Log } from '$lib/utils/Log';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { deliveryUrl } from '$lib/utils/apiUrl';
+import { GIF_MAX_BYTES } from '$lib/utils/gifMediaProxy';
 
 /**
  * THE GIF SEARCH, ASKED OF CANARI AND NEVER OF THE PROVIDER (owner decision 2026-10-16).
@@ -22,6 +23,17 @@ export interface GifRendition {
   url: string;
   width: number;
   height: number;
+  /**
+   * The byte size the provider declared, when it sent one. The relay answers 413 above
+   * {@link GIF_MAX_BYTES}, and an `<img>` that failed cannot say why, so a rendition known to be over
+   * it is never chosen (`fitsRelay`) and never retried (`GifTileImage`).
+   */
+  bytes?: number;
+}
+
+/** Whether the relay will carry this rendition: only a DECLARED size over its ceiling says no. */
+export function fitsRelay(r: GifRendition): boolean {
+  return r.bytes === undefined || r.bytes <= GIF_MAX_BYTES;
 }
 
 export interface GifResult {
@@ -168,7 +180,13 @@ export async function fetchGifPage(
  * lightest rendition.
  */
 export function pickGridRendition(gif: GifResult, tileWidth: number): GifRendition {
-  const candidates = [gif.tiny, gif.preview].filter((r): r is GifRendition => !!r);
+  const all = [gif.tiny, gif.preview].filter((r): r is GifRendition => !!r);
+  // Only renditions the relay carries; when none does the lightest is still drawn (and shown as failed).
+  const carried = all.filter(fitsRelay);
+  const candidates =
+    carried.length > 0
+      ? carried
+      : [all.reduce((a, b) => ((b.bytes ?? 0) < (a.bytes ?? 0) ? b : a))];
   const covering = candidates.filter((r) => r.width >= tileWidth);
   const pool =
     covering.length > 0 ? covering : [candidates.reduce((a, b) => (b.width > a.width ? b : a))];
@@ -186,5 +204,6 @@ export const COMMENT_GIF_WIDTH = 200;
  * narrow to be drawn at that width.
  */
 export function commentGifRendition(gif: GifResult): GifRendition {
-  return gif.preview.width >= COMMENT_GIF_WIDTH ? gif.preview : gif.full;
+  if (gif.preview.width >= COMMENT_GIF_WIDTH || !fitsRelay(gif.full)) return gif.preview;
+  return gif.full;
 }
