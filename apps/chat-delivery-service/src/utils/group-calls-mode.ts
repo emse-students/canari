@@ -37,6 +37,15 @@ export const MESH_SEATS_VIDEO = 3;
 export const GROUP_CALL_MESH_VERSION = 1;
 
 /**
+ * The group-call version of a binary that ALSO speaks the SFU leg (`Join { mode: 'sfu' }`, one
+ * connection to the relay, the sender read from each forwarded stream id). Cumulative: a build at
+ * 2 speaks the mesh too. A group call goes through the relay only when its CALLER declared it, and
+ * only builds that declared it are rung for, or given a token to, a relayed call - a mesh-only build
+ * joins `p2p` and would be refused `mode-mismatch` (review of #3497).
+ */
+export const GROUP_CALL_SFU_VERSION = 2;
+
+/**
  * The group-call version a request or a registration declared: a non-negative integer, capped at
  * the highest version this server knows; anything else is 0 and `malformed`, so the caller can
  * accuse it. Absent is 0 and NOT malformed - an old build saying nothing is the ordinary case.
@@ -44,10 +53,10 @@ export const GROUP_CALL_MESH_VERSION = 1;
 export function parseGroupCallVersion(declared: unknown): { version: number; malformed: boolean } {
   if (declared === undefined || declared === null) return { version: 0, malformed: false };
   if (typeof declared === 'number' && Number.isInteger(declared) && declared >= 0) {
-    return { version: Math.min(declared, GROUP_CALL_MESH_VERSION), malformed: false };
+    return { version: Math.min(declared, GROUP_CALL_SFU_VERSION), malformed: false };
   }
   if (typeof declared === 'string' && /^\d{1,3}$/.test(declared)) {
-    return { version: Math.min(Number(declared), GROUP_CALL_MESH_VERSION), malformed: false };
+    return { version: Math.min(Number(declared), GROUP_CALL_SFU_VERSION), malformed: false };
   }
   return { version: 0, malformed: true };
 }

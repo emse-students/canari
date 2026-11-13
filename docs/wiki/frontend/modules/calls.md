@@ -2049,8 +2049,15 @@ server-side setting picks the relay of a group call. `platform_config.call_relay
 `call-service`, **INTERIM and reversible (2026-11-13): a group call goes through the relay FROM THE
 START** - its binding and every room token say `mode: "sfu"` and carry the relay's cap (8,
 `RELAY_SEATS`), and `initiate` and `room-token` answer `mode: "sfu"` - until WP-GC5's mid-call switch
-from the mesh exists (D1). call-service refuses a `Join` in another mode than the token signs. The
-dev seed writes `call-service`. `cloudflare` joins the list with its leg (WP-GC3).
+from the mesh exists (D1). call-service refuses a `Join` in another mode than the token signs.
+**A build without the SFU leg is never put on the relay (review of #3497, 2026-11-14):** the leg is a
+capability, `groupCallVersion` 2 (`GROUP_CALL_SFU_VERSION`; 1 is the mesh alone). With
+`call-service`, a CALLER that declared less than 2 gets a MESH call - no `mode`, the mesh's cap - and
+chat-delivery logs `stays on the mesh although call_relay=call-service - the caller's build has no
+SFU leg`; a relayed call's room token is refused (`GROUP_CALL_CLIENT_TOO_OLD`) to a build below 2, and
+its ring reaches only devices at 2 or more (the mesh's ring keeps `>= 1`). So turning the relay on
+never breaks the builds that only speak the mesh. The dev seed writes `none` until the app's SFU leg
+ships. `cloudflare` joins the list with its leg (WP-GC3).
 
 The relay never sees a clear frame: each client keeps its per-sender keys and transforms (WP-GC1),
 and learns the sender of every forwarded track from its stream id, which the SFU sets to the sender's

@@ -149,7 +149,7 @@ describe('PushController - the wake-up push', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable wakeVersion'));
     });
 
-    it('stores the group-call version a binary declares, 0 when it says nothing (WP-GC2)', async () => {
+    it('stores the group-call version a binary declares, capped at the SFU leg version, 0 when it says nothing (WP-GC2)', async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
       await controller.registerPushToken({ ...body, groupCallVersion: 1 }, 'user-1', undefined);
       await controller.registerPushToken({ ...body, groupCallVersion: 9 }, 'user-1', undefined);
@@ -160,7 +160,7 @@ describe('PushController - the wake-up push', () => {
         undefined
       );
       expect(pushTokenRepo.upsert.mock.calls.map(([row]) => row.groupCallVersion)).toEqual([
-        1, 1, 0, 0,
+        1, 2, 0, 0,
       ]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable groupCallVersion'));
     });

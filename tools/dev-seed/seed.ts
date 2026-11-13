@@ -592,7 +592,8 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         group_calls_mode: 'mesh',
         // Dev seeds the relay on `call-service` (core migration 023) so a group call through our SFU
         // is read on the bench phones without a click; production's row defaults to `none`.
-        call_relay: 'call-service',
+        // `none` until the client's SFU leg ships: a mesh-only client cannot join a relayed call.
+        call_relay: 'none',
       },
     ],
     users,

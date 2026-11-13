@@ -27,6 +27,7 @@ import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
 import {
   GROUP_CALL_MESH_VERSION,
+  GROUP_CALL_SFU_VERSION,
   MESH_SEATS_AUDIO,
   MESH_SEATS_VIDEO,
   parseGroupCallVersion,
@@ -257,6 +258,11 @@ interface RingPlan {
   calleeIds: string[];
   /** A GROUP call (WP-GC2): its ring reaches only devices whose binary speaks the mesh. */
   group: boolean;
+  /**
+   * The group-call version a device must have declared to be rung: the mesh's, or the SFU leg's
+   * for a call through the relay. 0 for a 1:1 call.
+   */
+  needsVersion: number;
 }
 
 @Injectable()
@@ -406,7 +412,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const group = others.length >= 2;
     let path: GroupCallPath | undefined;
     if (group) {
-      path = await this.assertGroupCallsOpen(userId, groupId, video);
+      path = await this.assertGroupCallsOpen(
+        userId,
+        groupId,
+        video,
+        parseGroupCallVersion(groupCallVersion).version
+      );
       this.assertSpeaksTheMesh(userId, groupCallVersion, `initiate group=${groupId}`);
       this.refuseAcrossReviewCohort(userId, others, `initiate group=${groupId}`);
     } else {
@@ -496,7 +507,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('This call does not belong to this conversation');
     }
     if (binding.maxSeats !== undefined) {
-      this.assertSpeaksTheMesh(userId, groupCallVersion, `join-token room=${roomId}`);
+      this.assertSpeaksTheMesh(
+        userId,
+        groupCallVersion,
+        `join-token room=${roomId}`,
+        binding.mode === 'sfu' ? GROUP_CALL_SFU_VERSION : GROUP_CALL_MESH_VERSION
+      );
       // The review cohort's boundary, as at `initiate` and `ring`: every participant the joiner
       // would be paired with, the caller included.
       this.refuseAcrossReviewCohort(
@@ -964,12 +980,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
       return null;
     }
-    return { callerId, groupId, callId, hasVideo, calleeIds, group };
+    const needsVersion = !group
+      ? 0
+      : bound?.mode === 'sfu'
+        ? GROUP_CALL_SFU_VERSION
+        : GROUP_CALL_MESH_VERSION;
+    return { callerId, groupId, callId, hasVideo, calleeIds, group, needsVersion };
   }
 
   /** The push fan-out of a ring; resolves with how many devices were handed the ring. */
   private async fanOutRing(plan: RingPlan): Promise<{ rang: number }> {
-    const { callerId, groupId, callId, hasVideo, calleeIds, group } = plan;
+    const { callerId, groupId, callId, hasVideo, calleeIds, group, needsVersion } = plan;
     const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
     if (ringable.length === 0) {
       this.logger.log(`[ring] call=${callId} group=${groupId} rang=0 - nobody may be rung`);
@@ -980,11 +1001,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // A GROUP call rings only binaries that speak the mesh: an older one would ring, then join as
     // a 1:1 call and break the others' legs - never offered (WP-GC2). Its member is not told.
     const tokens = group
-      ? registered.filter((pt) => (pt.groupCallVersion ?? 0) >= GROUP_CALL_MESH_VERSION)
+      ? registered.filter((pt) => (pt.groupCallVersion ?? 0) >= needsVersion)
       : registered;
     if (tokens.length < registered.length) {
       this.logger.log(
-        `[ring] call=${callId} group=${groupId} kind=group skipped=${registered.length - tokens.length} device(s) whose build predates group calls`
+        `[ring] call=${callId} group=${groupId} kind=group skipped=${registered.length - tokens.length} device(s) whose build predates group calls (needs groupCallVersion>=${needsVersion})`
       );
     }
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
@@ -1170,7 +1191,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   private async assertGroupCallsOpen(
     userId: string,
     groupId: string,
-    video: boolean
+    video: boolean,
+    callerVersion: number
   ): Promise<GroupCallPath> {
     const mode = await readGroupCallsMode(this.groupMemberRepo.manager, this.logger);
     if (mode === 'off') {
@@ -1183,7 +1205,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     const relay = await readCallRelay(this.groupMemberRepo.manager, this.logger);
-    if (relay === 'call-service') {
+    if (relay === 'call-service' && callerVersion < GROUP_CALL_SFU_VERSION) {
+      // The relay is on, but this caller's build has no SFU leg: it would `Join` p2p and be
+      // refused `mode-mismatch`. The call stays on the mesh, where it works, and says so.
+      this.logger.log(
+        `[call] initiate group=${groupId} user=${userId}: stays on the mesh although call_relay=call-service - the caller's build has no SFU leg (groupCallVersion=${callerVersion})`
+      );
+    } else if (relay === 'call-service') {
       this.logger.log(
         `[call] initiate group=${groupId} user=${userId}: through call-service's relay (call_relay=call-service, seats=${RELAY_SEATS})`
       );
@@ -1197,11 +1225,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * {@link GROUP_CALL_MESH_VERSION}). An older build would join as a 1:1 call - one connection, the
    * 1:1 keys - and break every other leg; it is refused with a code of its own, before a token.
    */
-  private assertSpeaksTheMesh(userId: string, declared: unknown, scope: string): void {
+  private assertSpeaksTheMesh(
+    userId: string,
+    declared: unknown,
+    scope: string,
+    needs: number = GROUP_CALL_MESH_VERSION
+  ): void {
     const { version, malformed } = parseGroupCallVersion(declared);
-    if (version >= GROUP_CALL_MESH_VERSION) return;
+    if (version >= needs) return;
     this.logger.log(
-      `[call] ${scope} REFUSED user=${userId}: the client does not speak group calls (groupCallVersion=${malformed ? 'unreadable' : version})`
+      `[call] ${scope} REFUSED user=${userId}: the client does not speak this group call (groupCallVersion=${malformed ? 'unreadable' : version}, needs ${needs})`
     );
     throw new ForbiddenException({
       code: RefusalCode.GROUP_CALL_CLIENT_TOO_OLD,

@@ -1231,8 +1231,12 @@ async fn an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user() {
         recv(&mut late).await,
         json!({ "type": "Refused", "reason": "room-full" })
     );
-    svc.logged(&["refused from SFU room", room, "already hold its 3 seat(s)"])
-        .await;
+    svc.logged(&[
+        "refused from SFU room",
+        room,
+        "all 3 seat(s) are held by other users",
+    ])
+    .await;
     let mut sibling = join_sfu(&svc, "u1", room, 3).await;
     sfu_joined(&mut sibling, room).await;
     svc.logged(&["[multi-device] SFU room", room, "takes the seat of u1:"])

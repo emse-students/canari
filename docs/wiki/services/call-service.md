@@ -267,6 +267,22 @@ throughout, so no clear frame ever crosses it. The SFU mode needed three things 
   forwarded track is ever answered on the client's own transceiver - whose receiver transform was
   made before anyone knew whose frames it would carry - and every one arrives on a transceiver of its
   own, armed in `ontrack`.
+- **A departed publisher's tracks leave with it.** Every forwarded track records its publisher
+  (`PublishedTrack.publisher`). When a peer leaves or is evicted by a sibling,
+  `drop_publisher_tracks` removes its entries from the room, `remove_track`s them from every other
+  peer's connection and renegotiates each peer that lost one - so a late joiner is never offered a
+  dead track, and a rejoin leaves ONE track set per user under its stream id (tests
+  `a_departed_publishers_tracks_leave_the_room_and_every_subscriber`,
+  `a_rejoin_leaves_one_set_of_tracks_per_user`).
+- **A renegotiation never collides with a negotiation in flight.** One owed while the peer's
+  connection is not `stable` (its own offer being answered) is recorded in `renegotiate_pending` and
+  offered when that negotiation returns to `stable` (`renegotiate_if_owed`, after the answer to the
+  peer's offer and after a renegotiation answer is applied) - a fact, not a retry timer.
+- **No map guard across an await.** Peer contexts are `Arc`s and every handler clones the context
+  (or the room) out of its `DashMap` before awaiting: a shard guard held across an await can deadlock
+  a task that takes the same shard on that worker.
+- **An SFU `Join` carrying a p2p resume token is answered `Refused { mode-mismatch }`**, never a
+  silent close.
 - **The mode is signed.** A token carrying `mode` (`sfu` | `p2p`) is refused for a `Join` in the
   other mode (`mode-mismatch`), so a client cannot take a relayed group call into a mesh or the
   reverse. Tokens without the claim (1:1 calls, the mesh, every token older than WP-GC4) leave the
