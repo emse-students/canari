@@ -1729,6 +1729,7 @@
   "admin_cercle_amount_hint": "Le montant est choisi par l'acheteur ; ces bornes l'encadrent. Une recharge est rachetable sans limite et ne peut jamais être épuisée.",
   "admin_cercle_members_only_label": "Réservé aux cotisants",
   "admin_cercle_members_only_hint": "Coché, seuls les cotisants de l'association (une formule active, quelle qu'elle soit) peuvent recharger. Décoché, toute personne connectée peut recharger.",
+  "admin_cotisation_mode_in_use": "La cotisation ne peut pas être désactivée tant que des produits ou des cartes partenaires sont réservés aux cotisants. Décochez d'abord « réservé aux cotisants » sur ces éléments, puis réessayez.",
   "admin_members_only_without_cotisation": "Activez d'abord la cotisation de l'association : sans elle, personne ne peut être cotisant, donc rien ne peut être réservé aux cotisants.",
   "admin_cercle_webhook_secret_set": "Un secret est enregistré. Laisser vide pour le conserver, ou saisir une nouvelle valeur pour le remplacer.",
   "admin_cercle_saved": "Enregistré",

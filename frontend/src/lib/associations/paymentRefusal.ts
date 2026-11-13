@@ -224,6 +224,21 @@ export function membersOnlySaveRefusalMessage(err: unknown): string | null {
 }
 
 /**
+ * The body `code` of social-service's 409 when an association clears its cotisation mode while an
+ * active product or partnership card is still reserved to cotisants (`members-only-gate.ts`): the
+ * rows must be unticked first. The body also lists them, for API clients.
+ */
+export const COTISATION_MODE_IN_USE = 'COTISATION_MODE_IN_USE';
+
+/** The sentence for a clear of the cotisation mode refused for a members-only row, or `null`. */
+export function cotisationModeInUseMessage(err: unknown): string | null {
+  if (err instanceof SocialApiError && err.code === COTISATION_MODE_IN_USE) {
+    return m.admin_cotisation_mode_in_use();
+  }
+  return null;
+}
+
+/**
  * The body `code` of social-service's 409 when a paid answer's form grants the cotisation tier the
  * submitter already holds (`tier-pricing.ts`): a form words it apart from a product already bought.
  */
