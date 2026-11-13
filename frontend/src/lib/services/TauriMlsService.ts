@@ -47,7 +47,8 @@ import {
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { toBase64, toHex } from '$lib/utils/hex';
+import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
+import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import {
@@ -1044,8 +1045,17 @@ export class TauriMlsService extends BaseMlsService {
    * second write went in 2026-08-14; the marshalling it blamed only went when the command stopped
    * returning the blob at all.
    */
-  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await this.persistState(deviceKeyB64);
+  protected async writeCheckpoint(
+    deviceKeyB64: string,
+    _latch: MlsStateWriteLatch,
+    ledgers?: StateLedgerChanges
+  ): Promise<void> {
+    await this.persistState(deviceKeyB64, ledgers);
+  }
+
+  /** The ledgers the opened native state carries (`mls-core/src/app_ledgers.rs`). */
+  protected async readStateLedgers(): Promise<Record<string, string>> {
+    return invoke<Record<string, string>>('lire_ledgers_mls');
   }
 
   /**
@@ -1075,10 +1085,15 @@ export class TauriMlsService extends BaseMlsService {
    * A length, by contrast, is eight bytes and answers the one question a caller can have about a
    * write it did not perform itself.
    */
-  async persistState(deviceKeyB64: string): Promise<number> {
+  async persistState(deviceKeyB64: string, ledgers?: StateLedgerChanges): Promise<number> {
     await this.awaitRustMutations();
-    // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point.
-    return invoke<number>('sauvegarder_mls_et_persister', { deviceKeyB64 });
+    // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point. The
+    // ledgers ride the same invoke and are applied to the manager before its export
+    // (`stateLedgers.ts`), so they reach `mls.bin` in the write that holds their ratchets.
+    return invoke<number>('sauvegarder_mls_et_persister', {
+      deviceKeyB64,
+      ledgers: ledgers ?? null,
+    });
   }
 
   /**

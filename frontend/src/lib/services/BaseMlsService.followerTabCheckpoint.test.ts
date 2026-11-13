@@ -6,11 +6,23 @@ vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 // The IndexedDB path of the version guard, never the native file.
 vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => false }));
 
-const commitPendingHistoryMarks = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/history', () => ({
-  commitPendingHistoryMarks,
-  snapshotPendingHistoryMarks: (userId: string) => ({ userId, groups: [] }),
+  forgetSeenCipherCaches: vi.fn(),
+  stagePendingHistoryMarks: vi.fn(() => 0),
   noteFrameConsumed: vi.fn(),
+}));
+
+// The send ledger's `emitted` counts live in IndexedDB (KILL-2): what a follower must not touch is
+// observed at the ledger's own seam, the functions that would reset, read, forget or count it.
+const ledger = vi.hoisted(() => ({
+  resetSendRatchetLedger: vi.fn(async () => {}),
+  sendRatchetEntries: vi.fn(async () => []),
+  forgetSendRatchetEntries: vi.fn(async () => {}),
+  readEmitted: vi.fn(async () => ({})),
+}));
+vi.mock('$lib/mls-client/sendRatchetLedger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/sendRatchetLedger')>()),
+  ...ledger,
 }));
 
 // THE ROLE OF THE TAB WHOSE CODE IS RUNNING. Both tabs share this one `BaseMlsService` module, so
@@ -28,7 +40,6 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { BaseMlsService } from './BaseMlsService';
 import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 import type * as HexModule from '$lib/utils/hex';
-import { noteFrameEmitted } from '$lib/mls-client/sendRatchetLedger';
 import { MLS_STATE_VERSION_KEY as VERSION_KEY } from '$lib/utils/hex';
 
 /**
@@ -104,6 +115,8 @@ async function openTab(storedVersion: number) {
     owedSendBurns: new Map(),
     unprovenSendRatchets: new Set(),
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
+    stageCheckpointLedgers: BaseMlsService.prototype['stageCheckpointLedgers'],
+    emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
     writeCheckpoint: vi.fn(async (_key: string, latch: HexModule.MlsStateWriteLatch) => {
       const outcome = await hex.saveMlsStateEncrypted(
         'u',
@@ -128,7 +141,7 @@ describe('BaseMlsService.persistCheckpoint in two tabs of one account', () => {
   beforeEach(() => {
     store = installSharedIndexedDb();
     resetStateAuthorityForTests();
-    commitPendingHistoryMarks.mockClear();
+    ledger.readEmitted.mockClear();
     infoLines = [];
     vi.spyOn(console, 'info').mockImplementation((line: string) => void infoLines.push(line));
   });
@@ -157,14 +170,14 @@ describe('BaseMlsService.persistCheckpoint in two tabs of one account', () => {
     // Refused BEFORE anything is captured: no export, no write, nothing declared durable.
     expect(follower.doc.writeCheckpoint).not.toHaveBeenCalled();
     expect(store.get(VERSION_KEY)).toBe(loaded);
-    expect(commitPendingHistoryMarks).toHaveBeenCalledTimes(1); // the leader's, only
+    expect(leader.doc.writeCheckpoint).toHaveBeenCalledTimes(1); // the leader's, only
 
     // The leader moves on: its next number is the one the follower's write used to take.
     role.now = 'leader';
     noteMlsStateLoaded(true);
     await leader.persist();
     expect(store.get(VERSION_KEY)).toBe(loaded + 1);
-    expect(commitPendingHistoryMarks).toHaveBeenCalledTimes(2);
+    expect(leader.doc.writeCheckpoint).toHaveBeenCalledTimes(2);
   });
 
   it('a follower promoted in place writes nothing until its reload', async () => {
@@ -259,9 +272,7 @@ describe('BaseMlsService in a follower tab sends nothing and judges no ledger', 
 
   it('leaves the shared send ledger to the leader: no reset, no forget, no burn', async () => {
     role.now = 'follower';
-    localStorage.clear();
-    // The leader's own count of a frame it sent: what a reset on this copy's fresh start would erase.
-    noteFrameEmitted('u', 'group-1', 3);
+    Object.values(ledger).forEach((fn) => fn.mockClear());
     const doc = {
       userId: 'u',
       freshStart: true,
@@ -271,13 +282,15 @@ describe('BaseMlsService in a follower tab sends nothing and judges no ledger', 
       skipSendGenerations: vi.fn(),
       persistCheckpoint: vi.fn(),
     };
-    const before = { ...localStorage };
     await (
       BaseMlsService.prototype as unknown as { reconcileSendRatchets(): Promise<void> }
     ).reconcileSendRatchets.call(doc);
 
-    expect(Object.keys(before)).not.toHaveLength(0);
-    expect({ ...localStorage }).toEqual(before);
+    // A fresh start in the leader resets the ledger; this copy's fresh start resets, reads and
+    // forgets nothing of the leader's counts.
+    expect(ledger.resetSendRatchetLedger).not.toHaveBeenCalled();
+    expect(ledger.sendRatchetEntries).not.toHaveBeenCalled();
+    expect(ledger.forgetSendRatchetEntries).not.toHaveBeenCalled();
     expect(doc.restoredEpochOf).not.toHaveBeenCalled();
     expect(doc.skipSendGenerations).not.toHaveBeenCalled();
     expect(doc.persistCheckpoint).not.toHaveBeenCalled();

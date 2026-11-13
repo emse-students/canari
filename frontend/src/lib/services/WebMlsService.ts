@@ -47,6 +47,7 @@ import {
   isEphemeralFrame,
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
+import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
 import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import {
   loadMlsState,
@@ -200,6 +201,10 @@ export class WebMlsService extends BaseMlsService {
         return false;
       }
     }
+    // THE LEDGERS STAY THIS DOCUMENT'S (`mls-core/src/app_ledgers.rs`): the candidate holds them as
+    // its snapshot did, and the live client may have taken newer ones since. Sound because the
+    // candidate holds every live ratchet - this guard and `installUnlessOvertaken` both held.
+    candidate.adopt_app_ledgers(current);
     this.client = candidate;
     return true;
   }
@@ -1031,9 +1036,16 @@ export class WebMlsService extends BaseMlsService {
    * export and seal, or the IndexedDB transaction, which stores all of it or none of it. A caller
    * deciding whether a commit's stage can be on disk reads that, never the text.
    */
-  protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
+  protected async writeCheckpoint(
+    deviceKeyB64: string,
+    latch: MlsStateWriteLatch,
+    ledgers?: StateLedgerChanges
+  ): Promise<void> {
     let sealed: Uint8Array;
     try {
+      // IN THIS TURN, BEFORE THE EXPORT: `saveState` captures synchronously below, so the ledgers
+      // and the ratchets they describe are one capture (`stateLedgers.ts`).
+      if (ledgers) this.client.apply_app_ledgers(JSON.stringify(ledgers));
       sealed = await this.saveState(deviceKeyB64);
     } catch (e) {
       throw new MlsCheckpointNotWrittenError('export', e);
@@ -1046,6 +1058,11 @@ export class WebMlsService extends BaseMlsService {
     }
     if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
       throw new MlsStateWriteRefusedError(outcome);
+  }
+
+  /** The ledgers the opened WASM state carries (`mls-core/src/app_ledgers.rs`). */
+  protected async readStateLedgers(): Promise<Record<string, string>> {
+    return JSON.parse(this.client.app_ledgers() as string) as Record<string, string>;
   }
 
   /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */
@@ -1231,8 +1248,8 @@ export class WebMlsService extends BaseMlsService {
     // and all three other branches mint on the live client. A capture taken now therefore contains
     // what a capture taken there did, and cannot be staler than the state it describes.
     //
-    // And it gains the ratchet bookkeeping this path never did: `persistCheckpoint` brackets the
-    // write with `snapshotEmitted` / `commitPersisted`, so the generations this checkpoint makes
+    // And it gains the ratchet bookkeeping this path never did: `persistCheckpoint` stages the send
+    // counts INTO the state it writes (`stagePersisted`), so the generations this checkpoint makes
     // durable are credited instead of being re-burnt on the next load.
     //
     // AWAITED BEFORE THE PUBLISH BELOW, as the previous write was: a key package whose private half

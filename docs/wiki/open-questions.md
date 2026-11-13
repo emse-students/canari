@@ -59,13 +59,14 @@ on-disk state is BEHIND by the frames received since the last checkpoint. The th
 
 Three things are out of scope: commits, which `persistNow` checkpoints at once under any policy; this
 device's own sends, which are checkpointed on the send path; and the replay marks, which are already
-bound to the checkpoint (`commitPendingHistoryMarks`).
+bound to the checkpoint (staged into the state it writes, `stagePendingHistoryMarks`).
 
 **Why this is a decision and not a fix.** Skipping the checkpoint WEAKENS durability. A process
 death leaves `mls.bin` behind by up to N received generations. The MLS layer recovers from that, but
 three app-level consequences are not measured:
 
-1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`, `localStorage`). After a
+1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`; since KILL-2 it travels
+   inside the MLS state, so this item applies to the marks staged between checkpoints). After a
    crash it can say "read" for a frame the restored state could still read. The rows for those frames
    are written at the same drain end as today's checkpoint, so nothing new is lost. The open part is
    that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the

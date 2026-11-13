@@ -3032,8 +3032,9 @@ held 2 762 row keys and 2 073 fingerprints, under the old SHARED cap of 5 000 th
 5 000 of the mixture - so row keys pushed fingerprints out first. Across the profile: 169 ledgers,
 247 kB, mean 1.5 kB each, and nothing bounded their number.
 
-**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, called by
-`saveSeenCipherHashes`):
+**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, applied when a group's
+marks are staged into the MLS state - they travel inside it since KILL-2,
+[mls-desync-prevention](mls-desync-prevention.md#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26)):
 
 | Bound | Value | Why this number |
 | --- | --- | --- |
@@ -3066,7 +3067,7 @@ in [backlog](../backlog.md).
 
 Shipped and in `CHANGELOG.md`: the two silent decrypt paths that spent a generation without recording it
 (`noteFrameConsumed`, asserted by `historyFrameConsumptionSeam.test.ts`), the checkpoint-bound replay marks
-(`commitPendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
+(staged into the checkpoint's own state since KILL-2, `stagePendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
 the TAB-3b row of [cross-client-testing](../cross-client-testing.md).
 
 **What is left, measured 2026-09-08 with the cap and hydration both exonerated (`seenset.mjs`).** Each

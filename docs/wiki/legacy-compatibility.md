@@ -253,6 +253,15 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once every account has opened its state on a build with KILL-2 - the `localStorage` ledger migration (#2515)
+
+`mls-client/stateLedgerMigration.ts` moves the seen-ciphertext marks
+(`history_seen_cipher:<user>:*` and its index) and the send ledger (`mls_send_ledger_<user>`) from
+`localStorage` into the MLS state, once per state without the `ledger-format` key. A count of states
+without the format is not measurable server-side (the state is sealed), so the condition is the
+floor (`minClientVersion`) at the first stable carrying #2515, plus one release cycle. Removing it
+early costs one re-walk per account that had not migrated - never a lost message.
+
 ### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
 
 **Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`

@@ -1,5 +1,5 @@
 /**
- * The two bounds on the durable seen-ciphertext ledger (`history_seen_cipher:<user>:<group>`).
+ * The two bounds on the durable seen-ciphertext ledger (`seen:<group>`, carried in the MLS state).
  *
  * A ledger holds TWO namespaces in one array, and they answer different questions:
  * - a FINGERPRINT (`frameFingerprint`, `<len36>:<hash36>`) - "I consumed this ratchet generation".
@@ -15,7 +15,12 @@
  * Nothing here reads a clock: eviction order is insertion order inside a ledger and write order
  * across ledgers.
  */
-import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import {
+  readStateLedger,
+  stageStateLedger,
+  stateLedgerKeys,
+  STATE_LEDGER,
+} from '$lib/mls-client/stateLedgers';
 
 /** Fingerprints kept per group. The busiest measured conversation held 2 073; this leaves 2.4x. */
 export const MAX_FINGERPRINTS_PER_LEDGER = 5000;
@@ -61,31 +66,24 @@ export function boundSeenEntries(entries: Iterable<string>): string[] {
   return all.filter((_, i) => keep[i]);
 }
 
-function ledgerIndexKey(userId: string): string {
-  return ACCOUNT_KEY.seenCipherIndex(userId);
-}
-
 /**
- * The user's ledgers, oldest write first. The persisted index is the answer; when there is none
- * (a profile from before this bound) the existing ledger keys are enumerated once, in storage order.
+ * The user's ledgers, oldest write first. The index the MLS state carries is the answer; when there
+ * is none (a state whose ledgers came from a profile before this bound) the ledger keys are
+ * enumerated once, in the order the state holds them.
  */
 function readLedgerIndex(userId: string): string[] {
-  const raw = localStorage.getItem(ledgerIndexKey(userId));
-  if (raw !== null) {
+  const raw = readStateLedger(userId, STATE_LEDGER.seenIndex);
+  if (raw !== undefined) {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed.filter((g): g is string => typeof g === 'string');
   }
-  const prefix = ACCOUNT_KEY.seenCipher(userId, '');
-  const groups: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(prefix)) groups.push(key.slice(prefix.length));
-  }
-  return groups;
+  return stateLedgerKeys(userId, STATE_LEDGER.seenPrefix).map((key) =>
+    key.slice(STATE_LEDGER.seenPrefix.length)
+  );
 }
 
 /**
- * Records that `groupId`'s ledger was just written, and returns the groups whose ledgers fell over
+ * Records that `groupId`'s ledger was just staged, and returns the groups whose ledgers fell over
  * the per-user cap (least recently written first) so the caller can delete them. The group being
  * written is never among them. A failure is logged and answers "evict nothing" - an unreadable
  * index must not take a ledger down with it.
@@ -98,7 +96,7 @@ export function noteLedgerWritten(userId: string, groupId: string): string[] {
       index.length > MAX_LEDGERS_PER_USER
         ? index.splice(0, index.length - MAX_LEDGERS_PER_USER)
         : [];
-    localStorage.setItem(ledgerIndexKey(userId), JSON.stringify(index));
+    stageStateLedger(userId, STATE_LEDGER.seenIndex, JSON.stringify(index));
     if (evicted.length > 0) {
       console.warn(
         `[HISTORY] ${evicted.length} least recently written seen-ciphertext ledger(s) dropped, ` +

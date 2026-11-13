@@ -379,6 +379,12 @@ read as owed: a seat whose adder died would then wait for ever, and the join ove
 
 ## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
 
+**Built in #2515 (draft, 2026-11-13: merged with `main`):** both ledgers travel inside the
+MLS state's own write, and a send's `emitted` count is in IndexedDB before the frame posts
+([mls-desync-prevention](protocols/mls-desync-prevention.md#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26)).
+Owed after the merge: the KILL-3 row re-run on dev (web kill after a send and after a receive -
+expected no `secret-reuse` accusation of a frame read before the kill).
+
 Chrome commits `localStorage` to the profile LAZILY: on a fresh profile a write made 2 s or 4.5 s
 before a hard kill of the browser was lost, one made 7 s before survived, and an IndexedDB write
 made beside it survived every time (probe of 2026-10-25; Chromium also rate-limits those commits,

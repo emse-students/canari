@@ -9,7 +9,12 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   noteInboundMlsFrame: vi.fn(),
 }));
 
+import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
 import type { Mock } from 'vitest';
+import { closeMlsDb } from '$lib/utils/hex';
+import { hydrateStateLedgers, resetStateLedgersForTests } from '$lib/mls-client/stateLedgers';
+import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
 import {
   noteFrameEmitted,
@@ -33,6 +38,9 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
  * starting the next epoch at 0, the same secrets for the same staged commit merged twice - and the
  * peer remembers every (epoch, generation) it consumed. `mls-core/tests/burn_spent_generations.rs`
  * pins the model's premises against two real clients.
+ *
+ * The checkpoint writes the ledgers it is handed INTO the state it writes (KILL-2, 2026-10-26), so
+ * the disk here holds both, and a session opens by reading the ledgers back from it.
  */
 
 const U = 'u';
@@ -52,9 +60,32 @@ interface ModelState {
   next: Record<number, number>;
 }
 
+/** The state on disk: the ratchet and the ledgers the same write carried. */
+interface Disk {
+  state: ModelState;
+  ledgers: Record<string, string>;
+}
+
+/** A disk holding a state at epoch 4 that nothing has been sent from. */
+const freshDisk = (): Disk => ({ state: { epoch: 4, next: {} }, ledgers: {} });
+
 /** One device's MLS client as the ratchet sees it. */
 class RatchetModel {
-  constructor(public state: ModelState = { epoch: 4, next: {} }) {}
+  /** The ledgers the client carries: applied by each checkpoint, exported with the ratchet. */
+  ledgers: Record<string, string>;
+  constructor(
+    public state: ModelState = { epoch: 4, next: {} },
+    ledgers: Record<string, string> = {}
+  ) {
+    this.ledgers = { ...ledgers };
+  }
+  /** Reopens what `disk` holds, as a reload would. */
+  static restore(disk: Disk): RatchetModel {
+    return new RatchetModel(
+      { epoch: disk.state.epoch, next: { ...disk.state.next } },
+      disk.ledgers
+    );
+  }
   snapshot(): ModelState {
     return { epoch: this.state.epoch, next: { ...this.state.next } };
   }
@@ -97,7 +128,9 @@ class Peer {
  * primitives answered by the model, and a checkpoint that makes the model durable and commits the
  * ledger the way `persistCheckpoint` does.
  */
-function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
+function session(model: RatchetModel, peer: Peer, disk: Disk) {
+  // The opening: this document's view of the ledgers is what the opened state carries.
+  hydrateStateLedgers(U, model.ledgers);
   const svc = Object.create(BaseMlsService.prototype) as Record<string, unknown>;
   Object.assign(svc, {
     userId: U,
@@ -124,8 +157,13 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
     // ledger it commits is half of what these cases test.
     stateWritesEnded: false,
     currentDeviceKeyB64: 'k',
-    writeCheckpoint: vi.fn(async () => {
+    writeCheckpoint: vi.fn(async (_k: string, _latch: unknown, ledgers?: StateLedgerChanges) => {
+      for (const [key, value] of Object.entries(ledgers ?? {})) {
+        if (value === null) delete model.ledgers[key];
+        else model.ledgers[key] = value;
+      }
       disk.state = model.snapshot();
+      disk.ledgers = { ...model.ledgers };
     }),
     persistCheckpoint: vi.fn((options?: { endsDocumentOnRefusal?: boolean }): Promise<void> =>
       BaseMlsService.prototype.persistCheckpoint.call(svc as never, options)
@@ -154,8 +192,11 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
 }
 
 describe('BaseMlsService.reconcileSendRatchets', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
+    await closeMlsDb();
+    globalThis.indexedDB = new IDBFactory();
+    resetStateLedgersForTests();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -172,7 +213,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    */
   it('a merge after the reload starts its epoch at 0, so the frames sent there are burnt THERE', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.send(); // epoch 4, generation 0
@@ -182,7 +223,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     await first.send(); // epoch 5, generation 1
     // The crash: everything after the stage checkpoint is gone from the state, not from the ledger.
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     await second.svc.reconcileSendRatchets();
     after.merge(); // the settle: the resubmission is answered a duplicate, and the stage merges
@@ -193,13 +234,13 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
 
   it('burns what the restored epoch is behind at load, and checkpoints to close the ledger', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.send();
     await first.send();
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     await second.svc.reconcileSendRatchets();
 
@@ -210,13 +251,47 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
   });
 
   /**
+   * KILL-2 (2026-10-26), ENUMERATED RATHER THAN SAMPLED: the same session killed after EVERY step,
+   * and each reload sends again. What makes this hold is that the count a send needs is on disk
+   * before it posts (`noteFrameEmitted` is awaited), and the count a checkpoint declares rides IN the
+   * write that holds the ratchet - so no kill point leaves a declaration without its ratchet.
+   */
+  it('re-issues no generation whichever step the kill lands after', async () => {
+    const steps = ['send', 'checkpoint', 'send', 'send', 'merge', 'send', 'checkpoint', 'send'];
+    for (let killAfter = 0; killAfter <= steps.length; killAfter++) {
+      await closeMlsDb();
+      globalThis.indexedDB = new IDBFactory();
+      resetStateLedgersForTests();
+      const peer = new Peer();
+      const disk = freshDisk();
+      const before = new RatchetModel();
+      const first = session(before, peer, disk);
+      for (const step of steps.slice(0, killAfter)) {
+        if (step === 'send') await first.send();
+        else if (step === 'checkpoint') await first.svc.persistCheckpoint();
+        else before.merge();
+      }
+
+      const after = RatchetModel.restore(disk);
+      const second = session(after, peer, disk);
+      await second.svc.reconcileSendRatchets();
+      // The settle: a merge the restored state lost is merged again, from the same stage.
+      while (after.state.epoch < before.state.epoch) after.merge();
+      await second.send();
+      await second.send();
+
+      expect({ killAfter, reused: peer.reused }).toEqual({ killAfter, reused: [] });
+    }
+  });
+
+  /**
    * An incoming commit is not held off by the send barrier, so the group can reach an epoch that
    * still owes a burn between the burn and the encrypt. That frame is never posted: the burn is spent
    * and the frame sealed again.
    */
   it('never posts a frame sealed at an epoch that still owed a burn', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.svc.persistCheckpoint();
@@ -224,7 +299,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     await first.send(); // epoch 5, generations 0 and 1
     await first.send();
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     await second.svc.reconcileSendRatchets();
     // The incoming commit lands between the epoch read and the first encrypt.
@@ -254,7 +329,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    */
   it('a checkpoint between the merge and the first send keeps the owed burn for the next load', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.svc.persistCheckpoint(); // the stage checkpoint, at epoch 4
@@ -262,13 +337,13 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     await first.send(); // epoch 5, generations 0 and 1 - then the crash
     await first.send();
 
-    const middle = new RatchetModel(disk.state);
+    const middle = RatchetModel.restore(disk);
     const second = session(middle, peer, disk);
     await second.svc.reconcileSendRatchets(); // owes 2 at epoch 5
     middle.merge(); // the settle merges the stage again
     await second.svc.persistCheckpoint(); // the persister lands before any send - then a crash
 
-    const last = new RatchetModel(disk.state);
+    const last = RatchetModel.restore(disk);
     const third = session(last, peer, disk);
     await third.svc.reconcileSendRatchets();
     await third.send();
@@ -283,13 +358,13 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    */
   it('burns blind, and says so, when the held groups cannot be listed', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.send();
     await first.send();
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     (second.svc as unknown as { heldGroupsKnown: () => boolean }).heldGroupsKnown = () => false;
     await second.svc.reconcileSendRatchets();
@@ -299,7 +374,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
       expect.stringContaining('of 1 group(s) could not be read')
     );
     // Its own checkpoint does not close the ledger: the next load judges it with an epoch.
-    expect(sendRatchetEntries(U)).toHaveLength(1);
+    expect(await sendRatchetEntries(U)).toHaveLength(1);
     await second.send();
     expect(peer.reused).toEqual([]);
   });
@@ -310,7 +385,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    */
   it('two concurrent sends wait for the one owed burn', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.svc.persistCheckpoint();
@@ -318,7 +393,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     await first.send();
     await first.send();
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     await second.svc.reconcileSendRatchets();
     after.merge();
@@ -341,14 +416,14 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
   /** A burn that fails refuses the send rather than sealing over a consumed generation. */
   it('refuses the send when the owed burn fails, and burns it on the next', async () => {
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const before = new RatchetModel();
     const first = session(before, peer, disk);
     await first.svc.persistCheckpoint();
     before.merge();
     await first.send();
 
-    const after = new RatchetModel(disk.state);
+    const after = RatchetModel.restore(disk);
     const second = session(after, peer, disk);
     await second.svc.reconcileSendRatchets();
     after.merge();
@@ -361,20 +436,20 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
   });
 
   it('forgets epochs the restored state is past, and groups it does not hold', async () => {
-    noteFrameEmitted(U, G, 2);
-    noteFrameEmitted(U, 'g-gone', 7);
+    await noteFrameEmitted(U, G, 2);
+    await noteFrameEmitted(U, 'g-gone', 7);
     const peer = new Peer();
-    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const disk = freshDisk();
     const { svc } = session(new RatchetModel(), peer, disk);
 
     await svc.reconcileSendRatchets();
 
     expect(svc.skipSendGenerations).not.toHaveBeenCalled();
-    expect(sendRatchetEntries(U)).toEqual([]);
+    expect(await sendRatchetEntries(U)).toEqual([]);
   });
 
   it('burns nothing, and touches no disk, when the snapshot is up to date', async () => {
-    const { svc } = session(new RatchetModel(), new Peer(), { state: { epoch: 4, next: {} } });
+    const { svc } = session(new RatchetModel(), new Peer(), freshDisk());
     await svc.reconcileSendRatchets();
 
     expect(svc.skipSendGenerations).not.toHaveBeenCalled();
@@ -386,9 +461,9 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    * entry costs every other conversation its repair.
    */
   it('repairs the other groups when one of them cannot be burnt', async () => {
-    noteFrameEmitted(U, 'g-broken', 4);
-    noteFrameEmitted(U, G, 4);
-    const { svc } = session(new RatchetModel(), new Peer(), { state: { epoch: 4, next: {} } });
+    await noteFrameEmitted(U, 'g-broken', 4);
+    await noteFrameEmitted(U, G, 4);
+    const { svc } = session(new RatchetModel(), new Peer(), freshDisk());
     (svc as unknown as { getLocalGroups: () => string[] }).getLocalGroups = () => [G, 'g-broken'];
     svc.skipSendGenerations.mockImplementation(async (groupId: string) => {
       if (groupId === 'g-broken') throw new Error('Burn error after 0/1 generation(s)');
@@ -407,13 +482,13 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
    * generations no peer is waiting for.
    */
   it('drops the ledger instead of replaying it on a fresh start', async () => {
-    noteFrameEmitted(U, G, 4);
-    const { svc } = session(new RatchetModel(), new Peer(), { state: { epoch: 4, next: {} } });
+    await noteFrameEmitted(U, G, 4);
+    const { svc } = session(new RatchetModel(), new Peer(), freshDisk());
     (svc as unknown as { freshStart: boolean }).freshStart = true;
 
     await svc.reconcileSendRatchets();
 
     expect(svc.skipSendGenerations).not.toHaveBeenCalled();
-    expect(sendRatchetEntries(U)).toEqual([]);
+    expect(await sendRatchetEntries(U)).toEqual([]);
   });
 });

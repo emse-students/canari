@@ -3456,7 +3456,7 @@ id": the envelope was logged as `Duplicate ignored during a bulk ingest`, droppe
 answered `true`. The frame was acknowledged and deleted server-side, and all three recovery routes
 shut in the same instant - the queue row gone, the generation spent, and the archive replay
 skipping the fingerprint for ever because the drain had marked it consumed
-(`saveSeenCipherHashes` is durable). The bubble reads `📷 Photo` for good, on a device that
+(the seen marks are durable - inside the MLS state since KILL-2). The bubble reads `📷 Photo` for good, on a device that
 never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
 path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
 buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no
