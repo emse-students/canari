@@ -296,24 +296,26 @@
                   {formatDurationMs(entry.durationMs)}
                 </span>
                 {#if isAdmin}
-                  <button
-                    type="button"
-                    class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
+                  <Button
+                    icon
+                    size="compact"
+                    variant="ghost"
                     aria-label={m.minesweeper_admin_remove_score()}
                     title={m.minesweeper_admin_remove_score()}
                     onclick={() => void removeScore(entry)}
                   >
                     <Trash2 size={14} strokeWidth={2.25} />
-                  </button>
-                  <button
-                    type="button"
-                    class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
+                  </Button>
+                  <Button
+                    icon
+                    size="compact"
+                    variant="ghost"
                     aria-label={m.minesweeper_admin_ban()}
                     title={m.minesweeper_admin_ban()}
                     onclick={() => void banPlayer(entry)}
                   >
                     <Ban size={14} strokeWidth={2.25} />
-                  </button>
+                  </Button>
                 {/if}
               </span>
             </li>
@@ -351,15 +353,16 @@
                     <span class="text-text-muted block truncate text-xs">{ban.reason}</span>
                   {/if}
                 </span>
-                <button
-                  type="button"
-                  class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
+                <Button
+                  icon
+                  size="compact"
+                  variant="ghost"
                   aria-label={m.minesweeper_admin_unban()}
                   title={m.minesweeper_admin_unban()}
                   onclick={() => void unbanPlayer(ban)}
                 >
                   <Undo2 size={14} strokeWidth={2.25} />
-                </button>
+                </Button>
               </li>
             {/each}
           </ul>
