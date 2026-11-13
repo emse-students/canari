@@ -331,6 +331,34 @@ export function seenByAnchors(
 }
 
 /**
+ * Where a DM's "Lu" marker sits: under the NEWEST message of the conversation the peer has read,
+ * which must be one of the viewer's own (owner, 2026-11-13, the Messenger placement). The same
+ * anchor as a group's heads ({@link seenByAnchors}), so the two shapes cannot disagree about where
+ * "the last thing they saw" is.
+ *
+ * - The marker follows the peer's read point, not the viewer's last send: with the viewer's last
+ *   message unread, it stays under the newest one that was read; when everything is read it sits
+ *   under the conversation's last message.
+ * - **When the peer wrote after the viewer's last read message there is no marker**: the reply is
+ *   the proof, and the anchor would land on the peer's own row (never drawn).
+ * - A system line never carries it, and never counts as the row the peer read last.
+ *
+ * Pure and called from a derivation: it logs nothing (a line per recomputation would be noise).
+ *
+ * @param messages The conversation in DISPLAY order, the WHOLE list (never a render window).
+ * @returns The id of the viewer's message that carries the marker, or `null`.
+ */
+export function dmReadAnchorId(
+  messages: Parameters<typeof seenByAnchors>[0],
+  watermarks: ReadWatermarks | undefined,
+  viewerId: string,
+  serverWatermarks?: ReadWatermarks
+): string | null {
+  const [first] = seenByAnchors(messages, watermarks, viewerId, serverWatermarks).keys();
+  return first ?? null;
+}
+
+/**
  * `out[i]` = the smallest of `keys[i..]`: non-decreasing, whatever order `keys` is in. The display
  * order is the server key's order for every dated row, but not for an unsent own row (ordered below
  * them all, on its `sentAt`) nor for the stamped key at all - so the anchors search THIS, never the

@@ -118,6 +118,7 @@ const CORPUS = [
   '### *i* title',
   '# **x **',
   '**bold *and italic* inside**',
+  'Le **prix *réduit***',
   '*italic **and bold** inside*',
   'a ***b*** c',
   '2 * 3 * 4',
@@ -396,6 +397,16 @@ describe('every toolbar action produces what its button promises', () => {
       expected: '**Prix ce** soir',
       selected: 'soir',
       leaves: ['bold:Prix ce', 'plain:soir'],
+    },
+    {
+      // The bold ends on an italic that shares its closing edge: preview and marked agree on `***`.
+      name: 'bold off on the last word of a bold that ends in an italic',
+      type: 'bold',
+      text: 'Le **prix *réduit***',
+      sel: [11, 17],
+      expected: 'Le **prix** *réduit*',
+      selected: 'réduit',
+      leaves: ['plain:Le', 'bold:prix', 'italic:réduit'],
     },
     {
       name: 'bold off on the first word of a bold phrase',
