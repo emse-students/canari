@@ -85,6 +85,10 @@ the WASM by ORDER, not by data (WP-W3, diagnosed, not built,
 and the runs its section 8 still owes - delivery at the peer, and the Android and iPhone send, kill
 and relaunch rows on a shaped link
 ([section 8](../frontend/offline-and-weak-network.md#8-not-measured-and-owed)).
+Re-measured 2026-11-09 ([section 23](../frontend/offline-and-weak-network.md#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)):
+the WASM preload took 12-13 s of the JavaScript's bandwidth on Slow 3G, so it now runs only on `/chat`
+and `/communities` and a cold `/` boots at 33.1 s instead of 46.1 s; owed, the real-phone reading of
+a cold `/` on a throttled link; next there, a bundle budget (WP-W5) and the on-demand features.
 
 **Carried from the attachment-path audit (2026-10-10, its entry closed into this one on
 2026-11-11).** The upload bubble, the 8 MiB body budget, navigation never waiting on a post and

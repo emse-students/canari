@@ -353,7 +353,7 @@ proxy) and compression on, to replace the pessimistic bytes; and on a real salon
 | WP | State | Reaches users through |
 | --- | --- | --- |
 | **WP-W1** origin compression | **built** (one nginx block + `static-compression.test.mjs`) | the next pre-release / stable: it is an nginx image change |
-| **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`) | the next pre-release / stable (web build only; Tauri is inert by construction) |
+| **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`); **since 2026-11-09 on `/chat` and `/communities` only** ([section 23](#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)) | the next pre-release / stable (web build only; Tauri is inert by construction) |
 | **WP-OFF-5** deadline, `slow`, lanes | **built** (section 11) | the next pre-release / stable (frontend only) |
 | **WP-OFF-6** prompt resume | **built** (section 12) | the next pre-release / stable (frontend only) |
 | **WP-W3** list before the WASM | **diagnosed, NOT built**: the dependency is real, section 10.3 | - |
@@ -1143,6 +1143,85 @@ what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen repl
 
 Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
 showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.
+
+## 23. The engine is preloaded only where the first screen waits for it (2026-11-09)
+
+**Re-measured a month after WP-W1/W2, on `main` at `1151bcab1`.** Rig: a local production web build
+(`BUILD_WEB=1 vite build`, the adapter-node SSR for the document), behind a front that serves
+`build/client` gzipped at level 6 for nginx's `gzip_types` with the same immutable cache headers, and
+answers every `/api` at once with JSON (401 on the refresh, so the boot reads a verdict and ends on
+login). A private headless Chrome over CDP, cache cleared, Slow 3G (400 ms, 50 kB/s each way), with
+`canari_saved_user` and an `mls_device_id_*` key in `localStorage` (a signed-in, enrolled browser).
+HTTP/1.1 like section 10, so the byte column is exact and the round trips pessimistic. **"App boot"
+is the first `/api` request**: the bundle has arrived and run, which is the earliest any screen past
+the splash can draw (FCP is the inline splash, 3-4 s, and says nothing). Two runs per after-row,
+within 0.2 s of each other.
+
+**What a cold `/chat` downloads now:**
+
+| class | requests | bytes (gzip) | window |
+| --- | ---: | ---: | --- |
+| JS | 305 | 1176 kB | 0.6 -> 51.3 s |
+| WASM (`mls_wasm_bg`, 2.43 MB raw) | 1 | 879 kB | 0.6 -> 53.4 s |
+| fonts (Nunito, Fredoka) | 2 | 68 kB | 4.4 -> 50.9 s |
+| images | 7 | 85 kB | |
+| CSS | 5 | 40 kB | 0.7 -> 4.4 s |
+| total | 325 | **2258 kB** | app boot **46.4 s** |
+
+**It grew.** Section 10.2's W1 + W2 row was 1654 kB with the JS done at 23.3 s; the JS is now
+1176 kB instead of ~730 kB (+60 % in a month) and the binary 879 kB instead of 764 kB. Nothing
+watches either (WP-W5's bundle budget was never built). Read off the build's manifest and source
+maps: the root layout alone is **707 kB gzip in 187 files, on every route including `/login`**,
+of which the chat engine chunk (`globalChatSingleton` and everything it imports, 1.08 MB raw:
+`BaseMlsService` 95 kB, `CallService` 61 kB, `outbox` 56 kB, `sessionAuth` 39 kB...) is the largest
+piece - the finding of [cold-start](cold-start.md#the-reading-this-entry-asked-for-done-2026-09-16-the-root-layout-puts-the-chat-engine-on-the-login-page),
+three times bigger. `/chat` adds 393 kB beyond the layout, of which code highlighting
+(`highlight.js`, 31 kB) and the reel camera and editor (38 kB) serve no first screen.
+
+**The largest avoidable cost was the binary's head start.** `fetchpriority="low"` did not keep it off
+the JavaScript's bandwidth: with the preload, the bundle finished 12-13 s later than without it.
+
+| Slow 3G, cold | app boot | JS done | WASM done |
+| --- | ---: | ---: | ---: |
+| `/chat`, preload (before = after) | 46.4 s | 51.3 s | 53.4 s |
+| `/chat`, no preload (control) | 34.4 s | 39.2 s | 58.3 s |
+| **`/posts`, before** (preload) | **46.1 s** | 55.6 s | 54.8 s |
+| **`/posts`, after** (no preload) | **33.0-33.2 s** | 42.5-42.7 s | 57.9-58.0 s |
+| `/posts`, good link, before / after | 0.5 / 0.3 s | 0.7 / 0.5 s | 0.2 / 0.3 s |
+
+On `/chat` the trade is worth it: the list waits for `mlsService.init` (section 10.3), and the
+overlap ends the binary 5 s sooner than starting it after the bundle. On every other route nothing on
+the first screen needs the engine, and `/` lands on `/posts`: there the overlap only delayed the feed
+by 13 s. **The change:** `hooks.server.ts` fills the preload marker only for
+`MLS_FIRST_SCREEN_ROUTES` (`lib/server/wasmPreload.ts`: `/chat`, `/communities`); elsewhere the marker
+stays as the native shell leaves it, and the head script returns at once. The in-bundle prefetch
+(`hooks.client.ts`, `prefetchMlsWasmAtBoot`) is unchanged, so the binary still starts the moment the
+bundle has run, on every route. Event-ordered, no timer. **The list is derived, not declared**:
+`wasmPreloadRoutes.test.ts` reads `src/routes` and fails when the set of routes mounting
+`MainChatPage` and the list differ (checked against a list missing `/communities`: it fails).
+
+**What this does not measure:** an h2 path that honours the low priority would make the `/chat`
+cost smaller than 12 s, and production is h2 behind the host proxy - whether that proxy schedules by
+priority is not known (the `/posts` change holds either way: a transfer the screen does not need is
+off its path). The signed-in chain after boot (the rig has no session), a real phone's CPU, and the
+binary now arriving 3 s later for the chat badge's background login on the feed. **Owed: a real-phone
+reading** of a cold `/` on a throttled link, web build, before and after - not on the bench phones
+while other readings hold them.
+
+**Next, in order** (each its own pull request):
+
+1. **WP-W3, the list before the engine** (section 10.3) - still the largest cost on `/chat`: the
+   list could draw at app boot (~34 s here) instead of after the binary and the socket, and the
+   `/chat` preload would then have no reason left either.
+2. **A bundle budget (WP-W5)**: a test reading the client manifest's static closure per route
+   (`/login`, `/posts`, `/chat`), bytes and file count, so +60 % in a month cannot happen unseen.
+3. **On-demand features off the first screen of `/chat` and `/posts`**: `highlight.js` behind a
+   dynamic import in `codeHighlight.ts` (31 kB, a code block draws plain, then highlighted),
+   `CameraOverlay` loaded on open from `ChatComposer` and `PostComposerBar` (38 kB),
+   `svelte-dnd-action` (10 kB), the lightbox, PDF viewer and video player.
+4. **The chat engine off `/login`** (the 2026-09-16 finding, now 705 kB on a two-field form).
+5. **WP-W6, a service worker** for the repeat cold start after a release, when every changed chunk is
+   fetched again.
 
 ## The connection ring (owner, 2026-11-11)
 
