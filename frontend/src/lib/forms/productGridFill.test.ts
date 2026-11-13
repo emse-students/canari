@@ -179,6 +179,8 @@ describe('productGridRefusalMessage', () => {
     ]) {
       expect(productGridRefusalMessage(code)).toBe(m.form_refusal_grid_changed());
     }
+    // The empty ORDER is no refusal of a current estate (owner, 2026-11-13), but an estate older than
+    // each grid's switch still says it, so its words stay ([LEGACY]).
     expect(productGridRefusalMessage('PRODUCT_GRID_EMPTY')).toBe(m.form_refusal_grid_empty());
     expect(productGridRefusalMessage('FORM_FULL')).toBeNull();
     expect(productGridRefusalMessage(null)).toBeNull();

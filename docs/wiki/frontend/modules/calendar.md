@@ -960,3 +960,7 @@ cutoff of a current promo is one `GROUP BY` nobody has run.
 [profiles-and-access](../../profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05).
 A bare anonymous feed is refused (400); the subscribe modal and the PDF export page therefore carry a
 campus/formation selector (`AgendaSelectionFields`), defaulted from the reader's own spaces.
+
+## A post's event chip opens the global agenda on the event (2026-11-13)
+
+`PostCard`'s "Evenement : ..." chip links to `/calendar?fromPost=<postId>` (`postEventHref`). `/calendar` resolves the post through `openEventLinkedToPost` (`lib/calendar/postEventLink.ts`, shared with `AssociationCalendarSection`, which still honours old `/associations/<slug>/calendar?fromPost=` links): month grid moves to the event's month, then the detail modal opens, REGARDLESS of the space or association filter; no visible event means the plain agenda (debug line). The URL keeps `fromPost` on close, as the association section always did.

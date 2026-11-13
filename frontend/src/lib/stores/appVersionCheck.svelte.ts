@@ -164,6 +164,18 @@ export function serverFormDrafts(): boolean | null {
 }
 
 /**
+ * Whether this estate stores each priced grid's own "Obligatoire" switch (`gridRequiredSwitch`), as
+ * the last `/api/version` answer said - or `null` when no server has ever answered. Read through
+ * `gridRequiredSwitchOn` (`forms/gridRequiredGate.ts`): only `true` draws the switch and drops the
+ * order rule (docs/wiki/legacy-compatibility.md, "a form editor or fill page newer than its server's
+ * priced grids"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverGridRequiredSwitch(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.gridRequiredSwitch;
+  return loadCachedServerInfo()?.gridRequiredSwitch ?? null;
+}
+
+/**
  * Whether this estate serves the ranked lists (`rankedFeeds`: Pour toi and the ranked CanaReels
  * viewer), as the last `/api/version` answer said - or `null` when no server has ever answered. Read
  * by `listPosts` (`posts/api.ts`, `rankedFeedsKnown`, which waits for the answer while it is `null`): only `true` asks them (docs/wiki/legacy-compatibility.md,

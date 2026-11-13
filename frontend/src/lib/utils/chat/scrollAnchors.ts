@@ -54,7 +54,6 @@ export function peekConversationAnchor(conversationId: string): ConversationAnch
  */
 export function dropAnchorsExcept(conversationId: string): number {
   let dropped = 0;
-  // Deleting the entry being visited is safe while iterating a Map (the spec keeps the cursor).
   for (const id of conversationAnchors.keys()) {
     if (id === conversationId) continue;
     conversationAnchors.delete(id);

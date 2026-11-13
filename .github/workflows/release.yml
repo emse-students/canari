@@ -113,7 +113,7 @@ jobs:
       # rule, called by this gate and by the Play arm - it was reached here through `node` while
       # CLAUDE.md documented the very same command as `bun`, so the shipped runtime and the
       # documented one had quietly diverged on the release path.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 
@@ -590,7 +590,7 @@ jobs:
       # rule, called by this gate and by the Play arm - it was reached here through `node` while
       # CLAUDE.md documented the very same command as `bun`, so the shipped runtime and the
       # documented one had quietly diverged on the release path.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 

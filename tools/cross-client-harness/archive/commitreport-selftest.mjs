@@ -82,6 +82,45 @@ check(
   }),
   ['FAIL', 1]
 );
+check(
+  'the daily count of holes already accused is a note, not a finding',
+  verdict({
+    lines: [
+      at(
+        T,
+        'LOG',
+        '[CRON] reportCommitLogHealth: daily summary - 11 group(s) with a hole in their commit log already accused, unchanged since 2026-11-13T08:00:00.000Z (first accused 2026-11-13T08:00:00.000Z); a new item or a changed state is accused on the hour it appears'
+      ),
+    ],
+  }),
+  ['PASS', 0]
+);
+check(
+  'an accused hole leaving the report is a note, not a finding',
+  verdict({
+    lines: [
+      at(
+        T,
+        'LOG',
+        `[CRON] reportCommitLogHealth: 1 item(s) accused earlier are no longer reported (healed, or gone with their group) and leave the ledger: ${OUR_GROUP}(first hole 4, 2 missing, accused 2026-11-13T08:00:00.000Z)`
+      ),
+    ],
+  }),
+  ['PASS', 0]
+);
+check(
+  'control: a NEW hole in the accuse-once spelling still FAILS',
+  verdict({
+    lines: [
+      at(
+        T,
+        'ERROR',
+        `[CRON] reportCommitLogHealth: 1 group(s) have a HOLE in their commit log that no earlier run accused - 2 epoch(s) between the oldest retained commit and the head were accepted and never recorded. Newest 1 of 1: ${OUR_GROUP}(first hole at 4, 2 missing, log 1..9, after 2026-10-26T20:00:00.000Z)`
+      ),
+    ],
+  }),
+  ['FAIL', 1]
+);
 check('control: a failed report', verdict({ lines: [at(T, 'ERROR', '[CRON] reportCommitLogHealth failed')] }), ['FAIL', 1]);
 check('control: a span over an hour with no rate line was not read', verdict({ lines: [], spanMs: 2 * HOUR }), ['FAIL', 1]);
 check('a span under an hour may hold no report', verdict({ lines: [], spanMs: 50 * 60 * 1000 }), ['PASS', 0]);

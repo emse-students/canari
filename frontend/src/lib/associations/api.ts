@@ -14,6 +14,7 @@ import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
+import type { Form } from '$lib/forms/api';
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
 import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
@@ -2757,21 +2758,13 @@ export async function deleteWebhookDelivery(
 // ── Forms (MANAGE_FORMS) ────────────────────────────────────────────────────
 
 /** Lean form summary returned by GET /associations/:id/forms. */
-export interface AssociationForm {
-  id: string;
-  title: string;
-  description: string | null;
-  basePrice: number;
-  currency: string;
-  allowCashPayment: boolean;
-  /** `draft` until published; absent from a server before drafts (then published). */
-  status?: 'draft' | 'published';
-  createdAt: string;
-}
-
-/** Returns all forms linked to an association (requires MANAGE_FORMS flag). */
-export async function listAssociationForms(associationId: string): Promise<AssociationForm[]> {
-  return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
+/**
+ * Returns all forms linked to an association (requires MANAGE_FORMS flag, or a global or
+ * super admin): the WHOLE form, with its association name and unpublished-changes flag, as the
+ * managers' `GET /forms` list carries it - one read, no per-form follow-up.
+ */
+export async function listAssociationForms(associationId: string): Promise<Form[]> {
+  return request<Form[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
 }
 
 /**

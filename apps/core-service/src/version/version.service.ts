@@ -99,6 +99,18 @@ export type AppVersionResponse = {
    */
   formDrafts: true;
   /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: each priced
+   * grid has its own "Obligatoire" switch (owner, 2026-11-13) - a save may store a grid optional,
+   * the submit demands only a REQUIRED grid, and the rule over the whole order is gone. An older
+   * social-service refuses a grid sent `required: false` (`PRODUCT_GRID_NOT_REQUIRED`), strips the
+   * payload's `gridRequiredSwitch`, and demands one unit across the order - and a store build
+   * reaches phones before production deploys. A client draws the switch and drops the order rule
+   * only on an estate that says so. Built from ONE release tag with social-service. Always `true`
+   * from this release on (docs/wiki/legacy-compatibility.md, "a form editor or fill page newer than
+   * its server's priced grids").
+   */
+  gridRequiredSwitch: true;
+  /**
    * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: it serves the
    * RANKED lists - Pour toi (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, paged by
    * `asOf` (`posts/for-you-feed.ts`). An older social-service refuses `feed=foryou` `400` (`@IsIn`)
@@ -144,6 +156,7 @@ export class VersionService {
       presencePost: true,
       publishQueue: true,
       formDrafts: true,
+      gridRequiredSwitch: true,
       rankedFeeds: true,
       eventReach: true,
     };

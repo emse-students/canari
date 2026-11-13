@@ -585,6 +585,12 @@ const fcmCallers = [
   ['the TURN meter read in bytes',`[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [TurnUsageMeter] [ICE] TURN meter 2026-10: 615362488 egress bytes (account-wide)`, 'notable'],
   ['control: the TURN budget reached is a finding', `[Nest] 1  - 08/14/2026, 12:43:51 PM   ERROR [CallsService] [TURN-METER] 2026-10 (UTC calendar month): 951.00/950 GB metered egress (100.1%) - BUDGET REACHED, TURN is withheld from every call`, 'unexplained'],
   ['a device rotating its push token is routine', `${NEST}[PushController] [PUSH_REFRESH] user=aaaaaaaa device=tauri-a-b fcm=true voip=false`, 'benign'],
+  // EACH ITEM IS ACCUSED ONCE (migration 049): the daily count of what a report already accused, and
+  // an accused item leaving the report, are the estate's - notable. The accusations stay findings.
+  ['the daily count of conversations already accused', `${NEST}[AppController] [CRON] reportSingleHolderGroups: daily summary - 14 conversation(s) with fewer than two holders already accused, unchanged since 2026-11-13T08:00:00.000Z (first accused 2026-11-13T08:00:00.000Z); a new item or a changed state is accused on the hour it appears`, 'notable'],
+  ['the daily count of stranded devices, zero', `${NEST}[AppController] [CRON] reportStrandedDeviceMemberships: daily summary - 0 stranded device(s) already accused`, 'notable'],
+  ['an accused stale base leaving the report', `${NEST}[AppController] [CRON] reportStaleExternalJoinBases: 1 item(s) accused earlier are no longer reported (healed, or gone with their group) and leave the ledger: g1(base 3/4, head commit recorded, accused 2026-11-13T08:00:00.000Z)`, 'notable'],
+  ['control: a device accused once is still a finding', `[Nest] 1  - 08/14/2026, 12:43:51 PM    WARN [AppController] [CRON] reportStrandedDeviceMemberships: 1 device(s) hold a roster seat with no Welcome ever queued and no kick recorded - they were registered as members and never added to the MLS group, so they receive nothing and notify nothing (not accused before in this state; 2 device(s) accused earlier, unchanged). Oldest 1: tauri-a-b@g1(2026-11-01T00:00:00.000Z)`, 'unexplained'],
 ];
 for (const [name, line, want] of fcmCallers) {
   const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';

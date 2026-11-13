@@ -1348,6 +1348,11 @@ export class PushController {
       senderDeviceId: deviceId,
       silent: body.silent ?? false,
       durable: body.durable,
+      // THE ID A RESEND REPEATS. A native drain reads an answer past its 10 s read timeout as a
+      // failure and sends the same message again under this id, a fresh ciphertext each time; the
+      // service stores it once and answers the repeat with the first copy's receive time
+      // (`claimSentFrame`), so the sender's retry can never reach a receiver twice.
+      messageId: body.messageId,
     });
 
     this.logger.log(`[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`);

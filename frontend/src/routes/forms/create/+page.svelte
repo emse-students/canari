@@ -26,6 +26,7 @@
   } from '$lib/forms/api';
   import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
@@ -65,7 +66,7 @@
     firstItemsFaultQuestion,
     refusedProductGridFault,
   } from '$lib/forms/questionFault';
-  import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import { gridRequiredPayload, toFormItemsPayload } from '$lib/forms/itemsPayload';
   import {
     firstProductGridProblem,
     multipleSubmissionsAfterGridAdded,
@@ -278,6 +279,8 @@
    * always did, one "Enregistrer" that publishes (docs/wiki/legacy-compatibility.md).
    */
   const formDrafts = serverFormDrafts() === true;
+  /** Whether this estate stores each priced grid's own switch ([LEGACY] gate, `gridRequiredGate.ts`). */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
 
   /**
    * The draft this page is building, created at the first autosave once the form has a title
@@ -383,6 +386,8 @@
   /** The new form's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
+      // Each priced grid's "Obligatoire" switch is the manager's, on an estate that stores it.
+      ...gridRequiredPayload(gridSwitch),
       title,
       description,
       basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -390,7 +395,7 @@
       submitCondition,
       ...cotisationPayload(cotisation, requiresPayment),
       currency: 'eur',
-      items: toFormItemsPayload(items),
+      items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
       anonymous,

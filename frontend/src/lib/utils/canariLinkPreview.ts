@@ -1,10 +1,21 @@
-import { getAssociationBySlug, associationLogoSrc } from '$lib/associations/api';
-import { getForm } from '$lib/forms/api';
+import { getAssociation, getAssociationBySlug, associationLogoSrc } from '$lib/associations/api';
+import {
+  FormNotFoundError,
+  getForm,
+  getPublicForm,
+  PublicFormUnavailableError,
+  type Form,
+  type PublicForm,
+} from '$lib/forms/api';
+import { formatAmount } from '$lib/forms/fillAnswers';
+import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
+import { refusalStatus } from '$lib/utils/apiRefusal';
+import { avatarUrl } from '$lib/utils/avatarUrl';
+import { Log } from '$lib/utils/Log';
 import { getPost, isReel } from '$lib/posts/api';
 import { getGroupInvitePreview } from '$lib/mls/groupInvites';
 import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
-import { formatAmount } from '$lib/forms/fillAnswers';
 import { m } from '$lib/paraglide/messages';
 import {
   CANARI_BADGE_LABEL,
@@ -56,20 +67,77 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
   };
 }
 
+/**
+ * The one line saying whether a form takes answers now: closed by a manager, not open yet, full, or
+ * open. `now` is a parameter so a test never asserts a wall clock.
+ */
+export function formStateLabel(
+  form: Pick<Form, 'closedAt' | 'opensAt'> & { formFull?: boolean },
+  now: number = Date.now()
+): string {
+  if (form.closedAt) return m.link_preview_form_closed();
+  if (form.opensAt && new Date(form.opensAt).getTime() > now) {
+    return m.link_preview_form_opens_on({ date: formatFormOpensAt(form.opensAt) });
+  }
+  if (form.formFull) return m.link_preview_form_full();
+  return m.link_preview_form_open();
+}
+
+/**
+ * Whether `err` is the server ANSWERING that this viewer cannot read the target (a 4xx, or the
+ * typed not-found of the form readers), as opposed to nobody answering. An answer is final and
+ * cached; a transport failure is retried by the next card.
+ */
+export function isUnreadableAnswer(err: unknown): boolean {
+  if (err instanceof FormNotFoundError) return true;
+  if (err instanceof PublicFormUnavailableError) return err.notFound;
+  const status = refusalStatus(err);
+  return status !== null && status >= 400 && status < 500;
+}
+
+/**
+ * A form's card: its title, its banner (else the association's logo), and the association's name
+ * with the form's state. Read with the viewer's session first; a form that session cannot read
+ * (a guest link opened while signed in as a non-member, a 403/404) falls to the guest read, whose
+ * answer is the same form as the page `/f/<id>` itself shows.
+ */
 async function fetchFormPreview(formId: string): Promise<CanariLinkPreview> {
-  const form = await getForm(formId);
-  const subtitle = form.description?.trim()
+  let form: Form | PublicForm;
+  try {
+    form = await getForm(formId);
+  } catch (err) {
+    if (!isUnreadableAnswer(err)) throw err;
+    Log.d('LINK_PREVIEW', `form ${formId}: member read refused, trying the guest read`);
+    form = await getPublicForm(formId);
+  }
+  const associationId = 'associationId' in form ? form.associationId : undefined;
+  const associationName = 'associationName' in form ? form.associationName : null;
+  const state = formStateLabel(form);
+
+  let imageUrl = associationLogoSrc(form.imageUrl);
+  if (!imageUrl && associationId) {
+    try {
+      imageUrl = associationLogoSrc((await getAssociation(associationId)).logoUrl);
+    } catch (err) {
+      // The logo is garnish: the card is complete without it.
+      Log.d('LINK_PREVIEW', `form ${formId}: association logo not read: ${String(err)}`);
+    }
+  }
+
+  const description = form.description?.trim()
     ? truncateForMeta(markdownToPlainText(form.description), 90)
-    : form.basePrice > 0
-      ? formatAmount(form.basePrice, form.currency)
-      : undefined;
+    : undefined;
+  const price = form.basePrice > 0 ? formatAmount(form.basePrice, form.currency) : undefined;
+  const stateLine = associationName
+    ? m.link_preview_form_by({ state, association: associationName })
+    : state;
 
   return {
     kind: 'form',
     categoryLabel: m.link_label_form(),
     title: form.title?.trim() || m.link_label_form(),
-    subtitle,
-    imageUrl: form.imageUrl?.trim() || null,
+    subtitle: [stateLine, description ?? price].filter(Boolean).join(' - '),
+    imageUrl,
   };
 }
 
@@ -91,13 +159,16 @@ async function fetchAssociationPreview(slug: string): Promise<CanariLinkPreview>
 }
 
 async function fetchProfilePreview(userId: string): Promise<CanariLinkPreview> {
-  const title = getUserDisplayNameSync(userId, userId);
-  void resolveUserDisplayName(userId);
+  const resolved = await resolveUserDisplayName(userId).catch((err: unknown) => {
+    Log.d('LINK_PREVIEW', `profile ${userId}: name not resolved: ${String(err)}`);
+    return null;
+  });
   return {
     kind: 'profile',
     categoryLabel: m.link_label_profile(),
-    title,
+    title: resolved || getUserDisplayNameSync(userId, userId),
     subtitle: m.link_preview_profile_member(),
+    imageUrl: avatarUrl(userId),
   };
 }
 
@@ -140,6 +211,7 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
         preview = await fetchPostPreview(target.postId);
         break;
       case 'form':
+      case 'guest-form':
         preview = await fetchFormPreview(target.formId);
         break;
       case 'association':
@@ -168,13 +240,20 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
     }
     return cachePreview(href, preview);
   } catch (err) {
-    console.log('[canariLinkPreview] fetch failed:', href, err);
+    // A 403/404 is the server's ANSWER (restricted, deleted): the generic card is correct and kept.
+    // A transport failure is not an answer: the same generic card, but not remembered, so the next
+    // card for this link asks again.
+    const answered = isUnreadableAnswer(err);
+    Log.d(
+      'LINK_PREVIEW',
+      `${target.kind} ${href}: ${answered ? 'unreadable by this viewer' : 'not reached'}: ${String(err)}`
+    );
     const fallback: CanariLinkPreview = {
       kind: 'route',
       categoryLabel: CANARI_BADGE_LABEL,
       title: publicAppLinkLabel(href) ?? m.link_label_generic(),
       subtitle: m.link_preview_unavailable(),
     };
-    return cachePreview(href, fallback);
+    return answered ? cachePreview(href, fallback) : fallback;
   }
 }
