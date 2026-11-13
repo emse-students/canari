@@ -132,6 +132,34 @@ jobs:
             exit 1
           fi
 
+      # NO ESTATE-SCOPED SECRET MAY EXIST AT REPOSITORY LEVEL (2026-11-13). The build jobs read
+      # `BASE_URL`, `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID` and `ANDROID_APP_LINK_SHA256` under ONE
+      # name from the environment of their estate (`development` or `production`). GitHub resolves a
+      # name the environment lacks from the REPOSITORY level, so a repository copy is exactly how an
+      # alpha would quietly build against production's identity client. This job declares no
+      # environment, so the only value it can see under these names IS the repository's - and any
+      # value at all refuses the release, before anything is bumped. The list is the names
+      # MIGRATION.md gives the level `production, development` (the Cloudflare SFU pair among them,
+      # born in both environments on 2026-11-13); `secret-levels.test.mjs` holds the two equal.
+      # Nothing is printed but the names.
+      - name: No estate secret is kept at repository level
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
+          CLOUDFLARE_SFU_APP_ID: ${{ secrets.CLOUDFLARE_SFU_APP_ID }}
+          CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.CLOUDFLARE_SFU_APP_SECRET }}
+        run: |
+          found=0
+          for name in BASE_URL AUTHENTIK_URL AUTHENTIK_CLIENT_ID ANDROID_APP_LINK_SHA256 CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET; do
+            if [ -n "${!name:-}" ]; then
+              echo "::error::The secret $name exists at REPOSITORY level. It belongs to the environments only (each estate its own value): an environment lacking it would silently read this copy, which is how a pre-release builds against production. Check it is set in both 'development' and 'production', then delete the repository copy (docs/wiki/cicd.md#where-a-secret-lives-and-why)."
+              found=1
+            fi
+          done
+          [ "$found" -eq 0 ]
+
       # WHAT IS BEING RELEASED, AND FROM WHICH COMMIT - the only two facts the gates need.
       #
       # `github.event.release.target_commitish` is NOT the answer: it carries a branch NAME (`main`)
