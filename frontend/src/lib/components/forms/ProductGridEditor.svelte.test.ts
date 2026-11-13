@@ -71,7 +71,7 @@ const pasteBox = (t: HTMLElement) =>
   );
 const valid = (grid: EditorProductGrid) =>
   productGridItemRefusal(
-    { required: true, productGrid: productGridPayload(grid) },
+    { productGrid: productGridPayload(grid) },
     { isPublic: false, requiresPayment: true }
   );
 

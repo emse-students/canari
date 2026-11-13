@@ -61,6 +61,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
     Check,
@@ -631,7 +632,7 @@
       return;
     }
 
-    const missing = firstMissingAnswer(visibleItems, selections);
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
     missingAnswer = missing;
     if (missing?.itemId === null) {
       // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
@@ -718,9 +719,15 @@
     if (!form) return 0;
     return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
+  /**
+   * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
+   * it), a grid's flag means nothing and the ORDER is held empty-or-not across the grids.
+   */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
   /** What `reachedEnd` waits on: `handleSubmit`'s own validation as a yes/no - every visible
-   * REQUIRED question answered and, on a grid form, one unit across the grids (no grid on its own). */
-  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections));
+   * REQUIRED question answered - a required grid one unit of its own, or, before the switch
+   * ([LEGACY] `gridSwitch` off), one unit across the grids. */
+  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections, gridSwitch));
   /**
    * The empty-order sentence, shown after a send refused for it and only while the order is still
    * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).

@@ -89,6 +89,11 @@ export interface AudienceCondition {
 }
 
 export interface CreateFormPayload {
+  /**
+   * `true` from this editor, which draws each priced grid's "Obligatoire" switch: the `required`
+   * it sends on a grid is the manager's choice (`GRID_REQUIRED_SWITCH`). Never stored.
+   */
+  gridRequiredSwitch?: boolean;
   title: string;
   description?: string;
   basePrice: number;

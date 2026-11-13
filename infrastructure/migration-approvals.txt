@@ -79,3 +79,8 @@ apps/social-service/src/migrations/147_poster_spaces_and_zones.sql 1f6b76ff3f6b2
 # next pre-release before any stable; adversarial review passed 2026-11-09 in three rounds. Any edit to
 # the file holds it again.
 apps/social-service/src/migrations/152_opening_reminders_copy_form_reminders.sql a3b6cdcc9c5961d69b41eaeaf6a50b805c436fc87e8bda426945a6690e7db0f5
+# 164 (#3459, the per-grid "Obligatoire" switch, a backfill of forms.items): approved by the lead under
+# the owner's 2026-11-03 delegation; the owner decided the switch on 2026-11-13. Adversarial Opus review
+# passed 2026-11-13 (version skew fixed by the gridRequiredSwitch gate). It merges first and runs on dev
+# (with a backup) through the next pre-release before any stable. Any edit to the file holds it again.
+apps/social-service/src/migrations/164_product_grid_required_off.sql 10be65fd7ff47a5372435e3567abdd078a3a80745eb62a40e69d60dd96b5ca61

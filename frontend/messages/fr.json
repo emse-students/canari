@@ -4652,6 +4652,7 @@
   "form_guest_login_prompt": "Vous avez un compte Canari ?",
   "form_guest_login_link": "Se connecter pour votre tarif",
   "form_view_error_order_empty": "Commandez au moins un article.",
+  "form_view_error_grid_empty": "Commandez au moins un article de \"{label}\"",
   "form_refusal_grid_update_app": "Ce formulaire a changé depuis l'ouverture de la page. Rechargez-la, ou mettez à jour l'application.",
   "form_refusal_grid_changed": "Un article de votre commande n'est plus proposé. Rechargez la page et vérifiez votre commande.",
   "form_refusal_grid_empty": "Votre commande est vide : ajoutez au moins un article.",

@@ -114,6 +114,8 @@ export type ServerVersionInfo = {
   publishQueue: boolean;
   /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
   formDrafts: boolean;
+  /** Whether this estate stores each priced grid's own switch - see {@link AppVersionCheckResult}. */
+  gridRequiredSwitch: boolean;
   /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
   rankedFeeds: boolean;
 };
@@ -164,6 +166,16 @@ export type AppVersionCheckResult = {
    * deploys. `false` for every server older than the field.
    */
   formDrafts: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service stores each priced grid's own
+   * "Obligatoire" switch and demands a unit only of a REQUIRED grid, with no rule over the whole
+   * order (owner, 2026-11-13). The editor draws the switch, and the fill pages drop the order rule,
+   * only when this is true: an older server refuses a grid sent optional
+   * (`PRODUCT_GRID_NOT_REQUIRED`) and demands one unit across the order (`PRODUCT_GRID_EMPTY`) - and
+   * a store build reaches phones before production deploys. `false` for every server older than the
+   * field.
+   */
+  gridRequiredSwitch: boolean;
   /**
    * Whether this estate's social-service serves the RANKED lists (`rankedFeeds`): Pour toi
    * (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, with their `asOf` pages. An older
@@ -239,6 +251,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost?: unknown;
     publishQueue?: unknown;
     formDrafts?: unknown;
+    gridRequiredSwitch?: unknown;
     rankedFeeds?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
@@ -256,6 +269,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
+    gridRequiredSwitch: obj.gridRequiredSwitch === true,
     rankedFeeds: obj.rankedFeeds === true,
   };
 }
@@ -278,6 +292,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   presencePost: boolean;
   publishQueue: boolean;
   formDrafts: boolean;
+  gridRequiredSwitch: boolean;
   rankedFeeds: boolean;
 } {
   return {
@@ -292,6 +307,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
+    gridRequiredSwitch: info.gridRequiredSwitch,
     rankedFeeds: info.rankedFeeds,
   };
 }
@@ -479,6 +495,7 @@ export function buildAppVersionCheckResult(
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
+    gridRequiredSwitch: serverInfo?.gridRequiredSwitch ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
   };
 }

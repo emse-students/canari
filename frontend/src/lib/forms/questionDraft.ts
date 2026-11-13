@@ -24,8 +24,8 @@ export interface DraftQuestion {
 }
 
 /**
- * A blank question of `type`. A priced grid is required (its order is the answer) and carries a
- * new definition; a scale runs from 1 to 5; a choice grid starts with one blank row and one blank column, so its table has
+ * A blank question of `type`. A priced grid carries a new definition, its "Obligatoire" switch off
+ * (owner, 2026-11-13); a scale runs from 1 to 5; a choice grid starts with one blank row and one blank column, so its table has
  * somewhere to type; every other type starts with one blank option (dropped on save when unused).
  */
 export function newQuestion(type: string): DraftQuestion {
@@ -35,7 +35,7 @@ export function newQuestion(type: string): DraftQuestion {
     return {
       id,
       label: '',
-      required: true,
+      required: false,
       type,
       options: [],
       rows: [],

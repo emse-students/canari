@@ -4652,6 +4652,7 @@
   "form_guest_login_prompt": "Have a Canari account?",
   "form_guest_login_link": "Sign in for your price",
   "form_view_error_order_empty": "Order at least one item.",
+  "form_view_error_grid_empty": "Order at least one item of \"{label}\"",
   "form_refusal_grid_update_app": "This form changed since the page was opened. Reload it, or update the app.",
   "form_refusal_grid_changed": "An item of your order is no longer offered. Reload the page and check your order.",
   "form_refusal_grid_empty": "Your order is empty: add at least one item.",

@@ -27,6 +27,7 @@
     visibleAnswers,
     visibleItems,
   } from '$lib/forms/fillAnswers';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { m } from '$lib/paraglide/messages';
   import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { reminderFromValue, reminderOptions, reminderValue } from '$lib/bookings/reminder';
@@ -214,7 +215,7 @@
       error = m.bookings_sheet_holder_missing();
       return;
     }
-    const missing = firstMissingAnswer(shown, selections);
+    const missing = firstMissingAnswer(shown, selections, gridRequiredSwitchOn());
     if (missing) {
       error = missingAnswerMessage(missing);
       return;

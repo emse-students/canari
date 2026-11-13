@@ -6,6 +6,7 @@ import * as bounds from './answerBounds';
 import {
   ANSWER_MAX_SELECTIONS,
   ANSWER_MAX_TEXT_LENGTH,
+  FORM_ANSWER_MISSING,
   FORM_FULL,
   FORM_GRID_ANSWER_INVALID,
   FORM_MAX_QUESTIONS,
@@ -52,8 +53,8 @@ describe('formSubmitRefusalMessage (D6)', () => {
   });
 
   it("words a priced grid's answer refusal through the same entry point (WP-G2)", () => {
-    const empty = new SocialApiError('Grid order is empty', 'PRODUCT_GRID_EMPTY', 400);
-    expect(formSubmitRefusalMessage(empty, 'fallback')).toBe(m.form_refusal_grid_empty());
+    const missing = new SocialApiError('Missing required field: Veste', FORM_ANSWER_MISSING, 400);
+    expect(formSubmitRefusalMessage(missing, 'fallback')).toBe(m.form_refusal_answer_missing());
     const closed = new SocialApiError('Cell is closed', 'PRODUCT_GRID_CELL_CLOSED', 400);
     expect(formSubmitRefusalMessage(closed, 'fallback')).toBe(m.form_refusal_grid_changed());
   });
