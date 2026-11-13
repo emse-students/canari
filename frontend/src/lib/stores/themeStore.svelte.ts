@@ -75,6 +75,26 @@ function applyToDocument(dark: boolean): void {
   const theme = dark ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
   postThemeToNative(heldNativeTheme ?? theme);
+  postGroundToNative();
+}
+
+/**
+ * The page's ground (`--cn-bg`, as the theme just applied resolves it) to the Android shell, which
+ * paints it under the transparent WebView: the band the keyboard's padding opens below the page is
+ * then the page's colour, not the launch background (keyboard-and-send-motion.md). The page's own
+ * colour, never the held bars' theme - a full-bleed screen darkens the bar icons, not the ground.
+ * Absent in the browser and on iOS, where this is a no-op by design, not a fallback.
+ */
+function postGroundToNative(): void {
+  const bridge = (window as unknown as { canariTheme?: { setGround?: (c: string) => void } })
+    .canariTheme;
+  if (!bridge?.setGround) return;
+  const ground = getComputedStyle(document.documentElement).getPropertyValue('--cn-bg').trim();
+  if (!ground) {
+    console.warn('[theme] --cn-bg resolved to nothing - the native ground is left as it was');
+    return;
+  }
+  bridge.setGround(ground);
 }
 
 let preference = $state<ThemePreference>('system');

@@ -4,7 +4,14 @@
  * bench, docs/wiki/frontend/media-frame.md). The judgements are `threadAnchor.ts`'s; this is only
  * the wiring that feeds them the numbers.
  */
-import { anchorShift, firstRowBelow, threadGrowthResponse, threadReach } from './threadAnchor';
+import {
+  anchorShift,
+  appendGlidePx,
+  firstRowBelow,
+  threadGrowthResponse,
+  threadReach,
+} from './threadAnchor';
+import { Log } from '$lib/utils/Log';
 
 /** What the pane knows about itself at the moment a change is observed. */
 export interface ThreadGrowthState {
@@ -66,8 +73,10 @@ export function observeThreadGrowth(
   };
   captureAnchor();
 
-  const follow = () => {
+  let previousClientHeight = scroller.clientHeight;
+  const follow = (cause: 'rows' | 'box') => {
     const now = state();
+    const scrollTopBefore = scroller.scrollTop;
     const currentReach = threadReach(scroller);
     const response = threadGrowthResponse({
       previousReach,
@@ -87,15 +96,28 @@ export function observeThreadGrowth(
           })
         : 0;
     previousReach = currentReach;
-    if (response === 'follow-bottom') scroller.scrollTop = scroller.scrollHeight;
+    if (response === 'follow-bottom') {
+      scroller.scrollTop = scroller.scrollHeight;
+      const glide = appendGlidePx({
+        cause,
+        previousScrollTop: scrollTopBefore,
+        currentScrollTop: scroller.scrollTop,
+        previousClientHeight,
+        currentClientHeight: scroller.clientHeight,
+        isEntering: now.isEntering,
+        reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+      });
+      if (glide > 0) playAppendGlide(scroller, glide);
+    }
     // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
     // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
     // therefore lands on the same pixel whether or not this ran first - it cannot double-count.
     else if (shift !== 0) scroller.scrollTop += shift;
+    previousClientHeight = scroller.clientHeight;
     captureAnchor();
   };
 
-  const boxes = new ResizeObserver(follow);
+  const boxes = new ResizeObserver(() => follow('box'));
   boxes.observe(scroller);
   // EVERY CHILD'S BOX, because a medium decoding to its size is not a DOM mutation. An `<img>`
   // growing from 0 px when its GIF arrived changed no node and not the scroller's own box, so the
@@ -116,7 +138,7 @@ export function observeThreadGrowth(
       }
     }
     observeChildren();
-    follow();
+    follow('rows');
   });
   mutations.observe(scroller, { childList: true, subtree: true, characterData: true });
   if (composerBand) boxes.observe(composerBand);
@@ -126,4 +148,35 @@ export function observeThreadGrowth(
     boxes.disconnect();
     scroller.style.overflowAnchor = previousAnchoring;
   };
+}
+
+/** Reads a `--motion-*` duration token (`220ms`) as milliseconds, or null if it is not one. */
+function motionMs(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)ms$/.exec(value.trim());
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The thread making room for an arrival as Messenger does (`appendGlidePx`): the rows, already at
+ * their final place, are played from `px` lower back to it - a compositor transform on the motion
+ * scale's `--motion-thread-glide` / `--motion-ease-in-out`, never a `scrollTop` animation, so every
+ * measurement the pane takes meanwhile reads the final position. The new bubble's own fade
+ * (`.motion-bubble-in`) waits out the same glide.
+ */
+function playAppendGlide(scroller: HTMLElement, px: number): void {
+  const root = getComputedStyle(document.documentElement);
+  const duration = motionMs(root.getPropertyValue('--motion-thread-glide'));
+  const easing = root.getPropertyValue('--motion-ease-in-out').trim();
+  if (duration === null || !easing) {
+    Log.w('threadGrowth', `glide of ${px}px skipped: the motion tokens did not resolve`);
+    return;
+  }
+  Log.d('threadGrowth', `arrival: thread glides ${px}px over ${duration}ms`);
+  for (const child of scroller.children) {
+    if (!(child instanceof HTMLElement) || typeof child.animate !== 'function') continue;
+    child.animate([{ transform: `translateY(${px}px)` }, { transform: 'none' }], {
+      duration,
+      easing,
+    });
+  }
 }

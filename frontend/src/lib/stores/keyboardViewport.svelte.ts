@@ -5,6 +5,7 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { rememberKeyboardHeight } from './keyboardHeightMemory';
+import { parseImeTarget, resolveImeTarget } from './imeTarget';
 import { Log } from '$lib/utils/Log';
 
 export type KeyboardViewportSnapshot = {
@@ -238,7 +239,9 @@ export function hasVirtualKeyboard(os: string): boolean {
 
 /**
  * Reads the viewport now. A desktop OS has no on-screen keyboard, so its visual viewport is read as
- * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`).
+ * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`). While the Android
+ * shell has announced a keyboard the WebView has not been resized for yet, the measurement is the
+ * one that resize will produce (`resolveImeTarget`).
  */
 function measureViewport(): ViewportMeasurement {
   const vv = window.visualViewport;
@@ -246,13 +249,25 @@ function measureViewport(): ViewportMeasurement {
   if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
     return { winH, vvHeight: winH, offsetTop: 0, scale: 1 };
   }
-  return {
+  const raw = {
     winH,
     vvHeight: vv?.height ?? winH,
     offsetTop: vv?.offsetTop ?? 0,
     scale: vv?.scale ?? 1,
   };
+  const { measurement, drop } = resolveImeTarget(raw, baselineHeight, imeTargetPx);
+  if (drop) {
+    Log.d(
+      'keyboardViewport',
+      `keyboard target ${imeTargetPx} spent (layout ${winH}, visual ${raw.vvHeight})`
+    );
+    imeTargetPx = null;
+  }
+  return measurement;
 }
+
+/** The keyboard height the Android shell announced ahead of its resize (`imeTarget.ts`), or null. */
+let imeTargetPx: number | null = null;
 
 /** Tallest the layout viewport has been with no keyboard - owned by `initKeyboardViewport`. */
 let baselineHeight = 0;
@@ -468,6 +483,25 @@ export function initKeyboardViewport(): () => void {
     }, 400);
   };
 
+  /**
+   * `window.canariImeTarget`: the Android shell's announcement of a keyboard (`MainActivity`,
+   * `handOffIme`). The layout is applied HERE, synchronously, so the frame the shell waits for
+   * before resizing the WebView already holds it; `true` tells the shell it was taken.
+   */
+  const takeImeTarget = (value: unknown): boolean => {
+    const px = parseImeTarget(value);
+    if (px === null) {
+      Log.w('keyboardViewport', `keyboard target refused: ${String(value)}`);
+      return false;
+    }
+    Log.d('keyboardViewport', `keyboard target ${px} announced ahead of the resize`);
+    imeTargetPx = px;
+    update();
+    return true;
+  };
+  (window as unknown as { canariImeTarget?: (v: unknown) => boolean }).canariImeTarget =
+    takeImeTarget;
+
   update();
   window.addEventListener('resize', update);
   window.addEventListener('orientationchange', handleOrientationChange);
@@ -483,6 +517,8 @@ export function initKeyboardViewport(): () => void {
     window.removeEventListener('transitionend', handleTransitionEnd, true);
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
+    delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
+    imeTargetPx = null;
     pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');

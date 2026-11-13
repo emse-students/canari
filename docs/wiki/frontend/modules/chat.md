@@ -1102,6 +1102,8 @@ category tab, an emoji - then reads as "outside" and closes it a frame before th
 
 ### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, FIXED 2026-10-09, reading owed)
 
+> Since 2026-11-13 the Android shell announces the keyboard to the page before resizing the WebView, and the keyboard's own animation is the synced one: [keyboard-and-send-motion](../keyboard-and-send-motion.md).
+
 Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
 via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
 with no panel involved**, so neither comes from the panel's hand-off, though both show through it. The

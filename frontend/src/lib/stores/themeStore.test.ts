@@ -116,6 +116,18 @@ describe('themeStore', () => {
     delete (window as any).canariTheme;
   });
 
+  it('donne au shell Android le fond de la page, à chaque thème appliqué', () => {
+    const setGround = vi.fn();
+    (window as any).canariTheme = { set: vi.fn(), setGround };
+    document.documentElement.style.setProperty('--cn-bg', '#f0f2f5');
+    themeStore.setPreference('light');
+    document.documentElement.style.setProperty('--cn-bg', '#000000');
+    themeStore.setPreference('dark');
+    expect(setGround.mock.calls).toEqual([['#f0f2f5'], ['#000000']]);
+    document.documentElement.style.removeProperty('--cn-bg');
+    delete (window as any).canariTheme;
+  });
+
   it('tient les barres natives en icônes claires pour un écran plein cadre, puis les rend', () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     const set = vi.fn();

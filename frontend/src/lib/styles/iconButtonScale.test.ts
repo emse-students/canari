@@ -259,13 +259,21 @@ describe('the icon-button box', () => {
     );
 
     expect(widths.length, 'no .ui-icon-button rule declares a width - the class was gutted').toBe(
-      3
+      5
     );
-    // 2.75rem (44px touch), 2.375rem (38px pointer), 1.75rem (28px hover strip). A fourth value is
-    // the fifth size the design does not make.
+    // 2.75rem (44px touch), 2.375rem (38px pointer), 1.75rem (28px hover strip), and ONE row with a
+    // size of its own: the chat composer's 2.5rem (40px) on a phone, Messenger's measured pitch
+    // (owner, 2026-11-13: the bar's dimensions as Messenger's, keyboard-and-send-motion.md), which
+    // keeps the 38px pointer form. Any other value is the size the design does not make.
     expect(new Set(widths), `widths declared for .ui-icon-button: ${widths.join(', ')}`).toEqual(
-      new Set(['2.75rem', '2.375rem', '1.75rem'])
+      new Set(['2.75rem', '2.375rem', '1.75rem', '2.5rem'])
     );
+    const composerRow = [...css.matchAll(/([^{}]*)\{[^}]*?width:\s*2\.5rem/g)].map((m) =>
+      m[1].trim()
+    );
+    expect(composerRow, 'the 40px box belongs to the composer row alone').toEqual([
+      '.chat-composer-panel .ui-icon-button',
+    ]);
   });
 
   it('has no icon button declaring a box of its own outside the ones measured against a neighbour', () => {

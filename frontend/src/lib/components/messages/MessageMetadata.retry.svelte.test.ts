@@ -41,9 +41,16 @@ describe('MessageMetadata on a failed send', () => {
     expect(target.textContent).toContain('chec');
   });
 
-  it('keeps a pending clock for the last own message only', () => {
-    expect(render({ status: 'pending', isLastOwn: false }).textContent?.trim()).toBe('');
-    expect(render({ status: 'pending', isLastOwn: true }).textContent).toBeTruthy();
+  it('keeps a pending clock for the last own message only, under the bubble', () => {
+    const under = { status: 'pending', outsideBubble: true };
+    expect(render({ ...under, isLastOwn: false }).textContent?.trim()).toBe('');
+    expect(render({ ...under, isLastOwn: true }).textContent).toBeTruthy();
+  });
+
+  it('never puts a send in transit inside the bubble, whose size must not change at delivery', () => {
+    for (const status of ['pending', 'sending']) {
+      expect(render({ status, isLastOwn: true }).textContent?.trim()).toBe('');
+    }
   });
 
   it('calls retry and discard, and offers neither unless given', () => {

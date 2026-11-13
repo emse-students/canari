@@ -761,6 +761,35 @@ img[src^='/emoji/'] {
   --motion-base: 200ms;
   --motion-slow: 250ms;
   --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* THE THREAD MAKING ROOM FOR A NEW MESSAGE, measured on Messenger (Mi 9T recordings, 2026-11-13,
+     keyboard-and-send-motion.md): the list glides up by the new row's height in ~220 ms on a
+     symmetric curve (16 % / 46 % / 83 % of the way at a quarter, half and three quarters), THEN the
+     bubble fades in where it lands. `threadGrowthObserver` plays the glide, `.motion-bubble-in` the
+     fade. */
+  --motion-thread-glide: 220ms;
+  --motion-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
+}
+
+/* A NEW BUBBLE APPEARS WHERE IT LANDS, AFTER THE THREAD HAS MADE ROOM - opacity only, no slide, as
+   Messenger does. One animation covering the glide AND the fade rather than a delay with a fill: the
+   row is transparent through the glide (0 % -> 65 %, 65 = 220 / (220 + 120), restate it if either
+   token moves) and fades in over the last `--motion-fast`. It fills nothing and ends opaque, so an
+   animation cut short leaves the row as its own style (`riseInEntrance.test.ts`). */
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+  }
+  65% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.motion-bubble-in {
+  animation: bubbleIn calc(var(--motion-thread-glide) + var(--motion-fast))
+    var(--motion-ease-in-out);
 }
 
 @keyframes motionSheetIn {
@@ -2339,8 +2368,8 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
      Kept for the min-height floor `COMPOSER_MIN_HEIGHT` reads (`ChatComposer.svelte`): the padding
      below produces this height, so the floor can never disagree with it. Measured 2026-09-09: 20px
-     line box + 12 + 12. It no longer drives the row's cross-axis alignment - see `align-items`. */
-  --composer-field-height: calc(var(--text-sm--line-height) + 1.5rem);
+     line box + 12 + 12, now + 11 + 11 = 42 (Messenger, 2026-11-13). It no longer drives the row's cross-axis alignment - see `align-items`. */
+  --composer-field-height: calc(var(--text-sm--line-height) + 1.375rem);
   position: relative;
   display: flex;
   max-width: 100%;
@@ -2353,7 +2382,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
      shorter than the paperclip beside it (user, 2026-09-14: the two "n'ont pas l'air de tailles
      egales"). It takes the shared box now, so the controls are uniform again. */
   align-items: center;
-  gap: 0.5rem;
+  /* NO GAP ON A PHONE (2026-11-13, measured on Messenger, keyboard-and-send-motion.md): its controls
+     stand on a 40px pitch with nothing between them, the field starting where the last one ends.
+     The `md` block below puts 0.5rem back for a wide screen. */
+  gap: 0;
   padding: 0;
   border: none;
   /* NO FILL OF ITS OWN (user, 2026-09-14). It was `--cn-surface-alt`, a card drawn behind the row
@@ -2376,6 +2408,17 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 .chat-composer-panel.is-dragover {
   background: color-mix(in srgb, var(--cn-yellow) 12%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cn-yellow) 60%, transparent);
+}
+
+/* THE COMPOSER'S CONTROLS ARE 40px ON A PHONE, MESSENGER'S PITCH (owner, 2026-11-13: the bar's
+   layout and dimensions as Messenger's, our own look). Measured on the Mi 9T: four glyphs centred
+   every 40 dp from the edge, a 42 dp field, the send 40 dp from the right edge. The box is the
+   pitch; the glass "+" and the yellow send keep their own drawing inside it. A pointer keeps
+   `.ui-icon-button`'s 38px (the block at the end of this file). Before the chevron rule below, which
+   narrows one of these on purpose. */
+.chat-composer-panel .ui-icon-button {
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 /* THE BOX COMES FROM `.ui-icon-button`, WHICH THIS ROW IS WHERE IT WAS LEARNED. 44px on a phone
@@ -2642,9 +2685,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   min-width: 0;
   max-width: 100%;
   max-height: 10rem;
-  /* 12px, so one line measures 44px - the height of the touch targets beside it. The desktop
+  /* 11px above and below, so one line measures 42px - Messenger's field on the Mi 9T (104 px at
+     2.475 px per dp, 2026-11-13), two px taller than the 40px controls beside it. The desktop
      override below takes it back to the measured reference's 8px, where the controls are 36px. */
-  padding: 0.75rem;
+  padding: 0.6875rem 0.75rem;
   border: none;
   outline: none;
   resize: none;
@@ -3068,6 +3112,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .chat-composer-textarea,
   .mention-composer-editor.chat-composer-textarea {
     padding: 0.5625rem 0.75rem;
+  }
+
+  .chat-composer-panel .ui-icon-button {
+    width: 2.375rem;
+    height: 2.375rem;
   }
 }
 
