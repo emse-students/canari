@@ -262,6 +262,13 @@ impl Seats {
     fn cap(&self) -> usize {
         self.max_seats.unwrap_or(DEFAULT_MAX_SEATS)
     }
+
+    /// Whether `peer_id` holds a seat and is present.
+    fn is_present(&self, peer_id: &str) -> bool {
+        self.seats
+            .iter()
+            .any(|s| s.peer.peer_id == peer_id && s.present)
+    }
 }
 
 /// A room in peer-to-peer mode: at most `max_seats` seats of distinct users, in arrival order.
@@ -271,6 +278,26 @@ pub(crate) struct P2pRoom {
 }
 
 impl P2pRoom {
+    /// Runs `announce` UNDER the room's lock, and only if both seats of `pairing` are still seated
+    /// and present - so a `PeerReady` is never delivered after the `PeerLeft` of either side.
+    /// A pairing is decided under the lock and announced after it is released; a departure in
+    /// between is applied under the same lock, so holding it here orders the two: either the
+    /// pairing is announced first and the departure's `PeerLeft` follows it, or the departure
+    /// came first and nothing is announced. `announce` only `try_send`s, so it never blocks here.
+    /// Answers whether it ran.
+    pub(crate) fn announce_if_present(&self, pairing: &Pairing, announce: impl FnOnce()) -> bool {
+        let room = self
+            .inner
+            .lock()
+            .expect("p2p room lock poisoned: a thread panicked while holding it");
+        if room.is_present(&pairing.initiator.peer_id) && room.is_present(&pairing.polite.peer_id) {
+            announce();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Admits `peer` into a room of `max_seats`, replacing any device of the same user already in
     /// it (present or away).
     ///
@@ -415,9 +442,12 @@ impl P2pRoom {
     /// other party of a two-seat room (the 1:1 wire, which names nobody); in a larger room it is
     /// `Unaddressed`, unless `broadcast`, which sends it to every other present seat.
     pub(crate) fn route(&self, peer_id: &str, to: Option<&str>, broadcast: bool) -> Route {
-        let Ok(room) = self.inner.lock() else {
-            return Route::Nobody;
-        };
+        // A poisoned lock means a thread panicked mid-change: the seats cannot be trusted, and
+        // answering `Nobody` would read as an ordinary empty room. It is propagated as the panic.
+        let room = self
+            .inner
+            .lock()
+            .expect("p2p room lock poisoned: a thread panicked while holding it");
         let Some(me) = room.seats.iter().find(|s| s.peer.peer_id == peer_id) else {
             return Route::NotSeated;
         };
@@ -548,6 +578,68 @@ mod tests {
                 .collect(),
             _ => panic!("expected a seat"),
         }
+    }
+
+    #[test]
+    fn a_pairing_is_not_announced_once_either_side_has_left() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "d1");
+        let (b, _rb) = peer("bob", "d1");
+        room.join(a, 3);
+        let outcome = room.join(b, 3);
+        let JoinOutcome::Seated { pairings, .. } = outcome else {
+            panic!("expected a seat")
+        };
+        let pairing = &pairings[0];
+        // Bob leaves between the decision and the announcement.
+        room.leave("bob:d1");
+        let mut ran = false;
+        assert!(!room.announce_if_present(pairing, || ran = true));
+        assert!(
+            !ran,
+            "a PeerReady must never follow the PeerLeft of its pair"
+        );
+    }
+
+    #[test]
+    fn a_pairing_still_present_is_announced() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "d1");
+        let (b, _rb) = peer("bob", "d1");
+        room.join(a, 3);
+        let JoinOutcome::Seated { pairings, .. } = room.join(b, 3) else {
+            panic!("expected a seat")
+        };
+        let mut ran = false;
+        assert!(room.announce_if_present(&pairings[0], || ran = true));
+        assert!(ran);
+    }
+
+    #[test]
+    #[should_panic(expected = "p2p room lock poisoned")]
+    fn a_poisoned_room_lock_is_a_panic_not_an_empty_room() {
+        let room = Arc::new(P2pRoom::default());
+        let (a, _ra) = peer("alice", "d1");
+        room.join(a, 3);
+        let poisoner = room.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.inner.lock().unwrap();
+            panic!("a thread dies holding the room's lock");
+        })
+        .join();
+        room.route("alice:d1", Some("bob"), false);
+    }
+
+    #[test]
+    fn a_relayed_mic_state_counts_nothing_in_either_ledger() {
+        // A broadcast MicSuspended is delivered once per recipient; the ledger must not see N
+        // events for one - and it sees none at all: the column set has no microphone counter.
+        let (a, _ra) = peer("alice", "d1");
+        let (b, _rb) = peer("bob", "d1");
+        let before = (a.ledger.counters(), b.ledger.counters());
+        count_relayed(RelayedKind::MicSuspended, &a.ledger, &b.ledger);
+        count_relayed(RelayedKind::MicSuspended, &a.ledger, &b.ledger);
+        assert_eq!((a.ledger.counters(), b.ledger.counters()), before);
     }
 
     fn routed_to(route: Route) -> Option<String> {
