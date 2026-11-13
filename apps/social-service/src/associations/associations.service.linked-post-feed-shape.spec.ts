@@ -31,7 +31,13 @@ describe('AssociationsService.findCalendarEventByLinkedPost feed shape', () => {
 
   function makeService(post: Record<string, unknown> | null) {
     const postRepo = { findOne: jest.fn(async () => post) };
-    const calendarRepo = { findOne: jest.fn(async () => EVENT) };
+    // The linked event is read through a query builder: it carries the reach gate (2026-11-13).
+    const qb = {
+      where: jest.fn(() => qb),
+      andWhere: jest.fn(() => qb),
+      getOne: jest.fn(async () => EVENT),
+    };
+    const calendarRepo = { createQueryBuilder: jest.fn(() => qb) };
     const assoRepo = {
       find: jest.fn(async () => [
         { id: 'asso-1', name: 'BDE', slug: 'bde', color: '#f5a623', logoUrl: null },
@@ -61,13 +67,13 @@ describe('AssociationsService.findCalendarEventByLinkedPost feed shape', () => {
 
   it('returns null when the post has no linked event', async () => {
     const service = makeService({ id: 'p1', linkedCalendarEventId: null });
-    await expect(service.findCalendarEventByLinkedPost('p1')).resolves.toBeNull();
+    await expect(service.findCalendarEventByLinkedPost('p1', 'reader-1')).resolves.toBeNull();
   });
 
   it('attaches the association identity the calendar detail modal renders', async () => {
     const service = makeService({ id: 'p1', linkedCalendarEventId: 'ev-1' });
 
-    const result = await service.findCalendarEventByLinkedPost('p1');
+    const result = await service.findCalendarEventByLinkedPost('p1', 'reader-1');
 
     expect(result).toMatchObject({
       id: 'ev-1',

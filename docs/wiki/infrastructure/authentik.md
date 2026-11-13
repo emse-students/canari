@@ -709,7 +709,7 @@ printed in full (the rollback):**
   rest are real browsers, where the flow heals itself once on most clients and a client CAN stay out
   after repeated failures. The log stops at a NUL byte, so nothing after the container restart can be
   counted and the events table records only successes. Nothing was changed on MiConnect or the CAS.
-  Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09).
+  Open: [backlog](../backlog.d/p2-some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can.md).
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
@@ -801,7 +801,7 @@ collection of name and first name, as one required tick, for new AND existing ac
 > built instance (fresh AND upgraded from main) that no provider authorizes through
 > `miconnect-authorization`, in place of the driven test below. Dev signs in through the SAME
 > MiConnect, so the hold covers both. **Lifting it is `git revert` of the hold's commit**, after the
-> three conditions in [backlog](../backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16).
+> three conditions in [backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md).
 > The page `/legal/miconnect` stays published.
 
 - **Where:** `blueprints/45-consent.yaml` (HELD: `blueprints/held/`), flow `miconnect-authorization`, which the eight OAuth2

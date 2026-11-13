@@ -292,7 +292,10 @@ export class PostsController {
   ) {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(
+      postId,
+      xUserId
+    );
     // The detail modal opened from a post offers "add to my calendar" like the agenda's: same `icsSig`.
     return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }

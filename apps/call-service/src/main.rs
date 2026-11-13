@@ -2278,14 +2278,33 @@ fn p2p_join(
         );
     }
     for pairing in pairings {
-        p2p_announce_pair(&room_id, &pairing);
+        p2p_announce_pair(state, &room_id, &pairing);
     }
 }
 
 /// Tells a pair of PRESENT seats that they are paired: `PeerReady` to each, with its role and the
 /// user it is paired WITH. Both records mark the pairing: `paired_ms` on each is measured from its
 /// own Join, to its FIRST pairing.
-fn p2p_announce_pair(room_id: &str, pairing: &Pairing) {
+fn p2p_announce_pair(state: &Arc<AppState>, room_id: &str, pairing: &Pairing) {
+    let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
+        info!(
+            "[call] p2p pairing room={} initiator={} polite={} not announced: the room is gone",
+            room_id, pairing.initiator.peer_id, pairing.polite.peer_id
+        );
+        return;
+    };
+    let announced = room.announce_if_present(pairing, || announce_pair_now(room_id, pairing));
+    if !announced {
+        info!(
+            "[call] p2p pairing room={} initiator={} polite={} not announced: one side left first",
+            room_id, pairing.initiator.peer_id, pairing.polite.peer_id
+        );
+    }
+}
+
+/// The body of [`p2p_announce_pair`], run under the room's lock: marks both records paired and
+/// delivers one `PeerReady` to each side (never awaits: `p2p::deliver` is a `try_send`).
+fn announce_pair_now(room_id: &str, pairing: &Pairing) {
     let Pairing {
         initiator,
         polite,
@@ -2479,7 +2498,7 @@ fn p2p_resume(
                     peer_id,
                 );
             }
-            OtherSeat::Present(pairing) => p2p_announce_pair(&room_id, &pairing),
+            OtherSeat::Present(pairing) => p2p_announce_pair(state, &room_id, &pairing),
         }
     }
 }

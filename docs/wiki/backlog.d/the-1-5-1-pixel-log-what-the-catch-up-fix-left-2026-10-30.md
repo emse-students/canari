@@ -1,5 +1,7 @@
 ## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
 
+target: 1.10.0
+
 One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). Of the
 lines the catch-up fix did not cover, three are settled since (batch 17, 2026-11-12, read in the
 code): `playWhileVisible play() refused AbortError` is classified by `name` and the page's own facts

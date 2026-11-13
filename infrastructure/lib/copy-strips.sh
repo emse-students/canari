@@ -130,7 +130,12 @@ apply_copy_strips() {
   # column and the table: a dump taken before migration 120 reached production has neither.
   "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'submissions' AND column_name = 'lydiaOrderRef') THEN UPDATE submissions SET \"lydiaOrderRef\" = NULL, \"lydiaVendorToken\" = NULL WHERE \"lydiaOrderRef\" IS NOT NULL OR \"lydiaVendorToken\" IS NOT NULL; END IF; END \$\$;" "$database"
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_refunds') IS NOT NULL THEN UPDATE lydia_refunds SET \"orderRef\" = '', \"vendorToken\" = '' WHERE \"orderRef\" <> '' OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 25 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds\n' "$prefix"
+  # A Lydia account bridge (migration 167, lydia-account-bridge.ts): the standby Business's vendor
+  # tokens and sealed key, the same live identifiers as `associations.lydiaAccountId`. The whole row
+  # goes: with its Business cleared a copy has no bridge to keep. Guarded on the table: a dump taken
+  # before migration 167 reached production has none.
+  "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_account_bridges') IS NOT NULL THEN DELETE FROM lydia_account_bridges; END IF; END \$\$;" "$database"
+  printf '%s   payment identifiers cleared: 25 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds; lydia_account_bridges emptied\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say

@@ -108,6 +108,9 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
+    // The bridge's table (lydia-account-bridge.ts), read by every Lydia path: twice, idempotent.
+    await admin.query(migration('167_lydia_account_bridge.sql'));
+    await admin.query(migration('167_lydia_account_bridge.sql'));
     await admin.query('RESET lock_timeout');
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,

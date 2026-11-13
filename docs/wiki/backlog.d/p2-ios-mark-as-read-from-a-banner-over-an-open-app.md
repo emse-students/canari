@@ -1,5 +1,7 @@
 ## P2 - iOS: "mark as read" from a banner over an open app is refused, and its watermark erased
 
+target: 1.10.0
+
 The twin of the quick reply that #2843 hands to the page. `CanariHandleMarkReadAction` clears the
 notification and calls `CanariSendReadWatermark`, which queues the watermark in
 `outbox_pending.ndjson` and drains it natively. While the page holds a loaded MLS manager

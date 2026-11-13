@@ -609,7 +609,7 @@ jobs:
         # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
         # proving either on another major proves it on a server production does not run. Bump it WITH
         # the compose files, never alone.
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe
@@ -820,7 +820,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -930,7 +930,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -1362,6 +1362,8 @@ jobs:
           target: aarch64-linux-android
           cache-workspaces: frontend/src-tauri
           rustflags: ''
+          # And its v2 `CARGO_BUILD_WARNINGS=deny`, exported the same way (see `build-mls-wasm`).
+          build-warnings: ''
 
       - name: Cache Gradle
         uses: actions/cache@v6

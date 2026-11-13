@@ -25,7 +25,8 @@
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
-  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
@@ -96,6 +97,10 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 166). */
+  let allowAnswerEdit = $state(false);
+  /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
+  const answerEditAvailable = serverFormAnswerEdit() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -235,6 +240,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -398,6 +404,7 @@
       items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
+      ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
@@ -644,6 +651,8 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
+      {answerEditAvailable}
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic

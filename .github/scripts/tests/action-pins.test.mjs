@@ -164,6 +164,65 @@ for (const file of files) {
 }
 check(files.length > 0 && thirdParty > 0, 'the scan read no third-party reference at all');
 
+/**
+ * A PIN MOVES DEFAULTS TOO. `actions-rust-lang/setup-rust-toolchain` exports its `rustflags`
+ * (`-D warnings`) and, from v2, its `build-warnings` (`CARGO_BUILD_WARNINGS=deny`) into
+ * $GITHUB_ENV, so they reach every later step of the job - including a Tauri build whose vendored
+ * path dependencies Cargo does not cap. Both are held empty on every use: v0.14.1's AppImage died
+ * of the first, `1.6.12-alpha.1`'s iOS build of the second.
+ */
+const EXPORTED_LINT_INPUTS = ['rustflags', 'build-warnings'];
+
+/** The `with:` keys of the step whose `uses:` sits at `line` (1-based), with their raw values. */
+export function withInputsAt(text, line) {
+  const lines = text.split(/\r?\n/);
+  const inputs = {};
+  let i = line;
+  while (i < lines.length && !/^\s*with:\s*$/.test(lines[i]) && !/^\s*-\s/.test(lines[i])) i += 1;
+  if (i >= lines.length || !/^\s*with:\s*$/.test(lines[i])) return inputs;
+  const withIndent = lines[i].search(/\S/);
+  for (i += 1; i < lines.length; i += 1) {
+    const raw = lines[i];
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+    if (raw.search(/\S/) <= withIndent) break;
+    const match = /^\s*([\w-]+):\s*(.*?)\s*$/.exec(raw);
+    if (match) inputs[match[1]] = match[2];
+  }
+  return inputs;
+}
+
+{
+  const sample = [
+    '      - uses: actions-rust-lang/setup-rust-toolchain@x',
+    '        with:',
+    '          # a comment',
+    "          rustflags: ''",
+    '      - name: next',
+    "        build-warnings: ''",
+  ].join('\n');
+  const read = withInputsAt(sample, 1);
+  check(read.rustflags === "''", 'withInputsAt reads an input under with:');
+  check(!('build-warnings' in read), 'withInputsAt stops at the next step');
+}
+
+let rustSetups = 0;
+for (const file of files) {
+  const relative = file.slice(ROOT.length + 1);
+  const text = readFileSync(file, 'utf-8');
+  for (const use of usesOf(text)) {
+    if (!use.ref.startsWith('actions-rust-lang/setup-rust-toolchain@')) continue;
+    rustSetups += 1;
+    const inputs = withInputsAt(text, use.line);
+    for (const name of EXPORTED_LINT_INPUTS) {
+      check(
+        inputs[name] === "''" || inputs[name] === '""',
+        `${relative}:${use.line} setup-rust-toolchain must set \`${name}: ''\` - its default is exported to every later step of the job`
+      );
+    }
+  }
+}
+check(rustSetups > 0, 'the scan found no setup-rust-toolchain use to hold');
+
 if (failed > 0) {
   console.error(`action-pins: ${failed} failure(s)`);
   process.exit(1);

@@ -25,7 +25,7 @@ measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner'
 to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
 generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
 (core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
-`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
 **The switch is flipped by the lead on dev, then production, only after [the readings
 below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
 the protocol, and is deleted when those readings are read and the switch is on in production.
@@ -576,6 +576,22 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
+## A group call holds one device per user (decided 2026-11-13, reversible)
+
+*The question (review of #3489): group-call media keys are per USER (`deriveSenderKey`,
+`<callId>|<userId>`), so two devices of one person in the same group call would seal under one key
+- one nonce space, and no receiver could tell the two apart.*
+
+**Recommended and taken (reversible): one device per user in a group call - the second device's
+join REPLACES the first.** call-service already evicts a seated user's sibling device in p2p mode
+(`PeerLeft` to the replaced one, a new `PeerReady` to the others), so the server half holds today;
+the group client treats the replaced device as gone. The alternative - keys per DEVICE
+(`<callId>|<userId>|<deviceId>`) - changes the derivation and every receiver's key map, and buys a
+case (one person, two devices, one call) nobody asked for. Recorded in
+[calls](frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13); the check that it holds end
+to end is [a backlog entry](backlog.d/group-calls-one-device-per-user.md). Reopen only if two devices
+of one user in one group call becomes a wanted case.
+
 ## Which account a SECOND phone would carry, the day one is attached again
 
 **Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
@@ -663,3 +679,7 @@ which would let the School address its staff in the app without naming each one?
 reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
 institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
 account with no membership, grant or follow.
+
+**The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
+has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
+so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.

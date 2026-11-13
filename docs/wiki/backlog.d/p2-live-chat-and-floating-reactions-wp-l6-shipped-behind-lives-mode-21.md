@@ -1,5 +1,7 @@
 ## P2 - Live chat and floating reactions (WP-L6): shipped behind `lives_mode` (#2131, #2136, #2170), three things are owed (2026-10-19)
 
+target: 1.8.0
+
 **Re-read 2026-11-11: the three owed items (a), (b), (e) stand.** No crypto review of the chat
 seal is recorded on [lives](../services/lives.md), and no several-viewer contention reading or phone
 reading of the panel is recorded either.

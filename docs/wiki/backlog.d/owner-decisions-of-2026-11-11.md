@@ -1,5 +1,7 @@
 ## The owner's decisions of 2026-11-11
 
+target: 1.7.0
+
 - **`1.6.10` shipped to production on 2026-11-11** ([roadmap](../roadmap.md)).
 - **Fewer features, the backlog first.** *"On va se calmer un peu sur les features pour la suite. Il
   faut réduire et traiter le backlog, et corriger des bugs de longue date."*

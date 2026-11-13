@@ -1,5 +1,7 @@
 ## P3 - the foreground send does not name its messageId, so an adopted orphan can still be queued twice
 
+target: 1.10.0
+
 Since migration 048 the server stores one message per `(group, sender, device, messageId)` and
 answers a repeat with the first copy's receive time
 ([chat-delivery](../services/chat-delivery.md#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)).

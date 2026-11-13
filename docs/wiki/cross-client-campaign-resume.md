@@ -235,7 +235,7 @@ Everything below is in order, and nothing else goes first.
 ## 7. What is still blocked, and what is not
 
 **Blocked on hardware** - the whole list, each row with what would arm it, is
-[the verification table at the top of backlog](backlog.md#owed-a-verification-and-nothing-else).
+[the readings owed](plan.md#readings-owed).
 
 **Takeable with no device**, and worth doing while the rig is being built:
 

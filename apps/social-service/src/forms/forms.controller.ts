@@ -27,6 +27,7 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import {
   CreateFormDto,
+  EditAnswerDto,
   FormRevisionDto,
   PublishFormRevisionDto,
   SaveFormDraftDto,
@@ -359,6 +360,32 @@ export class FormsController {
     @Body() dto: SubmitFormDto
   ) {
     return this.service.submit(id, { ...dto, userId: xUserId });
+  }
+
+  /**
+   * The caller's own answers to this form that they may still change (`FormsService.
+   * myEditableAnswers`), each with the questions locked because they touch the price. Empty when the
+   * form does not allow a change, is anonymous or is not open.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/my-answers')
+  myAnswers(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.myEditableAnswers(id, xUserId);
+  }
+
+  /**
+   * Changes the caller's OWN answer (`FormsService.editAnswer`): the same checks as a submit, the
+   * price-affecting questions locked, nothing about payment moved. Another person's answer is a 404.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/submissions/:submissionId/answers')
+  editAnswer(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: EditAnswerDto
+  ) {
+    return this.service.editAnswer(id, submissionId, xUserId, dto.answers);
   }
 
   /** Returns all submissions for the specified form. Requires form owner or MANAGE_FORMS flag. */

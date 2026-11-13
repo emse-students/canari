@@ -1,5 +1,7 @@
 ## P3 - At boot the web client sends 10 `GET /api/users/batch` and 10 `GET /api/users/avatar-presence` in the same millisecond (owner's Firefox console, production 1.6.8, 2026-11-09)
 
+target: 1.10.0
+
 Both are already coalesced, but only within ONE microtask turn: `enqueueProfileFetch`
 (`frontend/src/lib/stores/user.ts`, `queueMicrotask`) and `avatarPhotoPresence`
 (`frontend/src/lib/utils/avatarPresence.ts`, `queueMicrotask`). Ten pairs in one millisecond means ten

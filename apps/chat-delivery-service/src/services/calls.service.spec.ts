@@ -1370,6 +1370,68 @@ describe('CallsService', () => {
       jest.restoreAllMocks();
     });
 
+    it('refuses a ring of another kind than the call was opened as - the cap follows the kind', async () => {
+      groupCallsMode = 'mesh';
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      // Opened as AUDIO (4 seats), rung as VIDEO: it would be a 4-person video mesh.
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+
+      const refusal = await service
+        .ringGroup('caller', 'group-1', roomId, true)
+        .catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect(captured(warn)).toContain('rung as video, opened as audio');
+      // No answer window was opened, nobody was rung.
+      expect(redisStore.has(`call:room:${roomId}:answer_by`)).toBe(false);
+      expect(pushTokenRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('refuses a VIDEO initiate on an audio-only server, before any room is bound', async () => {
+      callsMode = 'audio';
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const refusal = await service
+        .initiateCall('caller', 'group-1', true, 1)
+        .catch((e: unknown) => e);
+
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'CALLS_VIDEO_DISABLED',
+      });
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it('refuses a group token across the review cohort boundary, the caller included', async () => {
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+      groupMemberRepo.find.mockResolvedValue(members('caller'));
+      await service.ringGroup('caller', 'group-1', roomId, false);
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+      const cohort = jest.spyOn(service as never, 'refuseAcrossReviewCohort');
+
+      await service.requestRoomToken('b', 'group-1', roomId, '1');
+
+      expect(cohort).toHaveBeenCalledWith(
+        'b',
+        expect.arrayContaining(['caller', 'c', 'd']),
+        `join-token room=${roomId}`
+      );
+    });
+
+    it('a ring-end naming no room of this conversation stops only the sender devices, and says so', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      pushTokenRepo.find.mockResolvedValue([]);
+
+      await service.endRing('b', 'group-1', 'no-such-room', 'answered');
+
+      expect(lastTokenLookup()).toEqual(['b']);
+      expect(captured(warn)).toContain('names no room of group=group-1 - their own devices only');
+    });
+
     it('refuses a client that does not speak the mesh, at initiate and at the token', async () => {
       groupCallsMode = 'mesh';
       const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
@@ -1490,7 +1552,7 @@ describe('CallsService', () => {
         expect(captured(log)).toContain('path=sfu');
 
         groupMemberRepo.find.mockResolvedValue(members('caller'));
-        await service.ringGroup('caller', 'group-1', answer.roomId, false);
+        await service.ringGroup('caller', 'group-1', answer.roomId, video);
         groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
         groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
         const joined = await service.requestRoomToken('c', 'group-1', answer.roomId, '1');
@@ -1529,7 +1591,7 @@ describe('CallsService', () => {
       jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
       const { roomId } = await service.initiateCall('caller', 'group-1', true, 1);
       groupMemberRepo.find.mockResolvedValue(members('caller'));
-      await service.ringGroup('caller', 'group-1', roomId, false);
+      await service.ringGroup('caller', 'group-1', roomId, true);
 
       groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
       groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));

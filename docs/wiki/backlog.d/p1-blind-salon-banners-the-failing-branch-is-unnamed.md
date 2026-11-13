@@ -1,4 +1,6 @@
-## P1 - blind salon banners on production: the background seed-frame open works on the bench, and the branch that fails in the field is not named yet (2026-11-04)
+## Reading owed - the `[PUSH_BLIND] refused=` reasons on production and on a real-size key group
+
+target: 1.7.0
 
 Production, one day of chat-delivery logs (2026-11-04): 16 `[PUSH_BLIND]` lines from 3 accounts,
 all `missing=seed`, Android `held=true`, iOS `held=false`.

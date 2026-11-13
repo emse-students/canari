@@ -203,4 +203,4 @@ What is NOT part of it, and stays where it lives:
   (notification level `mentions`, more than six lines): a receipt is a WATERMARK, read "up to", as a
   DM's is. Changing that is a product decision, not a defect of this chantier;
 - the "owed" readings of rows 5, 10 and 16 on dev and on the phones ([chat](frontend/modules/chat.md),
-  [backlog](backlog.md#owed-a-verification-and-nothing-else)).
+  [backlog](plan.md#readings-owed)).

@@ -1161,7 +1161,7 @@
                 ? 'text-bubble-out-text bg-bubble-out'
                 : 'text-text-main bg-bubble-in'} {isHighlighted
               ? 'ring-accent/80 animate-pulse ring-2 ring-offset-2 ring-offset-transparent'
-              : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
+              : ''} {shouldAnimate ? 'motion-bubble-in' : ''}"
           >
             {#if pollEnvelope && pollSpec && pollMeta}
               <ChannelPoll
@@ -1278,7 +1278,10 @@
       {isLastOwn}
       {isReadReceiptAnchor}
       {status}
+      {waitingOn}
       {readBy}
+      onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
+      {onDiscard}
       outsideBubble
     />
 

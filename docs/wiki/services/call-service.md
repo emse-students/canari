@@ -224,6 +224,10 @@ negotiated through this service exactly as a 1:1 call is, and no media ever reac
   an unknown or away addressee drops it with a line. An unaddressed frame in a two-seat room goes
   to the other party (the 1:1 wire, unchanged); in a mesh it is dropped as `unaddressed`, except
   `MicSuspended`, which is broadcast to every present party.
+- **No `PeerReady` after a `PeerLeft`.** A pairing is decided under the room's lock and announced
+  after it; the announcement re-takes the lock and sends only if both seats are still present
+  (`P2pRoom::announce_if_present`), so a departure in between is either announced after it or
+  wins and nothing is announced. A poisoned room lock is a panic, never read as an empty room.
 - **Departures.** A leave, an expired grace or an away seat tells every remaining present party,
   each with its own `PeerLeft { peer }` / `PeerAway { peer }`; the room ends with its last seat.
 - **Pinned by** the `p2p.rs` unit tests (pairs, routing, the cap) and

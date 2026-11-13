@@ -45,6 +45,14 @@ export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
 export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
 /** A price grid splits a multiple-choice question into several groups (refused at save). */
 export const FORM_GRID_MULTIPLE_CHOICE_SPLIT = 'FORM_GRID_MULTIPLE_CHOICE_SPLIT';
+/** The form does not let its answers be changed (the switch is off, or it is anonymous). */
+export const FORM_ANSWER_EDIT_OFF = 'FORM_ANSWER_EDIT_OFF';
+/** An edit changed a question that touches the price; `itemId` names it. */
+export const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
+/** The answer was cancelled or has expired: nothing left to change. */
+export const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
+/** No answer of the reader's under this id. */
+export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
@@ -86,6 +94,13 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_guest_identity_changed();
     case FORM_GRID_MULTIPLE_CHOICE_SPLIT:
       return m.form_refusal_grid_multiple_choice_split();
+    case FORM_ANSWER_EDIT_OFF:
+      return m.form_refusal_answer_edit_off();
+    case FORM_ANSWER_LOCKED:
+      return m.form_refusal_answer_locked();
+    case FORM_ANSWER_NOT_EDITABLE:
+    case FORM_ANSWER_NOT_FOUND:
+      return m.form_refusal_answer_not_editable();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

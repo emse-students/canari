@@ -1419,7 +1419,7 @@ three answers and reason codes as Android:
 Only the JSON literal `true` proves (a CFBoolean: `isJSONTrue`, and the same test in `canari_push.mm`; a
 JSON `1` does not). An older native library answers without `authorProven`, which reads as not proven: such a build
 names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
-reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+reading on the iPhone 12** ([backlog](../plan.md#readings-owed)).
 
 #### What the extension did, in the app's log (2026-11-01)
 
@@ -2300,7 +2300,7 @@ already built, #2184, and only the Mi 9T reading below is owed).
   (no back-forward swipe), the iOS Back is the app's own `swipeBack`, only in a conversation, so the
   feed's left edge already belongs to the page. The bridge is absent there and the call is a no-op.
 - **Owed:** a Mi 9T reading on the next pre-release
-  ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+  ([backlog](../plan.md#readings-owed)).
 
 ### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
 
@@ -2399,8 +2399,17 @@ runs on every change of the scroll view's offset and content size (KVO) and at t
 keyboard animation, puts an offset outside `[-inset.top, contentSize - bounds + inset.bottom]` back
 on its edge, and leaves a drag, its deceleration and its bounce to UIKit.
 
-Stateless on purpose - the target is recomputed from the superview's bounds on every event, so there is
-no remembered frame to restore and nothing that can drift. `UIKeyboardWillChangeFrame` alone covers
+**A rise from no keyboard is handed to the page first (2026-11-13).** Animating the frame on a rise
+drew the page one keyboard overlap lower and slid it up behind the keyboard, the composer hidden for
+~150 ms on the iPhone 12; the page now lays itself out for the keyboard (`window.canariImeTarget`, the
+contract Android uses) and the frame is set without animation once a screen-update proof says it is
+drawn. A fall is announced first with the keyboard's own duration and curve, the frame snaps, and the
+page rides its composer and thread down with the keys; height changes while open still animate the
+frame ([keyboard-and-send-motion](keyboard-and-send-motion.md#5-ios-measured-on-the-iphone-12-2026-11-13)).
+
+The target is recomputed from the superview's bounds on every event, so there is no remembered frame
+to restore and nothing that can drift; the only state is the sequence that lets a late answer to a
+rise tell it was superseded. `UIKeyboardWillChangeFrame` alone covers
 appearing, disappearing, height changes and interactive dismissal: on the way out the end frame is
 off-screen, the intersection is empty, and the overlap is zero. One path, both directions.
 
