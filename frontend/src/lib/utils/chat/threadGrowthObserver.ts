@@ -74,7 +74,20 @@ export function observeThreadGrowth(
   captureAnchor();
 
   let previousClientHeight = scroller.clientHeight;
-  const follow = (cause: 'rows' | 'box') => {
+  const glide = createThreadGlide(scroller);
+  /**
+   * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
+   * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
+   */
+  const follow = (cause: 'rows' | 'box', added: readonly Element[] = []) => {
+    // A GLIDE IN FLIGHT IS TAKEN OFF THE ROWS BEFORE ANYTHING IS MEASURED (review of #3490, B1).
+    // A transformed row counts in the scroller's scrollable overflow - measured in Chrome 2026-11-13:
+    // `scrollHeight` grows by `max(0, offset - padding-bottom)` - so a pin to `scrollHeight` during
+    // a glide went past the real bottom by the row's remaining offset and the rows rose too far,
+    // then dropped back when the glide ended. With the transforms removed every number below is the
+    // layout's; the glide is then put back exactly where it was drawn (same keyframes, same time
+    // into it), so no frame shows the difference. The state is the running animation itself.
+    const held = glide.suspend();
     const now = state();
     const scrollTopBefore = scroller.scrollTop;
     const currentReach = threadReach(scroller);
@@ -96,9 +109,10 @@ export function observeThreadGrowth(
           })
         : 0;
     previousReach = currentReach;
+    let travel = 0;
     if (response === 'follow-bottom') {
       scroller.scrollTop = scroller.scrollHeight;
-      const glide = appendGlidePx({
+      travel = appendGlidePx({
         cause,
         previousScrollTop: scrollTopBefore,
         currentScrollTop: scroller.scrollTop,
@@ -107,12 +121,17 @@ export function observeThreadGrowth(
         isEntering: now.isEntering,
         reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
       });
-      if (glide > 0) playAppendGlide(scroller, glide);
     }
     // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
     // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
     // therefore lands on the same pixel whether or not this ran first - it cannot double-count.
     else if (shift !== 0) scroller.scrollTop += shift;
+    // TWO ARRIVALS INSIDE ONE GLIDE (S5): the new glide starts where the rows are DRAWN - what the
+    // running one had left to travel, plus the new row - so nothing jumps. Otherwise the held glide
+    // resumes as it was.
+    if (travel > 0) {
+      if (glide.play(glideTravel(held, travel))) markGlideEntrance(added);
+    } else if (held) glide.play(held.px, held.time);
     previousClientHeight = scroller.clientHeight;
     captureAnchor();
   };
@@ -138,7 +157,11 @@ export function observeThreadGrowth(
       }
     }
     observeChildren();
-    follow('rows');
+    const added: Element[] = [];
+    for (const record of records) {
+      for (const node of record.addedNodes) if (node instanceof Element) added.push(node);
+    }
+    follow('rows', added);
   });
   mutations.observe(scroller, { childList: true, subtree: true, characterData: true });
   if (composerBand) boxes.observe(composerBand);
@@ -146,6 +169,7 @@ export function observeThreadGrowth(
   return () => {
     mutations.disconnect();
     boxes.disconnect();
+    glide.stop();
     scroller.style.overflowAnchor = previousAnchoring;
   };
 }
@@ -156,27 +180,100 @@ function motionMs(value: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** Where a glide taken off the rows had drawn them. */
+export interface HeldGlide {
+  /** The distance the glide was started with. */
+  px: number;
+  /** How far below their place the rows were drawn: `px` times what was left of the curve. */
+  remaining: number;
+  /** Milliseconds into the glide, to resume it on the same frame of its curve. */
+  time: number;
+}
+
+/** The distance a new arrival glides from: the held glide's drawn offset, plus the new row. */
+export function glideTravel(held: HeldGlide | null, travel: number): number {
+  return (held?.remaining ?? 0) + travel;
+}
+
+/** The thread's glide, as the durable state `follow` reads: see {@link createThreadGlide}. */
+export interface ThreadGlide {
+  /** Removes the glide's transforms so the layout can be measured; null when none was running. */
+  suspend(): HeldGlide | null;
+  /** Plays the rows from `px` below their place back to it, `time` ms in; false if nothing ran. */
+  play(px: number, time?: number): boolean;
+  /** Ends any glide (teardown). */
+  stop(): void;
+}
+
 /**
  * The thread making room for an arrival as Messenger does (`appendGlidePx`): the rows, already at
  * their final place, are played from `px` lower back to it - a compositor transform on the motion
- * scale's `--motion-thread-glide` / `--motion-ease-in-out`, never a `scrollTop` animation, so every
- * measurement the pane takes meanwhile reads the final position. The new bubble's own fade
- * (`.motion-bubble-in`) waits out the same glide.
+ * scale's `--motion-thread-glide` / `--motion-ease-in-out`, never a `scrollTop` animation. The
+ * running animations ARE the state: `suspend` reads where they drew the rows from their own
+ * computed timing (the eased progress) and cancels them; `play` starts them again. A glide that
+ * ends clears itself on its `finish` event - no clock anywhere.
  */
-function playAppendGlide(scroller: HTMLElement, px: number): void {
-  const root = getComputedStyle(document.documentElement);
-  const duration = motionMs(root.getPropertyValue('--motion-thread-glide'));
-  const easing = root.getPropertyValue('--motion-ease-in-out').trim();
-  if (duration === null || !easing) {
-    Log.w('threadGrowth', `glide of ${px}px skipped: the motion tokens did not resolve`);
-    return;
-  }
-  Log.d('threadGrowth', `arrival: thread glides ${px}px over ${duration}ms`);
-  for (const child of scroller.children) {
-    if (!(child instanceof HTMLElement) || typeof child.animate !== 'function') continue;
-    child.animate([{ transform: `translateY(${px}px)` }, { transform: 'none' }], {
-      duration,
-      easing,
+export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
+  let running: { px: number; animations: Animation[] } | null = null;
+
+  const suspend = (): HeldGlide | null => {
+    const current = running;
+    if (!current) return null;
+    running = null;
+    const first = current.animations[0];
+    const progress = first.effect?.getComputedTiming().progress ?? null;
+    const time = Number(first.currentTime ?? 0);
+    for (const animation of current.animations) animation.cancel();
+    // A null progress is a glide past its end whose `finish` has not been delivered yet: nothing is
+    // left to draw, and nothing to resume.
+    if (progress === null) return null;
+    return { px: current.px, remaining: current.px * (1 - progress), time };
+  };
+
+  const play = (px: number, time = 0): boolean => {
+    if (px <= 0) return false;
+    const root = getComputedStyle(document.documentElement);
+    const duration = motionMs(root.getPropertyValue('--motion-thread-glide'));
+    const easing = root.getPropertyValue('--motion-ease-in-out').trim();
+    if (duration === null || !easing) {
+      Log.w('threadGrowth', `glide of ${px}px skipped: the motion tokens did not resolve`);
+      return false;
+    }
+    const animations: Animation[] = [];
+    for (const child of scroller.children) {
+      if (!(child instanceof HTMLElement) || typeof child.animate !== 'function') continue;
+      const animation = child.animate(
+        [{ transform: `translateY(${px}px)` }, { transform: 'none' }],
+        { duration, easing }
+      );
+      if (time > 0) animation.currentTime = time;
+      animations.push(animation);
+    }
+    if (animations.length === 0) return false;
+    const run = { px, animations };
+    running = run;
+    animations[0].addEventListener('finish', () => {
+      if (running === run) running = null;
     });
+    if (time === 0) {
+      Log.d('threadGrowth', `arrival: thread glides ${Math.round(px)}px over ${duration}ms`);
+    }
+    return true;
+  };
+
+  return { suspend, play, stop: () => void suspend() };
+}
+
+/**
+ * Marks the bubbles among `added` as waiting out the glide that makes room for them
+ * (`.motion-bubble-in[data-glide-entrance]`, app.css). Set in the same task as their mount, before
+ * any frame, so the plain fade they started with is never seen.
+ */
+function markGlideEntrance(added: readonly Element[]): void {
+  for (const node of added) {
+    if (node.matches('.motion-bubble-in')) node.setAttribute('data-glide-entrance', '');
+    for (const bubble of node.querySelectorAll('.motion-bubble-in')) {
+      bubble.setAttribute('data-glide-entrance', '');
+    }
   }
 }

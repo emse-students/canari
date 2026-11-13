@@ -242,6 +242,48 @@ const declaresABox = (s: Site): boolean =>
       EXPLICIT_BOX.test(withoutVariant(t))
   );
 
+/**
+ * Every rule whose selector names `.ui-icon-button` and declares a width, with the `@media`
+ * condition it sits in ('' for none). `@layer` and `@supports` are transparent; only `@media`
+ * conditions are kept, joined when nested.
+ */
+function iconButtonWidths(css: string): { selector: string; width: string; media: string }[] {
+  const found: { selector: string; width: string; media: string }[] = [];
+  const stack: string[] = [];
+  let prelude = '';
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i];
+    if (c === '{') {
+      const head = prelude.trim();
+      const close = css.indexOf('}', i);
+      const nextOpen = css.indexOf('{', i + 1);
+      const isBlock = head.startsWith('@') || (nextOpen !== -1 && nextOpen < close);
+      if (isBlock) {
+        stack.push(head.startsWith('@media') ? head.replace(/^@media\s*/, '') : '');
+      } else {
+        const width = /(?:^|;|\s)width:\s*([\d.]+rem)/.exec(css.slice(i + 1, close))?.[1];
+        if (width && /\.ui-icon-button/.test(head)) {
+          for (const selector of head.split(',').map((x) => x.trim())) {
+            if (selector.includes('.ui-icon-button')) {
+              found.push({ selector, width, media: stack.filter(Boolean).join(' and ') });
+            }
+          }
+        }
+        i = close;
+      }
+      prelude = '';
+    } else if (c === '}') {
+      stack.pop();
+      prelude = '';
+    } else if (c === ';' && !prelude.trim().startsWith('@')) {
+      prelude = '';
+    } else {
+      prelude += c;
+    }
+  }
+  return found;
+}
+
 describe('the icon-button box', () => {
   it('finds the population at all, so a silent reader failure cannot pass as a clean tree', () => {
     // Not an assertion about the exact number - it moves with every feature. It asserts the READER
@@ -254,26 +296,36 @@ describe('the icon-button box', () => {
     // to declare, and a rule about declared widths that counts the ones in its own explanation is
     // measuring prose - it reported a fifth size that did not exist until this line was added.
     const css = withoutComments(readFileSync(cssPath, 'utf8'));
-    const widths = [...css.matchAll(/\.ui-icon-button[^{]*\{[^}]*?width:\s*([\d.]+rem)/g)].map(
-      (m) => m[1]
-    );
+    const rules = iconButtonWidths(css);
 
-    expect(widths.length, 'no .ui-icon-button rule declares a width - the class was gutted').toBe(
-      5
-    );
-    // 2.75rem (44px touch), 2.375rem (38px pointer), 1.75rem (28px hover strip), and ONE row with a
-    // size of its own: the chat composer's 2.5rem (40px) on a phone, Messenger's measured pitch
-    // (owner, 2026-11-13: the bar's dimensions as Messenger's, keyboard-and-send-motion.md), which
-    // keeps the 38px pointer form. Any other value is the size the design does not make.
-    expect(new Set(widths), `widths declared for .ui-icon-button: ${widths.join(', ')}`).toEqual(
+    expect(rules.length, 'no .ui-icon-button rule declares a width - the class was gutted').toBe(4);
+    // 2.75rem (44px touch), 2.375rem (38px pointer), 1.75rem (28px hover strip), and the chat
+    // composer's 2.5rem (40px) on a phone. Any other value is the size the design does not make.
+    expect(new Set(rules.map((r) => r.width))).toEqual(
       new Set(['2.75rem', '2.375rem', '1.75rem', '2.5rem'])
     );
-    const composerRow = [...css.matchAll(/([^{}]*)\{[^}]*?width:\s*2\.5rem/g)].map((m) =>
-      m[1].trim()
-    );
-    expect(composerRow, 'the 40px box belongs to the composer row alone').toEqual([
-      '.chat-composer-panel .ui-icon-button',
-    ]);
+  });
+
+  it('keeps the 44px touch floor wherever a touch screen can be wider than a phone', () => {
+    // THE RULE, NOT A LIST OF VALUES (review of #3490, S4). The 44px box is the unconditioned one; a
+    // smaller box is legal only where no touch screen of 768px and up can meet it:
+    // - under a POINTER (`pointer: fine`), or the hover strip's `--sm`, which only a pointer shows;
+    // - the owner's ONE phone exception (2026-11-13, design-reference.md): the chat composer's 40px
+    //   row, Messenger's pitch, and only below 768px - a touch tablet keeps 44px.
+    const css = withoutComments(readFileSync(cssPath, 'utf8'));
+    for (const rule of iconButtonWidths(css)) {
+      const where = `${rule.selector} { width: ${rule.width} } in @media ${rule.media || '(none)'}`;
+      if (rule.width === '2.75rem') {
+        expect(rule.media, where).toBe('');
+        continue;
+      }
+      const underPointer = /pointer:\s*fine/.test(rule.media);
+      const hoverStrip = rule.selector === '.ui-icon-button--sm';
+      const phoneComposer =
+        rule.selector === '.chat-composer-panel .ui-icon-button' &&
+        /^\(max-width:\s*767px\)$/.test(rule.media);
+      expect(underPointer || hoverStrip || phoneComposer, where).toBe(true);
+    }
   });
 
   it('has no icon button declaring a box of its own outside the ones measured against a neighbour', () => {

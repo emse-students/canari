@@ -53,6 +53,13 @@ describe('MessageMetadata on a failed send', () => {
     }
   });
 
+  it('announces a send in transit, moved under the bubble, as a status (review of #3490, N3)', () => {
+    for (const status of ['pending', 'sending']) {
+      const target = render({ status, isLastOwn: true, outsideBubble: true });
+      expect(target.querySelector('[role="status"]')?.textContent?.trim()).toBeTruthy();
+    }
+  });
+
   it('calls retry and discard, and offers neither unless given', () => {
     const onRetry = vi.fn();
     const onDiscard = vi.fn();

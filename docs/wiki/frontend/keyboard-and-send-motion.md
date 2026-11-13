@@ -76,7 +76,9 @@ screen with a text field, because it acts on the viewport every screen already r
 
 1. The insets listener asks `imeStep` (`keyboard/ImeHandoff.kt`, pure, `ImeHandoffTest`) what to do.
    A rise from no keyboard, with a page present, is a HAND-OFF; anything else (a fall, a height change
-   while open, no page) pads at once as before and ends any hand-off still in flight.
+   while open, no page) pads at once as before and ends any hand-off still in flight. The hand-off in
+   flight is one `ImeHandoff` object: a number per hand-off, and only the current number's answers
+   decide anything.
 2. Hand-off: `window.canariImeTarget(<keyboard height in CSS px>)` is evaluated. The page
    (`keyboardViewport.svelte.ts` + `imeTarget.ts`, `imeTarget.test.ts`) answers by laying itself out
    as the resize WILL measure - layout and visual viewport both `baseline - target` - synchronously,
@@ -85,38 +87,84 @@ screen with a text field, because it acts on the viewport every screen already r
    only then is the content padded. The crop that follows removes only the band the keyboard is
    sliding over; the frames before and after the resize are the same picture.
 4. The target is spent as soon as either viewport gives up height of its own (the padding landed, or
-   the WebView shrank its visual viewport itself), or when the shell announces 0 on a fall.
+   the WebView shrank its visual viewport itself), or when the shell announces 0 on a fall - which it
+   does only for a hand-off whose padding never landed (a landed one is already spent).
+5. A hand-off ends when its page goes away. A new WebView ends it (`onWebViewCreate`), and so does a
+   new document in the same WebView: `initKeyboardViewport` calls `window.canariIme.pageReady()`, the
+   shell ends the hand-off and dispatches the insets again, so a keyboard still up is handed to the new
+   page. Without this, a reload that swallowed the answer left the hand-off pending and the keyboard
+   over the composer until it closed (review S1). Wry's generated client offers no page-start hook,
+   and a gone renderer takes the process with it (wry does not override `onRenderProcessGone`).
+6. The opening is two updates on the page - the announced layout, then the real resize that spends
+   the target - and both reveal the focused field at once (`auto`), never smoothly under the keyboard
+   (`keyboardRevealOnUpdate`, review S3: a modal, the PIN dialog, a payment overlay).
+
+One logcat line per padding change: `IME inset: <px> -> content padding (<why>)`, the why being
+`rise #n: the page drew its keyboard layout`, `applied at once`, `hand-off to <px> superseded`,
+`rise #n, target refused` or `no page to hand off to`.
 
 A page that does not answer `true` (not hydrated yet, an older bundle) is said at WARN in logcat
 (`the page did not take the target`) and the padding lands at once, as before.
 
-**The band under the page (Android).** `themeStore` sends the page's `--cn-bg` to
-`canariTheme.setGround` on every theme apply; `MainActivity` paints it on the content view, under the
-transparent WebView. The band any resize opens is the page's ground in both themes.
+**The band under the page (Android).** When the page takes a keyboard target it sends
+`canariTheme.setGround` the first opaque background painted where the keyboard will sit
+(`imeGround.ts`: `elementFromPoint` at the bottom edge, up through its ancestors, a translucent glass
+composer looked through, the colour converted by the engine on a one-pixel canvas), and `MainActivity`
+paints it on the content view, under the transparent WebView. A conversation's band is its grey, a
+full-bleed CanaReels, live or camera screen's is black (review N1). Read once per rise, when the layout
+changes anyway - never on a theme apply at boot (review N5).
 
 **The send.** `threadGrowthObserver` keeps its instant pin to the bottom, then plays the distance it
 jumped as a compositor transform from where the rows were (`appendGlidePx`, `threadAppendGlide.test.ts`):
 only for rows ADDED under a reader at the bottom, by less than half the pane - never for the keyboard,
 the entry, a batch or reduced motion. Tokens `--motion-thread-glide: 220ms` and
-`--motion-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1)`. The bubble plays `.motion-bubble-in`:
-transparent through the glide, then a `--motion-fast` fade, no slide, no fill
-(`riseInEntrance.test.ts`). A send in transit ("En attente...", "Envoi...") is drawn under the
-bubble where its check will be, in a row one `--text-2xs` line tall, so the bubble keeps its size
-from the tap to delivery; a failure stays inside, with its buttons.
+`--motion-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1)`.
 
-**The composer bar (phone, both platforms).** Controls on a 40 px box with no gap
-(`.chat-composer-panel .ui-icon-button`, the one row allowed a size of its own in
-`iconButtonScale.test.ts`), a 42 px field (11 px padding), 4 px from the screen's edges, the send's
-extra padding gone. Expected with the keyboard up: "+" 4-44, microphone 44-84, field 84-392, send
-392-432; while typing, field 44-392. A pointer keeps its 38 px controls and its gaps.
+- **A glide is taken off the rows before anything is measured** (`createThreadGlide`, review B1). A
+  transformed row counts in the scroller's scrollable overflow: measured in headless Chrome,
+  2026-11-13, `scrollHeight` grows by `max(0, offset - padding-bottom)` (a 70 px glide over 0, 80 and
+  200 px of padding: +70...0, 0, 0). So a pin taken mid-glide - the keyboard, a medium settling, a
+  second arrival - went past the real bottom and the rows rose too far, then dropped back. Every
+  follow now suspends the glide first (its animations are the state: their eased progress gives the
+  offset drawn), measures the layout, then resumes it on the same frame of its curve. Per-frame
+  numbers in Chrome, a 70 px arrival over 40 px of padding and the pane shrinking 100 px one frame
+  in: before, `scrollTop` reached 1038 against a real maximum of 1010 and walked back over five
+  frames, the last row parking at 300 then moving again; after, `scrollTop` is the real maximum on
+  every frame and the last row only descends, 327 to 260 (`threadGlide.test.ts` holds it with a
+  layout model that inflates the same way, and fails without the suspend).
+- **Two arrivals inside one glide** start the second from where the rows are drawn - what the first
+  had left, plus the new row - never a jump (review S5).
+- **The bubble waits only for a glide that played** (review S6). `.motion-bubble-in` alone is a plain
+  `--motion-fast` fade; the observer marks the arriving bubbles `data-glide-entrance` when its glide
+  makes room for them, in the same task as their mount, and only those are transparent through the
+  glide before the fade. A batch, a jump or a reader scrolled up shows its bubble at once. Neither
+  fills, both end opaque (`riseInEntrance.test.ts`).
+- **A salon echo is not remounted at delivery** (review B2). `salonEcho` re-keys the echo to the
+  server's id; the thread keyed rows by `id`, so the row was destroyed and mounted again, replaying
+  its entrance. The row now keeps `renderKey` (the client id it was drawn under) and the thread keys
+  by it (`threadRowRekey.svelte.test.ts`, which fails on the old key).
+
+A send in transit ("En attente...", "Envoi...") is drawn under the bubble where its check will be,
+in a row held one `--text-2xs` line tall by that token's line height (so text zoom moves it), as a
+`role="status"`, so the bubble keeps its size from the tap to delivery; a failure stays inside,
+with its buttons. The bubble hands that row its Retry and Delete (`MessageBubble.transitActions`).
+
+**The composer bar (phone, both platforms).** Below 768 px only: controls on a 40 px box with no gap,
+a 42 px field (11 px padding), 4 px from the screen's edges, the send's extra padding gone. Expected
+with the keyboard up: "+" 4-44, microphone 44-84, field 84-392, send 392-432; while typing, field
+44-392. It is the owner's one exception to the 44 px touch floor ([design-reference](design-reference.md)):
+a touch tablet keeps 44 px and its gaps, a pointer its 38 px. `iconButtonScale.test.ts` asserts the
+rule, not the value: a box under 44 px sits under `pointer: fine`, is the hover strip's `--sm`, or is
+this row inside `(max-width: 767px)` (review S4). In iPhone landscape the composer is already inside
+the safe area: it is positioned in `ChatArea`'s root, inside the app shell that pads by
+`env(safe-area-inset-left/right)` (review N4), so it adds none of its own.
 
 ## What is left different, and why
 
-- **What folds.** Messenger folds every action into a chevron as soon as the field has focus; Canari
-  folds the microphone on the first character and keeps "+", which already IS the group of actions
-  (the owner's rule of 2026-09-08: *"les icones sur les bords disparaissent quand tu commences a
-  taper"*). Folding the microphone on focus instead is one condition (`controlsCollapsed`) if the
-  owner wants it.
+- **What folds - DECIDED, kept as it is (owner, 2026-11-13).** Messenger folds every action into a
+  chevron as soon as the field has focus; Canari hides the microphone at the first character typed and
+  keeps "+", which already IS the group of actions (the owner's rule of 2026-09-08: *"les icones sur
+  les bords disparaissent quand tu commences a taper"*). No chevron fold.
 - **The gap above the keyboard**: 12 px against Messenger's 9.3 dp, and at rest the field sits 9 dp
   lower than Messenger's (Canari pads `max(0.75rem, inset)`, Messenger `inset + 9`). Kept: the GIF
   panel's hand-off is built on the same 0.75rem (chat.md), and iOS's home indicator makes `inset +
@@ -131,12 +179,19 @@ extra padding gone. Expected with the keyboard up: "+" 4-44, microphone 44-84, f
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):
 
-1. Keyboard open: a 285 ms opaque slide; logcat `IME animation: 285 ms` and `IME rise #n: the page
-   drew its keyboard layout`; the composer above the keyboard from its first frames, no cropped
-   frame, no navy band; and never `the page did not take the target`.
+1. Keyboard open: a 285 ms opaque slide; logcat `IME animation: 285 ms` and `IME inset: <px> ->
+   content padding (rise #n: the page drew its keyboard layout)`; the composer above the keyboard
+   from its first frames, no cropped frame; the band the page's ground (grey in a conversation,
+   black on a CanaReel's comment field); and never `the page did not take the target`.
 2. Keyboard close: an opaque slide down, no fade.
 3. Send: the thread glides ~220 ms, then the bubble fades in; the bubble's box unchanged from the tap
-   to the check.
+   to the check. In a salon, no second fade at delivery. Two sends in a row, and a send with the
+   keyboard closing mid-glide: no row rising past its place, `scrollTop` against `scrollHeight` per
+   frame through CDP.
 4. The composer's boxes read through CDP against the expected numbers above, light and dark.
+5. A field in a modal (the PIN change dialog): revealed at once when the keyboard opens, no smooth
+   scroll under it. A pull-to-refresh reload with the keyboard up: the composer still lifts
+   (`IME hand-off to <px> ended: the page started a new document`).
 
-And on the iPhone 12: the composer's dimensions and the send motion, which apply there unchanged.
+And on the iPhone 12: the composer's dimensions and the send motion, which apply there unchanged, and
+the composer in landscape clear of the notch.

@@ -47,3 +47,38 @@ fun imeCssPx(px: Int, density: Float): String {
     val hundredths = Math.round(px / density * 100f)
     return "${hundredths / 100}.${(hundredths % 100).toString().padStart(2, '0')}"
 }
+
+/**
+ * THE HAND-OFF IN FLIGHT, as the insets listener and the page's late answers share it (UI thread).
+ *
+ * Every answer carries the number [begin] gave it, and only the current number decides anything,
+ * so an answer that arrives after the keyboard moved again, or after the page it was asked of went
+ * away, does nothing. [end] is called by everything that makes a hand-off moot: a padding decided
+ * another way, a new WebView, a new document in it (the page announces itself, `canariIme`). Without
+ * that last one, a reload that swallowed the page's answer left [pending] set, and every later
+ * dispatch of the same inset was [ImeStep.NOTHING] - the keyboard covered the composer until it was
+ * closed (review of #3490, S1).
+ */
+class ImeHandoff {
+    /** The inset the hand-off in flight is taking the padding to, or null when none is. */
+    var pending: Int? = null
+        private set
+    private var seq = 0L
+
+    /** Starts a hand-off to [ime]; the returned number identifies its answers. */
+    fun begin(ime: Int): Long {
+        pending = ime
+        return ++seq
+    }
+
+    /** Whether an answer numbered [id] still decides anything. */
+    fun isCurrent(id: Long): Boolean = id == seq && pending != null
+
+    /** Ends any hand-off; returns the inset it was taking the padding to, null if none was running. */
+    fun end(): Int? {
+        val was = pending
+        pending = null
+        seq++
+        return was
+    }
+}
