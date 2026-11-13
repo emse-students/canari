@@ -23,6 +23,7 @@ import {
 } from '../../users/entities/purchase-record.entity';
 import { AssociationsService } from '../associations.service';
 import { productOrderRef } from '../product-checkout';
+import { vendorTokensHeldBy } from '../lydia-account-bridge';
 import { LydiaRefund, type RefundKind } from './lydia-refund.entity';
 import { LydiaRefundNotifier } from './lydia-refund-notifier.service';
 import {
@@ -208,7 +209,7 @@ export class RefundsService implements OnApplicationBootstrap {
     // A process that died mid-call left its row with no outcome: proven abandoned, it reads as
     // unconfirmed now rather than "in progress" until the next boot.
     await this.sweepAbandoned();
-    const business = await this.businessOf(manager, associationId);
+    const businesses = await this.businessesOf(manager, associationId);
     const records = await manager.find(PurchaseRecord, {
       where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
       order: { paidAt: 'DESC' },
@@ -225,7 +226,7 @@ export class RefundsService implements OnApplicationBootstrap {
     for (const record of records) {
       const target = targets.get(record.id) as Target;
       const mine = refunds.filter((r) => r.purchaseRecordId === record.id);
-      const reason = refusalOf(target, business);
+      const reason = refusalOf(target, businesses);
       standings.push({
         purchaseRecordId: record.id,
         refundable: reason === null,
@@ -360,8 +361,8 @@ export class RefundsService implements OnApplicationBootstrap {
     // still holds the money and still refunds it, and a new receiver, which never took it, may not
     // (owner review of #2967, 2026-11-03).
     const target = await this.targetOf(manager, record);
-    const business = await this.businessOf(manager, associationId);
-    const tookIt = target.ok && business !== null && target.vendorToken === business;
+    const businesses = await this.businessesOf(manager, associationId);
+    const tookIt = target.ok && businesses.includes(target.vendorToken);
     if (record.associationId !== associationId && !tookIt) {
       this.logger.warn(
         `[LYDIA-REFUND] refused: payment ${purchaseRecordId} is neither ${associationId}'s nor ` +
@@ -386,7 +387,7 @@ export class RefundsService implements OnApplicationBootstrap {
         message: 'Another refund of this payment is not settled',
       });
     }
-    const refusal = refusalOf(target, business);
+    const refusal = refusalOf(target, businesses);
     if (refusal || !target.ok) {
       this.logger.warn(
         `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: not refundable (${refusal})`
@@ -967,13 +968,18 @@ export class RefundsService implements OnApplicationBootstrap {
     return out;
   }
 
-  /** The Lydia Business the association holds now (its `vendor_token`), or null. */
-  private async businessOf(manager: EntityManager, associationId: string): Promise<string | null> {
-    const [row] = (await manager.query(`SELECT "lydiaAccountId" FROM associations WHERE id = $1`, [
+  /**
+   * The vendor tokens of every Lydia Business the association holds now: its active one and, on a
+   * bridge, the standby one (`vendorTokensHeldBy`, lydia-account-bridge.ts) - so a payment taken on
+   * a historical account is still refunded after the switch, with that account's key, which core
+   * finds by the ROW's vendor token.
+   */
+  private async businessesOf(manager: EntityManager, associationId: string): Promise<string[]> {
+    const [row] = (await manager.query(`SELECT id FROM associations WHERE id = $1`, [
       associationId,
-    ])) as { lydiaAccountId: string | null }[];
+    ])) as { id: string }[];
     if (!row) throw new NotFoundException('Association not found');
-    return row.lydiaAccountId?.trim() || null;
+    return vendorTokensHeldBy((sql, params) => manager.query(sql, params), associationId);
   }
 
   private async associationName(on: EntityManager, associationId: string): Promise<string> {
@@ -1040,12 +1046,12 @@ export class RefundsService implements OnApplicationBootstrap {
 }
 
 /**
- * Why a payment may NOT be refunded by the association holding `business`, or null when it may: the
- * payment's own reason, else `other-business` when its Lydia Business is not the one held now.
+ * Why a payment may NOT be refunded by the association holding `businesses`, or null when it may:
+ * the payment's own reason, else `other-business` when its Lydia Business is none of those held now.
  */
-function refusalOf(target: Target, business: string | null): NotRefundableReason | null {
+function refusalOf(target: Target, businesses: readonly string[]): NotRefundableReason | null {
   if ('reason' in target) return target.reason;
-  return target.vendorToken === business ? null : 'other-business';
+  return businesses.includes(target.vendorToken) ? null : 'other-business';
 }
 
 /**

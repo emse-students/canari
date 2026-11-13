@@ -22,6 +22,11 @@ export const LYDIA_ONBOARDING_REFUSAL = {
   CREATE_UNCONFIRMED: 'LYDIA_BUSINESS_CREATE_UNCONFIRMED',
   /** 503: the payout account could not be read first; nothing was created, a retry is safe. */
   PAYOUT_ACCOUNT_UNREADABLE: 'PAYOUT_ACCOUNT_UNREADABLE',
+  /**
+   * 409: the Business an earlier enrolment created still waits for Lydia's validation (an
+   * association on a historical-account bridge); a second one would only be refused by Lydia too.
+   */
+  PENDING_VALIDATION: 'LYDIA_BUSINESS_PENDING_VALIDATION',
 } as const;
 
 export type LydiaOnboardingRefusalCode =
@@ -48,6 +53,8 @@ export function lydiaOnboardingRefusalText(code: LydiaOnboardingRefusalCode): st
       return m.asso_lydia_onboarding_unconfirmed_error();
     case LYDIA_ONBOARDING_REFUSAL.PAYOUT_ACCOUNT_UNREADABLE:
       return m.asso_lydia_account_error();
+    case LYDIA_ONBOARDING_REFUSAL.PENDING_VALIDATION:
+      return m.asso_lydia_pending_validation_error();
   }
 }
 

@@ -11,6 +11,7 @@ import {
   LYDIA_RESPONSABLE_SOCIAL_REFUSAL,
 } from './lydiaResponsableRefusal';
 import { PAYMENTS_BLOCKED, PAYMENTS_NOT_ACTIVATED } from './paymentRefusal';
+import { LYDIA_ONBOARDING_REFUSAL } from './lydiaOnboardingRefusal';
 import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
 import { LYDIA_CASHIER_ADD_ENABLED } from './lydiaCashiers';
 import { isKnownNotificationType } from '$lib/posts/notificationTarget';
@@ -46,6 +47,9 @@ describe('Lydia codes follow the shared contract', () => {
     expect(PAYMENTS_NOT_ACTIVATED).toBe(CONTRACT.social.paymentsNotActivated);
     expect(PAYMENTS_BLOCKED).toBe(CONTRACT.social.paymentsBlocked);
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(CONTRACT.social.enrolmentInFlight);
+    expect(LYDIA_ONBOARDING_REFUSAL.PENDING_VALIDATION).toBe(
+      CONTRACT.social.businessPendingValidation
+    );
     expect(LYDIA_RESPONSABLE_SOCIAL_REFUSAL).toEqual({
       ALREADY_SET: CONTRACT.social.responsableAlreadySet,
       PHONE_LOCKED: CONTRACT.social.responsablePhoneLocked,

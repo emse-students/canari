@@ -2328,6 +2328,40 @@ describe('FormsService - the seat a pending payment holds', () => {
       }
     );
 
+    it('a bridge switch back re-issues the SAME answer ONCE on the historical account, a new order_ref', async () => {
+      const { service, rows, core, associationsService } = makeStore({
+        maxSubmissions: 5,
+        rows: [],
+        basePrice: 1500,
+        provider: 'lydia',
+        allowMultipleSubmissions: true,
+        grantsCotisation: false,
+      });
+      core.createAnswer = refusedBy('LYDIA_BUSINESS_NOT_VALIDATED');
+      // Error 5 on a bridge's just-switched Business: switched back, the historical account collects.
+      associationsService.getPaymentAccountId
+        .mockResolvedValueOnce('vendor-enrolled')
+        .mockResolvedValueOnce('vendor-historical');
+      associationsService.revertLydiaReadinessAfterRefusal.mockImplementationOnce(async () => {
+        core.createAnswer = null;
+        return true;
+      });
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const answer = await service.submit('f1', { userId: 'u1', answers: {} } as any);
+      expect(answer).toMatchObject({ checkoutUrl: 'https://lydia.example/pay/1' });
+      const issued = core.calls.filter((c) => c.route === 'create-checkout-session');
+      expect(issued.map((c) => c.body.connectAccountId)).toEqual([
+        'vendor-enrolled',
+        'vendor-historical',
+      ]);
+      expect(issued[0].body.idempotencyKey).not.toBe(issued[1].body.idempotencyKey);
+      expect(associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledTimes(1);
+      expect(rows[0]).toMatchObject({
+        lydiaVendorToken: 'vendor-historical',
+        lydiaOrderRef: issued[1].body.idempotencyKey,
+      });
+    });
+
     it('any other refusal reverts nothing', async () => {
       const { service, core, associationsService } = makeStore({
         maxSubmissions: 5,

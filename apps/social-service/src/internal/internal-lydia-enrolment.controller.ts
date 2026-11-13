@@ -48,7 +48,9 @@ export class InternalLydiaEnrolmentController {
    * 200 - nothing to retry - EXCEPT for the token a pending `business/create` answered and that is
    * not linked yet (`no-holder-enrolment-in-flight`): the VALIDATED names the Business being linked,
    * so this answers 503 and core answers Lydia 503, asking for a retry. That Lydia retries a 503 is
-   * UNMEASURED. A failure to apply throws (5xx) the same way.
+   * UNMEASURED. A failure to apply throws (5xx) the same way. A VALIDATED naming the ENROLLED
+   * Business of a bridge whose historical account collects switches the association to it
+   * (`switched`, lydia-account-bridge.ts); a forged one costs one error 5 and a switch back.
    */
   @Post('lydia-readiness')
   @HttpCode(200)
@@ -57,7 +59,7 @@ export class InternalLydiaEnrolmentController {
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { vendorToken?: unknown; ready?: unknown; cause?: unknown }
   ): Promise<{
-    outcome: 'transitioned' | 'replay' | 'held-by-lydia' | 'no-holder';
+    outcome: 'transitioned' | 'switched' | 'replay' | 'held-by-lydia' | 'no-holder';
     associationId: string | null;
   }> {
     assertInternalSecret(headerSecret);
@@ -82,7 +84,15 @@ export class InternalLydiaEnrolmentController {
       });
     }
     if (!('associationId' in outcome)) return { outcome: 'no-holder', associationId: null };
-    return { outcome: outcome.kind, associationId: outcome.associationId };
+    if (outcome.kind === 'switched-back') {
+      // Only a refusal switches back; a VALIDATED never reaches it. Said, never guessed into a kind.
+      this.logger.error('[LYDIA-READINESS] a VALIDATED answered switched-back - nothing to report');
+      return { outcome: 'no-holder', associationId: outcome.associationId };
+    }
+    // A bridge switch (lydia-account-bridge.ts) is a transition, named for core's log line.
+    const kind =
+      outcome.kind === 'transitioned' && outcome.bridgeSwitched ? 'switched' : outcome.kind;
+    return { outcome: kind, associationId: outcome.associationId };
   }
 
   /** Claims the enrolment-in-flight marker before `business/create` (typed 409 otherwise). */

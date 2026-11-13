@@ -129,6 +129,7 @@ import {
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { paymentsNotReady } from './lydia-readiness';
+import { LYDIA_BRIDGE_LOG_TAG } from './lydia-account-bridge';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -289,6 +290,14 @@ interface PreparedPurchase {
  * `PaymentTarget` the request is built from (provider, account, receiving association, readiness,
  * delegation), so one that changed in a field nobody listed is never taken for the same.
  */
+/** What opening a boutique checkout answers the buyer's page. */
+export interface CheckoutOpened {
+  checkoutUrl: string;
+  amountCents: number;
+  currency: string;
+  checkoutId: string;
+}
+
 function sameRouting(a: PaymentTarget, b: PaymentTarget): boolean {
   return (
     a.provider === b.provider &&
@@ -669,15 +678,21 @@ export class ProductsService {
   /**
    * The payment target of `asso` under a provider ALREADY fetched: reads the delegation parent by
    * id and calls nothing, so it may run under a lock (`decidePurchase`, with that transaction's
-   * `manager`, so the read uses the lock holder's connection).
+   * `manager`, so the read uses the lock holder's connection). `lockParent` (inside a transaction
+   * only) SHARE-locks the parent row: a readiness change or a bridge switch of the receiver, which
+   * locks it FOR UPDATE, then orders against the purchase's decision (lydia-account-bridge.ts).
    */
   private async routeWith(
     asso: Association,
     provider: PaymentProviderId,
-    manager: EntityManager = this.assoRepo.manager
+    manager: EntityManager = this.assoRepo.manager,
+    lockParent = false
   ): Promise<PaymentTarget> {
     const parent = isDelegating(asso)
-      ? await manager.findOne(Association, { where: { id: asso.paymentParentAssociationId } })
+      ? await manager.findOne(Association, {
+          where: { id: asso.paymentParentAssociationId },
+          ...(lockParent ? { lock: { mode: 'pessimistic_read' as const } } : {}),
+        })
       : null;
     return resolvePaymentTarget(asso, parent, provider);
   }
@@ -2231,7 +2246,34 @@ export class ProductsService {
     customAmountCents?: number,
     callbackUrls?: { successUrl?: string; cancelUrl?: string },
     payerEmail?: string
-  ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+  ): Promise<CheckoutOpened> {
+    return this.openCheckoutAttempt(
+      associationId,
+      productId,
+      userId,
+      customAmountCents,
+      callbackUrls,
+      payerEmail,
+      false
+    );
+  }
+
+  /**
+   * `createCheckoutSession`'s body. `bridgeReissue` is true for the ONE re-issue a bridge's switch
+   * back owes (owner, 2026-11-13): Lydia answered error 5 for the Business a switch had made
+   * active, BEFORE any request existed, so nothing is payable on it; the attempt was released and
+   * the historical account collects again - the same purchase is opened once more, re-resolved and
+   * re-decided from the start, and never a third time.
+   */
+  private async openCheckoutAttempt(
+    associationId: string,
+    productId: string,
+    userId: string,
+    customAmountCents: number | undefined,
+    callbackUrls: { successUrl?: string; cancelUrl?: string } | undefined,
+    payerEmail: string | undefined,
+    bridgeReissue: boolean
+  ): Promise<CheckoutOpened> {
     await assertReviewerReachesAssociation(
       this.productRepo.manager,
       userId,
@@ -2345,10 +2387,35 @@ export class ProductsService {
         // vendor token stops being ready, whatever had marked it ready (lydia-readiness.ts).
         const cause = lydiaReadinessRefusal(err);
         if (cause) {
-          await this.associationsService.revertLydiaReadinessAfterRefusal(vendorToken, cause, {
-            path: 'shop',
-            id: checkout.id,
-          });
+          const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
+            vendorToken,
+            cause,
+            { path: 'shop', id: checkout.id }
+          );
+          if (reissue && !bridgeReissue) {
+            // NOT a fallback: the owner's decision for the bridge, scoped to error 5 on the
+            // Business a switch just made active, logged and counted (`reissueCount`).
+            this.logger.warn(
+              `${LYDIA_BRIDGE_LOG_TAG} checkout ${checkout.id.slice(0, 8)}: error 5 on the ` +
+                `Business a bridge switch made active, switched back - the SAME purchase is ` +
+                `re-issued once on the historical account (nothing was issued on the first)`
+            );
+            return this.openCheckoutAttempt(
+              associationId,
+              productId,
+              userId,
+              customAmountCents,
+              callbackUrls,
+              payerEmail,
+              true
+            );
+          }
+          if (reissue) {
+            this.logger.error(
+              `${LYDIA_BRIDGE_LOG_TAG} checkout ${checkout.id.slice(0, 8)}: a re-issued purchase ` +
+                `met a second switch back - refused, never issued a third time`
+            );
+          }
         }
       } else {
         // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
@@ -3127,7 +3194,9 @@ export class ProductsService {
     });
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
-    const now = await this.routeWith(asso, prepared.provider, manager);
+    // The payee row SHARE-locked too when it is a parent: the switch of a bridge (or a revert)
+    // locks it FOR UPDATE, so the account read here is the one this attempt is issued to.
+    const now = await this.routeWith(asso, prepared.provider, manager, true);
     // Read BEFORE the product's own flag: a readiness revert committed while the purchase was being
     // prepared both clears the target's readiness and withholds the product, and the payer is owed
     // the reason (payments not active), not "product not found" nor a routing change.

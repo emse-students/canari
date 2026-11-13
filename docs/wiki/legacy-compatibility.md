@@ -253,6 +253,27 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once no association is left with a historical active account - the Lydia account bridge (owner, 2026-11-13)
+
+**Site:** `apps/social-service/src/associations/lydia-account-bridge.ts` and every caller of its three
+definitions (`managedVendorTokenSql`, `HELD_BUSINESSES_SQL`, `vendorTokensHeldBy`), the bridge branches
+of `AssociationsService.setLydiaReadiness` (`standbyReadinessStep`, `switchBackOnRefusal`), the
+re-issue in `ProductsService.openCheckoutAttempt` and in `FormsService`'s paid submit, the code
+`LYDIA_BUSINESS_PENDING_VALIDATION` (social, core, the contract, the frontend), the admin panel in
+`LydiaBusinessOnboardingForm.svelte`, the `meta.bridge` wording in `NotificationRow.svelte`, the strip
+in `copy-strips.sh`, and the table `lydia_account_bridges` (migration 167).
+**What it humours:** an association that collected through a Lydia account it held before Canari's
+enrolment (the BDE and Le Cercle): it keeps collecting there until Lydia validates the Business the
+enrolment created, then switches by itself
+([payments](frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13)).
+**The cost while it stands:** a second place a Business lives, every row-token lookup through a union,
+and the owner's error-5 re-issue - a path that exists for the bridge alone.
+**Removal condition:** no association left with a historical active account: `SELECT count(*) FROM
+lydia_account_bridges WHERE state = 'historical'` answers 0 on production, AND every switched bridge's
+historical account has nothing left to refund (its rows deleted by an admin, payments page). Then, in
+one pull request: a held migration dropping the table, the module and its callers back to the
+association's columns, the code, the panel, the wording, the strip and this entry.
+
 ### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
 
 **Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`

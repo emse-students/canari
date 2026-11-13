@@ -82,6 +82,13 @@ function payoutAccountUnreadable(): ServiceUnavailableException {
  */
 export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
 
+/**
+ * social-service's `code` (409) refusing an onboarding while the association's ENROLLED Business
+ * still waits for Lydia's validation, its historical account collecting meanwhile (the bridge of
+ * 2026-11-13, social-service's `lydia-account-bridge.ts`). Passed through to the screen.
+ */
+export const LYDIA_BUSINESS_PENDING_VALIDATION = 'LYDIA_BUSINESS_PENDING_VALIDATION';
+
 /** social-service's `code` (409) of a cashier operation while another one is in flight (lot 3). */
 export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 
@@ -280,7 +287,8 @@ export class PaymentController {
    * `LYDIA_ACCOUNT_ALREADY_LINKED` (`business/create` would replace it silently, lydia-api.md
    * section 2), and an earlier create whose outcome is unknown is the typed 409
    * `LYDIA_ENROLMENT_IN_FLIGHT` until a global admin clears it - a second Business is REFUSED, not
-   * merely discouraged. An unread state is never read as "free": 503 `PAYOUT_ACCOUNT_UNREADABLE`.
+   * merely discouraged. An enrolled Business still waiting for Lydia (a bridge) is the typed 409
+   * `LYDIA_BUSINESS_PENDING_VALIDATION`. An unread state is never read as "free": 503 `PAYOUT_ACCOUNT_UNREADABLE`.
    */
   private async assertNoLinkedBusiness(associationId: string): Promise<void> {
     let res;
@@ -314,6 +322,16 @@ export class PaymentController {
         `Lydia onboarding of association ${associationId} refused: a Business is already linked`
       );
       throw alreadyLinked();
+    }
+    if (res.status === 409 && code === LYDIA_BUSINESS_PENDING_VALIDATION) {
+      this.logger.warn(
+        `Lydia onboarding of association ${associationId} refused: its enrolled Business waits ` +
+          `for Lydia's validation`
+      );
+      throw new ConflictException({
+        code: LYDIA_BUSINESS_PENDING_VALIDATION,
+        message: 'The Lydia Business of this association is waiting for Lydia to validate it',
+      });
     }
     if (res.status === 409 && code === LYDIA_ENROLMENT_IN_FLIGHT) {
       this.logger.warn(

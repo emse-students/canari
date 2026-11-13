@@ -53,6 +53,20 @@ function makeService(rows: Row[]) {
         row.sealed = params[3];
         return [[{ id: row.id }], 1];
       }
+      if (sql.includes('FOR UPDATE OF a')) {
+        // The link's lock: no bridge here (lydia-account-bridge.ts), so the active Business alone.
+        const row = byId(params[0]);
+        return row ? [{ active: row.lydiaAccountId, state: null, enrolled: null }] : [];
+      }
+      if (sql.includes('h."vendorToken" = $1')) {
+        // HELD_BUSINESSES_SQL with no bridge row: every active Business, role `active`.
+        return table
+          .filter(
+            (r) =>
+              r.lydiaAccountId === params[0] && (!sql.includes('h.sealed IS NOT NULL') || r.sealed)
+          )
+          .map((r) => ({ id: r.id, sealed: r.sealed, ready: r.complete === true, role: 'active' }));
+      }
       if (sql.startsWith('SELECT id, "lydiaOnboardingComplete" AS complete')) {
         return table
           .filter((r) => r.lydiaAccountId === params[0])
@@ -74,6 +88,10 @@ function makeService(rows: Row[]) {
       throw new Error(`unexpected SQL: ${sql}`);
     }),
   };
+  // The link runs in ONE transaction holding the association row's lock; the fake does not roll back.
+  Object.assign(assoRepo, {
+    manager: { transaction: async (fn: (m: unknown) => unknown) => fn({ query: assoRepo.query }) },
+  });
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
     assoRepo,
     logger: new Logger('AssociationsService'),
@@ -246,6 +264,7 @@ describe('AssociationsService.lydiaBusinessOfVendorToken - a read for the unsign
     await expect(service.lydiaBusinessOfVendorToken('vendor-a')).resolves.toEqual({
       associationId: ASSO_A,
       onboardingComplete: true,
+      role: 'active',
     });
     await expect(service.lydiaBusinessOfVendorToken('vendor-nobody')).resolves.toBeNull();
     await expect(service.lydiaBusinessOfVendorToken('')).resolves.toBeNull();
@@ -423,7 +442,11 @@ describe('POST /api/internal/associations/lydia-callback-key - core-service only
     const hit = await lookup(INTERNAL);
     expect(hit.status).toBe(200);
     const text = await hit.text();
-    expect(JSON.parse(text)).toEqual({ associationId: ASSO_A, onboardingComplete: false });
+    expect(JSON.parse(text)).toEqual({
+      associationId: ASSO_A,
+      onboardingComplete: false,
+      role: 'active',
+    });
     expect(text).not.toContain(KEY_A);
   });
 });

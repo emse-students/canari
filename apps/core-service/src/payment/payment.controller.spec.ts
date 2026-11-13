@@ -21,6 +21,7 @@ import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
   LYDIA_BUSINESS_CHANGED,
   LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
   LYDIA_NO_BUSINESS,
   LYDIA_RESPONSABLE_ALREADY_SET,
   LYDIA_RESPONSABLE_NOT_A_CASHIER,
@@ -554,6 +555,19 @@ describe('PaymentController.createOnboarding - one Business per association, its
     await expect(
       controller.createOnboarding({ associationId: id, legalProfile }, req)
     ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ENROLMENT_IN_FLIGHT } });
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('a Business still pending validation on a bridge is the TYPED 409, and no second Business', async () => {
+    socialAnswers({ status: 409, data: { code: LYDIA_BUSINESS_PENDING_VALIDATION } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, paymentService } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_BUSINESS_PENDING_VALIDATION },
+    });
     expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
   });
 
@@ -1156,6 +1170,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
     );
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
     expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
+    expect(LYDIA_BUSINESS_PENDING_VALIDATION).toBe(contract.social.businessPendingValidation);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
     expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);

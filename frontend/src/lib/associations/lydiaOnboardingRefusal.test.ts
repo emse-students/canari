@@ -35,7 +35,7 @@ describe('Lydia onboarding refusals are classified by code, never by message', (
 
   it('gives each code its own sentence, none of them the server English', () => {
     const texts = Object.values(LYDIA_ONBOARDING_REFUSAL).map(lydiaOnboardingRefusalText);
-    expect(new Set(texts).size).toBe(4);
+    expect(new Set(texts).size).toBe(5);
     for (const text of texts) {
       expect(text.length).toBeGreaterThan(10);
       expect(text).not.toContain('already linked to this association');

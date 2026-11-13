@@ -279,6 +279,37 @@
     {/if}
   {/snippet}
 
+  {#snippet adminBridge()}
+    <!-- A GLOBAL ADMIN's read of a historical-account bridge (owner, 2026-11-13): the managers never
+         receive `bridge`, the historical account is invisible to them. -->
+    {#if isGlobalAdmin() && account?.bridge}
+      {@const bridge = account.bridge}
+      <div class="border-cn-border space-y-1 rounded-lg border p-3 text-sm" role="status">
+        <p class="text-text-main font-semibold">{m.asso_lydia_bridge_title()}</p>
+        <p class="text-text-muted leading-relaxed">
+          {bridge.state === 'switched' && bridge.switchedAt
+            ? m.asso_lydia_bridge_state_switched({ date: formatPauseDate(bridge.switchedAt) })
+            : m.asso_lydia_bridge_state_historical()}
+        </p>
+        {#if !bridge.enrolledLinked}
+          <p class="text-text-muted leading-relaxed">{m.asso_lydia_bridge_no_enrolled()}</p>
+        {/if}
+        {#if !bridge.historicalReady}
+          <p class="text-amber-warn-text leading-relaxed">
+            {m.asso_lydia_bridge_historical_not_ready()}
+          </p>
+        {/if}
+        <p class="text-text-muted text-xs">
+          {m.asso_lydia_bridge_counts({
+            switches: bridge.switchCount,
+            back: bridge.switchBackCount,
+            reissued: bridge.reissueCount,
+          })}
+        </p>
+      </div>
+    {/if}
+  {/snippet}
+
   {#snippet adminClear()}
     {#if view?.adminCanClearInFlight}
       <div class="space-y-2">
@@ -380,6 +411,7 @@
       </div>
     {/if}
     <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
+    {@render adminBridge()}
     {@render adminClear()}
     {@render adminAndDisconnect(false)}
   {:else}
@@ -513,6 +545,7 @@
       {/each}
     </ol>
     <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
+    {@render adminBridge()}
     {@render adminClear()}
     {#if account.lydiaAccountId}
       {@render adminAndDisconnect(view.adminCanValidate)}

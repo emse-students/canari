@@ -119,7 +119,12 @@ RESET lock_timeout;`
     // The two columns of `associations` the sweep's key test reads, and nothing else of it.
     await ds.query(
       `CREATE TABLE associations (id uuid PRIMARY KEY, "lydiaAccountId" varchar(255),
-         "lydiaBusinessKeyCiphertext" text)`
+         "lydiaBusinessKeyCiphertext" text, "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
+    );
+    // The bridge's table (lydia-account-bridge.ts): the key test reads every Business held.
+    await ds.query(
+      `${readFileSync(join(__dirname, '../migrations/167_lydia_account_bridge.sql'), 'utf8')}
+RESET lock_timeout;`
     );
     await ds.query(
       `INSERT INTO associations VALUES ($1, $2, 'sealed'), ('00000000-0000-4000-8000-0000000000c9', $3, NULL)`,
