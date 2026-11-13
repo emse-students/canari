@@ -13,7 +13,7 @@ import {
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
 import { canari } from '$lib/proto/canari.js';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, mkCallBusy, mkCallHangup, mkCallInvite } from '$lib/proto/codec';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
@@ -70,6 +70,12 @@ vi.mock('$lib/mls-client/mlsDeliveryHttp', () => ({
 }));
 
 const ICE = [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }];
+/** A room token shaped as the server signs it: a JWT whose payload the client reads (WP-GC2). */
+const roomJwt = (claims: Record<string, unknown>) =>
+  `h.${btoa(JSON.stringify(claims)).replace(/=+$/, '')}.sig`;
+/** The 1:1 room tokens the fake server answers: no `max_seats`, so a 1:1 call. */
+const RT1 = roomJwt({ room: 'rt-1' });
+const RT2 = roomJwt({ room: 'rt-2' });
 /** What the fake server answers; each test that needs another answer sets it, `beforeEach` resets. */
 const server = {
   ringTimeoutMs: 60_000,
@@ -83,6 +89,8 @@ const server = {
   ringHold: null as Promise<void> | null,
   /** When set, the room-token request waits for it: a test can see what ran beside it. */
   tokenHold: null as Promise<void> | null,
+  /** The `max_seats` claim the room tokens carry: set = a GROUP call (WP-GC2). */
+  seats: null as number | null,
 };
 /** The order in which the service talked to the server (`api:<path>`) and to the group (`mls`). */
 const order: string[] = [];
@@ -96,11 +104,18 @@ vi.mock('$lib/utils/apiFetch', () => ({
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url.includes('/api/calls/initiate'))
       return json(
-        { roomId: 'room-1', roomToken: 'rt-1', ringTimeoutMs: server.ringTimeoutMs },
+        {
+          roomId: 'room-1',
+          roomToken: server.seats ? roomJwt({ room: 'rt-1', max_seats: server.seats }) : RT1,
+          ringTimeoutMs: server.ringTimeoutMs,
+        },
         server.initiateStatus
       );
     if (url.includes('/api/calls/room-token'))
-      return json({ roomToken: 'rt-2' }, server.roomTokenStatus);
+      return json(
+        { roomToken: server.seats ? roomJwt({ room: 'rt-2', max_seats: server.seats }) : RT2 },
+        server.roomTokenStatus
+      );
     if (url.includes('/api/calls/ice-servers'))
       return json({ iceServers: ICE, turn: server.iceTurn }, server.iceStatus);
     if (url.includes('/api/calls/ring-end')) return json({});
@@ -125,6 +140,10 @@ const workerAnswers = {
   keys: null as { send: ArrayBuffer; receive: ArrayBuffer } | null,
   /** When set, the worker answers `setKeys` only once it settles: a key import still running. */
   keysHold: null as Promise<void> | null,
+  /** A group call's keys (`setGroupKeys`): the send key and the participants keyed (WP-GC2). */
+  groupKeys: null as { send: ArrayBuffer; peers: string[] } | null,
+  /** The participants keyed later, one `addReceiveKey` each, in order. */
+  added: [] as string[],
 };
 
 /** The E2E worker: answers `setKeys` with `keyReady` and `report` with counters, as the real one does. */
@@ -141,7 +160,13 @@ vi.mock('../workers/encryption.worker?worker', () => ({
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
-    postMessage(msg: { type: string; tag?: string; send?: ArrayBuffer; receive?: ArrayBuffer }) {
+    postMessage(msg: {
+      type: string;
+      tag?: string;
+      send?: ArrayBuffer;
+      receive?: ArrayBuffer | { peer: string; key: ArrayBuffer }[];
+      peer?: string;
+    }) {
       if (msg.type === 'report') {
         const frames = workerAnswers.report;
         if (!frames) return;
@@ -173,8 +198,23 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         });
         return;
       }
-      if (msg.type !== 'setKeys') return;
-      workerAnswers.keys = { send: msg.send!, receive: msg.receive! };
+      if (msg.type === 'addReceiveKey') {
+        const peer = msg.peer!;
+        workerAnswers.added.push(peer);
+        void flushMacrotask().then(() => {
+          const e = { data: { type: 'peerKeyReady', peer } } as MessageEvent;
+          for (const l of this.listeners.slice()) l(e);
+        });
+        return;
+      }
+      if (msg.type === 'setGroupKeys') {
+        const receive = msg.receive as { peer: string; key: ArrayBuffer }[];
+        workerAnswers.groupKeys = { send: msg.send!, peers: receive.map((r) => r.peer) };
+      } else if (msg.type === 'setKeys') {
+        workerAnswers.keys = { send: msg.send!, receive: msg.receive as ArrayBuffer };
+      } else {
+        return;
+      }
       const hold = workerAnswers.keysHold ?? Promise.resolve();
       // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
       // transform waited for it would be one task late, which Chromium short-circuits.
@@ -525,11 +565,14 @@ class FakePeerConnection {
 }
 
 class FakeTransform {
+  /** Every transform's options, in the order they were made (a group call reads whose they are). */
+  static made: { side: string; kind: string; epoch?: number; peer?: string }[] = [];
   constructor(
     public worker: unknown,
-    public options: { side: string; kind: string; epoch?: number }
+    public options: { side: string; kind: string; epoch?: number; peer?: string }
   ) {
     workerAnswers.epoch = options.epoch ?? 0;
+    FakeTransform.made.push(options);
   }
 }
 
@@ -538,6 +581,8 @@ const fakeTrack = () =>
   Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
 const fakeMls = {
   getDeviceId: () => 'device-1',
+  // The conversation's MLS tree: this device is alice's; bob and carol are the other members.
+  getGroupMemberIdentities: vi.fn(async () => ['alice:device-1', 'bob:device-b', 'carol:device-c']),
   // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
   exportSecret: vi.fn(async (_g: string, _l: string, context: Uint8Array) =>
     new Uint8Array(32).fill(context[context.length - 1])
@@ -585,6 +630,10 @@ beforeEach(() => {
   server.roomTokenStatus = 200;
   server.ringHold = null;
   server.tokenHold = null;
+  server.seats = null;
+  workerAnswers.groupKeys = null;
+  workerAnswers.added = [];
+  FakeTransform.made = [];
   workerAnswers.report = { sender: 250, receiver: 251 };
   workerAnswers.terminated = 0;
   workerAnswers.video = { sender: 0, receiver: 0 };
@@ -731,7 +780,7 @@ describe('a peer-to-peer call, client side', () => {
     expect(ws.sent[0]).toEqual({
       type: 'Join',
       room_id: 'room-1',
-      room_token: 'rt-1',
+      room_token: RT1,
       mode: 'p2p',
     });
     expect(get(service.callState)).toBe('calling');
@@ -895,7 +944,7 @@ describe('a peer-to-peer call, client side', () => {
     ws.open();
     ws.deliver({ type: 'Joined', room_id: 'room-1' });
     await accepted;
-    expect(ws.sent[0]).toMatchObject({ type: 'Join', room_token: 'rt-2', mode: 'p2p' });
+    expect(ws.sent[0]).toMatchObject({ type: 'Join', room_token: RT2, mode: 'p2p' });
 
     ws.deliver({ type: 'PeerReady', initiator: false });
     await settle();
@@ -2128,8 +2177,12 @@ describe('the E2E worker report (2026-10-19)', () => {
       const unsub = service.remoteStreams.subscribe(() => (published += 1));
       const before = published;
       const remote = (
-        service as unknown as { mergedRemoteStream: { tracks: { onmute?: () => void }[] } }
-      ).mergedRemoteStream.tracks.find((x) => x)!;
+        service as unknown as {
+          legs: Map<string, { mergedRemoteStream: { tracks: { onmute?: () => void }[] } }>;
+        }
+      ).legs
+        .get('')!
+        .mergedRemoteStream.tracks.find((x) => x)!;
       remote.onmute?.();
       expect(published).toBe(before + 1);
       unsub();
@@ -3023,7 +3076,7 @@ describe("the callee's answer runs its independent steps side by side", () => {
     ws.open();
     ws.deliver({ type: 'Joined', room_id: 'room-1' });
     await accepted;
-    expect(ws.sent[0]).toMatchObject({ type: 'Join', room_token: 'rt-2' });
+    expect(ws.sent[0]).toMatchObject({ type: 'Join', room_token: RT2 });
   });
 
   it('never waits for the "answered" notice: a notice still in flight does not hold the join', async () => {
@@ -5343,5 +5396,312 @@ describe("the caller's ringback and the app's sound gate (2026-10-31)", () => {
     service.retireFromPageRing();
 
     expect(callHoldsAppSound()).toBe(false);
+  });
+});
+
+/**
+ * The client half of a GROUP call (WP-GC2): one leg per other participant, over the relay's
+ * addressed mesh (`apps/call-service`, the server half). The fakes are the 1:1 call's; the room
+ * tokens carry `max_seats`, which is what makes a call a group call on both ends.
+ */
+describe('a group call, client side (WP-GC2)', () => {
+  const BOB = 'bob:seat-b';
+  const CAROL = 'carol:seat-c';
+  /** The CallMsg frames this device sent as a GROUP call's (`group_call`), since the last clear. */
+  const sentGroupFrames = () =>
+    vi
+      .mocked(fakeMls.sendMessage)
+      .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1]))
+      .filter((msg) => !!msg?.groupCall);
+  const answerSdp = JSON.stringify({ type: 'answer', sdp: 'v=0 answer' });
+
+  /** The caller of a 4-seat audio group call, joined, nobody paired yet. */
+  async function groupCaller(service: CallService) {
+    server.seats = 4;
+    return callerJoined(service);
+  }
+
+  /** The caller, with bob and carol paired (this side initiates both pairs) and connected. */
+  async function groupCallWithTwo(service: CallService) {
+    const ws = await groupCaller(service);
+    ws.deliver({ type: 'PeerReady', initiator: true, peer: BOB });
+    await settle();
+    ws.deliver({ type: 'PeerReady', initiator: true, peer: CAROL });
+    await settle();
+    const [bob, carol] = FakePeerConnection.instances;
+    for (const pc of [bob, carol]) {
+      await pc.onnegotiationneeded!();
+      pc.setIce('connected');
+      pc.setConnection('connected');
+    }
+    await settle();
+    return { ws, bob, carol };
+  }
+
+  it('reads its kind from the room token, keys one sender per member, rings as group_call and builds no peer connection before a pairing', async () => {
+    const service = new CallService(fakeMls);
+    const { apiFetch } = await import('$lib/utils/apiFetch');
+    vi.mocked(apiFetch).mockClear();
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await groupCaller(service);
+
+    expect(get(service.isGroupCall)).toBe(true);
+    // This device is alice's leaf: its own key is the send key, the two others' are received.
+    expect(workerAnswers.groupKeys?.peers).toEqual(['bob', 'carol']);
+    expect(workerAnswers.keys).toBeNull();
+    expect(FakePeerConnection.instances).toHaveLength(0);
+    // The invite is a `group_call`: a build before group calls never rings for it.
+    const invites = sentGroupFrames();
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.call).toBeFalsy();
+    expect(invites[0]?.groupCall?.offerSdp).toBe('START');
+    // The server is told this client carries group calls.
+    const initiate = vi
+      .mocked(apiFetch)
+      .mock.calls.find(([url]) => String(url).includes('/api/calls/initiate'));
+    expect(JSON.parse(String((initiate![1] as RequestInit).body))).toMatchObject({
+      groupId: 'group-1',
+      groupCallVersion: 1,
+    });
+  });
+
+  it('opens one leg per PeerReady, addresses each leg its own frames, and gives each receiver its participant', async () => {
+    const service = new CallService(fakeMls);
+    const { ws, bob, carol } = await groupCallWithTwo(service);
+
+    expect(FakePeerConnection.instances).toHaveLength(2);
+    const offers = ws.framesOfType('Offer');
+    expect(offers.map((f) => f.to)).toEqual([BOB, CAROL]);
+    expect(ws.framesOfType('IceCandidate').every((f) => f.to === BOB || f.to === CAROL)).toBe(true);
+    // The transforms of each leg were made in the task that created them, and say whose frames
+    // each receiver opens; a sender names nobody.
+    const receivers = FakeTransform.made.filter((o) => o.side === 'receiver');
+    expect(receivers.map((o) => o.peer)).toEqual(['bob', 'carol']);
+    expect(FakeTransform.made.filter((o) => o.side === 'sender').every((o) => !o.peer)).toBe(true);
+    expect(bob.senders[0].late).toBeUndefined();
+    expect(carol.senders[0].late).toBeUndefined();
+    // Each leg has its own epoch, which the worker counts its frames under.
+    expect(new Set(FakeTransform.made.map((o) => o.epoch)).size).toBe(2);
+
+    // An answer stamped `from` bob applies to bob's leg only.
+    ws.deliver({ type: 'Answer', sdp: answerSdp, from: BOB });
+    await settle();
+    expect(bob.remoteDescription?.type).toBe('answer');
+    expect(carol.remoteDescription).toBeNull();
+    // A frame from a seat this device holds no leg for is dropped, named.
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    ws.deliver({ type: 'Answer', sdp: answerSdp, from: 'dave:seat-d' });
+    await settle();
+    expect(carol.remoteDescription).toBeNull();
+    expect(
+      vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('holds no leg for'))
+    ).toBe(true);
+    expect(get(service.callState)).toBe('incall');
+  });
+
+  it('closes only the leg whose participant left, and ends the call when the last one leaves', async () => {
+    const service = new CallService(fakeMls);
+    const { ws, bob, carol } = await groupCallWithTwo(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    ws.deliver({ type: 'PeerLeft', peer: BOB });
+    await settle();
+    expect(bob.closed).toBe(true);
+    expect(carol.closed).toBe(false);
+    expect(get(service.callState)).toBe('incall');
+    expect(get(service.groupTiles).map((t) => t.userId)).toEqual(['carol']);
+
+    ws.deliver({ type: 'PeerLeft', peer: CAROL });
+    await settle();
+    expect(get(service.callState)).toBe('ended');
+    // Its hangup is a group call's, and carries no unanswered outcome: it stops nobody's call.
+    const hangups = sentGroupFrames().filter((m) => m?.groupCall?.hangup);
+    expect(hangups).toHaveLength(1);
+    expect(hangups[0]?.groupCall?.endReason ?? 0).toBe(0);
+  });
+
+  it('a PeerAway pauses only that leg', async () => {
+    const service = new CallService(fakeMls);
+    const { ws } = await groupCallWithTwo(service);
+
+    ws.deliver({ type: 'PeerAway', peer: BOB });
+    await settle();
+
+    expect(get(service.reconnecting)).toBe(true);
+    expect(get(service.callState)).toBe('incall');
+    ws.deliver({ type: 'PeerReady', initiator: true, peer: BOB, resumed: true });
+    await settle();
+    expect(get(service.reconnecting)).toBe(false);
+  });
+
+  it('one decline does not end it: the caller keeps ringing the others', async () => {
+    const service = new CallService(fakeMls);
+    await groupCaller(service);
+
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallHangup('room-1', 'device-b', 'declined').call!,
+      'alice',
+      'device-1',
+      true
+    );
+    await service.handleCallSignal(
+      'carol',
+      'group-1',
+      mkCallBusy('room-1', 'device-c').call!,
+      'alice',
+      'device-1',
+      true
+    );
+
+    expect(get(service.callState)).toBe('calling');
+    expect(get(service.ringingOut)).toBe(true);
+  });
+
+  it('the caller sends no ring-end while other participants are still in the call', async () => {
+    const service = new CallService(fakeMls);
+    await groupCallWithTwo(service);
+    order.length = 0;
+
+    service.endCall();
+    await settle();
+
+    expect(order).not.toContain('api:/api/calls/ring-end');
+    expect(sentGroupFrames().some((m) => m?.groupCall?.hangup)).toBe(true);
+  });
+
+  it('keys a participant who joined the conversation after the call was keyed, before its leg makes a transform', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await groupCaller(service);
+
+    ws.deliver({ type: 'PeerReady', initiator: true, peer: 'dave:seat-d' });
+    await settle();
+    await settle();
+
+    expect(workerAnswers.added).toEqual(['dave']);
+    expect(FakePeerConnection.instances).toHaveLength(1);
+    expect(FakeTransform.made.find((o) => o.side === 'receiver')?.peer).toBe('dave');
+  });
+
+  it('a 1:1 call keeps its wire: no `to` on any frame, one `call` kind invite', async () => {
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    await FakePeerConnection.instances[0].onnegotiationneeded!();
+    await settle();
+
+    expect(get(service.isGroupCall)).toBe(false);
+    expect(ws.sent.length).toBeGreaterThan(1);
+    expect(ws.sent.every((f) => !('to' in f))).toBe(true);
+    expect(sentGroupFrames()).toHaveLength(0);
+    expect(sentCallFrames()).toHaveLength(1);
+  });
+
+  it('a callee rung for a group call that rings out writes its own missed record', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-b', 60_000).call!,
+      'alice',
+      'device-1',
+      true
+    );
+    expect(get(service.callState)).toBe('incoming');
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(get(service.callState)).toBe('idle');
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'not-answered',
+      'bob'
+    );
+  });
+
+  it("a ringing callee's ring stops on the caller's cancel, and not on another member's decline", async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-b', 60_000).call!,
+      'alice',
+      'device-1',
+      true
+    );
+    await service.handleCallSignal(
+      'carol',
+      'group-1',
+      mkCallHangup('room-1', 'device-c', 'declined').call!,
+      'alice',
+      'device-1',
+      true
+    );
+    expect(get(service.callState)).toBe('incoming');
+
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallHangup('room-1', 'device-b', 'cancelled').call!,
+      'alice',
+      'device-1',
+      true
+    );
+    expect(get(service.callState)).not.toBe('incoming');
+  });
+
+  it('a callee answers with the token that names the group call, and keys per sender', async () => {
+    server.seats = 4;
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-b', 60_000).call!,
+      'alice',
+      'device-1',
+      true
+    );
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+
+    expect(get(service.isGroupCall)).toBe(true);
+    expect(workerAnswers.groupKeys?.peers).toEqual(['bob', 'carol']);
+    const { apiFetch } = await import('$lib/utils/apiFetch');
+    const token = vi
+      .mocked(apiFetch)
+      .mock.calls.map(([url]) => String(url))
+      .find((url) => url.includes('/api/calls/room-token'));
+    expect(new URL(token!).searchParams.get('groupCallVersion')).toBe('1');
+    // The callee's own answered notice travels as the group call's kind.
+    expect(sentGroupFrames().some((m) => m?.groupCall?.answered)).toBe(true);
+  });
+
+  it('refuses an answer whose token says 1:1 for an invite that rang as a group call', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'bob',
+      'group-1',
+      mkCallInvite('room-1', false, 'device-b', 60_000).call!,
+      'alice',
+      'device-1',
+      true
+    );
+    await service.acceptCall('group-1', 'room-1');
+    await settle();
+
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(get(service.callState)).not.toBe('incall');
   });
 });

@@ -9,11 +9,13 @@ import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
 import {
   callEndReasonFromWire,
+  groupHangupEndsRecord,
   encodeAppMessage,
   mkCallAnswered,
   mkCallBusy,
   mkCallHangup,
   mkCallInvite,
+  asGroupCallSignal,
   type CallEndReason,
 } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
@@ -29,7 +31,17 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
-import { deriveCallKeys, keyFingerprint, type CallKeys, type CallRole } from '$lib/utils/callKeys';
+import {
+  deriveCallKeys,
+  deriveGroupCallKeys,
+  deriveSenderKey,
+  keyFingerprint,
+  type CallKeys,
+  type CallRole,
+  type GroupCallKeys,
+} from '$lib/utils/callKeys';
+import { GROUP_CALL_VERSION, roomTokenSeats } from '$lib/utils/callRoomToken';
+import { CallLeg, ONE_TO_ONE_LEG, peerUserOf } from './callLeg';
 import { callMediaKind, type CallTransformOptions } from '$lib/utils/callFrameAad';
 import {
   CallE2eBypassedError,
@@ -278,17 +290,34 @@ export async function inboundAudioPackets(pc: RTCPeerConnection): Promise<number
   }
 }
 
-/** A server-to-client frame of the signalling socket (`apps/call-service`, `SignalMessage`). */
+/**
+ * A server-to-client frame of the signalling socket (`apps/call-service`, `SignalMessage`). `peer`
+ * names the other party's seat on `PeerReady` / `PeerLeft` / `PeerAway`, and `from` the sender of a
+ * relayed frame - both always sent; a 1:1 call reads neither, a group call (a mesh, WP-GC2) routes
+ * every frame to its leg by them.
+ */
 export type SignalFrame =
   | { type: 'Joined'; room_id?: string; resume_token?: string }
-  | { type: 'PeerReady'; initiator: boolean; resumed?: boolean }
-  | { type: 'PeerLeft' }
-  | { type: 'PeerAway' }
-  | { type: 'IceRestartRequest' }
-  | { type: 'MicSuspended'; suspended: boolean }
+  | { type: 'PeerReady'; initiator: boolean; resumed?: boolean; peer?: string }
+  | { type: 'PeerLeft'; peer?: string }
+  | { type: 'PeerAway'; peer?: string }
+  | { type: 'IceRestartRequest'; from?: string }
+  | { type: 'MicSuspended'; suspended: boolean; from?: string }
   | { type: 'Refused'; reason: string }
-  | { type: 'Offer' | 'Answer'; sdp: string }
-  | { type: 'IceCandidate'; candidate: string };
+  | { type: 'Offer' | 'Answer'; sdp: string; from?: string }
+  | { type: 'IceCandidate'; candidate: string; from?: string };
+
+/** One participant of a group call as the call screen draws it: a tile (WP-GC2). */
+export interface GroupCallTile {
+  /** The participant's user id (lowercased). */
+  userId: string;
+  /** Their tracks (audio + video), or null before the first arrived. */
+  stream: MediaStream | null;
+  /** Their OS holds their microphone, as they said over the relay (`MicSuspended`). */
+  micSuspended: boolean;
+  /** This leg's media path is connected. */
+  connected: boolean;
+}
 
 /**
  * A session description as it travels inside an `Offer`/`Answer` frame's `sdp` string. `seq` is
@@ -315,14 +344,29 @@ export function wireDescription(
  * mandatory E2E frame transform, and Cloudflare TURN as the last-resort relay.
  */
 export class CallService {
-  private pc: RTCPeerConnection | null = null;
   /**
-   * `pc` was built during the caller's ring and has not met its peer: it gathers candidates
-   * (`iceCandidatePoolSize`) and negotiates nothing until `PeerReady` adopts it. Closed by every
-   * end of the ring - `endCall`, `cleanup` - like any peer connection, at once rather than after
-   * the ended summary, since it holds a TURN allocation for a call nobody answered.
+   * THE CALL'S LEGS (WP-GC2): one peer connection, and its whole negotiation, per other participant
+   * (`callLeg.ts`). A 1:1 call has ONE leg, {@link ONE_TO_ONE_LEG}; a group call has one per other
+   * participant, keyed by user id, opened by its `PeerReady` and closed by its `PeerLeft`. The 1:1
+   * leg built during the caller's ring (`CallLeg.awaitingPeer`) gathers candidates and negotiates
+   * nothing until `PeerReady` adopts it; every end of the ring closes it at once, since it holds a
+   * TURN allocation for a call nobody answered.
    */
-  private pcAwaitingPeer = false;
+  private legs = new Map<string, CallLeg>();
+  /**
+   * This call is a GROUP call - a mesh (WP-GC2). Decided ONCE per call from the server's own word,
+   * the room token's `max_seats` claim (`utils/callRoomToken.ts`): the caller reads it from the
+   * token `initiate` answered, a callee from its `room-token`, so the two ends cannot disagree.
+   */
+  private groupCall = false;
+  /**
+   * What the ringing invite said the call is, before its token is in hand: `group` for a
+   * `group_call` signal, `direct` for a `call` one, `null` for an answer from a system surface,
+   * which carries no invite - its kind is then read from the token alone.
+   */
+  private incomingKind: 'direct' | 'group' | null = null;
+  /** This account's user id in a group call (lowercased): whose send key the worker holds. */
+  private selfUserId: string | null = null;
   private signaledWs: WebSocket | null = null;
   /** ICE servers fetched for this call before ringing, so a missing TURN key fails the call early. */
   private iceServers: RTCIceServer[] | null = null;
@@ -333,13 +377,6 @@ export class CallService {
    */
   private turnWithheldCode: string | null = null;
   /**
-   * Perfect negotiation (W3C WebRTC section 10.5). `polite` is the side that yields on an offer
-   * collision - the callee, as the server's `PeerReady { initiator: false }` says.
-   */
-  private polite = false;
-  private makingOffer = false;
-  private ignoreOffer = false;
-  /**
    * The ring window's timer, on either side. Its LENGTH is never this file's: it is the
    * `ringTimeoutMs` chat-delivery returned to the caller, relayed to the callee in the invite. A
    * wrong timer only stops a ring early or late; whether a callee may still answer is decided by
@@ -348,7 +385,10 @@ export class CallService {
   private ringTimer: number | null = null;
   /** The invite reached the group, so an unanswered end IS a missed call (F7). */
   private inviteSent = false;
-  /** The relay paired the two parties: the ring is over whatever the media then does. */
+  /**
+   * The relay paired this device with another party at least once (any leg's `PeerReady`): the
+   * ring is over whatever the media then does.
+   */
   private peerArrived = false;
   /**
    * The caller's ring window is open: the invite left and its timer is armed ({@link armRingTimer}).
@@ -373,16 +413,6 @@ export class CallService {
    */
   private ringMs: number | null = null;
   private connectMs: number | null = null;
-  /** The next `[CALL_REPORT]` tick of the current peer connection (`armCallReport`). */
-  private reportTimer: number | null = null;
-  /**
-   * The tick being read and written, if any, with the peer connection it reads: the end report is
-   * written after it, and rates against it only if it read the SAME peer connection.
-   */
-  private reportInFlight: {
-    pc: RTCPeerConnection;
-    snapshot: Promise<MediaSnapshot | null>;
-  } | null = null;
   /**
    * Which call setup is the live one: bumped when `startCall`/`acceptCall` begins and at every
    * `cleanup`, so a setup step resuming after its call ended can tell (`assertSetupLive`).
@@ -390,8 +420,6 @@ export class CallService {
   private callSetupSeq = 0;
   /** Settles the pending `ensureWorkerKeyReady` wait, if any (`cleanup` calls it). */
   private abandonWorkerKeyWait: (() => void) | null = null;
-  /** The previous reading's byte totals on the CURRENT peer connection, so the next states a rate. */
-  private lastSnapshot: MediaSnapshot | null = null;
   /**
    * The relay's token for THIS device's seat (`Joined.resume_token`): what lets a new socket take
    * the seat back after the old one dropped. Replaced by every `Joined`.
@@ -403,36 +431,18 @@ export class CallService {
   private resumeAttempts = 0;
   private resumeTimer: number | null = null;
   private resumeInFlight = false;
-  /** The relay said the other party's socket dropped (`PeerAway`) and it has not come back. */
-  private peerAway = false;
-  /** ICE of the CURRENT peer connection reached `connected` at least once. */
-  private mediaEverConnected = false;
-  /** ICE restarts since the media path was last connected. See the restart budget. */
-  private iceRestarts = 0;
-  /**
-   * Bumped every time the signalling PAIR breaks (this socket lost, `PeerAway`) or re-forms
-   * (`PeerReady`). A restart offer or request belongs to the pairing it was sent in: one sent in
-   * an earlier pairing may have gone into a dead socket, so it never blocks a new one.
+  /*
+   * Per leg (`CallLeg`): the state of perfect negotiation (W3C WebRTC 10.5 - `polite` yields on a
+   * collision: the callee, or a group's newcomer, as `PeerReady { initiator: false }` says); the
+   * pairing epochs (`pairEpoch` is bumped every time the leg's signalling PAIR breaks - this socket
+   * lost, `PeerAway` - or re-forms, `PeerReady`; a restart offer or request belongs to the pairing it
+   * was sent in, so one sent in an earlier pairing never blocks a new one); the ICE restart budget;
+   * the inbound packet counts read around an outage (`packetsAtLoss`, and `packetsAtRestart` -
+   * packets counted ABOVE it later prove the restart worked even if ICE never left `connected`);
+   * and the offer numbers (see {@link WireDescription}).
    */
-  private pairEpoch = 0;
-  /** The pairing whose restart OFFER awaits its answer (initiator); `null` when none does. */
-  private restartOfferEpoch: number | null = null;
-  /** The pairing whose restart REQUEST awaits the initiator's offer (polite); `null` when none. */
-  private restartRequestEpoch: number | null = null;
-  /** Inbound audio packets when the pair broke, compared once it re-forms. */
-  private packetsAtLoss: Promise<number | null> | null = null;
-  /**
-   * Inbound audio packets when the latest restart's negotiation completed (its answer applied on
-   * the initiator, the asked-for offer answered on the polite side). Packets counted ABOVE it later
-   * prove the restart worked even if ICE never left `connected` - the refund evidence.
-   */
-  private packetsAtRestart: Promise<number | null> | null = null;
   /** The call whose queued steps were last dropped as stale - logged once per call. */
   private staleStepsOfCall: string | null = null;
-  /** The number of the last offer this side sent (see {@link WireDescription}). */
-  private localOfferSeq = 0;
-  /** The number of this side's offer awaiting its answer; `null` when none is. */
-  private pendingOfferSeq: number | null = null;
   /**
    * EVERY negotiation step runs here, one at a time, in order: the relay's frames AND this side's
    * own offers (`negotiationneeded`, an ICE restart). An offer made beside the frame chain could be
@@ -455,58 +465,39 @@ export class CallService {
    * (CALL-E2E-BYPASS-MI9T), so the key is in the worker BEFORE the first track is added.
    */
   private workerKeyApplied = false;
-  /** A sender transform of the CURRENT peer connection encrypted a frame (worker `inPath`). */
-  private e2eSenderSeen = false;
-  /** A receiver transform of the CURRENT peer connection decrypted a frame from the peer (`inPath`). */
-  private e2eReceiverSeen = false;
   /**
    * Which peer connection a transform belongs to, passed in its options and echoed by the worker
-   * (`inPath`, `framesInBy`). Incremented by every `initPeerConnection` and NEVER reset, so a
-   * rebuilt peer connection - or a late message from the previous call's worker - can never lend
-   * its evidence to this one.
+   * (`inPath`, `framesInBy`): each leg's peer connection takes the next value (`CallLeg.epoch`).
+   * Incremented by every `initPeerConnection` and NEVER reset, so a rebuilt peer connection, another
+   * leg, or a late message from the previous call's worker can never lend its evidence to this one.
+   *
+   * The evidence itself is PER LEG (`CallLeg`): which sides of its peer connection were seen in the
+   * worker, its pending path check and the triggers it covers, its re-check budget (a BUDGET BY
+   * COUNT: run out, the leg's claim is withdrawn and the check waits for an event that starts media
+   * - `recheckE2eOnMediaStart`), the packet counts its previous check read (the PROOF a bypass is
+   * judged against, `checkE2eInPath`), and whether its claim was WITHDRAWN (only an answered,
+   * conclusive path check brings it back).
    */
   private transformEpoch = 0;
-  /** A path check is due (`scheduleE2ePathCheck`): its timer, so two triggers make one check. */
-  private e2ePathCheckTimer: number | null = null;
-  /** The triggers the pending path check covers, as its log tag. */
-  private e2ePathCheckReason = '';
-  /**
-   * Re-checks spent on media the last check could not judge. A BUDGET BY COUNT: when it runs out
-   * the claim is withdrawn and the check waits for an event that starts media (a negotiation
-   * reaching `stable`, a remote track or the camera unmuting - `recheckE2eOnMediaStart`). Reset by
-   * a conclusive check and by each such event.
-   */
-  private e2eRechecks = 0;
-  /** The last path check could not judge some media: an event that starts media re-checks. */
-  private e2ePathInconclusive = false;
-  /** What the last inconclusive check could not judge, so a re-check logs only a CHANGE. */
-  private e2eLastUnjudged = '';
-  /**
-   * The RTP packet counts read by the previous path check of this peer connection - the PROOF a
-   * bypass is judged against (`checkE2eInPath`). `null` before the first check of a peer connection.
-   */
-  private e2ePrevPackets: RtpPacketCounts | null = null;
-  /**
-   * The screen's claim was WITHDRAWN (a worker that did not answer, media never judged): no frame
-   * evidence brings it back, only an answered, conclusive path check (`claimE2eIfProven`).
-   */
-  private e2eClaimWithdrawn = false;
   /** The worker missed its last report request: the ERROR was logged once, until it answers again. */
   private e2eWorkerSilent = false;
-  /** Whether the CURRENT peer connection's first `connected` already scheduled its path check. */
-  private e2eConnectChecked = false;
   /**
    * Whether a path check (`scheduleE2ePathCheck`) RAN in this call - media had its delay to flow.
    * The end report judges a side with no frame only when this is true (`diagnoseE2eReport`).
    */
   private e2eReportFired = false;
-  /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
-  private mergedRemoteStream: MediaStream | null = null;
   /** This call's media keys, one per direction (`utils/callKeys.ts`); raw bytes, for the worker. */
   private callKeys: CallKeys | null = null;
+  /**
+   * A GROUP call's media keys (WP-GC1): this device's send key and one receive key per other
+   * participant, derived over the conversation's members (`deriveGroupCallKeys`). Exactly one of
+   * {@link callKeys} and this is set in a keyed call.
+   */
+  private groupKeys: GroupCallKeys | null = null;
+  /** Settles the receive-key waits of late participants (`ensureReceiveKey`); `cleanup` calls each. */
+  private receiveKeyWaits = new Set<() => void>();
   /** The key-mismatch notice (`onUndecryptable`) was shown in this call: once per call. */
   private keyMismatchShown = false;
-  private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
 
   /** The call this device rings, joins or runs - read and written through {@link currentCallId}. */
   private _currentCallId: string | null = null;
@@ -560,14 +551,14 @@ export class CallService {
   private audioFocusAsker: ((why: string) => void) | null = null;
   /** Removes the listeners {@link watchSystemMicrophone} put on the capture track. */
   private micWatchCleanup: (() => void) | null = null;
-  /**
-   * The transceiver the camera SENDS on, in the current peer connection: the `addTrack` one of a
-   * call that started with video, or the FRESH one `toggleVideo` made. Kept across camera off/on
-   * and switches - its sender keeps its E2E transform, and `replaceTrack` only changes the capture
-   * (measured fed in the rig, rows `video-switch` and `video-off-on`). Null before a camera ever
-   * went on in this peer connection.
+  /*
+   * Each leg's `cameraTransceiver` is the transceiver the camera SENDS on in its peer connection:
+   * the `addTrack` one of a call that started with video, or the FRESH one `toggleVideo` made. Kept
+   * across camera off/on and switches - its sender keeps its E2E transform, and `replaceTrack` only
+   * changes the capture (measured fed in the rig, rows `video-switch` and `video-off-on`). Null
+   * before a camera ever went on in that peer connection. Its `videoQuality` is that camera sender's
+   * quality ladder (`utils/callVideoQuality.ts`).
    */
-  private cameraTransceiver: RTCRtpTransceiver | null = null;
   /** A camera operation (on, off, switch) is running; another tap is dropped, except OFF (`offPending`). */
   private cameraBusy = false;
   /**
@@ -583,11 +574,6 @@ export class CallService {
   private videoTransformCodecs = new WeakMap<RTCRtpSender | RTCRtpReceiver, string | undefined>();
   /** A negotiated video codec that differs from its transform's was reported in this call. */
   private negotiatedCodecMismatchLogged = false;
-  /**
-   * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
-   * sender it was started on; `null` when no camera transceiver exists.
-   */
-  private videoQuality: CallVideoQualityLoop | null = null;
 
   public callState = writable<CallState>('idle');
   /**
@@ -662,6 +648,16 @@ export class CallService {
    * callee enters `incall` at the tap, seconds before any media flows.
    */
   public connectedAt = writable<number | null>(null);
+  /** This call is a GROUP call (WP-GC2): the screen draws a tile per participant. */
+  public isGroupCall = writable<boolean>(false);
+  /** A group call's participants, one tile per leg, in the order they joined. Empty in a 1:1 call. */
+  public groupTiles = writable<GroupCallTile[]>([]);
+  /**
+   * A group call's voice: ONE stream holding every leg's live audio track, for the call's ONE audio
+   * sink (`CallOverlay`), which plays all of them. `null` in a 1:1 call, whose sink plays
+   * {@link remoteStreams}' one stream as before.
+   */
+  public remoteAudioMix = writable<MediaStream | null>(null);
   /** When the call reached `ended` (epoch ms): the summary shows a duration that no longer runs. */
   public endedAt = writable<number | null>(null);
 
@@ -763,13 +759,19 @@ export class CallService {
    *
    * Hangups and `answered` frames are handled synchronously; an invite rings only after the
    * block check of {@link admitInvite}, so the returned promise settles once that is decided.
+   *
+   * `group`: the signal came as a GROUP call's (`group_call`, WP-GC2). One member's decline, busy
+   * answer or hangup does not end a group call (WP-C11, decided 2026-11-13): only the caller's
+   * unanswered end stops a ring, and the call ends here when the last other participant has left
+   * the room ({@link closeLeg}).
    */
   public async handleCallSignal(
     senderId: string,
     groupId: string,
     callMsg: canari.ICallMsg,
     currentUserId: string,
-    currentDeviceId: string
+    currentDeviceId: string,
+    group: boolean = false
   ): Promise<void> {
     if (!callMsg?.callId) return;
 
@@ -785,7 +787,9 @@ export class CallService {
       return;
     }
 
-    appendLog(`[Call] signal from ${senderId} in ${groupId} call=${callMsg.callId}`);
+    appendLog(
+      `[Call] ${group ? 'group call ' : ''}signal from ${senderId} in ${groupId} call=${callMsg.callId}`
+    );
 
     const senderNorm = senderId.toLowerCase();
     const userNorm = currentUserId.toLowerCase();
@@ -793,9 +797,18 @@ export class CallService {
 
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
+        if (group && !this.groupHangupEnds(senderNorm, callMsg)) return;
         // Remote origin: `handleCallSignalForChat` writes this call's record from the same frame.
         this.endCall(false, callEndReasonFromWire(callMsg.endReason), true);
       }
+      return;
+    }
+
+    if (callMsg.busy && group) {
+      // A member busy elsewhere is one member: the others are still rung (WP-C11).
+      appendLog(
+        `[Call] busy answer from ${senderId} in group call ${callMsg.callId} - the ring goes on`
+      );
       return;
     }
 
@@ -874,7 +887,13 @@ export class CallService {
       // may have used to take the slot.
       if (get(this.callState) !== 'idle' || this.currentCallId) {
         if (
-          !(await this.yieldToOrAnswerBusy(senderNorm, groupId, callMsg.callId, currentDeviceId))
+          !(await this.yieldToOrAnswerBusy(
+            senderNorm,
+            groupId,
+            callMsg.callId,
+            currentDeviceId,
+            group
+          ))
         ) {
           return;
         }
@@ -883,6 +902,9 @@ export class CallService {
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
+      this.incomingKind = group ? 'group' : 'direct';
+      // The ring screen says it is a group call before any token: the invite's kind is the fact.
+      this.isGroupCall.set(group);
       // Video only when the invite ASKS for it: an invite that says nothing never opens a camera.
       // And only on a build that carries video: an audio-only build (production, 2026-10-21) rings
       // a video invite as an AUDIO call - accepting it never opens the camera.
@@ -998,7 +1020,8 @@ export class CallService {
     senderNorm: string,
     groupId: string,
     callId: string,
-    deviceId: string
+    deviceId: string,
+    group: boolean = false
   ): Promise<boolean> {
     const state = get(this.callState);
     appendLog(
@@ -1026,6 +1049,11 @@ export class CallService {
       this.cleanup();
       return get(this.callState) === 'idle';
     }
+    if (group) {
+      // A busy answer ends nothing in a group call (WP-C11): this device simply does not ring.
+      appendLog(`[Call] group call ${callId} not rung - this device is in another call`);
+      return false;
+    }
     try {
       await this.sendMlsNotification(groupId, mkCallBusy(callId, deviceId));
     } catch (e) {
@@ -1037,6 +1065,82 @@ export class CallService {
   /** Stops an incoming ring without notifying the group (sibling device answered). */
   private dismissIncomingCall() {
     this.cleanup();
+  }
+
+  /**
+   * Whether a GROUP call's hangup from `senderNorm` ends this device's part (WP-C11, decided
+   * 2026-11-13, reversible). One member's decline, or a participant leaving, ends nothing for the
+   * others - the call ends when the last other participant has left the room ({@link closeLeg}).
+   * Only the CALLER's unanswered end (cancelled, or its window closed) stops a ring still sounding
+   * here: no room is open for this device to join.
+   */
+  private groupHangupEnds(senderNorm: string, callMsg: canari.ICallMsg): boolean {
+    const outcome = callEndReasonFromWire(callMsg.endReason);
+    const ringing = get(this.callState) === 'incoming';
+    const ends = ringing && senderNorm === this.incomingCallerId && groupHangupEndsRecord(outcome);
+    appendLog(
+      `[Call] group call ${callMsg.callId}: hangup from ${senderNorm} (outcome=${outcome ?? 'answered'}) - ${ends ? 'the caller ended the ring, it stops here' : 'the call goes on for this device'}`
+    );
+    return ends;
+  }
+
+  /**
+   * The ring window closed on THIS device without an answer. In a 1:1 call the caller's own timer
+   * ends the call for both and writes the missed record, so the ring only stops here. In a GROUP
+   * call someone else answered (the caller's timer stops at the first answer): nobody will hang up
+   * for this device, so it writes its own missed record, then stops ringing.
+   */
+  private ringOutIncoming(callId: string): void {
+    const groupId = this.currentGroupId;
+    if (this.incomingKind === 'group' && groupId) {
+      appendLog(`[Call] group call ${callId} rang out here - recorded as missed on this device`);
+      void this.chatNotifier?.onCallEnded(
+        groupId,
+        callId,
+        { timestamp: new Date(), ownAct: true },
+        'not-answered',
+        this.incomingCallerId ?? undefined
+      );
+    }
+    this.dismissIncomingCall();
+  }
+
+  /**
+   * Takes the call's kind from its room token's `max_seats` claim (WP-GC2), the one fact both ends
+   * read alike: present = a group call. On the callee the invite already said which kind it rang
+   * as (`expected`); a token that disagrees is refused, typed, rather than carried on a wrong
+   * wire (a 1:1 key derivation in a group room opens nobody's frames).
+   */
+  private adoptCallKind(roomToken: string, from: string, expected?: 'direct' | 'group' | null) {
+    let seats: number | null;
+    try {
+      seats = roomTokenSeats(roomToken);
+    } catch (e) {
+      throw new CallE2eSetupError(`${from} carried an unreadable room token`, { cause: e });
+    }
+    const group = seats !== null;
+    if (expected && (expected === 'group') !== group) {
+      throw new CallE2eSetupError(
+        `${from} says a ${group ? 'group' : '1:1'} call, the invite rang a ${expected === 'group' ? 'group' : '1:1'} one`
+      );
+    }
+    this.groupCall = group;
+    this.isGroupCall.set(group);
+    if (group) appendLog(`[Call] group call (${seats} seats, from ${from})`);
+  }
+
+  /**
+   * Sends one MLS call signal (invite, answered, hangup). A GROUP call's signal travels as the
+   * `group_call` kind (WP-GC2): a build before group calls drops an unknown kind in silence, so it
+   * never rings for a call it could not carry; a 1:1 call's is the `call` kind, unchanged.
+   */
+  private sendCallSignal(
+    groupId: string,
+    appMsgPartial: canari.IAppMessage,
+    sentAt?: number
+  ): Promise<EventTime> {
+    const msg = this.groupCall ? asGroupCallSignal(appMsgPartial) : appMsgPartial;
+    return this.sendMlsNotification(groupId, msg, sentAt);
   }
 
   /**
@@ -1059,7 +1163,7 @@ export class CallService {
       }
       appendLog(`[Call] ring window (${ringTimeoutMs} ms) closed unanswered - call=${callId}`);
       if (side === 'calling') this.endCall(true, 'not-answered');
-      else this.dismissIncomingCall();
+      else this.ringOutIncoming(callId);
     }, ringTimeoutMs);
   }
 
@@ -1113,10 +1217,11 @@ export class CallService {
     try {
       this.callState.set('calling');
       // Get server-issued room ID and access token before connecting.
-      const { roomId, roomToken, ringTimeoutMs } = await this.fetchInitiateCall(groupId);
+      const { roomId, roomToken, ringTimeoutMs } = await this.fetchInitiateCall(groupId, video);
       this.assertSetupLive(seq, 'after the initiate');
       this.currentCallId = roomId;
       this.currentRoomToken = roomToken;
+      this.adoptCallKind(roomToken, 'the initiate');
       // Before ringing: a server without TURN credentials (503) fails the call here, not after
       // the callee has answered into a call that can never connect.
       const ice = await this.fetchIceServers(groupId, roomId);
@@ -1129,10 +1234,13 @@ export class CallService {
       await this.connectSignalling(roomId, seq);
       // Before the ring: a call that ended while the socket joined must ring nobody.
       this.assertSetupLive(seq, 'after the join');
-      // The peer connection is built NOW and gathers its candidates through the ring, its
-      // negotiation held until `PeerReady` adopts it - so the answer meets candidates in hand.
-      await this.initPeerConnection({ awaitingPeer: true });
-      this.assertSetupLive(seq, 'after the peer connection was built');
+      // A 1:1 call's peer connection is built NOW and gathers its candidates through the ring, its
+      // negotiation held until `PeerReady` adopts it - so the answer meets candidates in hand. A
+      // group call builds each leg on its own `PeerReady`: nobody is known to pair with before.
+      if (!this.groupCall) {
+        await this.initPeerConnection(this.openLeg(ONE_TO_ONE_LEG, null), { awaitingPeer: true });
+        this.assertSetupLive(seq, 'after the peer connection was built');
+      }
       // The ring OPENS the server's answer window, and it goes BEFORE the invite: no callee can
       // learn of the call before the server would hand it a token, so an early answer (a quick tap,
       // an auto-accept) can never meet a 410 and hang up a call that was fine. Nothing the caller
@@ -1157,7 +1265,7 @@ export class CallService {
         return;
       }
       const deviceId = this.mlsService.getDeviceId();
-      const invite = await this.sendMlsNotification(
+      const invite = await this.sendCallSignal(
         groupId,
         mkCallInvite(roomId, video, deviceId, ringTimeoutMs)
       );
@@ -1283,17 +1391,23 @@ export class CallService {
       //   released by `setupMedia`'s own `assertSetupLive`, as for a hangup during the prompt.
       // - The keys: zeroed by `setupEncryption` when derived for a call that ended meanwhile.
       // Any one failing fails the answer; the others settle into the same `seq` guard.
+      // - THE KIND (WP-GC2) is the token's: an invite's kind lets the keys run beside it, and an
+      //   answer from a system surface - no invite - derives them once the token said which kind.
+      const kindFromInvite = this.incomingKind;
+      if (kindFromInvite) this.groupCall = kindFromInvite === 'group';
       const token = this.timedStep('room-token', async () => {
         const roomToken = await this.fetchRoomToken(groupId, callId);
         this.assertSetupLive(seq, 'after the room token');
         this.currentRoomToken = roomToken;
+        this.adoptCallKind(roomToken, 'the room token', kindFromInvite);
         this.announceAnswered(groupId, callId);
       });
+      const keys = () => this.setupEncryption(groupId, callId, 'callee', seq);
       const [, ice] = await Promise.all([
         token,
         this.timedStep('ice-servers', () => this.fetchIceServers(groupId, callId)),
         this.timedStep('media', () => this.setupMedia(useVideo, seq)),
-        this.timedStep('keys', () => this.setupEncryption(groupId, callId, 'callee', seq)),
+        this.timedStep('keys', () => (kindFromInvite ? keys() : token.then(keys))),
       ]);
       this.assertSetupLive(seq, 'after the parallel setup');
       this.adoptIceServers(ice);
@@ -1326,7 +1440,7 @@ export class CallService {
    */
   private announceAnswered(groupId: string, callId: string): void {
     const sentAt = performance.now();
-    this.sendMlsNotification(groupId, mkCallAnswered(callId, this.mlsService.getDeviceId())).then(
+    this.sendCallSignal(groupId, mkCallAnswered(callId, this.mlsService.getDeviceId())).then(
       () =>
         appendLog(
           `[Call] answered notice sent to our other devices: ${Math.round(performance.now() - sentAt)} ms`
@@ -1394,7 +1508,7 @@ export class CallService {
     // acceptance is patched in once the send answers (`onCallEndAnswered`).
     let hangup: Promise<EventTime | null> = Promise.resolve(null);
     if (notify && groupId && callId) {
-      hangup = this.sendMlsNotification(
+      hangup = this.sendCallSignal(
         groupId,
         mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
         endedAt
@@ -1405,12 +1519,22 @@ export class CallService {
         return null;
       });
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
-      // or a late ring after the call ended).
-      void this.endServerRing(
-        groupId,
-        callId,
-        wasCalling && !this.peerArrived ? 'cancelled' : 'ended'
-      );
+      // or a late ring after the call ended). In a GROUP call (WP-C11) the CALLER's ring-end stops
+      // every member's ring, so it is not sent while other participants are still in the call: a
+      // member still ringing may join them. A member's own ring-end stops only that member's
+      // devices on the server, as a decline should.
+      const othersRemain = this.groupCall && this.connectedLegCount() > 0;
+      if (othersRemain) {
+        appendLog(
+          `[Call] group call ${callId}: ${this.connectedLegCount()} participant(s) still in it - no ring-end, the members still rung may join them`
+        );
+      } else {
+        void this.endServerRing(
+          groupId,
+          callId,
+          wasCalling && !this.peerArrived ? 'cancelled' : 'ended'
+        );
+      }
     }
     if (groupId && callId && !remoteOrigin) {
       // The one record writer, told WHY the call ended. A call that failed before its invite
@@ -1469,8 +1593,8 @@ export class CallService {
    * network blip alone is resumed, never ended here). Without this, a dead media path
    * left the UI stuck "in call" on a frozen stream. No-op once the call is already
    * idle, so overlapping failure events (ICE + connection both fire `failed`) only
-   * tear down once. It DOES send the MLS hangup (calls are 1:1): the other party's ring stops and
-   * its record row is finalized by it.
+   * tear down once. It DOES send the MLS hangup: in a 1:1 call the other party's ring stops and its
+   * record row is finalized by it; in a group call it says this member left.
    */
   private failCall(reason: string, cause?: Error): void {
     const state = get(this.callState);
@@ -1526,18 +1650,20 @@ export class CallService {
     const endedCallId = this.currentCallId;
     const fiveSecondReportRan = this.e2eReportFired;
     this.e2eReportFired = false;
-    this.resetE2eEvidence();
+    for (const leg of this.legs.values()) {
+      this.resetE2eEvidence(leg);
+      this.stopCallReports(leg);
+      leg.reportInFlight = null;
+      leg.lastSnapshot = null;
+    }
+    this.e2eProven.set(false);
     this.clearRingTimer();
     this.clearResumeTimer();
-    this.stopCallReports();
-    this.reportInFlight = null;
-    this.lastSnapshot = null;
     this.tapAt = null;
     this.ringStartAt = null;
     this.answeredAt = null;
     this.ringMs = null;
     this.connectMs = null;
-    this.pcAwaitingPeer = false;
     this.inviteSent = false;
     this.ringWindowOpen = false;
     this.peerArrived = false;
@@ -1545,16 +1671,6 @@ export class CallService {
     this.signallingLost = false;
     this.resumeAttempts = 0;
     this.resumeInFlight = false;
-    this.peerAway = false;
-    this.mediaEverConnected = false;
-    this.iceRestarts = 0;
-    this.pairEpoch = 0;
-    this.restartOfferEpoch = null;
-    this.restartRequestEpoch = null;
-    this.packetsAtLoss = null;
-    this.packetsAtRestart = null;
-    this.localOfferSeq = 0;
-    this.pendingOfferSeq = null;
     this.signalQueue = Promise.resolve();
     this.reconnecting.set(false);
     this.removeBackgroundHandler();
@@ -1563,19 +1679,17 @@ export class CallService {
     this.currentCallId = null;
     this.currentGroupId = null;
     this.incomingCallerId = null;
+    this.incomingKind = null;
+    this.selfUserId = null;
+    // Late participants' key waits belong to this call: settled now, never answered in the next.
+    for (const abandon of this.receiveKeyWaits) abandon();
     this.dropCallKeys();
     this.keyMismatchShown = false;
     this.currentRoomToken = null;
-    this.mergedRemoteStream = null;
-    this.pendingRemoteIceCandidates = [];
     this.iceServers = null;
     this.turnWithheldCode = null;
-    this.polite = false;
-    this.makingOffer = false;
-    this.ignoreOffer = false;
     this.incomingHasVideo = false;
     this.callHasVideo = false;
-    this.cameraTransceiver = null;
     this.stopVideoQuality();
     this.cameraBusy = false;
     this.offPending = false;
@@ -1596,10 +1710,15 @@ export class CallService {
     }
     this.localStreamStore.set(null);
 
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
+    for (const leg of this.legs.values()) {
+      leg.pc?.close();
+      leg.pc = null;
     }
+    this.legs.clear();
+    this.groupCall = false;
+    this.isGroupCall.set(false);
+    this.groupTiles.set([]);
+    this.remoteAudioMix.set(null);
     if (this.signaledWs) {
       this.signaledWs.close();
       this.signaledWs = null;
@@ -1691,9 +1810,13 @@ export class CallService {
   /**
    * Asks chat-delivery-service to create a new call room.
    * Returns the server-generated `roomId` and a signed `roomToken` proving group membership.
+   * `video` and {@link GROUP_CALL_VERSION} let the server open a GROUP call (WP-GC2): its seat cap
+   * depends on the kind, and it refuses a group call to a build that does not declare the mesh. A
+   * 1:1 call reads neither.
    */
   private async fetchInitiateCall(
-    groupId: string
+    groupId: string,
+    video: boolean
   ): Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }> {
     const { historyUrl } = resolveMlsPublicUrls();
     const url = new URL('/api/calls/initiate', historyUrl);
@@ -1701,7 +1824,7 @@ export class CallService {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupId }),
+      body: JSON.stringify({ groupId, video, groupCallVersion: GROUP_CALL_VERSION }),
     });
     if (!res.ok) {
       // THE STATUS CROSSES THE THROW, and the body stays in the message for the log. Spelling the
@@ -1727,6 +1850,8 @@ export class CallService {
     const url = new URL('/api/calls/room-token', historyUrl);
     url.searchParams.set('groupId', groupId);
     url.searchParams.set('roomId', roomId);
+    // A group call's token goes only to a build that declares the mesh (WP-GC2).
+    url.searchParams.set('groupCallVersion', String(GROUP_CALL_VERSION));
     const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
     if (!res.ok) {
       // Typed, as the initiate's refusal is: a 410 HERE (ring window closed) is told as "this call
@@ -1848,25 +1973,25 @@ export class CallService {
    * that collides with our own is dropped by the impolite side and wins on the polite side, where
    * `setRemoteDescription` rolls our offer back implicitly. Every applied offer is answered.
    */
-  private async handleRemoteDescription(sdp: WireDescription): Promise<void> {
-    const pc = this.pc;
+  private async handleRemoteDescription(leg: CallLeg, sdp: WireDescription): Promise<void> {
+    const pc = leg.pc;
     if (!pc) {
-      appendLog(`[Call] remote ${sdp.type} with no peer connection - dropped`);
+      appendLog(`[Call]${leg.tag} remote ${sdp.type} with no peer connection - dropped`);
       return;
     }
     if (sdp.type === 'answer') {
       if (pc.signalingState !== 'have-local-offer') {
         // The answer to an offer this side rolled back for a newer restart: nothing to apply it to.
         appendLog(
-          `[Call] answer to offer #${sdp.seq ?? '?'} with no offer of ours pending (signaling=${pc.signalingState}) - dropped`
+          `[Call]${leg.tag} answer to offer #${sdp.seq ?? '?'} with no offer of ours pending (signaling=${pc.signalingState}) - dropped`
         );
         return;
       }
-      if (sdp.seq !== undefined && sdp.seq !== this.pendingOfferSeq) {
+      if (sdp.seq !== undefined && sdp.seq !== leg.pendingOfferSeq) {
         // An answer to an EARLIER offer (one rolled back after its socket died), arriving while a
         // newer one is pending: applied, it would pair the new offer with a stale answer.
         appendLog(
-          `[Call] answer to offer #${sdp.seq} while offer #${this.pendingOfferSeq ?? '?'} is pending - stale, dropped`
+          `[Call]${leg.tag} answer to offer #${sdp.seq} while offer #${leg.pendingOfferSeq ?? '?'} is pending - stale, dropped`
         );
         return;
       }
@@ -1875,45 +2000,45 @@ export class CallService {
         appendLog('[Call] unnumbered answer (older client) - applied to the pending offer');
       }
     }
-    const collision = sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable');
-    this.ignoreOffer = !this.polite && collision;
-    if (this.ignoreOffer) {
-      appendLog('[Call] offer collision - the impolite side keeps its own offer');
+    const collision = sdp.type === 'offer' && (leg.makingOffer || pc.signalingState !== 'stable');
+    leg.ignoreOffer = !leg.polite && collision;
+    if (leg.ignoreOffer) {
+      appendLog(`[Call]${leg.tag} offer collision - the impolite side keeps its own offer`);
       return;
     }
     await pc.setRemoteDescription({ type: sdp.type, sdp: sdp.sdp });
-    await this.flushPendingRemoteIceCandidates();
+    await this.flushPendingRemoteIceCandidates(leg);
     if (sdp.type === 'answer') {
-      this.pendingOfferSeq = null;
-      this.restartOfferEpoch = null;
+      leg.pendingOfferSeq = null;
+      leg.restartOfferEpoch = null;
     }
-    if (this.iceRestarts > 0) this.packetsAtRestart = inboundAudioPackets(pc);
+    if (leg.iceRestarts > 0) leg.packetsAtRestart = inboundAudioPackets(pc);
     if (sdp.type === 'offer') {
       // The initiator's offer is what a restart request asked for; an offer of ours it collided
       // with on this (polite) side was rolled back by `setRemoteDescription`.
-      this.restartRequestEpoch = null;
-      this.pendingOfferSeq = null;
+      leg.restartRequestEpoch = null;
+      leg.pendingOfferSeq = null;
       await pc.setLocalDescription();
       appendLog(
-        `[Call] answer to offer #${sdp.seq ?? '?'} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+        `[Call]${leg.tag} answer to offer #${sdp.seq ?? '?'} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
-      this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) });
+      this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) }, leg);
     }
     await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
   }
 
-  /** Queues or applies a trickle ICE candidate from the other party. */
-  private async addRemoteIceCandidate(init: RTCIceCandidateInit): Promise<void> {
-    const pc = this.pc;
+  /** Queues or applies a trickle ICE candidate from the leg's other party. */
+  private async addRemoteIceCandidate(leg: CallLeg, init: RTCIceCandidateInit): Promise<void> {
+    const pc = leg.pc;
     if (!pc) return;
 
     const isEnd = !init.candidate;
     if (!pc.remoteDescription) {
       if (!isEnd) {
-        this.pendingRemoteIceCandidates.push(init);
-        const n = this.pendingRemoteIceCandidates.length;
+        leg.pendingRemoteIceCandidates.push(init);
+        const n = leg.pendingRemoteIceCandidates.length;
         if (n <= 3 || n % 50 === 0) {
-          appendLog(`[Call] ICE candidate buffered (${n}, waiting for remote SDP)`);
+          appendLog(`[Call]${leg.tag} ICE candidate buffered (${n}, waiting for remote SDP)`);
         }
       }
       return;
@@ -1922,25 +2047,25 @@ export class CallService {
     try {
       await pc.addIceCandidate(isEnd ? null : new RTCIceCandidate(init));
       if (isEnd) {
-        appendLog('[Call] remote ICE end-of-candidates');
+        appendLog(`[Call]${leg.tag} remote ICE end-of-candidates`);
       }
     } catch (e) {
       // A candidate for the offer we just ignored (impolite side, collision) is expected to fail;
       // anything else is a defect and is named.
-      if (!this.ignoreOffer) {
-        appendLog(`[Call] addIceCandidate failed: ${String(e)}`);
+      if (!leg.ignoreOffer) {
+        appendLog(`[Call]${leg.tag} addIceCandidate failed: ${String(e)}`);
       }
     }
   }
 
-  private async flushPendingRemoteIceCandidates(): Promise<void> {
-    const pc = this.pc;
-    if (!pc?.remoteDescription || this.pendingRemoteIceCandidates.length === 0) return;
+  private async flushPendingRemoteIceCandidates(leg: CallLeg): Promise<void> {
+    const pc = leg.pc;
+    if (!pc?.remoteDescription || leg.pendingRemoteIceCandidates.length === 0) return;
 
-    const pending = this.pendingRemoteIceCandidates.splice(0);
-    appendLog(`[Call] applying ${pending.length} buffered ICE candidate(s)`);
+    const pending = leg.pendingRemoteIceCandidates.splice(0);
+    appendLog(`[Call]${leg.tag} applying ${pending.length} buffered ICE candidate(s)`);
     for (const init of pending) {
-      await this.addRemoteIceCandidate(init);
+      await this.addRemoteIceCandidate(leg, init);
     }
   }
 
@@ -2149,49 +2274,60 @@ export class CallService {
     return this.currentCallId === callId && state !== 'idle' && state !== 'ended';
   }
 
-  /** Acts on one frame from the relay, after the room is joined. */
+  /**
+   * Acts on one frame from the relay, after the room is joined. A 1:1 call routes every frame to its
+   * one leg; a GROUP call (WP-GC2) routes each to the leg it names - `PeerReady` / `PeerLeft` /
+   * `PeerAway` by `peer`, a relayed frame by the `from` the relay stamped ({@link legOfFrame}).
+   */
   private async handleSignalFrame(frame: SignalFrame): Promise<void> {
+    if (frame.type === 'PeerReady') {
+      const leg = await this.legForPeerReady(frame.peer);
+      if (leg) await this.onPeerReady(leg, frame.initiator, frame.resumed === true, frame.peer);
+      return;
+    }
+    if (frame.type === 'PeerLeft') {
+      this.onPeerLeft(frame.peer);
+      return;
+    }
+    const leg = this.legOfFrame(frame);
+    if (!leg) return;
     switch (frame.type) {
-      case 'PeerReady':
-        await this.onPeerReady(frame.initiator, frame.resumed === true);
-        return;
-      case 'PeerLeft':
-        // An ANSWER: the other party hung up, or its away seat was never resumed.
-        appendLog('[Call] the other party left the call room');
-        this.endCall(false);
-        return;
       case 'IceRestartRequest':
         // The polite side lost its media path and cannot restart ICE itself.
-        this.onIceRestartRequested();
+        this.onIceRestartRequested(leg);
         return;
       case 'PeerAway':
         // NOT an end: the relay keeps its seat for a resume, and says `PeerReady { resumed }` or
         // `PeerLeft` next.
-        appendLog('[Call] the other party lost its signalling connection - waiting for it');
-        this.peerAway = true;
+        appendLog(
+          `[Call]${leg.tag} the other party lost its signalling connection - waiting for it`
+        );
+        leg.away = true;
         // Its microphone report is about a device we can no longer hear from: no fresh evidence,
         // so no claim. Its `PeerReady { resumed }` re-announces a microphone still held.
-        this.peerMicSuspended.set(false);
-        this.onPairBroken('peer away');
+        this.setPeerMicSuspended(leg, false);
+        this.onPairBroken(leg, 'peer away');
         this.updateReconnecting();
         return;
       case 'MicSuspended':
         appendLog(
           frame.suspended
-            ? "[Call] the other party's system took its microphone - it cannot be heard"
-            : "[Call] the other party's system gave its microphone back"
+            ? `[Call]${leg.tag} the other party's system took its microphone - it cannot be heard`
+            : `[Call]${leg.tag} the other party's system gave its microphone back`
         );
-        this.peerMicSuspended.set(frame.suspended === true);
+        this.setPeerMicSuspended(leg, frame.suspended === true);
         return;
       case 'Offer':
       case 'Answer': {
         const sdp = JSON.parse(frame.sdp) as WireDescription;
-        appendLog(`[Call] peer -> ${frame.type} (signaling=${this.pc?.signalingState ?? 'none'})`);
-        await this.handleRemoteDescription(sdp);
+        appendLog(
+          `[Call]${leg.tag} peer -> ${frame.type} (signaling=${leg.pc?.signalingState ?? 'none'})`
+        );
+        await this.handleRemoteDescription(leg, sdp);
         return;
       }
       case 'IceCandidate':
-        await this.addRemoteIceCandidate(JSON.parse(frame.candidate) as RTCIceCandidateInit);
+        await this.addRemoteIceCandidate(leg, JSON.parse(frame.candidate) as RTCIceCandidateInit);
         return;
       default:
         appendLog(`[Call] unexpected signalling frame ${frame.type} - ignored`);
@@ -2199,64 +2335,148 @@ export class CallService {
   }
 
   /**
-   * The other party is in the room. Builds the peer connection with this side's role; a second
-   * `PeerReady` means the other party's device was replaced, and negotiation restarts from nothing.
+   * The leg a relayed frame (or `PeerAway`) belongs to: the 1:1 call's one leg, or - in a group
+   * call - the leg of the participant the relay named (`from`, or `peer` on `PeerAway`). A frame of
+   * a participant this device holds no leg for is DROPPED, named at WARN: the relay pairs before it
+   * relays (`PeerReady` precedes every frame of a pair on the same socket), so this is a frame of a
+   * leg already closed, never one to open a leg for.
+   */
+  private legOfFrame(frame: SignalFrame): CallLeg | null {
+    // A 1:1 call's one leg, opened with no peer connection when no `PeerReady` came yet: each
+    // handler then says what it drops for want of one, as before group calls.
+    if (!this.groupCall) {
+      return this.legs.get(ONE_TO_ONE_LEG) ?? this.openLeg(ONE_TO_ONE_LEG, null);
+    }
+    const peerId =
+      frame.type === 'PeerAway' ? frame.peer : 'from' in frame ? frame.from : undefined;
+    if (!peerId) {
+      appendLog(`[Call] WARN group call: ${frame.type} names no participant - dropped`);
+      return null;
+    }
+    const leg = this.legs.get(peerUserOf(peerId));
+    if (!leg || leg.peerId !== peerId) {
+      appendLog(
+        `[Call] WARN group call: ${frame.type} from ${peerId}, a seat this device holds no leg for (${leg ? `its leg is ${leg.peerId}` : 'no leg'}) - dropped`
+      );
+      return null;
+    }
+    return leg;
+  }
+
+  /**
+   * The leg a `PeerReady` opens or re-forms: the 1:1 call's one leg (created here unless the ring
+   * built it), or the group leg of the participant it names - created on its first pairing, its
+   * receive key installed in the worker FIRST (`ensureReceiveKey`), so the rule "the worker holds
+   * the key before the first track" holds per peer. `null` when the frame names nobody in a group
+   * call (named), or the key could not be installed (the call fails, named).
+   */
+  private async legForPeerReady(peerId: string | undefined): Promise<CallLeg | null> {
+    if (!this.groupCall) {
+      return this.legs.get(ONE_TO_ONE_LEG) ?? this.openLeg(ONE_TO_ONE_LEG, peerId ?? null);
+    }
+    if (!peerId) {
+      appendLog('[Call] WARN group call: PeerReady names no participant - dropped');
+      return null;
+    }
+    const user = peerUserOf(peerId);
+    const known = this.legs.get(user);
+    if (known) return known;
+    try {
+      await this.ensureReceiveKey(user);
+    } catch (e) {
+      if (e instanceof CallSetupAbandonedError) return null;
+      this.failCall(
+        `no receive key for ${user}: ${String(e)}`,
+        new CallE2eSetupError(`receiver of ${user}`, { cause: e })
+      );
+      return null;
+    }
+    return this.legs.get(user) ?? this.openLeg(user, peerId);
+  }
+
+  /**
+   * `PeerLeft`: an ANSWER. In a 1:1 call the other party hung up, or its away seat was never
+   * resumed, and the call ends. In a GROUP call (WP-C11) only that participant's leg closes; the
+   * call ends when the last other participant has left. A `PeerLeft` naming nobody is THIS device's
+   * seat taken by a sibling device: the call is over here.
+   */
+  private onPeerLeft(peerId: string | undefined): void {
+    if (!this.groupCall || !peerId) {
+      appendLog(
+        peerId || !this.groupCall
+          ? '[Call] the other party left the call room'
+          : '[Call] this device was replaced in the call room by another of this account'
+      );
+      this.endCall(false);
+      return;
+    }
+    const user = peerUserOf(peerId);
+    const leg = this.legs.get(user);
+    if (!leg || leg.peerId !== peerId) {
+      appendLog(
+        `[Call] group call: PeerLeft of ${peerId}, a seat this device holds no leg for - nothing to close`
+      );
+      return;
+    }
+    this.closeLeg(leg, 'the participant left the call room');
+  }
+
+  /**
+   * The leg's other party is in the room. Builds the leg's peer connection with this side's role; a
+   * second `PeerReady` means that party's device was replaced (a new `peerId` in a group call), and
+   * the leg's negotiation restarts from nothing.
    *
    * `resumed`: the pair is back together after one side's signalling dropped and was RESUMED in
    * place (same seats, same roles). The peer connection is kept - the media may never have
    * stopped - and {@link restartIfMediaDidNotSurvive} decides, from evidence, whether ICE restarts.
    */
-  private async onPeerReady(initiator: boolean, resumed = false): Promise<void> {
-    this.polite = !initiator;
+  private async onPeerReady(
+    leg: CallLeg,
+    initiator: boolean,
+    resumed = false,
+    peerId?: string
+  ): Promise<void> {
+    if (peerId) leg.peerId = peerId;
+    leg.polite = !initiator;
+    leg.arrived = true;
     this.peerArrived = true;
     this.syncRingingOut('the callee answered (the relay paired the two)');
-    this.peerAway = false;
+    leg.away = false;
     this.clearRingTimer();
-    this.pairEpoch += 1;
+    leg.pairEpoch += 1;
     appendLog(
-      `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${this.pairEpoch})`
+      `[Call]${leg.tag} peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${leg.pairEpoch})`
     );
-    this.announceMicOnPairing();
+    this.announceMicOnPairing(leg);
     // The caller's answer is the callee in the room (the callee marked its own at its tap).
     this.markAnswered('the peer joined');
-    if (this.pc && this.pcAwaitingPeer) {
+    if (leg.pc && leg.awaitingPeer) {
       // Built during the ring, and never paired: there is nothing to resume or replace.
-      this.adoptRingPeerConnection(this.pc);
+      this.adoptRingPeerConnection(leg, leg.pc);
       this.updateReconnecting();
       return;
     }
-    if (this.pc && resumed) {
+    if (leg.pc && resumed) {
       this.updateReconnecting();
-      await this.restartIfMediaDidNotSurvive();
+      await this.restartIfMediaDidNotSurvive(leg);
       return;
     }
-    if (this.pc) {
-      appendLog('[Call] the other device was replaced - rebuilding the peer connection');
-      this.pc.close();
-      this.pc = null;
+    if (leg.pc) {
+      appendLog(`[Call]${leg.tag} the other device was replaced - rebuilding the peer connection`);
+      leg.pc.close();
+      leg.pc = null;
       // The new peer connection earns its own E2E claim and its own path check: nothing the dead
       // one proved is evidence about it.
-      this.resetE2eEvidence();
+      this.resetE2eEvidence(leg);
       // The new peer connection gets the camera on its own transceiver (`initPeerConnection`),
       // and its own ladder: the dead link's evidence says nothing about the new one.
-      this.cameraTransceiver = null;
-      this.stopVideoQuality();
+      this.stopLegVideoQuality(leg);
       // It counts its bytes from zero: a rate against the old one's totals would be negative.
       // (A tick of the old one still in flight is refused by `writeEndReport`: it names its pc.)
-      this.lastSnapshot = null;
-      this.mergedRemoteStream = null;
-      this.pendingRemoteIceCandidates = [];
-      this.makingOffer = false;
-      this.ignoreOffer = false;
-      this.mediaEverConnected = false;
-      this.iceRestarts = 0;
-      this.restartOfferEpoch = null;
-      this.restartRequestEpoch = null;
-      this.packetsAtLoss = null;
-      this.packetsAtRestart = null;
-      this.pendingOfferSeq = null;
+      leg.resetNegotiation();
     }
-    await this.initPeerConnection();
+    await this.initPeerConnection(leg);
+    this.publishTiles();
     this.updateReconnecting();
   }
 
@@ -2277,7 +2497,7 @@ export class CallService {
     appendLog(`[Call] signalling WebSocket closed code=${code} - resuming (call=${roomId})`);
     this.signallingLost = true;
     this.resumeAttempts = 0;
-    this.onPairBroken('signalling lost');
+    for (const leg of this.legs.values()) this.onPairBroken(leg, 'signalling lost');
     this.updateReconnecting();
     this.scheduleSignallingResume(roomId);
   }
@@ -2363,14 +2583,14 @@ export class CallService {
    * into a dead socket costs one restart, and since the keepalive can break a pairing every 20-30 s,
    * a reset per pairing would let a flapping peer restart for ever.
    */
-  private onPairBroken(why: string): void {
-    this.pairEpoch += 1;
+  private onPairBroken(leg: CallLeg, why: string): void {
+    leg.pairEpoch += 1;
     // A peer connection built during the ring carries no media yet: a baseline read from it (no
     // inbound stream yet) would outlive the ring and hide a later dead-but-"connected" path from the restart.
-    if (this.pc && !this.pcAwaitingPeer && !this.packetsAtLoss) {
-      this.packetsAtLoss = inboundAudioPackets(this.pc);
+    if (leg.pc && !leg.awaitingPeer && !leg.packetsAtLoss) {
+      leg.packetsAtLoss = inboundAudioPackets(leg.pc);
     }
-    appendLog(`[Call] signalling pair broken (${why}) - pairing ${this.pairEpoch}`);
+    appendLog(`[Call]${leg.tag} signalling pair broken (${why}) - pairing ${leg.pairEpoch}`);
   }
 
   /**
@@ -2382,30 +2602,33 @@ export class CallService {
    * no restart can ever be negotiated (`restartIce()` fires no `negotiationneeded` outside
    * `stable` - the 2026-10-19 bench stall, both phones on "Reconnexion..." for good).
    */
-  private async restartIfMediaDidNotSurvive(): Promise<void> {
-    const pc = this.pc;
+  private async restartIfMediaDidNotSurvive(leg: CallLeg): Promise<void> {
+    const pc = leg.pc;
     if (!pc) return;
-    const before = this.packetsAtLoss ? await this.packetsAtLoss : null;
-    this.packetsAtLoss = null;
-    const atRestart = this.packetsAtRestart ? await this.packetsAtRestart : null;
+    const before = leg.packetsAtLoss ? await leg.packetsAtLoss : null;
+    leg.packetsAtLoss = null;
+    const atRestart = leg.packetsAtRestart ? await leg.packetsAtRestart : null;
     const now = await inboundAudioPackets(pc);
-    if (this.pc !== pc) return;
-    if (this.iceRestarts > 0 && atRestart !== null && before !== null && before > atRestart) {
+    if (leg.pc !== pc) return;
+    if (leg.iceRestarts > 0 && atRestart !== null && before !== null && before > atRestart) {
       // Audio arrived after the last restart and before this outage: that restart WORKED, even if
       // ICE never left `connected` to say so. The budget is per media loss, and that loss is over.
-      this.refundIceRestarts(`audio packets ${atRestart} -> ${before} after the last restart`);
+      this.refundIceRestarts(leg, `audio packets ${atRestart} -> ${before} after the last restart`);
     }
-    const staleOffer = !this.polite && pc.signalingState === 'have-local-offer';
+    const staleOffer = !leg.polite && pc.signalingState === 'have-local-offer';
     const stalled = before !== null && now !== null && now <= before;
     const down = mediaPathDown(pc);
     appendLog(
-      `[Call] pair resumed: ice=${pc.iceConnectionState} connection=${pc.connectionState} signaling=${pc.signalingState} audio packets ${before ?? '?'} -> ${now ?? '?'}`
+      `[Call]${leg.tag} pair resumed: ice=${pc.iceConnectionState} connection=${pc.connectionState} signaling=${pc.signalingState} audio packets ${before ?? '?'} -> ${now ?? '?'}`
     );
     if (!staleOffer && !stalled && !down) {
-      appendLog('[Call] the media path carried audio across the outage - no ICE restart');
+      appendLog(`[Call]${leg.tag} the media path carried audio across the outage - no ICE restart`);
       // Refunded only on PROOF that audio flowed: unreadable stats (`null`) are no evidence.
-      if (this.iceRestarts > 0 && before !== null && now !== null && now > before) {
-        this.refundIceRestarts(`audio carried across the outage (packets ${before} -> ${now})`);
+      if (leg.iceRestarts > 0 && before !== null && now !== null && now > before) {
+        this.refundIceRestarts(
+          leg,
+          `audio carried across the outage (packets ${before} -> ${now})`
+        );
       }
       return;
     }
@@ -2416,7 +2639,7 @@ export class CallService {
     ]
       .filter(Boolean)
       .join(', ');
-    this.maybeRestartIce(`signalling resumed: ${why}`, true);
+    this.maybeRestartIce(leg, `signalling resumed: ${why}`, true);
   }
 
   /**
@@ -2431,47 +2654,51 @@ export class CallService {
    * pairing starts - a fact either way, never a timeout. The budget counts restarts (or requests)
    * since the path was last connected; spent, the call ends.
    */
-  private maybeRestartIce(reason: string, force = false): void {
-    const pc = this.pc;
+  private maybeRestartIce(leg: CallLeg, reason: string, force = false): void {
+    const pc = leg.pc;
     if (!pc) return;
     const ice = pc.iceConnectionState;
     if (!force && !mediaPathDown(pc)) return;
-    if (this.signallingLost || this.peerAway) {
+    if (this.signallingLost || leg.away) {
       appendLog(
-        `[Call] ICE ${ice} (${reason}) - restart deferred until both parties are back on the relay`
+        `[Call]${leg.tag} ICE ${ice} (${reason}) - restart deferred until both parties are back on the relay`
       );
       return;
     }
-    if (this.restartOfferEpoch === this.pairEpoch) {
-      appendLog(`[Call] ICE ${ice} (${reason}) - a restart offer is already awaiting its answer`);
+    if (leg.restartOfferEpoch === leg.pairEpoch) {
+      appendLog(
+        `[Call]${leg.tag} ICE ${ice} (${reason}) - a restart offer is already awaiting its answer`
+      );
       return;
     }
-    if (this.polite && this.restartRequestEpoch === this.pairEpoch) {
-      appendLog(`[Call] ICE ${ice} (${reason}) - a restart request is already awaiting its offer`);
+    if (leg.polite && leg.restartRequestEpoch === leg.pairEpoch) {
+      appendLog(
+        `[Call]${leg.tag} ICE ${ice} (${reason}) - a restart request is already awaiting its offer`
+      );
       return;
     }
     const failed = ice === 'failed' || pc.connectionState === 'failed';
-    if (!force && !failed && this.iceRestarts > 0) {
+    if (!force && !failed && leg.iceRestarts > 0) {
       // A restart already ran for this loss and was answered; the next one waits for `failed`.
       return;
     }
-    if (this.polite) {
+    if (leg.polite) {
       // Only the initiator offers, and it may see its own path as fine: ASK it, on THIS side's
       // budget, so a loss only the polite side sees still ends in a restart or in the call's end.
       // Charged HERE: the request leaves in this same call.
-      if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+      if (leg.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
         this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
         return;
       }
-      this.iceRestarts += 1;
+      leg.iceRestarts += 1;
       appendLog(
-        `[Call] ICE ${ice} (${reason}) - asking the initiator to restart (${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
+        `[Call]${leg.tag} ICE ${ice} (${reason}) - asking the initiator to restart (${leg.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
       );
-      this.restartRequestEpoch = this.pairEpoch;
-      this.sendSignal({ type: 'IceRestartRequest' });
+      leg.restartRequestEpoch = leg.pairEpoch;
+      this.sendSignal({ type: 'IceRestartRequest' }, leg);
       return;
     }
-    this.enqueueIceRestartOffer(`${reason}, ice=${ice}`);
+    this.enqueueIceRestartOffer(leg, `${reason}, ice=${ice}`);
   }
 
   /**
@@ -2479,11 +2706,11 @@ export class CallService {
    * trigger in the same tick adds none) and runs it on {@link signalQueue}, after whatever frame is
    * being applied - never beside it.
    */
-  private enqueueIceRestartOffer(why: string): void {
-    const epoch = this.pairEpoch;
-    this.restartOfferEpoch = epoch;
-    appendLog(`[Call] ICE restart decided (${why})`);
-    void this.serialized('ICE restart offer', () => this.sendIceRestartOffer(epoch));
+  private enqueueIceRestartOffer(leg: CallLeg, why: string): void {
+    const epoch = leg.pairEpoch;
+    leg.restartOfferEpoch = epoch;
+    appendLog(`[Call]${leg.tag} ICE restart decided (${why})`);
+    void this.serialized('ICE restart offer', () => this.sendIceRestartOffer(leg, epoch));
   }
 
   /**
@@ -2496,42 +2723,44 @@ export class CallService {
    * An engine that cannot CREATE the offer ends the call, named: nothing this side does next would
    * differ (same connection, same state), so a retry would only repeat the refusal.
    */
-  private async sendIceRestartOffer(epoch: number): Promise<void> {
-    const pc = this.pc;
+  private async sendIceRestartOffer(leg: CallLeg, epoch: number): Promise<void> {
+    const pc = leg.pc;
     if (!pc) return;
-    if (epoch !== this.pairEpoch) {
+    if (epoch !== leg.pairEpoch) {
       // The pair broke again before this step ran: the next `PeerReady` decides afresh.
-      appendLog(`[Call] ICE restart of pairing ${epoch} dropped - pairing ${this.pairEpoch} now`);
+      appendLog(
+        `[Call]${leg.tag} ICE restart of pairing ${epoch} dropped - pairing ${leg.pairEpoch} now`
+      );
       return;
     }
     // Charged HERE, once the offer is certain to be made: a restart dropped above cost nothing.
-    if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+    if (leg.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
       this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
       return;
     }
-    this.iceRestarts += 1;
-    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS}`);
-    this.makingOffer = true;
+    leg.iceRestarts += 1;
+    appendLog(`[Call]${leg.tag} ICE restart ${leg.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS}`);
+    leg.makingOffer = true;
     try {
       if (pc.signalingState === 'have-local-offer') {
         appendLog(
-          `[Call] rolling back unanswered offer #${this.pendingOfferSeq ?? '?'} - its answer can no longer come`
+          `[Call]${leg.tag} rolling back unanswered offer #${leg.pendingOfferSeq ?? '?'} - its answer can no longer come`
         );
         await pc.setLocalDescription({ type: 'rollback' });
-        this.pendingOfferSeq = null;
+        leg.pendingOfferSeq = null;
       }
       await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
-      if (this.pc !== pc) return;
-      const seq = this.nextOfferSeq();
+      if (leg.pc !== pc) return;
+      const seq = this.nextOfferSeq(leg);
       appendLog(
-        `[Call] ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+        `[Call]${leg.tag} ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
-      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
     } catch (e) {
-      if (this.pc !== pc) return;
+      if (leg.pc !== pc) return;
       this.failCall(`ICE restart offer could not be made: ${String(e)}`);
     } finally {
-      this.makingOffer = false;
+      leg.makingOffer = false;
     }
   }
 
@@ -2539,17 +2768,19 @@ export class CallService {
    * Gives the restart budget back: the media loss it was counting is PROVEN over by packets, not by
    * a state machine (which may never have left `connected`).
    */
-  private refundIceRestarts(evidence: string): void {
-    appendLog(`[Call] media path restored after ${this.iceRestarts} ICE restart(s) - ${evidence}`);
-    this.iceRestarts = 0;
-    this.packetsAtRestart = null;
+  private refundIceRestarts(leg: CallLeg, evidence: string): void {
+    appendLog(
+      `[Call]${leg.tag} media path restored after ${leg.iceRestarts} ICE restart(s) - ${evidence}`
+    );
+    leg.iceRestarts = 0;
+    leg.packetsAtRestart = null;
   }
 
   /** Numbers the offer this side is about to send, and marks it as the one awaiting an answer. */
-  private nextOfferSeq(): number {
-    this.localOfferSeq += 1;
-    this.pendingOfferSeq = this.localOfferSeq;
-    return this.localOfferSeq;
+  private nextOfferSeq(leg: CallLeg): number {
+    leg.localOfferSeq += 1;
+    leg.pendingOfferSeq = leg.localOfferSeq;
+    return leg.localOfferSeq;
   }
 
   /**
@@ -2559,45 +2790,52 @@ export class CallService {
    * call. Counted against this side's budget too, so a misbehaving peer cannot drive restarts for
    * ever.
    */
-  private onIceRestartRequested(): void {
-    if (!this.pc || this.polite) {
-      appendLog('[Call] ICE restart request ignored - this side does not offer');
+  private onIceRestartRequested(leg: CallLeg): void {
+    if (!leg.pc || leg.polite) {
+      appendLog(`[Call]${leg.tag} ICE restart request ignored - this side does not offer`);
       return;
     }
-    if (this.restartOfferEpoch === this.pairEpoch) {
+    if (leg.restartOfferEpoch === leg.pairEpoch) {
       appendLog("[Call] ICE restart request - this pairing's restart offer is already on its way");
       return;
     }
     // Counted when the offer is made (`sendIceRestartOffer`), against this side's budget too.
-    this.enqueueIceRestartOffer('requested by the other party');
+    this.enqueueIceRestartOffer(leg, 'requested by the other party');
   }
 
   /**
    * Recomputes {@link reconnecting} from the three facts that make it: this device's signalling
-   * resuming, the other party's (`PeerAway`), and a media path that had connected and is not
-   * connected now. Logged on every change, with the facts, so a "Reconnexion..." seen on a phone
-   * is explained in its exported log.
+   * resuming, another party's (`PeerAway`), and a media path that had connected and is not
+   * connected now - on ANY leg of the call. Logged on every change, with the facts, so a
+   * "Reconnexion..." seen on a phone is explained in its exported log.
    */
   private updateReconnecting(): void {
-    const ice = this.pc?.iceConnectionState;
-    const mediaDown = this.mediaEverConnected && ice !== 'connected' && ice !== 'completed';
-    const next =
-      get(this.callState) === 'incall' && (this.signallingLost || this.peerAway || mediaDown);
+    let away = false;
+    let mediaDown = false;
+    const ices: string[] = [];
+    for (const leg of this.legs.values()) {
+      const ice = leg.pc?.iceConnectionState;
+      if (leg.pc) ices.push(ice ?? 'none');
+      away ||= leg.away;
+      mediaDown ||= leg.mediaEverConnected && ice !== 'connected' && ice !== 'completed';
+    }
+    const next = get(this.callState) === 'incall' && (this.signallingLost || away || mediaDown);
     if (next === get(this.reconnecting)) return;
     appendLog(
-      `[Call] reconnecting=${next} (signalling=${this.signallingLost ? 'lost' : 'up'} peer=${this.peerAway ? 'away' : 'present'} ice=${ice ?? 'none'})`
+      `[Call] reconnecting=${next} (signalling=${this.signallingLost ? 'lost' : 'up'} peer=${away ? 'away' : 'present'} ice=${ices.join(',') || 'none'})`
     );
     this.reconnecting.set(next);
   }
 
   /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
   private async handleRemoteTrack(
+    leg: CallLeg,
     track: MediaStreamTrack,
     receiver: RTCRtpReceiver,
     transceiver: RTCRtpTransceiver | undefined
   ) {
     appendLog(
-      `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
+      `[Call]${leg.tag} remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
     );
 
     // A transceiver the peer's offer CREATED (a kind this side never sent): both its transforms go
@@ -2615,18 +2853,21 @@ export class CallService {
     const videoCodec = transceiver ? this.holdVideoToVp8(transceiver, track.kind) : undefined;
     let side: 'receiver' | 'sender' = 'receiver';
     try {
-      this.attachReceiverTransform(receiver, track.kind, videoCodec);
+      this.attachReceiverTransform(leg, receiver, track.kind, videoCodec);
       side = 'sender';
       // Armed with no track yet: it sends nothing until a later `addTrack` reuses it.
       if (transceiver)
         this.attachSenderTransform(
+          leg,
           transceiver.sender,
           track.kind,
           videoCodec,
           'armed, no track yet'
         );
     } catch (e) {
-      appendLog(`[Call] E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`);
+      appendLog(
+        `[Call]${leg.tag} E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`
+      );
       this.failCall(
         `E2E ${side} transform failed`,
         e instanceof CallE2eSetupError
@@ -2636,7 +2877,9 @@ export class CallService {
       return;
     }
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
-    if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
+    if (newMline && leg.pc) {
+      this.scheduleE2ePathCheck(leg, leg.pc, `after a new ${track.kind} m-line`);
+    }
 
     // AN AUDIO-ONLY BUILD RECEIVES A PEER'S VIDEO AND SHOWS NOTHING OF IT. Only a modified client
     // (or a later build) sends one. The m-line is answered `recvonly` - this side never adds a
@@ -2651,92 +2894,133 @@ export class CallService {
     // floor rises past this build or the `inactive` route is built (docs/wiki/frontend/modules/calls.md, B0).
     if (track.kind === 'video' && !CALLS_VIDEO_ENABLED) {
       appendLog(
-        '[Call] the peer sends video - this build is audio only, it is received and not shown'
+        `[Call]${leg.tag} the peer sends video - this build is audio only, it is received and not shown`
       );
-      track.onunmute = () => this.recheckE2eOnMediaStart('after the remote video unmuted');
+      track.onunmute = () => this.recheckE2eOnMediaStart('after the remote video unmuted', leg);
       return;
     }
 
-    if (!this.mergedRemoteStream) {
-      this.mergedRemoteStream = new MediaStream();
+    if (!leg.mergedRemoteStream) {
+      leg.mergedRemoteStream = new MediaStream();
     }
-    const already = this.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
+    const already = leg.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
     if (!already) {
       // Renegotiation adds new m-lines; drop stale tracks of the same kind (UI kept the dead one).
-      for (const old of this.mergedRemoteStream.getTracks()) {
+      for (const old of leg.mergedRemoteStream.getTracks()) {
         if (old.kind === track.kind && old.id !== track.id) {
-          this.mergedRemoteStream.removeTrack(old);
+          leg.mergedRemoteStream.removeTrack(old);
           old.stop();
-          appendLog(`[Call] replaced stale remote ${old.kind} track ${old.id.slice(0, 8)}…`);
+          appendLog(
+            `[Call]${leg.tag} replaced stale remote ${old.kind} track ${old.id.slice(0, 8)}…`
+          );
         }
       }
-      this.mergedRemoteStream.addTrack(track);
+      leg.mergedRemoteStream.addTrack(track);
     }
 
     track.onunmute = () => {
-      appendLog(`[Call] remote track unmuted kind=${track.kind}`);
-      this.publishRemoteStream();
-      this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`);
+      appendLog(`[Call]${leg.tag} remote track unmuted kind=${track.kind}`);
+      this.publishRemoteStream(leg);
+      this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`, leg);
     };
     // The peer's camera OFF is a renegotiation to `recvonly` on its side, which mutes this track
     // (measured in the rig, row `video-off-on`): the screen shows the avatar again, not a frozen
     // last frame.
     track.onmute = () => {
-      appendLog(`[Call] remote track muted kind=${track.kind}`);
-      this.publishRemoteStream();
+      appendLog(`[Call]${leg.tag} remote track muted kind=${track.kind}`);
+      this.publishRemoteStream(leg);
     };
     // Watchdog: a remote track that never unmutes means no media reached us - the usual cause
     // of "no audio on this call". Logged so a failing call is diagnosable from the exported log.
     setTimeout(() => {
       if (track.readyState === 'live' && track.muted) {
-        appendLog(`[Call] WARN remote ${track.kind} still muted after 5s - no media received`);
+        appendLog(
+          `[Call]${leg.tag} WARN remote ${track.kind} still muted after 5s - no media received`
+        );
       }
     }, 5000);
     track.onended = () => {
-      appendLog(`[Call] remote track ended kind=${track.kind}`);
-      this.mergedRemoteStream?.removeTrack(track);
-      this.publishRemoteStream();
+      appendLog(`[Call]${leg.tag} remote track ended kind=${track.kind}`);
+      leg.mergedRemoteStream?.removeTrack(track);
+      this.publishRemoteStream(leg);
     };
 
-    this.publishRemoteStream();
+    this.publishRemoteStream(leg);
 
     if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
       this.callState.set('incall');
     }
   }
 
-  /** Notifies subscribers so `<video>` re-binds when tracks start producing frames. */
-  private publishRemoteStream() {
-    if (!this.mergedRemoteStream) return;
-    const stream = this.mergedRemoteStream;
-    this.remoteStream.set(stream);
-    this.remoteStreams.set(new Map([['remote', stream]]));
+  /**
+   * Notifies subscribers so `<video>` re-binds when tracks start producing frames. A 1:1 call
+   * publishes its one leg's stream as `remote`, as before group calls; a GROUP call publishes every
+   * leg's stream keyed by its participant, the tiles, and the voice of all of them in one stream
+   * ({@link remoteAudioMix}).
+   */
+  private publishRemoteStream(leg: CallLeg) {
+    if (!this.groupCall) {
+      if (!leg.mergedRemoteStream) return;
+      const stream = leg.mergedRemoteStream;
+      this.remoteStream.set(stream);
+      this.remoteStreams.set(new Map([['remote', stream]]));
+      return;
+    }
+    const streams: RemoteStreams = new Map();
+    const mix = new MediaStream();
+    for (const l of this.legs.values()) {
+      if (!l.mergedRemoteStream) continue;
+      streams.set(l.key, l.mergedRemoteStream);
+      for (const t of l.mergedRemoteStream.getTracks()) {
+        if (t.kind === 'audio' && t.readyState !== 'ended') mix.addTrack(t);
+      }
+    }
+    this.remoteStreams.set(streams);
+    this.remoteAudioMix.set(mix);
+    this.publishTiles();
+  }
+
+  /** Re-publishes a group call's tiles from its legs (WP-GC2): nothing in a 1:1 call. */
+  private publishTiles(): void {
+    if (!this.groupCall) return;
+    this.groupTiles.set(
+      [...this.legs.values()].map((l) => ({
+        userId: l.key,
+        stream: l.mergedRemoteStream,
+        micSuspended: l.peerMicSuspended,
+        connected: l.mediaEverConnected && !l.away,
+      }))
+    );
   }
 
   /**
    * One offer, on the negotiation queue: from `negotiationneeded`, and from the adoption of a peer
    * connection built during the ring (its `negotiationneeded` fired while it waited, and made none).
    */
-  private async offerIfNeeded(pc: RTCPeerConnection): Promise<void> {
+  private async offerIfNeeded(leg: CallLeg, pc: RTCPeerConnection): Promise<void> {
     // Nothing is offered before the peer is in the room. The polite side never opens the
     // negotiation: it answers the initiator's first offer, which already carries a slot for its
     // tracks. After that, either side may renegotiate.
-    if (this.pc !== pc || this.pcAwaitingPeer || (this.polite && !pc.remoteDescription)) return;
+    if (leg.pc !== pc || leg.awaitingPeer || (leg.polite && !pc.remoteDescription)) return;
     if (pc.signalingState !== 'stable') {
       // A step queued before this one (an ICE restart offer) already opened a negotiation.
-      appendLog(`[Call] negotiationneeded in signaling=${pc.signalingState} - already offering`);
+      appendLog(
+        `[Call]${leg.tag} negotiationneeded in signaling=${pc.signalingState} - already offering`
+      );
       return;
     }
     try {
-      this.makingOffer = true;
+      leg.makingOffer = true;
       await pc.setLocalDescription();
-      const seq = this.nextOfferSeq();
-      appendLog(`[Call] offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
-      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+      const seq = this.nextOfferSeq(leg);
+      appendLog(
+        `[Call]${leg.tag} offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+      );
+      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
     } catch (e) {
-      appendLog(`[Call] creating an offer failed: ${String(e)}`);
+      appendLog(`[Call]${leg.tag} creating an offer failed: ${String(e)}`);
     } finally {
-      this.makingOffer = false;
+      leg.makingOffer = false;
     }
   }
 
@@ -2745,32 +3029,94 @@ export class CallService {
    * with what was held back until now - the report ticks, the camera's ladder, and the offer.
    * Runs INSIDE the negotiation queue (`onPeerReady`), so the offer is queued after it, never awaited.
    */
-  private adoptRingPeerConnection(pc: RTCPeerConnection): void {
-    this.pcAwaitingPeer = false;
+  private adoptRingPeerConnection(leg: CallLeg, pc: RTCPeerConnection): void {
+    leg.awaitingPeer = false;
     // No outage before the pairing is evidence about the media this pairing will carry.
-    this.packetsAtLoss = null;
+    leg.packetsAtLoss = null;
     appendLog(
-      `[Call] the peer joined - the peer connection built during the ring is adopted (ice gathering=${pc.iceGatheringState})`
+      `[Call]${leg.tag} the peer joined - the peer connection built during the ring is adopted (ice gathering=${pc.iceGatheringState})`
     );
-    this.armCallReport(pc);
-    const camera = this.liveCameraTransceiver();
-    if (camera?.sender.track) this.startVideoQuality(pc, camera.sender);
-    void this.serialized('offer', () => this.offerIfNeeded(pc));
+    this.armCallReport(leg, pc);
+    const camera = this.liveCameraTransceiver(leg);
+    if (camera?.sender.track) this.startVideoQuality(leg, pc, camera.sender);
+    void this.serialized('offer', () => this.offerIfNeeded(leg, pc));
   }
 
   /**
    * Closes a peer connection built during the ring that never met its peer - at once, not after the
    * ended summary: it holds a TURN allocation for a call nobody answered. `cleanup` closes it too,
-   * on the paths that reach it first.
+   * on the paths that reach it first. Only a 1:1 call's leg is built during the ring.
    */
   private closeRingPeerConnection(why: string): void {
-    if (!this.pc || !this.pcAwaitingPeer) return;
+    const leg = this.legs.get(ONE_TO_ONE_LEG);
+    if (!leg?.pc || !leg.awaitingPeer) return;
     appendLog(`[Call] closing the peer connection built during the ring (${why})`);
-    this.pc.close();
-    this.pc = null;
-    this.pcAwaitingPeer = false;
+    leg.pc.close();
+    leg.pc = null;
+    leg.awaitingPeer = false;
     // Its microphone sender died with it: the switch must not `replaceTrack` on a closed sender.
     this.micSwitch?.detachSender();
+  }
+
+  /**
+   * Opens a leg (WP-GC2): {@link ONE_TO_ONE_LEG}, or a group call's leg to the participant `key`,
+   * whose relay seat is `peerId`. Its peer connection is built by {@link initPeerConnection}.
+   */
+  private openLeg(key: string, peerId: string | null): CallLeg {
+    const leg = new CallLeg(key, peerId);
+    this.legs.set(key, leg);
+    if (leg.isGroup) {
+      appendLog(`[Call]${leg.tag} leg opened to ${peerId ?? '?'} (${this.legs.size} leg(s))`);
+    }
+    return leg;
+  }
+
+  /**
+   * Closes ONE leg of a group call (WP-GC2): its participant left, or its media could not be
+   * carried. Its peer connection, its microphone sender, its camera ladder, its report and its
+   * pending E2E check go; its tile goes. WP-C11 (decided 2026-11-13, reversible): the call itself
+   * ends only when the LAST other participant has left - a fact the relay states, never a timer.
+   */
+  private closeLeg(leg: CallLeg, why: string): void {
+    if (this.legs.get(leg.key) !== leg) return;
+    appendLog(`[Call]${leg.tag} leg closed (${why}) - ${this.legs.size - 1} leg(s) left`);
+    // Its last report, while its peer connection is alive.
+    this.writeLegEndReport(leg);
+    this.resetE2eEvidence(leg);
+    this.stopLegVideoQuality(leg);
+    this.micSwitch?.detachSender(leg.key);
+    leg.pc?.close();
+    leg.pc = null;
+    this.legs.delete(leg.key);
+    this.publishRemoteStream(leg);
+    this.syncE2eProven();
+    this.updateReconnecting();
+    if (this.legs.size > 0) return;
+    appendLog('[Call] the last other participant left the group call - it ends here');
+    // Notified: the hangup ends nothing for anyone (it carries no unanswered outcome), and the
+    // ring-end stops the system rings of members still rung for a room nobody is in any more.
+    this.endCall(true);
+  }
+
+  /** The legs whose party is in the call now (paired, not away): who a leaving caller leaves. */
+  private connectedLegCount(): number {
+    let n = 0;
+    for (const leg of this.legs.values()) if (leg.arrived && !leg.away && leg.pc) n += 1;
+    return n;
+  }
+
+  /**
+   * A leg whose media never connected. In a 1:1 call that is the call failing, as it always was; in
+   * a GROUP call only that participant is unreachable, so only its leg closes (WP-GC2) - the call
+   * goes on with the others, and ends through {@link closeLeg} if it was the last.
+   */
+  private failLeg(leg: CallLeg, why: string): void {
+    if (!leg.isGroup) {
+      this.failCall(why, this.neverConnectedCause());
+      return;
+    }
+    appendLog(`[Call]${leg.tag} WARN media never connected to this participant (${why})`);
+    this.closeLeg(leg, `media never connected: ${why}`);
   }
 
   /**
@@ -2783,24 +3129,25 @@ export class CallService {
    * tick, no path check, no video ladder - until `PeerReady` adopts it ({@link adoptRingPeerConnection}).
    * The pool gathers ONE transport: both kinds ride it under BUNDLE.
    */
-  private async initPeerConnection(opts: { awaitingPeer?: boolean } = {}) {
+  private async initPeerConnection(leg: CallLeg, opts: { awaitingPeer?: boolean } = {}) {
     if (!this.currentGroupId || !this.currentCallId || !this.iceServers) {
       throw new Error('No active call context');
     }
     const awaitingPeer = opts.awaitingPeer === true;
 
     appendLog(
-      `[Call] creating PeerConnection (policy=${CALL_ICE_TRANSPORT_POLICY}, ${this.iceServers.length} ICE server(s)${awaitingPeer ? ', during the ring: gathering now, negotiating once the peer joins' : ''})`
+      `[Call]${leg.tag} creating PeerConnection (policy=${CALL_ICE_TRANSPORT_POLICY}, ${this.iceServers.length} ICE server(s)${awaitingPeer ? ', during the ring: gathering now, negotiating once the peer joins' : ''})`
     );
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
       iceTransportPolicy: CALL_ICE_TRANSPORT_POLICY,
       ...(awaitingPeer ? { iceCandidatePoolSize: 1 } : {}),
     });
-    this.pc = pc;
-    this.pcAwaitingPeer = awaitingPeer;
+    leg.pc = pc;
+    leg.awaitingPeer = awaitingPeer;
     this.transformEpoch += 1;
-    if (!awaitingPeer) this.armCallReport(pc);
+    leg.epoch = this.transformEpoch;
+    if (!awaitingPeer) this.armCallReport(leg, pc);
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
     /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
@@ -2810,15 +3157,18 @@ export class CallService {
       if (e.candidate) {
         const type = e.candidate.type;
         if (type && type in gathered) gathered[type as keyof typeof gathered]++;
-        this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
+        this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) }, leg);
       } else {
         appendLog(
-          `[Call] ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} ice=${pc.iceConnectionState})`
+          `[Call]${leg.tag} ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} ice=${pc.iceConnectionState})`
         );
-        this.sendSignal({
-          type: 'IceCandidate',
-          candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
-        });
+        this.sendSignal(
+          {
+            type: 'IceCandidate',
+            candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
+          },
+          leg
+        );
         // A working direct pair stops libwebrtc's gathering before TURN answers (CALL-GATHER-0),
         // and the ICE state the attribute shows here may lag the pair that ended it. So nothing
         // is concluded now: the gap is remembered, and accused only if ICE then FAILS without
@@ -2829,109 +3179,115 @@ export class CallService {
 
     // On the negotiation queue like every other step, so an offer is never made while a frame
     // is half applied.
-    pc.onnegotiationneeded = () => this.serialized('offer', () => this.offerIfNeeded(pc));
+    pc.onnegotiationneeded = () => this.serialized('offer', () => this.offerIfNeeded(leg, pc));
 
     pc.onicegatheringstatechange = () => {
-      appendLog(`[Call] iceGatheringState=${pc.iceGatheringState}`);
+      appendLog(`[Call]${leg.tag} iceGatheringState=${pc.iceGatheringState}`);
     };
 
     pc.onsignalingstatechange = () => {
-      appendLog(`[Call] signalingState=${pc.signalingState}`);
+      appendLog(`[Call]${leg.tag} signalingState=${pc.signalingState}`);
       // `stable` follows a completed negotiation - the media the last path check could not judge
       // (an m-line not negotiated yet) can flow now - and also a ROLLBACK, after which one more
       // check costs a look and never a verdict.
-      if (pc.signalingState === 'stable' && this.pc === pc) {
-        this.recheckE2eOnMediaStart('after signalling reached stable');
+      if (pc.signalingState === 'stable' && leg.pc === pc) {
+        this.recheckE2eOnMediaStart('after signalling reached stable', leg);
         this.reportNegotiatedVideoCodecs(pc);
       }
     };
 
     pc.ontrack = (e) => {
       const { track, receiver, transceiver } = e;
-      void this.handleRemoteTrack(track, receiver, transceiver);
+      void this.handleRemoteTrack(leg, track, receiver, transceiver);
     };
 
     pc.onconnectionstatechange = () => {
-      if (this.pc !== pc) return;
+      if (leg.pc !== pc) return;
       const state = pc.connectionState;
-      appendLog(`[Call] connectionState=${state}`);
+      appendLog(`[Call]${leg.tag} connectionState=${state}`);
       if (state === 'connected') {
         // Only a RINGING call becomes `incall` here, as in `handleRemoteTrack`: ICE that connects
         // during the 1.5 s summary must not turn `ended` back into a call - the summary's timer would
         // then skip `cleanup`, leaving the microphone open under an overlay that says "in call".
         const callState = get(this.callState);
         if (callState === 'ended' || callState === 'idle') {
-          appendLog(`[Call] connected after the call ended (state=${callState}) - not reopened`);
+          appendLog(
+            `[Call]${leg.tag} connected after the call ended (state=${callState}) - not reopened`
+          );
           return;
         }
         if (callState === 'calling' || callState === 'incoming') this.callState.set('incall');
         if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
         void pc
           .getStats()
-          .then((stats) => appendLog(`[Call] selected path ${describeSelectedPair(stats)}`))
-          .catch((e: unknown) => appendLog(`[Call] getStats failed: ${String(e)}`));
+          .then((stats) =>
+            appendLog(`[Call]${leg.tag} selected path ${describeSelectedPair(stats)}`)
+          )
+          .catch((e: unknown) => appendLog(`[Call]${leg.tag} getStats failed: ${String(e)}`));
         // The RTP streams bind their codec on the first packet, after `connected`: read once
         // the media has had time to flow (a diagnostic read, nothing waits on it).
-        setTimeout(() => this.logAudioCodecs(pc), CallService.CODEC_READ_DELAY_MS);
+        setTimeout(() => this.logAudioCodecs(leg, pc), CallService.CODEC_READ_DELAY_MS);
         // ONE path check per peer connection at its first connect (a reconnect does not re-arm
         // it; a rebuilt peer connection does), plus the report at the end (`cleanup`).
-        if (!this.e2eConnectChecked) {
-          this.e2eConnectChecked = true;
-          this.scheduleE2ePathCheck(pc, '5 s after connected');
+        if (!leg.e2eConnectChecked) {
+          leg.e2eConnectChecked = true;
+          this.scheduleE2ePathCheck(leg, pc, '5 s after connected');
         }
       }
       if (state === 'disconnected') {
         // 'disconnected' is often transient (WebRTC may recover); log but do not tear down.
-        appendLog('[Call] WebRTC peer connection disconnected (may recover)');
+        appendLog(`[Call]${leg.tag} WebRTC peer connection disconnected (may recover)`);
       }
       if (state === 'failed') {
-        if (this.mediaEverConnected) {
+        if (leg.mediaEverConnected) {
           // A path that HAD connected. Acted on HERE too: Android Chromium was measured reaching
           // connectionState=failed while iceConnectionState stayed `disconnected`.
-          this.maybeRestartIce('connectionState=failed');
+          this.maybeRestartIce(leg, 'connectionState=failed');
           this.updateReconnecting();
         } else {
-          this.failCall('connectionState=failed', this.neverConnectedCause());
+          this.failLeg(leg, 'connectionState=failed');
         }
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (this.pc !== pc) return;
+      if (leg.pc !== pc) return;
       const iceState = pc.iceConnectionState;
-      appendLog(`[Call] iceConnectionState=${iceState}`);
+      appendLog(`[Call]${leg.tag} iceConnectionState=${iceState}`);
       if (iceState === 'connected' || iceState === 'completed') {
-        if (this.iceRestarts > 0) {
-          appendLog(`[Call] media path restored after ${this.iceRestarts} ICE restart(s)`);
+        if (leg.iceRestarts > 0) {
+          appendLog(`[Call]${leg.tag} media path restored after ${leg.iceRestarts} ICE restart(s)`);
         }
-        this.mediaEverConnected = true;
-        this.iceRestarts = 0;
-        this.packetsAtRestart = null;
-        this.restartOfferEpoch = null;
-        this.restartRequestEpoch = null;
-      } else if (iceState === 'failed' && !this.mediaEverConnected) {
+        leg.mediaEverConnected = true;
+        leg.iceRestarts = 0;
+        leg.packetsAtRestart = null;
+        leg.restartOfferEpoch = null;
+        leg.restartRequestEpoch = null;
+        // A group call's tile says its participant is connected from here.
+        this.publishTiles();
+      } else if (iceState === 'failed' && !leg.mediaEverConnected) {
         // Never connected: there is no path at all, and a restart would find the same candidates.
         appendLog(
-          '[Call] ICE failed - no direct path and no TURN relay pair (check Cloudflare TURN on chat-delivery)'
+          `[Call]${leg.tag} ICE failed - no direct path and no TURN relay pair (check Cloudflare TURN on chat-delivery)`
         );
         if (relayGap) {
           // The call settled with no working pair AND no relay gathered: now the gap is evidence.
           appendLog(
-            '[Call] WARN no TURN relay candidate was gathered and no direct pair worked (Cloudflare TURN unreachable or misconfigured)'
+            `[Call]${leg.tag} WARN no TURN relay candidate was gathered and no direct pair worked (Cloudflare TURN unreachable or misconfigured)`
           );
         }
-        this.failCall('iceConnectionState=failed', this.neverConnectedCause());
+        this.failLeg(leg, 'iceConnectionState=failed');
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         // A path that had connected and was lost - a network change, a blip. Restart, not end.
-        this.maybeRestartIce(`iceConnectionState=${iceState}`);
+        this.maybeRestartIce(leg, `iceConnectionState=${iceState}`);
       }
       this.updateReconnecting();
     };
 
     if (this.localStream) {
       const tracks = this.localStream.getTracks();
-      appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
+      appendLog(`[Call]${leg.tag} adding ${tracks.length} local track(s) to PeerConnection`);
       for (const track of tracks) {
         // `addTrack` and BOTH transforms of its transceiver in ONE task, nothing awaited between
         // them. Chromium short-circuits a sender or receiver whose transform is not assigned by the
@@ -2950,19 +3306,19 @@ export class CallService {
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         // A camera's transceiver is held to VP8 BEFORE its transforms, which are told the codec.
         const videoCodec = this.holdVideoToVp8(transceiver, track.kind);
-        this.attachSenderTransform(sender, track.kind, videoCodec);
+        this.attachSenderTransform(leg, sender, track.kind, videoCodec);
         // A track muted by the OS (or not producing yet) starts sending with no negotiation.
         track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
-        this.attachReceiverTransform(transceiver.receiver, track.kind, videoCodec);
+        this.attachReceiverTransform(leg, transceiver.receiver, track.kind, videoCodec);
         // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
-        micSwitch?.attachSender(sender);
+        micSwitch?.attachSender(sender, leg.key);
         if (track.kind === 'video') {
           if (!videoCodec) {
             this.refuseCameraSender(pc, sender, track);
             continue;
           }
-          this.cameraTransceiver = transceiver;
-          this.startVideoQuality(pc, sender);
+          leg.cameraTransceiver = transceiver;
+          this.startVideoQuality(leg, pc, sender);
         }
       }
       await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
@@ -3013,23 +3369,24 @@ export class CallService {
    * Forgets every piece of E2E evidence and every pending path check: a new call, or a peer
    * connection rebuilt for a replaced device, earns its claim from its OWN transforms.
    */
-  private resetE2eEvidence(): void {
-    if (this.e2ePathCheckTimer !== null) {
-      window.clearTimeout(this.e2ePathCheckTimer);
-      this.e2ePathCheckTimer = null;
+  private resetE2eEvidence(leg: CallLeg): void {
+    if (leg.e2ePathCheckTimer !== null) {
+      window.clearTimeout(leg.e2ePathCheckTimer);
+      leg.e2ePathCheckTimer = null;
     }
-    this.e2eConnectChecked = false;
+    leg.e2eConnectChecked = false;
     // A rebuilt peer connection's end report judges frames only once ITS check has run.
     this.e2eReportFired = false;
-    this.e2eRechecks = 0;
-    this.e2ePathInconclusive = false;
-    this.e2eLastUnjudged = '';
-    this.e2ePrevPackets = null;
-    this.e2eClaimWithdrawn = false;
+    leg.e2eRechecks = 0;
+    leg.e2ePathInconclusive = false;
+    leg.e2eLastUnjudged = '';
+    leg.e2ePrevPackets = null;
+    leg.e2eClaimWithdrawn = false;
     this.e2eWorkerSilent = false;
-    this.e2eSenderSeen = false;
-    this.e2eReceiverSeen = false;
-    this.e2eProven.set(false);
+    leg.e2eSenderSeen = false;
+    leg.e2eReceiverSeen = false;
+    leg.e2eProven = false;
+    this.syncE2eProven();
   }
 
   /**
@@ -3038,27 +3395,27 @@ export class CallService {
    * remote m-line - each is media the previous check did not see. The delay only lets packets flow
    * so there is something to compare; the verdict is the comparison (`checkE2eInPath`).
    */
-  private scheduleE2ePathCheck(pc: RTCPeerConnection, why: string): void {
+  private scheduleE2ePathCheck(leg: CallLeg, pc: RTCPeerConnection, why: string): void {
     // A peer connection still waiting for its peer has no media to judge: its first `connected`
     // arms the check, after the adoption.
-    if (this.pcAwaitingPeer && pc === this.pc) return;
+    if (leg.awaitingPeer && pc === leg.pc) return;
     const worker = this.encryptionWorker;
     if (!worker) {
-      appendLog(`[Call] WARN E2E path check (${why}) not armed: no worker`);
+      appendLog(`[Call]${leg.tag} WARN E2E path check (${why}) not armed: no worker`);
       return;
     }
     // A check already pending KEEPS its deadline and takes this trigger's reason too: re-arming
     // on every trigger could postpone it for ever (review S2 of #2158). Media too young to be
     // judged at that deadline makes the check inconclusive, and it re-arms itself.
-    if (this.e2ePathCheckTimer !== null) {
-      this.e2ePathCheckReason = `${this.e2ePathCheckReason}, ${why}`;
+    if (leg.e2ePathCheckTimer !== null) {
+      leg.e2ePathCheckReason = `${leg.e2ePathCheckReason}, ${why}`;
       return;
     }
-    this.e2ePathCheckReason = why;
-    this.e2ePathCheckTimer = window.setTimeout(() => {
-      this.e2ePathCheckTimer = null;
+    leg.e2ePathCheckReason = why;
+    leg.e2ePathCheckTimer = window.setTimeout(() => {
+      leg.e2ePathCheckTimer = null;
       this.e2eReportFired = true;
-      void this.checkE2eInPath(pc, worker, this.e2ePathCheckReason);
+      void this.checkE2eInPath(leg, pc, worker, leg.e2ePathCheckReason);
     }, CallService.E2E_REPORT_DELAY_MS);
   }
 
@@ -3080,8 +3437,13 @@ export class CallService {
    * the next event that starts media re-checks (`recheckE2eOnMediaStart`). NO ANSWER from the
    * worker withdraws the claim the same way and re-checks. No stats proves nothing: logged.
    */
-  private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
-    const recheck = this.e2eRechecks > 0;
+  private async checkE2eInPath(
+    leg: CallLeg,
+    pc: RTCPeerConnection,
+    worker: Worker,
+    why: string
+  ): Promise<void> {
+    const recheck = leg.e2eRechecks > 0;
     let packets: RtpPacketCounts | null = null;
     let stats: RTCStatsReport | null = null;
     let statsError = '';
@@ -3091,31 +3453,31 @@ export class CallService {
     } catch (e) {
       statsError = String(e);
     }
-    const epoch = this.transformEpoch;
+    const epoch = leg.epoch;
     // Without packets there is nothing to read the frames against: the worker is not asked.
     const report = packets ? await this.askE2eReport(why, worker) : null;
     // Stale FIRST: a check of a replaced peer connection may not withdraw the new one's claim.
-    if (this.pc !== pc || this.encryptionWorker !== worker) {
+    if (leg.pc !== pc || this.encryptionWorker !== worker) {
       appendLog(
-        `[Call] E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
+        `[Call]${leg.tag} E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
       );
       return;
     }
     if (!packets) {
       // Unverifiable, exactly as a worker that does not answer: withdrawn, and re-checked.
-      this.withdrawE2eClaim(why, 'the stats cannot be read');
-      this.recheckE2ePath(pc, why, [`getStats failed (${statsError})`], 'no packet counts');
+      this.withdrawE2eClaim(leg, why, 'the stats cannot be read');
+      this.recheckE2ePath(leg, pc, why, [`getStats failed (${statsError})`], 'no packet counts');
       return;
     }
     const counts = describePacketCounts(packets);
     if (!report) {
-      this.withdrawE2eClaim(why, 'the worker cannot be asked');
-      this.recheckE2ePath(pc, why, ['the worker did not answer'], counts);
+      this.withdrawE2eClaim(leg, why, 'the worker cannot be asked');
+      this.recheckE2ePath(leg, pc, why, ['the worker did not answer'], counts);
       return;
     }
     const facts = readE2eEngineFacts();
-    const prev = this.e2ePrevPackets;
-    this.e2ePrevPackets = packets;
+    const prev = leg.e2ePrevPackets;
+    leg.e2ePrevPackets = packets;
     const sides = prev ? e2eBypassedSides(report, prev, epoch) : [];
     if (prev && sides.length > 0) {
       appendLog(describeE2eReport(report, facts, true, epoch));
@@ -3126,7 +3488,7 @@ export class CallService {
         })
         .join(' ');
       appendLog(
-        `[Call] ERROR E2E path check (${why}): media flowed AROUND the transform on ${sides.join(' and ')} (previous check ${describePacketCounts(prev)}; now ${counts}; frames ${frames})`
+        `[Call]${leg.tag} ERROR E2E path check (${why}): media flowed AROUND the transform on ${sides.join(' and ')} (previous check ${describePacketCounts(prev)}; now ${counts}; frames ${frames})`
       );
       this.failCall('E2E transform bypassed', new CallE2eBypassedError(sides));
       return;
@@ -3145,29 +3507,29 @@ export class CallService {
     ];
     if (unjudged.length === 0) {
       appendLog(describeE2eReport(report, facts, true, epoch));
-      this.e2eRechecks = 0;
-      this.e2ePathInconclusive = false;
-      this.e2eLastUnjudged = '';
+      leg.e2eRechecks = 0;
+      leg.e2ePathInconclusive = false;
+      leg.e2eLastUnjudged = '';
       // THE SUCCESS LINE, worded as what it proved: every packet counted on every side carried a
       // frame through the transform (the bypass check above found none around it).
       appendLog(
-        `[Call] E2E path check (${why}): PASS - all media went through the E2E transform (${counts})`
+        `[Call]${leg.tag} E2E path check (${why}): PASS - all media went through the E2E transform (${counts})`
       );
       // A call carrying video says, at each conclusive check, whether the picture DECODES - an
       // encrypted frame can reach the decoder and still never show (frame rate, freezes, PLIs).
       if (stats && packets.sent.video + packets.received.video > 0) {
-        appendLog(`[Call] ${describeVideoStats(stats)}`);
+        appendLog(`[Call]${leg.tag} ${describeVideoStats(stats)}`);
       }
-      if (this.e2eClaimWithdrawn) {
-        this.e2eClaimWithdrawn = false;
-        this.claimE2eIfProven();
+      if (leg.e2eClaimWithdrawn) {
+        leg.e2eClaimWithdrawn = false;
+        this.claimE2eIfProven(leg);
       }
       return;
     }
     // A re-check's report is logged only with a changed verdict below, and never judged: its media
     // is the one the check already said it cannot judge yet.
     if (!recheck) appendLog(describeE2eReport(report, facts, true, epoch));
-    this.recheckE2ePath(pc, why, unjudged, counts);
+    this.recheckE2ePath(leg, pc, why, unjudged, counts);
   }
 
   /**
@@ -3176,38 +3538,44 @@ export class CallService {
    * re-checks (`recheckE2eOnMediaStart`).
    */
   private recheckE2ePath(
+    leg: CallLeg,
     pc: RTCPeerConnection,
     why: string,
     unjudged: readonly string[],
     counts: string
   ): void {
-    this.e2ePathInconclusive = true;
+    leg.e2ePathInconclusive = true;
     const state = unjudged.join(', ');
     // Packets with no frame YET is judged by the very next check - a frame through the transform,
     // or a bypass against this reading - so that state cannot repeat, and its next check is owed
     // OUTSIDE the budget: spending the budget must never drop a verdict that is one check away.
     const verdictNext = unjudged.some((u) => u.endsWith(CARRIED_NO_FRAME_YET));
-    if (!verdictNext && this.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
+    if (!verdictNext && leg.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
       appendLog(
-        `[Call] WARN E2E path check (${why}): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (${state}; ${counts}) - waiting for media to start`
+        `[Call]${leg.tag} WARN E2E path check (${why}): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (${state}; ${counts}) - waiting for media to start`
       );
-      this.withdrawE2eClaim(why, `media not judged (${state})`);
+      this.withdrawE2eClaim(leg, why, `media not judged (${state})`);
       return;
     }
-    if (!verdictNext) this.e2eRechecks += 1;
-    if (state !== this.e2eLastUnjudged) {
-      this.e2eLastUnjudged = state;
+    if (!verdictNext) leg.e2eRechecks += 1;
+    if (state !== leg.e2eLastUnjudged) {
+      leg.e2eLastUnjudged = state;
       appendLog(
-        `[Call] E2E path check (${why}): not yet judged: ${state} (${counts}) - re-checking, at most ${CALL_E2E_PATH_RECHECKS} times`
+        `[Call]${leg.tag} E2E path check (${why}): not yet judged: ${state} (${counts}) - re-checking, at most ${CALL_E2E_PATH_RECHECKS} times`
       );
     }
-    this.scheduleE2ePathCheck(pc, 're-check');
+    this.scheduleE2ePathCheck(leg, pc, 're-check');
   }
 
   /** What a report says that the peer connection and the worker do not, stamped at THIS moment. */
-  private reportStamp(phase: CallReportContext['phase']): Omit<CallReportContext, 'ice' | 'e2e'> {
+  private reportStamp(
+    leg: CallLeg,
+    phase: CallReportContext['phase']
+  ): Omit<CallReportContext, 'ice' | 'e2e'> {
+    // A group call's report names its leg, so the lines of two participants are told apart.
+    const callId = this.currentCallId ?? '-';
     return {
-      callId: this.currentCallId ?? '-',
+      callId: leg.isGroup ? `${callId}/${leg.key.slice(0, 8)}` : callId,
       phase,
       durMs: this.tapAt === null ? 0 : performance.now() - this.tapAt,
       ringMs: this.ringMs,
@@ -3247,6 +3615,7 @@ export class CallService {
    * meanwhile is not a failure: it is named as dropped.
    */
   private async logCallReport(
+    leg: CallLeg,
     pc: RTCPeerConnection,
     reading: ReturnType<CallService['readCallReport']>,
     stamp: Omit<CallReportContext, 'ice' | 'e2e'>,
@@ -3255,9 +3624,9 @@ export class CallService {
     const read = await reading;
     if ('error' in read) {
       appendLog(
-        stamp.phase === 'tick' && this.pc !== pc
-          ? '[Call] call report tick dropped - its peer connection was rebuilt while it was read'
-          : `[Call] WARN call report (${stamp.phase}) not written: ${String(read.error)}`
+        stamp.phase === 'tick' && leg.pc !== pc
+          ? `[Call]${leg.tag} call report tick dropped - its peer connection was rebuilt while it was read`
+          : `[Call]${leg.tag} WARN call report (${stamp.phase}) not written: ${String(read.error)}`
       );
       return null;
     }
@@ -3275,13 +3644,13 @@ export class CallService {
    * `incall` (before that there is nothing to rate) and re-arms itself once its line is written,
    * for as long as `pc` is the call's peer connection.
    */
-  private armCallReport(pc: RTCPeerConnection): void {
-    this.stopCallReports();
-    this.reportTimer = window.setTimeout(() => {
-      this.reportTimer = null;
-      if (this.pc !== pc) return;
+  private armCallReport(leg: CallLeg, pc: RTCPeerConnection): void {
+    this.stopCallReports(leg);
+    leg.reportTimer = window.setTimeout(() => {
+      leg.reportTimer = null;
+      if (leg.pc !== pc) return;
       if (get(this.callState) !== 'incall') {
-        this.armCallReport(pc);
+        this.armCallReport(leg, pc);
         return;
       }
       // Before the line is stamped, so its `ns=` already says a worklet caught not processing.
@@ -3289,47 +3658,60 @@ export class CallService {
       const inFlight = {
         pc,
         snapshot: this.logCallReport(
+          leg,
           pc,
           this.readCallReport(pc, 'tick'),
-          this.reportStamp('tick'),
-          this.lastSnapshot
+          this.reportStamp(leg, 'tick'),
+          leg.lastSnapshot
         ).then((snapshot) => {
-          if (this.reportInFlight === inFlight) this.reportInFlight = null;
-          if (this.pc !== pc) return snapshot;
-          if (snapshot) this.lastSnapshot = snapshot;
+          if (leg.reportInFlight === inFlight) leg.reportInFlight = null;
+          if (leg.pc !== pc) return snapshot;
+          if (snapshot) leg.lastSnapshot = snapshot;
           // Not after the end report began: it stopped the ticks, and `callState` says it.
-          if (get(this.callState) === 'incall') this.armCallReport(pc);
+          if (get(this.callState) === 'incall') this.armCallReport(leg, pc);
           return snapshot;
         }),
       };
-      this.reportInFlight = inFlight;
+      leg.reportInFlight = inFlight;
     }, CALL_REPORT_INTERVAL_MS);
   }
 
-  private stopCallReports(): void {
-    if (this.reportTimer !== null) {
-      window.clearTimeout(this.reportTimer);
-      this.reportTimer = null;
+  private stopCallReports(leg: CallLeg): void {
+    if (leg.reportTimer !== null) {
+      window.clearTimeout(leg.reportTimer);
+      leg.reportTimer = null;
     }
   }
 
   /**
-   * The END `[CALL_REPORT]`, once per call that built a peer connection: stamped and READ now,
-   * while the peer connection and the worker are alive (`cleanup` releases them when the summary
-   * closes), and WRITTEN after a tick still in flight, so no tick line follows it.
+   * The END `[CALL_REPORT]`, once per call that built a peer connection - one per LEG of a group
+   * call: stamped and READ now, while the peer connections and the worker are alive (`cleanup`
+   * releases them when the summary closes), and WRITTEN after a tick still in flight, so no tick
+   * line follows it.
    */
   private writeEndReport(): void {
-    const pc = this.pc;
+    for (const leg of this.legs.values()) this.writeLegEndReport(leg);
+  }
+
+  /** One leg's END `[CALL_REPORT]` (see {@link writeEndReport}); a leg that closes writes its own. */
+  private writeLegEndReport(leg: CallLeg): void {
+    const pc = leg.pc;
     if (!pc) return;
-    this.stopCallReports();
-    const stamp = this.reportStamp('end');
+    this.stopCallReports(leg);
+    const stamp = this.reportStamp(leg, 'end');
     const reading = this.readCallReport(pc, 'end');
-    const tick = this.reportInFlight;
-    const previous = this.lastSnapshot;
+    const tick = leg.reportInFlight;
+    const previous = leg.lastSnapshot;
     // Written after a tick in flight, so no tick line follows it; rated against that tick only if
     // it read THIS peer connection - an old one's totals would make a negative or bogus rate.
     void (tick?.snapshot ?? Promise.resolve(null)).then((tickSnapshot) =>
-      this.logCallReport(pc, reading, stamp, (tick?.pc === pc ? tickSnapshot : null) ?? previous)
+      this.logCallReport(
+        leg,
+        pc,
+        reading,
+        stamp,
+        (tick?.pc === pc ? tickSnapshot : null) ?? previous
+      )
     );
   }
 
@@ -3341,8 +3723,8 @@ export class CallService {
    * (2026-10-19): an iPhone's audio reached every receiver as noise while all Chromium pairs were
    * clean, and which codec WebKit really sends was in no log. Codec names only, never an address.
    */
-  private logAudioCodecs(pc: RTCPeerConnection): void {
-    if (this.pc !== pc || pc.connectionState !== 'connected') return;
+  private logAudioCodecs(leg: CallLeg, pc: RTCPeerConnection): void {
+    if (leg.pc !== pc || pc.connectionState !== 'connected') return;
     void pc
       .getStats()
       .then((stats) =>
@@ -3353,10 +3735,15 @@ export class CallService {
       .catch((e: unknown) => appendLog(`[Call] getStats (codecs) failed: ${String(e)}`));
   }
 
-  /** Writes one frame to the signalling socket. A frame that cannot leave is named, never dropped silently. */
-  private sendSignal(msg: Record<string, unknown>) {
+  /**
+   * Writes one frame to the signalling socket. A frame that cannot leave is named, never dropped
+   * silently. A GROUP call's frame for one leg is ADDRESSED to that leg's seat (`to`, WP-GC2), and the
+   * relay stamps `from`; a 1:1 call's frames carry no `to`, byte for byte as before group calls.
+   */
+  private sendSignal(msg: Record<string, unknown>, leg?: CallLeg) {
     if (this.signaledWs && this.signaledWs.readyState === WebSocket.OPEN) {
-      this.signaledWs.send(JSON.stringify(msg));
+      const frame = leg?.isGroup && leg.peerId ? { ...msg, to: leg.peerId } : msg;
+      this.signaledWs.send(JSON.stringify(frame));
     } else {
       appendLog(
         `[Call] signalling ${String(msg.type)} NOT sent - socket ${this.signaledWs ? `state ${this.signaledWs.readyState}` : 'absent'}`
@@ -3372,6 +3759,10 @@ export class CallService {
    */
   private async setupEncryption(groupId: string, callId: string, role: CallRole, seq: number) {
     this.assertSetupLive(seq, 'before the keys');
+    if (this.groupCall) {
+      await this.setupGroupEncryption(groupId, callId, seq);
+      return;
+    }
     const keys = await deriveCallKeys(
       (g, label, context, length) => this.mlsService.exportSecret(g, label, context, length),
       groupId,
@@ -3405,6 +3796,112 @@ export class CallService {
     // A cleanup during the wait terminated that worker and dropped its memo and the keys.
     this.assertSetupLive(seq, 'after the worker took the keys');
     appendLog('[Call] E2E worker holds the call keys');
+  }
+
+  /**
+   * A GROUP call's keys (WP-GC2, `utils/callKeys.ts` `deriveGroupCallKeys`): this device's send key
+   * and one receive key per other member of the conversation, read off the MLS TREE - the only
+   * authority on who can read the group. This user's id is the one whose leaf carries THIS device.
+   * A participant who joined the conversation after this derivation is keyed when its leg opens
+   * (`ensureReceiveKey`). The log carries fingerprints, never bytes.
+   */
+  private async setupGroupEncryption(groupId: string, callId: string, seq: number) {
+    const leaves = await this.mlsService.getGroupMemberIdentities(groupId);
+    this.assertSetupLive(seq, 'after the member read');
+    const deviceId = this.mlsService.getDeviceId();
+    const own = leaves.find((leaf) => leaf.slice(leaf.lastIndexOf(':') + 1) === deviceId);
+    if (!own) throw new CallE2eSetupError('this device has no leaf in the conversation');
+    const self = peerUserOf(own);
+    const keys = await deriveGroupCallKeys(
+      (g, label, context, length) => this.mlsService.exportSecret(g, label, context, length),
+      groupId,
+      callId,
+      self,
+      leaves.map(peerUserOf)
+    );
+    try {
+      this.assertSetupLive(seq, 'after the key export');
+    } catch (e) {
+      keys.send.fill(0);
+      for (const k of keys.receive.values()) k.fill(0);
+      throw e;
+    }
+    this.dropCallKeys();
+    this.selfUserId = self;
+    this.groupKeys = keys;
+    void keyFingerprint(keys.send).then(
+      (send) =>
+        appendLog(
+          `[Call] group media keys derived from MLS (send_fp=${send}, ${keys.receive.size} participant key(s), sha256)`
+        ),
+      (e: unknown) =>
+        appendLog(`[Call] group media keys derived (fingerprint failed: ${String(e)})`)
+    );
+    await this.ensureWorkerKeyReady();
+    this.assertSetupLive(seq, 'after the worker took the keys');
+    appendLog('[Call] E2E worker holds the group call keys');
+  }
+
+  /**
+   * The receive key of the participant `user` is in the worker before its leg makes a transform
+   * (WP-GC2). A member keyed at setup resolves at once; one who joined the conversation since is
+   * derived now and handed over (`addReceiveKey`), and the leg waits for the worker's
+   * `peerKeyReady`. A cleanup during the wait settles it (`receiveKeyWaits`), so it never lands in
+   * the next call.
+   */
+  private ensureReceiveKey(user: string): Promise<void> {
+    const keys = this.groupKeys;
+    if (!keys) return Promise.reject(new CallE2eSetupError('a group leg without group keys'));
+    if (keys.receive.has(user)) return Promise.resolve();
+    const groupId = this.currentGroupId;
+    const callId = this.currentCallId;
+    const worker = this.encryptionWorker;
+    if (!groupId || !callId || !worker) {
+      return Promise.reject(new CallE2eSetupError('a group leg outside a keyed call'));
+    }
+    appendLog(
+      `[Call] [leg ${user.slice(0, 8)}] keying a participant who joined the conversation after the call was keyed`
+    );
+    return deriveSenderKey(
+      (g, label, context, length) => this.mlsService.exportSecret(g, label, context, length),
+      groupId,
+      callId,
+      user
+    ).then(
+      (key) =>
+        new Promise<void>((resolve, reject) => {
+          if (this.groupKeys !== keys || this.encryptionWorker !== worker) {
+            key.fill(0);
+            reject(new CallSetupAbandonedError('keying a participant'));
+            return;
+          }
+          keys.receive.set(user, key);
+          const settle = () => {
+            worker.removeEventListener('message', onMessage);
+            this.receiveKeyWaits.delete(abandon);
+          };
+          const abandon = () => {
+            settle();
+            reject(new CallSetupAbandonedError('waiting for the worker to take a participant key'));
+          };
+          const onMessage = (
+            event: MessageEvent<{ type: string; peer?: string; detail?: string }>
+          ) => {
+            if (event.data?.peer !== user) return;
+            if (event.data.type === 'peerKeyReady') {
+              settle();
+              resolve();
+            } else if (event.data.type === 'keyError') {
+              settle();
+              reject(new CallE2eSetupError(event.data.detail ?? 'participant key import failed'));
+            }
+          };
+          this.receiveKeyWaits.add(abandon);
+          worker.addEventListener('message', onMessage);
+          const raw = key.slice().buffer;
+          worker.postMessage({ type: 'addReceiveKey', peer: user, key: raw }, [raw]);
+        })
+    );
   }
 
   private getOrCreateEncryptionWorker(): Worker {
@@ -3500,21 +3997,28 @@ export class CallService {
    * call's worker, or from a peer connection since rebuilt, is logged and lends nothing.
    */
   private noteE2eEvidence(worker: Worker, side: string, epoch: number, mediaKind: string): void {
-    if (this.encryptionWorker !== worker || epoch !== this.transformEpoch) {
+    const leg = this.legOfEpoch(epoch);
+    if (this.encryptionWorker !== worker || !leg) {
       appendLog(
         `[Call] E2E ${side} evidence (${mediaKind}) from a stale transform (epoch ${epoch}, current ${this.transformEpoch}) - ignored`
       );
       return;
     }
-    if (side === 'sender') this.e2eSenderSeen = true;
-    else if (side === 'receiver') this.e2eReceiverSeen = true;
-    if (this.e2eClaimWithdrawn) {
+    if (side === 'sender') leg.e2eSenderSeen = true;
+    else if (side === 'receiver') leg.e2eReceiverSeen = true;
+    if (leg.e2eClaimWithdrawn) {
       appendLog(
-        `[Call] E2E ${side} evidence (${mediaKind}) noted - the claim stays withdrawn until a path check concludes`
+        `[Call]${leg.tag} E2E ${side} evidence (${mediaKind}) noted - the claim stays withdrawn until a path check concludes`
       );
       return;
     }
-    this.claimE2eIfProven();
+    this.claimE2eIfProven(leg);
+  }
+
+  /** The leg whose CURRENT peer connection carries the transforms of `epoch`, if any. */
+  private legOfEpoch(epoch: number): CallLeg | null {
+    for (const leg of this.legs.values()) if (leg.pc && leg.epoch === epoch) return leg;
+    return null;
   }
 
   /**
@@ -3532,13 +4036,14 @@ export class CallService {
     mediaKind: string,
     failures: number
   ): void {
-    if (this.encryptionWorker !== worker || epoch !== this.transformEpoch) {
+    const leg = this.legOfEpoch(epoch);
+    if (this.encryptionWorker !== worker || !leg) {
       appendLog(
         `[Call] E2E undecryptable ${mediaKind} receiver of a stale transform (epoch ${epoch}, current ${this.transformEpoch}) - ignored`
       );
       return;
     }
-    if (this.e2eReceiverSeen) {
+    if (leg.e2eReceiverSeen) {
       appendLog(
         `[Call] ERROR E2E ${mediaKind} receiver: ${failures} frame(s) failed and none decrypted, while another receiver of this call decrypts - not a key mismatch`
       );
@@ -3552,30 +4057,54 @@ export class CallService {
     showToast(m.call_e2e_key_mismatch(), 'error');
   }
 
-  /** Sets the screen's claim when both sides were seen and nothing withdrew it. */
-  private claimE2eIfProven(): void {
-    if (!this.e2eSenderSeen || !this.e2eReceiverSeen || this.e2eClaimWithdrawn) return;
-    if (get(this.e2eProven)) return;
+  /**
+   * Marks `leg` proven when both its sides were seen and nothing withdrew it, then re-derives the
+   * screen's claim ({@link syncE2eProven}).
+   */
+  private claimE2eIfProven(leg: CallLeg): void {
+    if (!leg.e2eSenderSeen || !leg.e2eReceiverSeen || leg.e2eClaimWithdrawn) return;
+    if (leg.e2eProven) return;
+    leg.e2eProven = true;
+    if (!this.syncE2eProven()) return;
     // connect_ms: the answer to the FIRST proof of the call (a claim withdrawn and earned again is
     // not a second connect).
     if (this.connectMs === null && this.answeredAt !== null) {
       this.connectMs = performance.now() - this.answeredAt;
     }
     appendLog(
-      `[Call] E2E proven: this device encrypted a frame and decrypted one from the peer (connect_ms=${this.connectMs === null ? '-' : Math.round(this.connectMs)})`
+      `[Call] E2E proven: this device encrypted a frame and decrypted one from ${this.groupCall ? 'every participant' : 'the peer'} (connect_ms=${this.connectMs === null ? '-' : Math.round(this.connectMs)})`
     );
-    this.e2eProven.set(true);
+  }
+
+  /**
+   * The screen's claim, derived from the legs: TRUE only when at least one leg carries a negotiating
+   * peer connection and EVERY such leg is proven - one participant in clear would make the badge a
+   * lie for the whole call. Answers whether the claim turned on in this call.
+   */
+  private syncE2eProven(): boolean {
+    let any = false;
+    let all = true;
+    for (const leg of this.legs.values()) {
+      if (!leg.pc || leg.awaitingPeer) continue;
+      any = true;
+      all &&= leg.e2eProven;
+    }
+    const next = any && all;
+    const was = get(this.e2eProven);
+    if (next !== was) this.e2eProven.set(next);
+    return next && !was;
   }
 
   /**
    * Takes the screen's claim back until an answered, conclusive path check returns it: a worker
    * that cannot be asked, or media never judged, cannot be verified, whatever was proven before.
    */
-  private withdrawE2eClaim(why: string, reason: string): void {
-    this.e2eClaimWithdrawn = true;
-    if (!get(this.e2eProven)) return;
-    appendLog(`[Call] WARN E2E claim withdrawn (${why}): ${reason}`);
-    this.e2eProven.set(false);
+  private withdrawE2eClaim(leg: CallLeg, why: string, reason: string): void {
+    leg.e2eClaimWithdrawn = true;
+    if (!leg.e2eProven) return;
+    leg.e2eProven = false;
+    appendLog(`[Call]${leg.tag} WARN E2E claim withdrawn (${why}): ${reason}`);
+    this.syncE2eProven();
   }
 
   /**
@@ -3583,11 +4112,13 @@ export class CallService {
    * unmuting - after a check that could not judge everything: a fresh re-check budget, one check
    * `E2E_REPORT_DELAY_MS` later. Nothing when the last check concluded.
    */
-  private recheckE2eOnMediaStart(why: string): void {
-    const pc = this.pc;
-    if (!pc || !this.e2ePathInconclusive) return;
-    this.e2eRechecks = 0;
-    this.scheduleE2ePathCheck(pc, why);
+  private recheckE2eOnMediaStart(why: string, only?: CallLeg): void {
+    for (const leg of only ? [only] : this.legs.values()) {
+      const pc = leg.pc;
+      if (!pc || !leg.e2ePathInconclusive) continue;
+      leg.e2eRechecks = 0;
+      this.scheduleE2ePathCheck(leg, pc, why);
+    }
   }
 
   /**
@@ -3595,6 +4126,11 @@ export class CallService {
    * worker, which is terminated at cleanup. The copies posted to the worker were transferred.
    */
   private dropCallKeys(): void {
+    if (this.groupKeys) {
+      this.groupKeys.send.fill(0);
+      for (const k of this.groupKeys.receive.values()) k.fill(0);
+      this.groupKeys = null;
+    }
     if (!this.callKeys) return;
     this.callKeys.send.fill(0);
     this.callKeys.receive.fill(0);
@@ -3607,7 +4143,7 @@ export class CallService {
    * never fire into the NEXT call, and the wait rejects with `CallSetupAbandonedError`.
    */
   private ensureWorkerKeyReady(): Promise<void> {
-    if (!this.callKeys) return Promise.resolve();
+    if (!this.callKeys && !this.groupKeys) return Promise.resolve();
     if (this.workerKeyReady) return this.workerKeyReady;
 
     const worker = this.getOrCreateEncryptionWorker();
@@ -3642,6 +4178,17 @@ export class CallService {
       this.abandonWorkerKeyWait = abandon;
       worker.addEventListener('message', onReady);
       const keys = this.callKeys;
+      const group = this.groupKeys;
+      if (group) {
+        // A group call: one send key and one receive key per participant, in ONE message.
+        const send = group.send.slice().buffer;
+        const receive = [...group.receive].map(([peer, k]) => ({ peer, key: k.slice().buffer }));
+        worker.postMessage({ type: 'setGroupKeys', send, receive }, [
+          send,
+          ...receive.map((r) => r.key),
+        ]);
+        return;
+      }
       if (!keys) {
         settle(true);
         reject(new Error('no call keys'));
@@ -3662,7 +4209,7 @@ export class CallService {
    * see `attachSenderTransform`.
    */
   private keyedWorker(side: 'sender' | 'receiver', mediaKind: string): Worker {
-    if (!this.callKeys || !this.encryptionWorker || !this.workerKeyApplied) {
+    if ((!this.callKeys && !this.groupKeys) || !this.encryptionWorker || !this.workerKeyApplied) {
       throw new CallE2eSetupError(`${side} (${mediaKind}): the worker holds no call key`);
     }
     return this.encryptionWorker;
@@ -3677,15 +4224,19 @@ export class CallService {
    * engine's frame metadata names no codec on WebKit (`utils/callVideoFrame.ts`, `framesAsVp8`).
    */
   private transformOptions(
+    leg: CallLeg,
     side: 'sender' | 'receiver',
     trackKind: string,
     videoCodec: string | undefined
   ): CallTransformOptions {
     const kind = callMediaKind(trackKind);
     if (!kind) throw new CallE2eSetupError(`${side} (${trackKind}): not an audio or video track`);
-    return kind === 'video' && videoCodec
-      ? { side, kind, epoch: this.transformEpoch, videoCodec }
-      : { side, kind, epoch: this.transformEpoch };
+    const options: CallTransformOptions = { side, kind, epoch: leg.epoch };
+    if (kind === 'video' && videoCodec) options.videoCodec = videoCodec;
+    // A group call's receiver opens ITS participant's frames (WP-GC2); a sender names nobody.
+    const peer = side === 'receiver' ? leg.receivePeer : undefined;
+    if (peer) options.peer = peer;
+    return options;
   }
 
   /**
@@ -3707,6 +4258,7 @@ export class CallService {
    * (CALL-E2E-BYPASS-MI9T, 2026-10-20). THROWS when the worker holds no key.
    */
   private attachSenderTransform(
+    leg: CallLeg,
     sender: RTCRtpSender,
     mediaKind: string,
     videoCodec: string | undefined,
@@ -3715,16 +4267,17 @@ export class CallService {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
-      this.transformOptions('sender', mediaKind, videoCodec)
+      this.transformOptions(leg, 'sender', mediaKind, videoCodec)
     );
     if (mediaKind === 'video') this.videoTransformCodecs.set(sender, videoCodec);
     appendLog(
-      `[Call] E2E sender transform ${how} (${describeTransformMedia(mediaKind, videoCodec)})`
+      `[Call]${leg.tag} E2E sender transform ${how} (${describeTransformMedia(mediaKind, videoCodec)})`
     );
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
   private attachReceiverTransform(
+    leg: CallLeg,
     receiver: RTCRtpReceiver,
     mediaKind: string,
     videoCodec: string | undefined
@@ -3732,11 +4285,11 @@ export class CallService {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
       this.keyedWorker('receiver', mediaKind),
-      this.transformOptions('receiver', mediaKind, videoCodec)
+      this.transformOptions(leg, 'receiver', mediaKind, videoCodec)
     );
     if (mediaKind === 'video') this.videoTransformCodecs.set(receiver, videoCodec);
     appendLog(
-      `[Call] E2E receiver transform attached (${describeTransformMedia(mediaKind, videoCodec)})`
+      `[Call]${leg.tag} E2E receiver transform attached (${describeTransformMedia(mediaKind, videoCodec)})`
     );
   }
 
@@ -4055,7 +4608,22 @@ export class CallService {
   private sendMicState(suspended: boolean): void {
     // Before the pairing there is nobody to tell; `announceMicOnPairing` sends it then.
     if (!this.peerArrived) return;
-    this.sendSignal({ type: 'MicSuspended', suspended });
+    // Every leg: in a group call each participant is told, addressed (`to`).
+    for (const leg of this.legs.values()) {
+      if (leg.arrived) this.sendSignal({ type: 'MicSuspended', suspended }, leg);
+    }
+  }
+
+  /**
+   * The partner's microphone report, on ITS leg: the call-level flag (the 1:1 screen) says whether
+   * ANY participant's microphone is held, and a group call's tile says whose.
+   */
+  private setPeerMicSuspended(leg: CallLeg, suspended: boolean): void {
+    leg.peerMicSuspended = suspended;
+    let any = false;
+    for (const l of this.legs.values()) any ||= l.peerMicSuspended;
+    this.peerMicSuspended.set(any);
+    this.publishTiles();
   }
 
   /**
@@ -4064,11 +4632,13 @@ export class CallService {
    * in a socket that dropped, so it is cleared, and this side re-announces a microphone the system
    * still holds. Both ends receive `PeerReady`, so both rebuild the pair's state the same way.
    */
-  private announceMicOnPairing(): void {
-    this.peerMicSuspended.set(false);
+  private announceMicOnPairing(leg: CallLeg): void {
+    this.setPeerMicSuspended(leg, false);
     if (this.micHeldBySystem()) {
-      appendLog('[Call] the system still holds the microphone - telling the other party again');
-      this.sendSignal({ type: 'MicSuspended', suspended: true });
+      appendLog(
+        `[Call]${leg.tag} the system still holds the microphone - telling the other party again`
+      );
+      this.sendSignal({ type: 'MicSuspended', suspended: true }, leg);
     }
   }
 
@@ -4208,8 +4778,13 @@ export class CallService {
         return;
       }
       this.adoptCameraTrack(track, next);
-      const t = this.liveCameraTransceiver();
-      if (t) await t.sender.replaceTrack(track);
+      let t: RTCRtpTransceiver | null = null;
+      for (const leg of this.legs.values()) {
+        const lt = this.liveCameraTransceiver(leg);
+        if (!lt) continue;
+        t = lt;
+        await lt.sender.replaceTrack(track);
+      }
       appendLog(
         `[Call] camera switched to ${get(this.cameraFacing)}${t ? ' (replaceTrack: same sender, same transform)' : ''}`
       );
@@ -4286,10 +4861,10 @@ export class CallService {
     void this.cameraOff('turned off while the camera was opening');
   }
 
-  /** The camera transceiver, if it still belongs to the live peer connection. */
-  private liveCameraTransceiver(): RTCRtpTransceiver | null {
-    const t = this.cameraTransceiver;
-    const pc = this.pc;
+  /** The camera transceiver of `leg`, if it still belongs to that leg's live peer connection. */
+  private liveCameraTransceiver(leg: CallLeg): RTCRtpTransceiver | null {
+    const t = leg.cameraTransceiver;
+    const pc = leg.pc;
     if (!t || !pc || t.currentDirection === 'stopped') return null;
     return pc.getTransceivers().includes(t) ? t : null;
   }
@@ -4379,22 +4954,29 @@ export class CallService {
       this.callHasVideo = true;
       this.adoptCameraTrack(track, facing);
       void this.refreshCameraCount();
-      const pc = this.pc;
-      if (!pc) {
+      const legs = [...this.legs.values()].filter((l) => l.pc);
+      if (legs.length === 0) {
         appendLog('[Call] camera on - sent once the peer connection is built');
         return;
       }
-      const t = this.liveCameraTransceiver();
-      if (t) {
-        await t.sender.replaceTrack(track);
-        t.direction = 'sendrecv';
-        // The ladder paused while the sender had no camera: it samples again, from a new baseline.
-        this.videoQuality?.resume();
-        this.scheduleE2ePathCheck(pc, 'after the camera came back');
-        appendLog('[Call] camera on again (replaceTrack on its sender, sendrecv - renegotiating)');
-        return;
+      // Every leg: a group call sends the one camera to each participant.
+      for (const leg of legs) {
+        const pc = leg.pc;
+        if (!pc) continue;
+        const t = this.liveCameraTransceiver(leg);
+        if (t) {
+          await t.sender.replaceTrack(track);
+          t.direction = 'sendrecv';
+          // The ladder paused while the sender had no camera: it samples again, from a new baseline.
+          leg.videoQuality?.resume();
+          this.scheduleE2ePathCheck(leg, pc, 'after the camera came back');
+          appendLog(
+            `[Call]${leg.tag} camera on again (replaceTrack on its sender, sendrecv - renegotiating)`
+          );
+          continue;
+        }
+        this.addCameraTransceiver(leg, pc, track);
       }
-      this.addCameraTransceiver(pc, track);
     } finally {
       this.endCameraOp(call);
     }
@@ -4407,7 +4989,7 @@ export class CallService {
    * `fault-video-bare-sender`). Both transforms in the task that creates it, as in
    * `initPeerConnection`; `negotiationneeded` then carries the new m-line.
    */
-  private addCameraTransceiver(pc: RTCPeerConnection, track: MediaStreamTrack): void {
+  private addCameraTransceiver(leg: CallLeg, pc: RTCPeerConnection, track: MediaStreamTrack): void {
     const transceiver = pc.addTransceiver(track, {
       direction: 'sendrecv',
       streams: this.localStream ? [this.localStream] : [],
@@ -4415,8 +4997,8 @@ export class CallService {
     // Held to VP8 BEFORE its transforms, which are told the codec (`holdVideoToVp8`).
     const videoCodec = this.holdVideoToVp8(transceiver, 'video');
     try {
-      this.attachSenderTransform(transceiver.sender, 'video', videoCodec);
-      this.attachReceiverTransform(transceiver.receiver, 'video', videoCodec);
+      this.attachSenderTransform(leg, transceiver.sender, 'video', videoCodec);
+      this.attachReceiverTransform(leg, transceiver.receiver, 'video', videoCodec);
     } catch (e) {
       // Never a video sender without its transform: removed before any negotiation carries it.
       pc.removeTrack(transceiver.sender);
@@ -4433,10 +5015,10 @@ export class CallService {
       this.refuseCameraSender(pc, transceiver.sender, track);
       return;
     }
-    this.cameraTransceiver = transceiver;
-    this.scheduleE2ePathCheck(pc, 'after the camera was added');
-    this.startVideoQuality(pc, transceiver.sender);
-    appendLog('[Call] camera added mid-call on a fresh transceiver (renegotiating)');
+    leg.cameraTransceiver = transceiver;
+    this.scheduleE2ePathCheck(leg, pc, 'after the camera was added');
+    this.startVideoQuality(leg, pc, transceiver.sender);
+    appendLog(`[Call]${leg.tag} camera added mid-call on a fresh transceiver (renegotiating)`);
   }
 
   /**
@@ -4444,22 +5026,24 @@ export class CallService {
    * the start rung applied now, then one `getStats()` sample every 2 s while the camera sends. It
    * belongs to THIS sender of THIS peer connection; a rebuilt one stops it.
    */
-  private startVideoQuality(pc: RTCPeerConnection, sender: RTCRtpSender): void {
-    this.stopVideoQuality();
+  private startVideoQuality(leg: CallLeg, pc: RTCPeerConnection, sender: RTCRtpSender): void {
+    this.stopLegVideoQuality(leg);
     // A peer connection still waiting for its peer sends nothing to sample: the adoption starts
     // the ladder on the camera sender it then has ({@link adoptRingPeerConnection}).
-    if (this.pcAwaitingPeer && pc === this.pc) return;
+    if (leg.awaitingPeer && pc === leg.pc) return;
     const loop = new CallVideoQualityLoop({
       pc,
       sender,
       log: appendLog,
       onReduced: (reduced) => {
-        if (this.videoQuality === loop) this.videoSendReduced.set(reduced);
+        if (leg.videoQuality !== loop) return;
+        leg.videoSendReduced = reduced;
+        this.syncVideoSendReduced();
       },
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (id) => window.clearTimeout(id),
     });
-    this.videoQuality = loop;
+    leg.videoQuality = loop;
     loop.start();
   }
 
@@ -4469,9 +5053,23 @@ export class CallService {
    * sender still is.)
    */
   private stopVideoQuality(): void {
-    this.videoQuality?.stop();
-    this.videoQuality = null;
+    for (const leg of this.legs.values()) this.stopLegVideoQuality(leg);
     this.videoSendReduced.set(false);
+  }
+
+  /** Stops ONE leg's ladder (its peer connection was rebuilt, or its participant left). */
+  private stopLegVideoQuality(leg: CallLeg): void {
+    leg.videoQuality?.stop();
+    leg.videoQuality = null;
+    leg.videoSendReduced = false;
+    this.syncVideoSendReduced();
+  }
+
+  /** The screen's "reduced picture" flag: any leg whose ladder reduced what it sends. */
+  private syncVideoSendReduced(): void {
+    let any = false;
+    for (const leg of this.legs.values()) any ||= leg.videoSendReduced;
+    if (any !== get(this.videoSendReduced)) this.videoSendReduced.set(any);
   }
 
   /**
@@ -4519,18 +5117,25 @@ export class CallService {
   private async sendNoCamera(why: string): Promise<void> {
     this.isVideoOff.set(true);
     this.localStreamStore.set(this.localStream);
-    const t = this.liveCameraTransceiver();
-    if (t) {
+    let emptied = 0;
+    for (const leg of this.legs.values()) {
+      const t = this.liveCameraTransceiver(leg);
+      if (!t) continue;
+      emptied += 1;
       try {
         await t.sender.replaceTrack(null);
       } catch (e) {
-        appendLog(`[Call] emptying the camera sender failed: ${String(e)}`);
+        appendLog(`[Call]${leg.tag} emptying the camera sender failed: ${String(e)}`);
       }
       if (t.direction !== 'recvonly' && t.direction !== 'inactive') t.direction = 'recvonly';
     }
-    appendLog(
-      `[Call] camera off (${why})${t ? ' - sender emptied, recvonly (renegotiating)' : ''}`
-    );
+    const tail =
+      emptied === 0
+        ? ''
+        : emptied === 1
+          ? ' - sender emptied, recvonly (renegotiating)'
+          : ` - ${emptied} senders emptied, recvonly (renegotiating)`;
+    appendLog(`[Call] camera off (${why})${tail}`);
   }
 
   /** Reads how many cameras the device has, once one is open (labels and counts need the grant). */

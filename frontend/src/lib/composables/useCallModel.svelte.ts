@@ -1,4 +1,4 @@
-import type { CallService, CallState } from '$lib/services/CallService';
+import type { CallService, CallState, GroupCallTile } from '$lib/services/CallService';
 import type { CameraFacing } from '$lib/utils/callVideo';
 import { callStatusKind, type CallStatusKind } from '$lib/stores/callView.svelte';
 import { callElapsedMs, formatCallDuration } from '$lib/utils/callClock';
@@ -39,6 +39,9 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());
   let remoteStream = $state<MediaStream | null>(null);
+  let isGroupCall = $state(false);
+  let groupTiles = $state<GroupCallTile[]>([]);
+  let remoteAudioMix = $state<MediaStream | null>(null);
   let now = $state(Date.now());
 
   $effect(() => {
@@ -66,6 +69,9 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       }),
       service.remoteStreams.subscribe((v) => (remoteStreams = v)),
       service.remoteStream.subscribe((v) => (remoteStream = v)),
+      service.isGroupCall.subscribe((v) => (isGroupCall = v)),
+      service.groupTiles.subscribe((v) => (groupTiles = v)),
+      service.remoteAudioMix.subscribe((v) => (remoteAudioMix = v)),
     ];
     return () => unsubs.forEach((u) => u());
   });
@@ -74,9 +80,11 @@ export function useCallModel(getService: () => CallService | null | undefined) {
    * The peer's picture, when there is one to show: a remote video track that is live AND unmuted.
    * A muted one is the peer's camera OFF (its side went `recvonly`) or no frame yet - the avatar
    * shows, never a frozen last frame. Re-read at every publish of the remote stream, which the
-   * service does on each `mute` / `unmute` / `ended` of a remote track.
+   * service does on each `mute` / `unmute` / `ended` of a remote track. A GROUP call has no one
+   * peer's picture: each participant's is on its own tile (`groupTiles`).
    */
   const remoteVideoTrack = $derived.by<MediaStreamTrack | null>(() => {
+    if (isGroupCall) return null;
     for (const [, stream] of remoteStreams) {
       const track = stream.getVideoTracks().find((t) => t.readyState === 'live' && !t.muted);
       if (track) return track;
@@ -183,6 +191,18 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     },
     get remoteStream() {
       return remoteStream;
+    },
+    /** The call is a GROUP call (WP-GC2): the screen draws one tile per participant. */
+    get isGroupCall() {
+      return isGroupCall;
+    },
+    /** A group call's participants as the screen draws them (`CallService.groupTiles`). */
+    get groupTiles() {
+      return groupTiles;
+    },
+    /** A group call's voices in ONE stream, for the call's one audio sink (`CallService.remoteAudioMix`). */
+    get remoteAudioMix() {
+      return remoteAudioMix;
     },
   };
 }

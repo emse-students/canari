@@ -1,5 +1,5 @@
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
-import type { CallsMode } from '$lib/utils/appVersion';
+import type { CallsMode, GroupCallsMode } from '$lib/utils/appVersion';
 import {
   getAppVersionCheck,
   refreshAppVersionCheck,
@@ -40,4 +40,19 @@ export async function callsAvailableAnswered(): Promise<boolean> {
 /** Video too: the build carries video AND the server allows it (`audio_video`). */
 export function callVideoAvailable(mode: CallsMode): boolean {
   return CALLS_VIDEO_ENABLED && mode === 'audio_video';
+}
+
+/**
+ * A GROUP conversation's call entry point (WP-GC2): calls available AND the server's group switch
+ * on the peer-to-peer mesh (`group_calls_mode`, read by `serverGroupCallsMode()`). The server
+ * refuses a group `initiate` otherwise (403 `GROUP_CALLS_DISABLED`), so nothing that could only
+ * fail is shown.
+ */
+export function groupCallsAvailable(mode: CallsMode, groupMode: GroupCallsMode): boolean {
+  return callsAvailable(mode) && groupMode === 'mesh';
+}
+
+/** A group VIDEO call: {@link groupCallsAvailable} and video allowed ({@link callVideoAvailable}). */
+export function groupCallVideoAvailable(mode: CallsMode, groupMode: GroupCallsMode): boolean {
+  return groupCallsAvailable(mode, groupMode) && callVideoAvailable(mode);
 }

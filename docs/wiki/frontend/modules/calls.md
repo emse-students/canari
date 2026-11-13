@@ -1976,8 +1976,8 @@ the equal-key refusals, all-or-nothing sets, the 1:1 slot).
 ## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
 
 **Built, behind a switch that is OFF in production.** The client's mesh (one peer connection per
-other participant, the tile grid, the start control in a group) is the next pull request; until it
-lands nothing in the app can start or join a group call.
+other participant, the tile grid, the start control in a group) is the
+[client half](#group-calls---the-mesh-client-half-wp-gc2-2026-11-13) below.
 
 - **The switch: `platform_config.group_calls_mode`** (`off` | `mesh`, core-service migration 022,
   edited at `/admin/platform`, published by `GET /api/version` as `calls.groupMode`). `off` is the
@@ -2000,8 +2000,8 @@ lands nothing in the app can start or join a group call.
   and on a group call's `initiate` and `room-token`. A group call rings only devices at `>= 1`
   (`[ring] ... skipped=N device(s) whose build predates group calls`), and a token request without
   it is refused `403 GROUP_CALL_CLIENT_TOO_OLD` - an old build would join as a 1:1 call, with the
-  1:1 keys, and break every other leg. The start control was already 1:1 only (`selectedIsDirect`).
-  The in-app ring (the MLS `CallInvite`) is the client PR's to keep from old builds.
+  1:1 keys, and break every other leg. The in-app ring (the MLS invite) is kept from old builds by
+  its own kind, `group_call` (the client half below).
 - **WP-C11, a block in a group call - decided 2026-11-13, reversible: ONE BLOCK DROPS THAT MEMBER,
   NEVER THE CALL.** Every member, the caller excepted, who stands in a block with another admitted
   member is not rung and gets no token (`USER_BLOCKED`, the neutral sentence): a mesh pairs everyone
@@ -2017,6 +2017,76 @@ lands nothing in the app can start or join a group call.
 - **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
+
+## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
+
+**Built, behind the same server switch** (`group_calls_mode`, `off` in production). The start
+controls of a GROUP conversation show only when `serverGroupCallsMode() === 'mesh'` and calls are
+open (`groupCallsAvailable`, `groupCallVideoAvailable` in `utils/callsAvailability.ts`); a 1:1
+conversation is unchanged. Nothing here is proven on hardware yet: the readings it owes are in
+[readings owed](../../plan.md#readings-owed).
+
+- **One service, one leg per other participant.** Everything that belonged to "the" peer connection
+  - perfect negotiation, ICE restarts, the E2E evidence and path check, the `[CALL_REPORT]` ticks,
+  the camera transceiver and its quality ladder - lives on a `CallLeg` (`services/callLeg.ts`),
+  keyed by peer. A 1:1 call is ONE leg keyed `''` (`ONE_TO_ONE_LEG`), whose log lines and wire are
+  byte for byte the ones before group calls (`leg.tag` is empty, no frame carries `to`); a group
+  call is one leg per other participant, keyed by the participant's lowercased user id (the relay's
+  seat id is `<userId>:<uuid>`, `peerUserOf`). There is no second call service and no second copy
+  of the negotiation.
+- **The kind is the room token's** (`utils/callRoomToken.ts`, `roomTokenSeats`): a token carrying
+  `max_seats` is a group call. The caller reads it from `initiate`, a callee from `room-token`; an
+  answer whose token disagrees with the kind its invite rang as is refused, typed
+  (`CallE2eSetupError`), never carried on the wrong keys.
+- **Routing.** `PeerReady { peer }` opens (or, with a new seat, rebuilds) that participant's leg;
+  every frame this device sends on a leg is addressed `to: leg.peerId`, and a relayed frame is
+  routed by the `from` the relay stamped. A frame from a seat this device holds no leg for is
+  dropped at WARN (the relay pairs before it relays). `PeerAway { peer }` pauses only that leg
+  (`reconnecting` reads every leg), `PeerLeft { peer }` closes only that leg (`closeLeg`), and a
+  `PeerLeft` naming nobody is this device's seat taken by a sibling: the call ends here. A leg
+  whose media never connects closes alone (`failLeg`); in a 1:1 call that is the call failing, as
+  before.
+- **Keys, per sender (WP-GC1).** A group call's setup reads the MLS TREE
+  (`getGroupMemberIdentities`), finds this user as the leaf carrying this device, and derives the
+  send key and one receive key per other member (`deriveGroupCallKeys`), handed to the worker in
+  ONE `setGroupKeys` before any transform. Every leg's transforms are assigned in the task that
+  created them, as in a 1:1 call; a receiver's options carry `peer` (whose key opens its frames), a
+  sender's none, and each leg has its own `epoch`, so the worker's counts and the bypass check
+  (`e2eBypassedSides`) are judged PER LEG. A participant who joined the conversation after the
+  derivation is keyed before its leg exists (`ensureReceiveKey`: `addReceiveKey`, then the worker's
+  `peerKeyReady`); a cleanup settles that wait. The screen's shield (`e2eProven`) shows only while
+  EVERY negotiating leg is proven: one participant in clear would make it a lie for the call.
+- **An old build never rings for a group call.** Every MLS signal of a group call (invite, answered,
+  hangup) travels as a new `AppMessage` kind, `group_call = 15` (`asGroupCallSignal`), not as
+  `call`: a build before group calls decodes an unknown kind as no kind and drops it, while it
+  would ring a `call` carrying any extra field. `codec.call.test.ts` proves it by decoding a group
+  invite with `canari.proto` minus that field. The server half keeps the push ring and the token
+  from old builds; this build declares `groupCallVersion: 1` on `initiate`, `room-token` and every
+  push registration (the native apps never build that body: they refresh tokens only, which leaves
+  the column alone).
+- **WP-C11 on the client.** A member's decline or busy answer ends nothing: the caller keeps ringing
+  the others, and a device in another call sends no busy to a group invite. A ringing member's ring
+  stops on the CALLER's unanswered end only (`groupHangupEnds`); the record writer ignores a
+  declined or outcome-less group hangup (`groupHangupEndsRecord`, `proto/codec.ts`). The caller
+  sends no ring-end while connected legs remain, so a member still rung may join them. When the
+  last other participant leaves, the call ends (`closeLeg` -> `endCall(true)`: its hangup carries
+  no unanswered outcome, so it stops nobody's call, and its ring-end stops the system rings of
+  members still rung for an empty room). A member whose ring window closes while others talk
+  writes its own missed record (`ringOutIncoming`).
+- **Sound and picture.** Every leg's audio is mixed into ONE stream (`remoteAudioMix`) played by
+  the call's one sink; the microphone switch (`CallMicSwitch`) holds one sender per leg, so the
+  RNNoise choice reaches every participant. `CallOverlay` draws one `CallGroupTile` per leg -
+  photo, name, picture when that participant's camera sends, the microphone-held badge - and an
+  AUDIO group call has no camera control (its seats were counted for voices).
+- **Pinned by** `CallService.p2p.test.ts` (`a group call, client side (WP-GC2)`: kind and keys,
+  addressed frames and per-peer receivers, PeerLeft and the last leave, PeerAway, one decline, no
+  ring-end while others remain, a late member's key, the 1:1 wire unchanged, the rang-out record,
+  the token mismatch), `codec.call.test.ts` (the old-build proof), `callRoomToken.test.ts`,
+  `callsAvailability.test.ts`, `CallOverlay.svelte.test.ts` (`a group call (WP-GC2)`) and
+  `PushNotificationService.test.ts`.
+- **Left, named:** a callee who answers after everyone else has left joins an empty room and has
+  no proof of the end until its own hang-up (the relay says nothing of a seat that never came) - the
+  ring window bounds it; the SFU path (WP-GC3/GC4, #3497); and the bench readings ([readings owed](../../plan.md#readings-owed)).
 
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 
