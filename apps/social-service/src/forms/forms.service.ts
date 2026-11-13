@@ -83,6 +83,7 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
+import { safeWorksheetName } from '../utils/worksheet-name';
 import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
 import type { ExportLabels } from './export-labels';
 import {
@@ -3885,9 +3886,8 @@ export class FormsService {
     }
 
     const workbook = new ExcelJS.Workbook();
-    // Excel sheet names are limited to 31 characters
-    const sheetName = form.title.slice(0, 31);
-    const sheet = workbook.addWorksheet(sheetName);
+    // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).
+    const sheet = workbook.addWorksheet(safeWorksheetName(form.title));
 
     // An anonymous form's sheet has no name columns and only a DAY: the time was never stored.
     const headers: Partial<ExcelJS.Column>[] = [

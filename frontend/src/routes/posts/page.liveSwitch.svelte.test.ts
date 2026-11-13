@@ -36,7 +36,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => {
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
   listPosts: () => Promise.resolve([]),
-  getMyScheduledPosts: () => Promise.resolve([]),
+  getScheduledPostsToEdit: () => Promise.resolve([]),
   searchPosts: () => Promise.resolve([]),
 }));
 vi.mock(
