@@ -776,8 +776,8 @@ still be renamed, withdrawn - or put back on sale, where every buyer is refused.
 `members-only-gate.ts`. Both product editors
 (`EditBoutiqueTab.svelte`, `/admin/cercle`) and the card editor (`PartnershipEditor.svelte`) word it
 from the code (`membersOnlySaveRefusalMessage`). **The reverse order is refused too** (2026-11-13, decided by the lead on 2026-11-12 under the
-owner's absence rule): clearing the mode (`cotisationMode: null`) while an ACTIVE members-only
-product (no `requiredTags`) or card exists answers `409 COTISATION_MODE_IN_USE`, naming the rows in
+owner's absence rule): clearing the mode (`cotisationMode: null`) while a members-only
+product (no `requiredTags`) or card exists, ACTIVE OR NOT (reactivating a row already ticked passes no gate, so an inactive one would be the stuck state again; lead, 2026-11-13) answers `409 COTISATION_MODE_IN_USE`, naming the rows in
 the body, and writes nothing (`assertCotisationModeClearable`; `EditCotisationsTab.svelte` words it
 through `cotisationModeInUseMessage`, though no screen sends a clear today). **Why refuse rather than
 untick the rows in the same commit:** unticking silently changes what buyers see without the

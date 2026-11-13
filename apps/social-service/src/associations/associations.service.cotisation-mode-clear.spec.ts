@@ -79,6 +79,20 @@ describe('AssociationsService.update - clearing the cotisation mode', () => {
     expect(calls).toEqual(['lock:pessimistic_write', 'count', 'count']);
   });
 
+  it('counts INACTIVE rows too: reactivating one passes no gate, so it must not be left behind', async () => {
+    const { service, manager } = makeService({
+      mode: 'dated',
+      products: [{ id: 'p1', name: 'Withdrawn' }],
+      cards: [],
+    });
+    await expect(
+      service.update('asso-1', { cotisationMode: null } as never)
+    ).rejects.toBeInstanceOf(ConflictException);
+    const sqls = manager.query.mock.calls.map((c) => String((c as unknown[])[0]));
+    expect(sqls).toHaveLength(2);
+    for (const sql of sqls) expect(sql).not.toContain('isActive');
+  });
+
   it('refuses for a card alone', async () => {
     const { service } = makeService({
       mode: 'lifetime',

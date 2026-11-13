@@ -65,12 +65,12 @@ export async function lockAndAssertMembersOnlyGateable(
 }
 
 /**
- * Refuses (409 `COTISATION_MODE_IN_USE`, nothing written) clearing a cotisation mode while an ACTIVE
+ * Refuses (409 `COTISATION_MODE_IN_USE`, nothing written) clearing a cotisation mode while a
  * product or partnership card is reserved to cotisants: with no mode `tierFactsOf` answers null, so
  * `isBuyerCotisant` is false for everyone and those rows would stay listed, greyed and refused to all.
  * The association row is locked `FOR UPDATE` FIRST (see {@link lockAndAssertMembersOnlyGateable}); the
  * check is made on the mode read UNDER that lock, so it asks only of a real transition. A product
- * gated by `requiredTags` is not counted (the tags take precedence at purchase), nor is an inactive row.
+ * gated by `requiredTags` is not counted (the tags take precedence at purchase). INACTIVE rows ARE counted: reactivating a row already ticked passes no gate (a transition test only), so one left behind would be the stuck state again.
  * Must run inside the transaction that then writes the clear.
  */
 export async function assertCotisationModeClearable(
@@ -85,13 +85,13 @@ export async function assertCotisationModeClearable(
   if (!locked?.cotisationMode) return;
   const products: { id: string; name: string }[] = await manager.query(
     `SELECT id, name FROM association_products
-      WHERE "associationId" = $1 AND "membersOnly" AND "isActive"
+      WHERE "associationId" = $1 AND "membersOnly"
         AND cardinality(COALESCE("requiredTags", '{}')) = 0`,
     [associationId]
   );
   const cards: { id: string; title: string }[] = await manager.query(
     `SELECT id, title FROM partnership_cards
-      WHERE "associationId" = $1 AND "membersOnly" AND "isActive"`,
+      WHERE "associationId" = $1 AND "membersOnly"`,
     [associationId]
   );
   if (products.length === 0 && cards.length === 0) return;
