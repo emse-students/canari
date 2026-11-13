@@ -6,6 +6,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { normalizePayerEmail } from '$lib/payments/payerEmail';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   interface Props {
@@ -16,6 +17,7 @@
   }
 
   let { onSubmit, onClose }: Props = $props();
+  const layer = useOverlayLayer(() => true, 'PayerEmailPrompt');
 
   /**
    * Mounted only while asked, so it is open for as long as it exists: the system Back cancels it,
@@ -48,7 +50,8 @@
   <div
     use:coversScreen
     data-keyboard-aware-overlay
-    class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
+    style:z-index={layer.z}
+    class="flex items-end justify-center bg-black/40 sm:items-center"
     role="presentation"
   >
     <div

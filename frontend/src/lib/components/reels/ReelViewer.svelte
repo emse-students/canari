@@ -16,7 +16,7 @@
    * the heart, the comments and the send (`ReelActionRail`); the comments open over the playing
    * reel (`ReelCommentsSheet`). A conversation's reel is not a post and gets neither - the rail is
    * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
-   * picker) is drawn above the viewer (`markViewerLayer`).
+   * picker) opens later than the viewer, so it is drawn above it (`utils/overlayStack.ts`).
    *
    * A CAROUSEL PAGE (owner, 2026-11-06): vertical still pages POSTS, horizontal pages the MEDIA of
    * the post on screen (`reelViewerNav.ts` decides, `ReelSlide` draws the strip). The visible media
@@ -33,7 +33,6 @@
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
-  import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { pickedReactionToggle, railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
   import {
     WheelPageLock,
@@ -98,6 +97,7 @@
   } from '$lib/posts/postReaction';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** The reel shown first: the one touched, or the newest when opened from the feed's icon. */
@@ -150,6 +150,9 @@
     orderChoice,
   }: Props = $props();
 
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'ReelViewer');
+
   /** The label of each order, in the order `REEL_ORDERS` lists them. */
   const REEL_ORDER_LABELS: Record<ReelOrder, () => string> = {
     ranked: m.reels_order_for_you,
@@ -162,8 +165,6 @@
    */
   const NOT_A_GESTURE =
     'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-comments-drawer]';
-
-  markViewerLayer();
 
   // WHATEVER PLAYS BEHIND THE VIEWER STOPS WHEN IT OPENS, not when its first player mounts (owner,
   // 2026-11-06): held from the first line, released on destroy, which brings the feed's video back.
@@ -546,7 +547,7 @@
    * The post whose share sheet is open (the rail's send), by id. The sheet (`PostShareSheet`) is
    * loaded on the first send, never with the viewer: it reads the conversation list, which a
    * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
-   * take the viewer's rung (`markViewerLayer`).
+   * open later and are drawn above it (`utils/overlayStack.ts`).
    */
   let ShareSheet = $state<
     typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
@@ -1003,7 +1004,8 @@
     <div
       bind:this={viewerEl}
       use:coversScreen
-      class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
+      style:z-index={layer.z}
+      class="fixed inset-0 overflow-hidden bg-black text-white {expandOrigin
         ? 'motion-expand-in'
         : ''}"
       style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}

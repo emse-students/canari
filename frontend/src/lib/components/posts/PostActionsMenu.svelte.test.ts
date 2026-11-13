@@ -3,7 +3,7 @@
  * THE MENU IS PORTALLED, SO A HOVERED CARD CANNOT TRAP IT UNDER THE NEXT POST.
  *
  * `PostCard` lifts on hover (`hover:-translate-y-0.5`), which creates a stacking context for
- * exactly the card the menu was opened on - the one under the cursor. `z-(--z-popover)` then only
+ * exactly the card the menu was opened on - the one under the cursor. its z-index then only
  * won against siblings INSIDE that context; from outside, the card's own box is still
  * `z-index: auto`, so the next post in the feed - later in DOM order, same layer - painted over
  * the whole thing, popover included. Escaping to `<body>` (the same mechanism `UserAutocomplete`

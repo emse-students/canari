@@ -32,6 +32,7 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Announced as the dialog's name; also what a screen reader reads on open. */
@@ -94,6 +95,9 @@
     backdropOpacity = 1,
   }: Props = $props();
 
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'FullScreenViewer');
+
   const touchStyle = $derived(lockTouch ? 'touch-action: none;' : '');
 
   function handleKeydown(e: KeyboardEvent) {
@@ -125,9 +129,8 @@
   <div
     role="presentation"
     use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center {immersive
-      ? ''
-      : 'bg-cn-scrim sm:p-4'}"
+    style:z-index={layer.z}
+    class="fixed inset-0 flex items-center justify-center {immersive ? '' : 'bg-cn-scrim sm:p-4'}"
     style="{touchStyle}{immersive ? `background-color: rgb(0 0 0 / ${backdropOpacity});` : ''}"
     onclick={onClose}
     transition:fade={{ duration: 160 }}

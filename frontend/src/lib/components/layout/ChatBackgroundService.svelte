@@ -2486,6 +2486,7 @@
 <!-- PIN recovery after a cross-device PIN change -->
 <ChangePinModal
   open={showRecoverModal}
+  gate="PinRecovery"
   variant="recover"
   onSubmit={handleRecoverSubmit}
   onClose={() => (showRecoverModal = false)}
