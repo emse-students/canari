@@ -311,6 +311,24 @@ function tryCodeSpan(
   };
 }
 
+/**
+ * Where a `**` opener really closes when the closer it found is the head of a run of exactly three
+ * stars: `**prix *reduit***` closes the italic with the FIRST star and the bold with the last two
+ * (as marked reads it), not the bold with the first two and a stray star. The closer moves one
+ * star right only when the content then ends on an italic of its own, so no other text changes.
+ */
+function sharedClosingRun(index: PairingIndex, contentStart: number, closeIdx: number): number {
+  const { text } = index;
+  if (text[closeIdx + 2] !== '*' || text[closeIdx + 3] === '*' || text[closeIdx - 1] === '*') {
+    return closeIdx;
+  }
+  const shifted = text.slice(contentStart, closeIdx + 1);
+  const inner: InlineSpan[] = [];
+  parseInlineMarkdownPreview(shifted, [], [], inner, 0);
+  const endsOnItalic = inner.some((sp) => sp.marker === '*' && sp.end === shifted.length);
+  return endsOnItalic ? closeIdx + 1 : closeIdx;
+}
+
 function tryDelimiter(
   index: PairingIndex,
   start: number,
@@ -339,16 +357,18 @@ function tryDelimiter(
         : index.singleCloserFrom(spec.marker)[contentStart];
 
     if (closeIdx === -1) continue;
+    const closer =
+      spec.kind === 'bold' ? sharedClosingRun(index, contentStart, closeIdx) : closeIdx;
 
-    const content = text.slice(contentStart, closeIdx);
+    const content = text.slice(contentStart, closer);
     if (content.trim().length === 0) continue;
 
     const added = stylesForKind(spec.kind);
     spans?.push({
       start: base + start,
       contentStart: base + contentStart,
-      contentEnd: base + closeIdx,
-      end: base + closeIdx + spec.marker.length,
+      contentEnd: base + closer,
+      end: base + closer + spec.marker.length,
       marker: spec.marker,
       kinds: added,
     });
@@ -361,7 +381,7 @@ function tryDelimiter(
     );
 
     return {
-      end: closeIdx + spec.marker.length,
+      end: closer + spec.marker.length,
       segments: [
         { kind: 'delimiter', marker: spec.marker },
         ...inner,

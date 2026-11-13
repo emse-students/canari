@@ -126,13 +126,16 @@ jobs:
       # track and the estate cannot disagree.
       - name: Read the release under way
         id: release_tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           {
-            echo "version=${{ inputs.version }}"
-            echo "prerelease=${{ inputs.prerelease }}"
+            echo "version=${INPUT_VERSION}"
+            echo "prerelease=${INPUT_PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
+          echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
       # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
       # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles
@@ -247,7 +250,6 @@ jobs:
           APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -265,7 +267,6 @@ jobs:
             APPLE_PROVISIONING_PROFILE_SHARE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
-            JWT_SECRET
             BASE_URL
             AUTHENTIK_URL
             AUTHENTIK_CLIENT_ID

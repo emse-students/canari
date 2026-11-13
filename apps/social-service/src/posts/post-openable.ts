@@ -2,7 +2,7 @@ import type { EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { postVisibleToViewerSql, type PostAccessIntent } from '../spaces/reader-spaces';
 import { commentsWithheldPostIds } from './comments-withheld';
-import { isExpiredReel, type PostKind } from './reel.constants';
+import { isExpiredPost, type StoredPostKind } from './reel.constants';
 
 /**
  * The columns of a `posts` row the open-a-post gate reads - an entity or a raw row both fit, so a
@@ -16,8 +16,10 @@ export interface OpenablePost {
   anonymous?: boolean | null;
   hiddenByModeration?: boolean | null;
   scheduledAt?: Date | string | null;
-  kind?: PostKind | null;
+  kind?: StoredPostKind | null;
   expiresAt?: Date | string | null;
+  /** The live a `replay` names; read only for that kind. */
+  liveId?: string | null;
 }
 
 /**
@@ -48,7 +50,7 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  * report - five of which hide a post - could be filed by someone who was never shown it.
  *
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
- * 1. a reel past its month is gone for everyone (`isExpiredReel`);
+ * 1. a reel past its month is gone for everyone (`isExpiredPost`);
  * 2. the audience - `postVisibleToViewerSql`, a global admin included (opening by id is a
  *    moderation path - for an "Entre étudiants" post only with `allowHidden`, the moderation read);
  *    a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
@@ -71,7 +73,7 @@ export async function readPostOpenVerdict(
   opts: { viewerId?: string; allowHidden?: boolean },
   intent: PostAccessIntent
 ): Promise<PostOpenVerdict> {
-  if (isExpiredReel(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
+  if (isExpiredPost(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
   const rows: { visible: boolean }[] = await manager.query(
     // `adminModerates` only with `allowHidden`: a platform admin opens an "Entre étudiants" post to
     // MODERATE it (read it, its comments), never to react, comment or vote (lead, 2026-11-04).
@@ -79,6 +81,9 @@ export async function readPostOpenVerdict(
     [post.id, opts.viewerId ?? null]
   );
   if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');
+  if (post.kind === 'replay' && (await removedFromReplayLive(manager, post, opts.viewerId))) {
+    return refuse('not-found', 'removed from the live by its broadcaster');
+  }
   if (
     intent === 'COMMENT' &&
     (await commentsWithheldPostIds(manager, [post.id], opts.viewerId)).has(post.id)
@@ -92,8 +97,10 @@ export async function readPostOpenVerdict(
     return refuse('not-found', `scheduled for ${scheduledAt.toISOString()}`);
   }
   const blockedIds = await blockedUserIdsFor(manager, opts.viewerId);
+  // A live replay is the broadcaster on screen: a block hides it as it hid the live, an
+  // association's live included (docs/wiki/live-replays.md section 4).
   if (
-    !post.associationId &&
+    (!post.associationId || post.kind === 'replay') &&
     !post.anonymous &&
     blockedIds.includes(post.authorId) &&
     !opts.allowHidden
@@ -101,4 +108,25 @@ export async function readPostOpenVerdict(
     return refuse('not-found', 'a block stands between the reader and its author');
   }
   return { refusal: null, why: 'open', blockedIds };
+}
+
+/**
+ * A LIVE REPLAY IS NEVER SHOWN TO A VIEWER ITS BROADCASTER REMOVED FROM THE LIVE (lead decision,
+ * docs/wiki/live-replays.md section 4): a removal was the broadcaster's statement about that person,
+ * and a replay served to them would undo it. Read from `live_removed_viewers`, whose rows live as long
+ * as the live row - which the purge deletes only once the replay post is gone. Asked of a `replay`
+ * alone, after the audience term (so it confirms nothing to an outsider). The author is never removed.
+ */
+async function removedFromReplayLive(
+  manager: EntityManager,
+  post: OpenablePost,
+  viewerId: string | undefined
+): Promise<boolean> {
+  if (!viewerId || viewerId === post.authorId) return false;
+  const rows: unknown[] = await manager.query(
+    `SELECT 1 FROM live_removed_viewers rv JOIN posts p ON p."liveId" = rv."liveId"
+      WHERE p.id = $1 AND rv."viewerId" = $2`,
+    [post.id, viewerId]
+  );
+  return rows.length > 0;
 }

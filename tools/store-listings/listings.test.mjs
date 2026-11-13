@@ -20,22 +20,39 @@ describe('store/listings', () => {
   }
   test('fr and en say the same thing', () => expect(validateParity(listings)).toEqual([]));
 
-  test('rejects Stripe, calls and overflow', () => {
+  test('rejects Stripe and overflow', () => {
     const bad = structuredClone(listings.fr);
-    bad.play.fullDescription += ' Paiement Stripe et appels audio.';
+    bad.play.fullDescription += ' Paiement Stripe.';
     bad.play.title = 'x'.repeat(31);
     const errors = validateListing('fr', bad).join('\n');
     expect(errors).toContain('stripe');
-    expect(errors).toContain('appels');
     expect(errors).toContain('play.title is 31 > 30');
   });
 
-  test('rejects a payment or ticketing promise while payments are disabled', () => {
+  test('lets truthful calls and video calls pass', () => {
+    const ok = structuredClone(listings.fr);
+    ok.play.fullDescription += ' Appels audio et vidéo. Audio and video calls.';
+    expect(validateListing('fr', ok)).toEqual([]);
+  });
+
+  test('lets the shop, cotisations and online or cash payment pass', () => {
+    const ok = structuredClone(listings.fr);
+    ok.play.fullDescription += ' Boutique, cotisations, paiement en ligne ou en espèces. Shop, online payment.';
+    expect(validateListing('fr', ok)).toEqual([]);
+  });
+
+  test('rejects a payment-security or ticketing claim', () => {
     const bad = structuredClone(listings.fr);
-    bad.play.fullDescription += ' Billetterie avec paiement integre.';
+    bad.play.fullDescription += ' Paiement sécurisé, billetterie, tickets, secure payment, ticketing.';
     const errors = validateListing('fr', bad).join('\n');
-    expect(errors).toContain('paiement');
-    expect(errors).toContain('billetterie');
+    for (const w of ['paiements?', 'billetterie', 'tickets', 'secure', 'ticketing']) expect(errors).toContain(w);
+  });
+
+  test('rejects the old spelling', () => {
+    const bad = structuredClone(listings.fr);
+    bad.appStore.promotionalText = 'Canareels';
+    const errors = validateListing('fr', bad).join('\n');
+    expect(errors).toContain('Canareels');
   });
 });
 

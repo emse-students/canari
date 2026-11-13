@@ -745,7 +745,7 @@ A history replay returns a commit thunk (`MlsReplayCommit`, `utils/chat/history.
 its Redis stream cursor, seen-ciphertext set and retry counters. It must run only once the ratchet
 advance the replay made is on disk: a cursor ahead of the state skips, on the next cold replay,
 frames the restored state never applied - the `wrong-epoch` / epoch-gap class, and the direction
-`commitPendingHistoryMarks` calls unsurvivable.
+the seen marks' own docblock (`stagePendingHistoryMarks`, `history.ts`) calls unsurvivable.
 
 **Until 2026-10-21 it ran after `endBulkIngest` resolved, and four comments said that was after the
 flush. It was not.** `BaseMlsService.endBulkIngest` awaits every observer, but the persister's
@@ -789,8 +789,9 @@ thunk's write also wrote every mark live delivery made while the covering checkp
 a live commit's fingerprint durable before the checkpoint holding its epoch, and a kill there made
 the cold replay skip that commit, move the cursor past it, and fail every later frame `wrong-epoch`
 into a forced re-Welcome. The walk's own marks need no such write: each is registered pending
-before the helper marks the state dirty, so the covering checkpoint's `commitPendingHistoryMarks`
-snapshot holds every one. The thunk keeps the cursor and the retry counters.
+before the helper marks the state dirty, so the covering checkpoint stages every one INTO the state
+it writes (`stagePendingHistoryMarks`, [below](#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26)).
+The thunk keeps the cursor and the retry counters.
 
 Rejected: awaiting the checkpoint in the persister's `onBulkIngestEnd` for persist-only windows.
 `endBulkIngest` swallows observer failures, so a failed checkpoint could not reach the caller
@@ -798,6 +799,68 @@ without changing that seam, the nested close would still start nothing, and the 
 conversation's page would be drawn only after the disk answered (8 s on a cold web client). Also
 rejected: the persister running registered thunks after a later checkpoint - the same proof with
 more state to own (registration, logout, two replays of one group).
+
+### The ledgers that describe the state travel inside it (KILL-2, 2026-10-26)
+
+**The defect.** Two ledgers describe the MLS state and lived in `localStorage`: the seen-ciphertext
+marks (`history_seen_cipher:<user>:<group>`, the frames this device already consumed) and the send
+ledger's `persisted` counts (how many generations of each send ratchet a stored state holds). Chrome
+commits `localStorage` to disk LAZILY - a write 2 s or 4.5 s before a hard kill was lost, one 7 s
+before survived, an IndexedDB write beside it always survived (probe of 2026-10-25). Written AFTER
+the checkpoint, a ledger could therefore be behind the state on disk after a kill: KILL-2 re-walked
+a frame the device had read and accused it (`frame never read here and unreadable for good
+(secret-reuse)`). Two stores have an order to choose; one write has none.
+
+**The design (#2515).**
+
+- **One document.** `mls-core` carries `app_ledgers: HashMap<String, String>` beside the ratchets
+  (`frontend/mls-core/src/app_ledgers.rs`, `#[serde(default)]`), so the ledgers are sealed and written
+  in the SAME CBOR document, by every Rust writer of the state, web and native.
+- **Staged, then applied before the export** (`mls-client/stateLedgers.ts`). The app stages changes;
+  `BaseMlsService.persistCheckpoint` takes them and hands them to `writeCheckpoint`, and the platform
+  applies them to the live client before it exports - synchronously in the same turn on the web, under
+  the manager lock inside `sauvegarder_mls_et_persister` on native. Nothing is awaited between the
+  staging and the call, so every mark staged describes an advance the export holds. A failed write
+  restages them for the next checkpoint.
+- **A client swap keeps them**: `swapClientMonotonic` (web) and `reload_into` (native) carry the live
+  ledgers into the swapped-in client.
+- **`emitted` is not a description of the state - it is what LEFT.** It moves to IndexedDB
+  (`send_ratchet_emitted:<user>` in `CanariDBMls_<user>`), and the send AWAITS that write before the
+  POST; a write that does not commit refuses the send (`SendCountNotDurableError`). Over-burning on
+  the next load is free, under-burning cannot happen. A kill after every step of the send is
+  enumerated in `BaseMlsService.sendRatchet.test.ts`.
+- **A ratchet whose repair the state does not hold is not declared durable** (an owed or unproven
+  burn, `sendRatchetsNotDurable`), as before.
+- **A follower tab stages but never writes** (`refusesCommitsHere`, #3371): its staged marks die with
+  its copy, and it touches neither the shared `emitted` counts nor the ledger's verdict.
+
+**The migration** (`mls-client/stateLedgerMigration.ts`): a state opened without the
+`ledger-format` key takes the old `localStorage` copies, once. The old copies are deleted only at the
+NEXT opening of a state that carries the format, so a kill before the first checkpoint lands
+migrates again. Both old ledgers were written after the checkpoint they describe, so a surviving old
+value is never ahead of the state it moves into. Shim recorded in
+[legacy-compatibility](../legacy-compatibility.md).
+
+**What it does not close, stated.**
+
+- A device rotation during the load starts with empty seen ledgers (they were inside the old state):
+  one re-walk.
+- A native background writer carries the ledgers last applied to the live manager, which may be
+  BEHIND the ratchet it writes (a re-accusation, survivable), never ahead.
+- **Rollback**: an older build drops `app_ledgers` on its next write, and the `localStorage` copies
+  are gone by then - one re-walk, with possible false accusations, after a downgrade.
+- Each send waits for one IndexedDB transaction before it posts.
+- The web catch-up session stages marks before its state is installed in the live client - the same
+  window the old design had, filed as
+  [P2](../backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md).
+
+**Pinned by** `stateLedgers.test.ts`, `stateLedgerMigration.test.ts`, `sendRatchetLedger.test.ts`,
+`history.checkpointBoundMarks.test.ts`, `history.consumedFrames.test.ts`, `seenLedgerBounds.test.ts`,
+`BaseMlsService.checkpointLedgers.test.ts`, `BaseMlsService.sendRatchet.test.ts`, five `app_ledgers`
+unit tests in `mls-core`, and `storage.rs`'s
+`a_reload_keeps_the_ledgers_the_app_staged_into_the_live_manager`. The rig: the KILL-3 row (web kill
+after a send and after a receive) is the reading that confirms it on dev; `seenset.mjs` is gone, the
+ledger being no longer readable from `localStorage`.
 
 Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
 failed checkpoint, a version-guard refusal, a close inside a live drain, a checkpoint already

@@ -38,7 +38,7 @@
   );
 
   const iconButtonClass =
-    'ui-icon-button rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500';
+    'ui-icon-button rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-accent-icon';
 </script>
 
 <div

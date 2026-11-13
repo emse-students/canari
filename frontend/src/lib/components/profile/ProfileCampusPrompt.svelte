@@ -17,7 +17,7 @@
   role="status"
   data-audience-profile-prompt
 >
-  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
     <MapPinOff size={20} />
     {m.audience_profile_prompt_title()}
   </h2>

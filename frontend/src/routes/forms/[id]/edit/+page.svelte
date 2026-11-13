@@ -780,7 +780,7 @@
   {:else if !form}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -890,7 +890,7 @@
           </div>
         {:else}
           <label
-            class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
+            class="border-cn-border bg-cn-bg text-text-muted hover:border-accent/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
               ? 'pointer-events-none opacity-50'
               : ''}"
           >

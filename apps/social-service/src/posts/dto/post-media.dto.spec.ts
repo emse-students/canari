@@ -64,3 +64,29 @@ describe('PostMediaDto.placeholder', () => {
     ]);
   });
 });
+
+describe('PostMediaDto.loudness', () => {
+  it('keeps a measured video sound through the whitelist', () => {
+    const dto = plainToInstance(PostMediaDto, {
+      ...MEDIA,
+      loudness: { integratedLufs: -21.4, samplePeakDbfs: -3.2, extra: 1 },
+    });
+    expect(validateSync(dto, { whitelist: true })).toEqual([]);
+    expect({ ...dto.loudness }).toEqual({ integratedLufs: -21.4, samplePeakDbfs: -3.2 });
+  });
+
+  it('accepts an entry with no loudness - every post written before it', () => {
+    expect(validate(MEDIA)).toEqual([]);
+  });
+
+  it('refuses values no real signal gives rather than storing them', () => {
+    for (const loudness of [
+      { integratedLufs: -90, samplePeakDbfs: -3 },
+      { integratedLufs: 29, samplePeakDbfs: 0 },
+      { integratedLufs: 'loud', samplePeakDbfs: -3 },
+      { integratedLufs: -20 },
+    ]) {
+      expect(validate({ ...MEDIA, loudness }).map((e) => e.property)).toEqual(['loudness']);
+    }
+  });
+});

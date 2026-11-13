@@ -27,10 +27,12 @@
   import type { Snippet } from 'svelte';
   import { ArrowLeft, X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Announced as the dialog's name; also what a screen reader reads on open. */
@@ -65,6 +67,12 @@
     /** Immersive only: the bars are faded out and let every touch through to the content. */
     chromeHidden?: boolean;
     /**
+     * Immersive only: the reader reaches for the faded bars - a mouse moves over the header, a key
+     * focuses one of its buttons. The owner of `chromeHidden` brings them back; without it a focused
+     * Back button sat at opacity 0.
+     */
+    onChromeReach?: () => void;
+    /**
      * Immersive only: how opaque the black ground is, in `[0, 1]`. The swipe-down dismiss fades it
      * as the picture follows the finger, so what is behind shows the gesture is a way out.
      */
@@ -83,8 +91,12 @@
     footer,
     immersive = false,
     chromeHidden = false,
+    onChromeReach,
     backdropOpacity = 1,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'FullScreenViewer');
 
   const touchStyle = $derived(lockTouch ? 'touch-action: none;' : '');
 
@@ -117,9 +129,8 @@
   <div
     role="presentation"
     use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center {immersive
-      ? ''
-      : 'bg-cn-scrim sm:p-4'}"
+    style:z-index={layer.z}
+    class="fixed inset-0 flex items-center justify-center {immersive ? '' : 'bg-cn-scrim sm:p-4'}"
     style="{touchStyle}{immersive ? `background-color: rgb(0 0 0 / ${backdropOpacity});` : ''}"
     onclick={onClose}
     transition:fade={{ duration: 160 }}
@@ -148,9 +159,15 @@
         chromeHidden
           ? 'pointer-events-none opacity-0'
           : ''}"
+        data-viewer-header
+        onpointermove={(e) => e.pointerType === 'mouse' && onChromeReach?.()}
+        onfocusin={() => onChromeReach?.()}
+        role="presentation"
         style="padding-top: max({immersive
           ? '0.5rem'
-          : '0.75rem'}, var(--safe-area-inset-top, 0.75rem));"
+          : '0.75rem'}, var(--safe-area-inset-top, 0.75rem)); {immersive
+          ? sideSafePadding('0.75rem')
+          : ''}"
       >
         <div class="flex min-w-0 flex-1 items-center gap-2">
           {#if immersive}
@@ -194,7 +211,9 @@
           class="shrink-0 {immersive
             ? 'absolute inset-x-0 bottom-0 z-20 transition-opacity duration-200'
             : ''} {immersive && chromeHidden ? 'pointer-events-none opacity-0' : ''}"
-          style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem));"
+          style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem)); {immersive
+            ? sideSafePadding()
+            : ''}"
         >
           {@render footer()}
         </div>

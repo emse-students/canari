@@ -51,7 +51,7 @@ function run(preserveMessagesOf: string | null) {
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn(),
     getLocalGroups: vi.fn(() => []),
-    getDismissedGroups: vi.fn(async () => []),
+    getDismissedGroups: vi.fn(async () => ({ kind: 'listed' as const, groupIds: [] })),
     isDistributionGroup: vi.fn(() => false),
     notifyConversationRowsSeeded: vi.fn(),
   };

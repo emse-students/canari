@@ -7,6 +7,7 @@ import {
   legacyBlobPurgeStatement,
   messageOrderColumnsStatements,
   outboxServerErrorsStatement,
+  outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
 
 // Columns of `CREATE TABLE messages` as it stands since the deviceKeyB64 refactor (2c3ec6fe).
@@ -216,6 +217,45 @@ describe('conversationStartedAtStatement (v17)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(18);
+    expect(SCHEMA_VERSION).toBe(20);
+  });
+});
+
+/**
+ * v18 -> v19 on a REAL in-memory SQLite: a row queued before it reads 0 "not now" answers, and a
+ * rerun does nothing.
+ */
+describe('outboxUnavailableAnswersStatement (v19)', () => {
+  const V18_OUTBOX = `CREATE TABLE outbox (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sent_at INTEGER,
+    kind TEXT, status TEXT, attempts INTEGER DEFAULT 0, last_attempt_at INTEGER, next_attempt_at INTEGER,
+    server_errors INTEGER DEFAULT 0, created_at INTEGER, iv TEXT, cipher_text TEXT)`;
+  const columnsOf = (engine: any): string[] =>
+    engine
+      .prepare('PRAGMA table_info(outbox)')
+      .all()
+      .map((c: { name: string }) => c.name);
+
+  it('adds the column to an existing table, and its queued rows read 0', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(V18_OUTBOX);
+    engine.exec(
+      "INSERT INTO outbox (id, conversation_id, kind, server_errors) VALUES ('a', 'g', 'text', 2)"
+    );
+
+    const sql = outboxUnavailableAnswersStatement(columnsOf(engine));
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT unavailable_answers, server_errors FROM outbox').get()).toEqual({
+      unavailable_answers: 0,
+      server_errors: 2,
+    });
+    expect(outboxUnavailableAnswersStatement(columnsOf(engine))).toBeNull();
+  });
+
+  it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
+    expect(outboxUnavailableAnswersStatement(['id', 'unavailable_answers'])).toBeNull();
+    expect(SCHEMA_VERSION).toBe(20);
   });
 });

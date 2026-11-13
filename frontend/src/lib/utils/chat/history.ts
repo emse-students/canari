@@ -19,7 +19,7 @@ import { recordAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAu
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
-import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
+import { applyEditToBody, editFitsBody, envelopeBodyText } from '$lib/envelope';
 import {
   appMsgToEnvelope,
   isOwnMessage,
@@ -546,6 +546,7 @@ export function replayedMutationsOnto(
   } else if (
     edit &&
     !next.isDeleted &&
+    editFitsBody(next.content, edit.content) &&
     editSupersedes({ editedAt: edit.editedAt.getTime(), content: edit.content }, next) &&
     replayMutationIsAuthorised(next, edit.by, 'edit')
   ) {

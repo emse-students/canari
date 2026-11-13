@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, CornerDownRight, ImageIcon, Send, X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import { ChevronDown, CornerDownRight, ImageIcon, ImagePlus, Send, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
@@ -18,6 +19,8 @@
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
+  import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import { COMMENT_MAX_LENGTH, type PostMediaRef } from '$lib/posts/api';
   import { ANONYMOUS_POST_IDENTITY } from '$lib/posts/postComposerDraft';
   import {
@@ -103,6 +106,11 @@
   let showGifPicker = $state(false);
   /** True while the box is focused, so only the focused one handles a keyboard GIF. */
   let inputFocused = $state(false);
+  /** The picture that did not go up, kept for "Retry"; cleared by a new attempt or a dismissal. */
+  let mediaFailure = $state<File | null>(null);
+  /** The photo library is the native picker (the iOS app), never a file input (as the post composer's). */
+  const nativeLibrary = opensNatively(currentAttachRuntime(false), 'library');
+  let imageInput = $state<HTMLInputElement | null>(null);
 
   function clearPendingMedia() {
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
@@ -117,6 +125,7 @@
    */
   async function stageMediaFile(file: File) {
     uploadingMedia = true;
+    mediaFailure = null;
     try {
       let uploadFile = file;
       let dims: { width: number; height: number } | undefined;
@@ -140,9 +149,49 @@
     } catch (err) {
       console.error('Failed to upload comment media', err);
       showToast(m.post_comment_media_error());
+      // Kept, so the chip beside the box can offer a retry without picking the file again.
+      mediaFailure = file;
     } finally {
       uploadingMedia = false;
     }
+  }
+
+  /**
+   * The "image" button: ONE picture from the library, through the SAME `stageMediaFile` as a paste
+   * or a GIF - compressed as a post's photo is, encrypted client-side, uploaded, and only then
+   * attachable, so no comment is ever sent ahead of its picture. Anything that is not an image is
+   * refused out loud.
+   */
+  async function takePickedFiles(files: File[]) {
+    const file = files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      Log.d('CommentComposer', `picked file is ${file.type || 'untyped'}, not an image - refused`);
+      showToast(m.post_comment_media_error());
+      return;
+    }
+    Log.d('CommentComposer', `image picked (${file.type}, ${file.size} bytes)`);
+    await stageMediaFile(file);
+  }
+
+  function openImagePicker() {
+    if (!nativeLibrary) {
+      imageInput?.click();
+      return;
+    }
+    pickNatively('library')
+      .then((files) => takePickedFiles(files.filter((f) => f.type.startsWith('image/'))))
+      .catch((error: unknown) => {
+        console.error(`[CommentComposer] the native library picker failed: ${String(error)}`);
+        showToast(m.chat_attach_picker_failed());
+      });
+  }
+
+  function handleImageInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    void takePickedFiles(files);
   }
 
   async function handlePaste(e: ClipboardEvent) {
@@ -334,7 +383,7 @@
 <div class="flex flex-col gap-2">
   {#if replyTo}
     <div
-      class="animate-in fade-in slide-in-from-bottom-1 text-2xs ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 font-bold text-amber-700 dark:text-amber-400"
+      class="animate-in fade-in slide-in-from-bottom-1 text-2xs border-accent/20 bg-accent/10 text-accent-text ml-10 flex items-center justify-between rounded-xl border px-3 py-1.5 font-bold"
     >
       <span class="flex items-center gap-1.5"
         ><CornerDownRight size={14} />
@@ -343,7 +392,7 @@
       <button
         type="button"
         onclick={onCancelReply}
-        class="ui-icon-button rounded-full transition-colors outline-none hover:bg-amber-500/20"
+        class="ui-icon-button hover:bg-accent/20 rounded-full transition-colors outline-none"
         aria-label={m.post_cancel_reply_label()}
       >
         <X size={14} strokeWidth={2.5} />
@@ -375,7 +424,7 @@
           {#if !gifLoad.error}
             <div class="absolute inset-x-0 bottom-0 h-1 bg-black/20">
               <div
-                class="h-full bg-amber-500 transition-[width]"
+                class="bg-accent h-full transition-[width]"
                 style="width: {Math.round(gifLoad.progress * 100)}%"
                 data-testid="comment-gif-progress"
               ></div>
@@ -392,17 +441,38 @@
         </div>
         {#if gifLoad.error}
           <span class="text-2xs text-red-500" role="alert">{gifLoad.error}</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="compact"
             onclick={() => gifLoad && void handleGifSelected(gifLoad.gif)}
-            class="text-2xs font-semibold text-amber-600 underline dark:text-amber-400"
             data-testid="comment-gif-retry"
           >
             {m.chat_gif_retry()}
-          </button>
+          </Button>
         {:else}
           <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
         {/if}
+      </div>
+    {:else if mediaFailure && !uploadingMedia}
+      <div class="mb-2 ml-10 flex items-center gap-2" data-testid="comment-media-failed">
+        <span class="text-2xs text-red-500" role="alert">{m.post_comment_media_error()}</span>
+        <Button
+          variant="ghost"
+          size="compact"
+          onclick={() => mediaFailure && void stageMediaFile(mediaFailure)}
+          data-testid="comment-media-retry"
+        >
+          {m.chat_gif_retry()}
+        </Button>
+        <Button
+          variant="ghost"
+          size="compact"
+          icon
+          onclick={() => (mediaFailure = null)}
+          aria-label={m.post_remove_image_label()}
+        >
+          <X size={12} strokeWidth={3} />
+        </Button>
       </div>
     {:else if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-10 flex items-center gap-2">
@@ -451,7 +521,7 @@
           options={identityOptions}
           onValueChange={(v) => (identityValue = v)}
           label={m.post_comment_identity_label()}
-          triggerClass="tap-target block h-8 w-8 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          triggerClass="tap-target block h-8 w-8 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent-icon"
         >
           {#snippet trigger()}
             <span class="relative block h-8 w-8">
@@ -499,7 +569,7 @@
       </div>
 
       <div
-        class="flex min-w-0 flex-1 items-end rounded-3xl bg-black/5 py-0.5 pr-0.5 pl-3.5 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:bg-white/10 dark:focus-within:bg-black/40"
+        class="focus-within:ring-accent/50 flex min-w-0 flex-1 items-end rounded-3xl bg-black/5 py-0.5 pr-0.5 pl-3.5 transition-all focus-within:bg-white focus-within:ring-2 dark:bg-white/10 dark:focus-within:bg-black/40"
         onfocusin={() => {
           inputFocused = true;
           void ensureAssociations();
@@ -521,13 +591,34 @@
           onpaste={handlePaste}
           onkeydown={handleKeyDown}
         />
+        <input
+          bind:this={imageInput}
+          type="file"
+          accept="image/*"
+          class="sr-only"
+          tabindex="-1"
+          aria-hidden="true"
+          data-testid="comment-image-input"
+          onchange={handleImageInput}
+        />
+        <button
+          type="button"
+          onclick={openImagePicker}
+          disabled={uploadingMedia || (gifLoad !== null && !gifLoad.error)}
+          title={m.post_comment_add_image_label()}
+          aria-label={m.post_comment_add_image_label()}
+          data-testid="comment-image-button"
+          class="ui-icon-button text-text-muted hover:text-accent-text shrink-0 transition-colors disabled:opacity-40"
+        >
+          <ImagePlus size={18} strokeWidth={2.25} />
+        </button>
         <button
           type="button"
           onclick={() => (showGifPicker = true)}
           disabled={uploadingMedia || (gifLoad !== null && !gifLoad.error)}
           title={m.chat_send_gif_label()}
           aria-label={m.chat_send_gif_label()}
-          class="text-text-muted text-2xs tap-target mr-0.5 flex h-11 shrink-0 items-center px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40 [@media(min-width:768px)_and_(pointer:fine)]:h-9.5"
+          class="text-text-muted text-2xs tap-target hover:text-accent-text mr-0.5 flex h-11 shrink-0 items-center px-1.5 font-bold tracking-tight transition-colors disabled:opacity-40 [@media(min-width:768px)_and_(pointer:fine)]:h-9.5"
         >
           GIF
         </button>
@@ -535,7 +626,7 @@
           type="button"
           onclick={submit}
           disabled={!canSend}
-          class="ui-icon-button ml-1 rounded-full text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
+          class="ui-icon-button text-accent-text hover:bg-accent/10 hover:text-accent-text focus-visible:ring-accent-icon ml-1 rounded-full transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
           aria-label={m.post_send_comment_label()}
         >
           <Send size={18} strokeWidth={2.5} class="ml-0.5" />

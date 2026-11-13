@@ -200,7 +200,7 @@
         : m.chat_nicknames_description_group()}
     </p>
     {#if listUnreadable}
-      <p class="text-xs font-medium text-amber-600 dark:text-amber-400">
+      <p class="text-accent-text text-xs font-medium">
         {m.chat_nicknames_list_unreadable()}
       </p>
     {/if}
@@ -344,7 +344,6 @@
   title={m.chat_nicknames_report_title()}
   targetPreview={reporting?.text ?? ''}
   submitting={reportSubmitting}
-  layer="critical"
   onSubmit={(reason) => void submitReport(reason)}
   onClose={() => (reporting = null)}
 />

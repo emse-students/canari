@@ -71,7 +71,53 @@ describe('SeenHelps', () => {
     expect(JSON.parse(localStorage.getItem(ACCOUNT_KEY.seenHelps('u1'))!)).toEqual({
       seen: ['welcome-tour'],
       owed: [],
+      confirmed: true,
+      photoPromptEligible: false,
     });
+  });
+
+  // SLOW-LINK CHANTIER, GAP 1 (2026-11-11): the read waits for the token, which a cold start gets from
+  // the session refresh (4 s on the owner's link). A copy the server once filled is drawn at once.
+  it('is ready before the server answers when an earlier answer filled the copy', async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(200, { seen: ['welcome-tour'], profilePhotoPromptEligible: true })
+    );
+    await store.load('u1');
+
+    // The next opening, with a network that answers nothing.
+    apiFetch.mockReset().mockReturnValue(new Promise(() => {}));
+    const next = new SeenHelps();
+    void next.load('u1');
+    expect(next.ready).toBe(true);
+    expect(next.has('welcome-tour')).toBe(true);
+    expect(next.profilePhotoPromptEligible).toBe(true);
+    // Revalidated behind the drawing, all the same.
+    expect(apiFetch).toHaveBeenCalledWith('https://core.test/api/users/me/help-seen');
+  });
+
+  it('a copy the server never filled still waits (a new device must not replay a finished tour)', async () => {
+    localStorage.setItem(
+      ACCOUNT_KEY.seenHelps('u1'),
+      JSON.stringify({ seen: ['welcome-tour'], owed: ['welcome-tour'] })
+    );
+    apiFetch.mockReturnValue(new Promise(() => {}));
+    void store.load('u1');
+    expect(store.has('welcome-tour')).toBe(true);
+    expect(store.ready).toBe(false);
+  });
+
+  it('a confirmed copy whose revalidation met no answer reads again at the reconnect', async () => {
+    localStorage.setItem(
+      ACCOUNT_KEY.seenHelps('u1'),
+      JSON.stringify({ seen: [], owed: [], confirmed: true, photoPromptEligible: false })
+    );
+    apiFetch.mockRejectedValueOnce(new TransportFailureError('no link'));
+    await store.load('u1');
+    expect(store.ready).toBe(true);
+    apiFetch.mockResolvedValueOnce(json(200, { seen: ['welcome-tour'] }));
+    reconnectListeners[0]();
+    await flush();
+    expect(store.has('welcome-tour')).toBe(true);
   });
 
   it('keeps the SERVER-measured age of a seen help, and none for one it has not aged', async () => {
@@ -87,6 +133,19 @@ describe('SeenHelps', () => {
     expect(store.ageSeconds('hint-chats')).toBeNull();
     store.reset();
     expect(store.ageSeconds('prompt-profile-photo')).toBeNull();
+  });
+
+  it('reads the profile-photo-prompt offer the server makes: false until true, false after a reset', async () => {
+    expect(store.profilePhotoPromptEligible).toBe(false);
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [], profilePhotoPromptEligible: true }));
+    await store.load('u1');
+    expect(store.profilePhotoPromptEligible).toBe(true);
+    store.reset();
+    expect(store.profilePhotoPromptEligible).toBe(false);
+    // An older server that does not say, or a non-boolean, is "not offered".
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [], profilePhotoPromptEligible: 'yes' }));
+    await store.load('u1');
+    expect(store.profilePhotoPromptEligible).toBe(false);
   });
 
   it('owes an unanswered write to the reconnect, and delivers it there', async () => {

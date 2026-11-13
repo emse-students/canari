@@ -23,7 +23,12 @@ import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_POSTER_MAX_BYTES, LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
-import { LivesService, type LiveArrivalsBlock, type LiveManifest } from './lives.service';
+import {
+  LivesService,
+  type LiveArrivalsBlock,
+  type LiveManifest,
+  type LiveReplayPage,
+} from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** The caller nginx authenticated, as every account id is compared: trimmed, lower case. */
@@ -229,6 +234,25 @@ export class LivesController {
    * is none - a copy one poll old is a viewer one segment behind, and the answer is per viewer
    * (a removed one is refused), so no shared cache may hold it. The SEGMENTS are the cached half.
    */
+  /**
+   * One page of a live's three-day REPLAY (docs/wiki/live-replays.md): the key, the segments from
+   * `from` with their place on the time line, `nextFrom`. No seat. 404 `LIVE_NOT_FOUND` to anyone the
+   * replay post is not visible to, and once it has expired.
+   */
+  @Get(':id/replay')
+  @Header('Cache-Control', 'no-store')
+  async replay(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Query('from') from?: string
+  ): Promise<LiveReplayPage> {
+    return this.lives.replay(
+      callerOf(userId),
+      id,
+      from === undefined ? 0 : indexOf(from, 'REPLAY_FROM')
+    );
+  }
+
   @Get(':id/manifest')
   @Header('Cache-Control', 'no-store')
   async manifest(

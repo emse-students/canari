@@ -279,7 +279,7 @@
             onclick={() => void selectSort(mode)}
             class="tap-target text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
             mode
-              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+              ? 'bg-accent/15 text-accent-text'
               : 'text-text-muted hover:text-text-main'}"
           >
             {label}

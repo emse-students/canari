@@ -54,7 +54,7 @@ Binding, on top of the ones above.
 | `frontend/src/lib/guidance/guideEngine.svelte.ts` | THE engine: when a help starts, which steps a layout shows, when it is seen. Draws nothing; its environment is injected |
 | `frontend/src/lib/guidance/guideAnchors.svelte.ts` | The anchor registry: `use:guideAnchor={'nav.chat'}` on a control, `registerGuideRegion` for a target that is not an element |
 | `frontend/src/lib/guidance/guideQuiet.ts` | The quiet state - the facts that hold a help back |
-| `frontend/src/lib/guidance/guidePlacement.ts` | Where the bubble goes (pure) |
+| `frontend/src/lib/guidance/guidePlacement.ts` | Where the bubble goes (pure); `usableBand` takes the bars fixed at the viewport edges out of the room, so no bubble covers the tab bar or the header. The bars are the elements marked `data-guide-chrome` (phone header, desktop top bar, web bottom bar) and the native tab regions, read from their real boxes by `GuideOverlay`. A target running past the band's bottom (a tall form block) gets the bubble inside it at the band's bottom edge, never above it over the page title (2026-11-11, `hint-create-form`) |
 | `frontend/src/lib/guidance/seenHelps.svelte.ts` | The account's seen set: optimistic local copy, server sync, owed writes |
 | `frontend/src/lib/guidance/guidance.svelte.ts` | The app's one engine wired to the app; `replayGuide(id)` |
 | `frontend/src/lib/components/guidance/GuideOverlay.svelte` | The ONE renderer: spotlight, halo, bubble, focus, Back. Mounted once by the root layout |
@@ -215,9 +215,13 @@ Every end records the help as seen: Next on the last step, "Passer", Esc, Back, 
 it (`replayGuide('welcome-tour')`, then the feed - the tour applies to `/posts`, where every control
 it points at is drawn). A replay ignores the seen set and still waits for the quiet state.
 
-**An unseen help starts only once the server has answered** (`seenHelps.ready`): starting on the
-local copy alone would replay on a new device a tour the account finished on another one. A device
-that cannot reach the server shows no new help; the next opening asks again.
+**An unseen help starts only on a copy the server has answered** (`seenHelps.ready`): starting on a
+copy the server never filled would replay on a new device a tour the account finished on another
+one. A device that never reached the server shows no new help; the next opening asks again. **Since
+2026-11-11 a copy the server once filled is ready at once** (the persisted `confirmed` flag), because
+the read waits for the session refresh at a cold start - 4 s on the owner's link - and is revalidated
+behind the drawing; the case taken knowingly is a help finished on ANOTHER device since that answer
+([local-first-ui](local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
 
 ## The first-time hints, batch 1 - create
 
@@ -244,7 +248,7 @@ Built 2026-11-04. All `kind: 'hint'`, once per account, listed after the tour in
 
 | Id | Route | Anchor(s) | Steps (fr) |
 | --- | --- | --- | --- |
-| `hint-feed-tabs` | `/posts` | `posts.tab.associations`, `.followed`, `.all`: each tab of `FeedTabRow` | one step per tab, reusing the `posts_tabs_info_*` strings of the removed (i) button (rewritten in "vous", like every guide string) |
+| `hint-feed-tabs` | `/posts` | `posts.tab.associations`, `.foryou`, `.all`: each tab of `FeedTabRow` | one step per tab, reusing the `posts_tabs_info_*` strings of the removed (i) button (rewritten in "vous", like every guide string); since 1.6.9 the steps are Associations, Pour toi (`posts_tabs_info_foryou_*`) and Campus (`posts_tabs_info_campus_*`) - the id is unchanged, so an account that saw the hint before 1.6.9 is not shown it again (replayable from Settings) |
 | `hint-reels` | `/posts` | `posts.reels`: the CanaReels icon (`ReelsEntryButton`), the control that OPENS the viewer | "CanaReels" - short videos, full screen, swipe for the next |
 | `hint-chats` | `/chat` | `chat.new`: the "+" of the list header (`SidebarHeaderControls`), which opens the new-conversation modal | "Démarrer une discussion" - the + creates a discussion (a channel in communities), touch a conversation to open it; left out (not-rendered) where the list is not drawn |
 
@@ -313,7 +317,7 @@ the right.** Two mechanisms, both reading what the interface already draws by:
 | --- | --- | --- | --- | --- |
 | `hint-asso-shop` | `/associations/<slug>` | `asso.shop` (the Shop hub row) | any signed-in visitor of an association whose shop is non-empty: the hub draws the row only then (`mayOpenPublicSection`), else the step is left out | "La boutique de l'association" - buy products and tickets, pay the cotisation that makes you a cotisant, with the tariffs and offers reserved to cotisants |
 | `hint-asso-post-as` | `/posts` | `posts.compose` (the SAME opening control as `hint-create-post`: phone "+" or desktop "Publier"; never inside the modal, decision 1) | `eligible: canPostAsAssociation` (`lib/posts/postAsAccess.svelte.ts`), which asks `listPostAsAssociations()`, the list the "Publier en tant que" picker offers | "Publier au nom d'une association" - names the picker at the top of the form |
-| `hint-asso-manage` | `/associations/<slug>` | `asso.manage` (the "Gestion de l'asso" link, which OPENS the area), `asso.agenda` (Agenda hub row) | both marked only when `canManage` (the link's own condition); the agenda row also needs `canProposeEvent`, the agenda section's edit right | "Gérer l'association", "L'agenda de l'association" |
+| `hint-asso-manage` | `/associations/<slug>` | `asso.manage` (the "Gestion de l'asso" link, which OPENS the area), `asso.agenda` (Agenda hub row) | both marked only when `canManage` (the link's own condition); the agenda row also needs `canProposeEvent`, the agenda section's edit right | "Gérer l'association", "L'agenda de l'association" (en: "The association's calendar" - the hub row is labelled Calendar in English, Agenda in French; the hint names the row's own label) |
 | `hint-asso-manage-hub` | `/associations/<slug>/edit` | `asso.edit.members`, `asso.edit.audience` (hub rows) | the hub draws a row only for a reader who holds its right (`visibleEditSections`), so the audience step (platform admin or BDE super-admin) is left out for a manager without it | "Membres et droits", "Le public de l'association" |
 
 **Owner correction, 2026-11-04: one does not "join" an association.** One pays a cotisation in its
@@ -326,8 +330,8 @@ Why two manager helps: the agenda is a row of the association's PUBLIC page, the
 audience are rows of the management hub, and a hint never follows a navigation. Neither declares
 `replay` (one route per association).
 
-**"Mon espace" has no hint of its own** (lead decision, 2026-11-04, after review): the tab is already
-explained by step 3 of `hint-feed-tabs` (`posts_tabs_info_all_body`), on the same anchor, so a second
+**"Mon espace" (Campus since 1.6.9) has no hint of its own** (lead decision, 2026-11-04, after review): the tab is already
+explained by step 3 of `hint-feed-tabs` (`posts_tabs_info_campus_body`), on the same anchor, so a second
 hint would only repeat it. The owner's moment is kept, not duplicated.
 
 Pinned by `guides/batch3Hints.test.ts` (routes, layouts, anchors named in the sources, eligibility
@@ -345,7 +349,7 @@ a help starts when its anchors mount; every anchor is marked by the element's ow
 | Id | Route | Anchor(s) | Steps (fr) |
 | --- | --- | --- | --- |
 | `hint-booking-spaces` | `/bookings` | `bookings.mine` (the "Vos prochaines réservations" section, drawn once loaded), `bookings.spaces` (a wrapper of `SpaceList`, drawn only when the read succeeded and the list is not empty) | "Vos réservations" - coming ones first, past and cancelled folded below; "Réserver un espace" - pick a space for its week; a link-only space is opened by its link or QR code |
-| `hint-booking-week` | `/bookings/spaces/<id>` (not `manage`, not `edit`) | `bookings.column` (a wrapper of `ColumnSelect`, drawn only for a space with several columns), `bookings.week` (`data-week-grid`: the planning list on a phone, the grid wide); both marked by `SpaceWeek` in `book` mode once the first read of the week landed | "Une colonne par ressource"; "Réserver un créneau" - body by layout (list and the icon-only + button on a phone, grid and drag on a wide screen), then the sheet adjusts the length and adds people |
+| `hint-booking-week` | `/bookings/spaces/<id>` (not `manage`, not `edit`) | `bookings.column` (a wrapper of `ColumnSelect`, drawn only for a space with several columns), `bookings.week.add` on a phone (the planning list's icon-only "+", sticky above the bar) or `bookings.week` wide (the grid wrapper); both marked by `SpaceWeek` in `book` mode once the first read landed AND only when the week draws an hour (`weekDrawn`, the same test as the "Nothing is offered over these 7 days" line), so an empty week leaves the step out (read on the Mi 9T, 2026-11-11: the step rang an empty list and named a "+" not drawn) | "Une colonne par ressource"; "Réserver un créneau" - body by layout (list and the icon-only + button on a phone, grid and drag on a wide screen), then the sheet adjusts the length and adds people |
 
 `hint-booking-spaces` declares `replay` (`/bookings`, label "Réservations"); the space hint has none (one
 route per space). The week anchors wait for `loaded` so a help never starts on the dimmed empty grid
@@ -403,8 +407,8 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
 - Pinned by `guideAnchorFollow.test.ts` (move reported, observer re-armed), the overlay test (a shift
   with no size change moves the spotlight) and `guideAnchorSources.test.ts` (every anchor a guide
   names is marked by a control on every layout).
-- The layer is its own rung, `--z-guide` (one over `--z-modal`): a help never runs over a modal or
-  a sheet (it would not be quiet - it is suspended), and the call and a confirmation keep their rungs
+- The layer registers on the overlay stack (`utils/overlayStack.ts`; it had its own `--z-guide` rung until 2026-11-13): a help is suspended when a modal or
+  a sheet opens (it would not be quiet), and what opens after it is above it; the call keeps its rung
   above it. The accent ink is the `guide-ink` token (brand dark in light, yellow in dark).
 - **Sign-out resets the engine** (`guideEngine.reset()` beside `resetSeenHelps()` in
   `endSessionImpl`): a run suspended for account A, or a replay A asked for, never resumes for
@@ -438,6 +442,22 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
   (`HelpSeenService.seenWithAges`), so no device clock decides "30 days". A first showing still owed
   to the server has no age, hence no reminder until it is recorded. Additive: an old client ignores
   the field, and a new client against an old server has no age and never reminds.
+
+- **OFFERED ONLY TO ICM AT SAINT-ETIENNE (owner, 2026-11-10; made permanent 2026-11-11: *"MiGallery
+  est faite avant tout pour les ICM/Saint-Etienne"*,
+  [decisions](../backlog.d/owner-decisions-of-2026-11-11.md)).** Who is offered the
+  prompt is decided on the SERVER, so changing it needs no release: core-service reads
+  `PROFILE_PHOTO_PROMPT_SPACES`, a comma-separated list of `FORMATION:campus` pairs in the spaces'
+  own spelling (`ICM:saint-etienne` on both estates, a literal row of `env-manifest.tsv`), and
+  `GET /api/users/me/help-seen` answers `profilePhotoPromptEligible` beside `seen` and `ageSeconds`
+  (`HelpSeenService.profilePhotoPromptEligible`, `platform/profile-photo-prompt-spaces.ts`). An
+  account is in a space by the `readerSpaces` rule: its campus is the pair's and one of its cursus
+  formations is the pair's; staff with no cursus and review accounts are in none. The client shows
+  neither the card nor the reminder unless the field is `true` (`seenHelps.profilePhotoPromptEligible`,
+  `false` until the server answers, or from an older server). **Unset or empty: nobody. A value that
+  does not parse: nobody, and an error line at boot** - a typo never widens it. Core-service logs
+  what the variable resolved to once at boot (`[PROFILE_PHOTO_PROMPT]`). **The gate stays**: the
+  limit is the owner's standing choice, not a rollout step.
 - **The rule is one pure function**, `profilePhotoPromptStage` (`guides/profilePhotoPromptStage.ts`):
   no photo + never shown -> first; shown, under 30 days -> nothing; 30 days or more and still none
   -> reminder; reminder shown -> never; a photo, or no answer -> never. Each help's `eligible` asks
@@ -449,14 +469,15 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
 
 ## The birthday prompt (2026-11-09)
 
-`prompt-birthday` (`guides/birthdayPrompt.ts`) is the same shape as the photo card: ONE centred
-step on `/posts`, declared after the two photo helps (an account missing both meets the photo first,
-the birthday on a later visit), its button opening Profile > Anniversaire. **Shown once, with NO
-reminder** - a birthday is personal data the member may not want to give; the reasoning is on
-[birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). `eligible` reads
-`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, loaded by `GuideOverlay.svelte`
-beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned
-by `guides/birthdayPrompt.test.ts`.
+`prompt-birthday` is **no longer a guide** (owner, 2026-11-10: the self-opening modal was too
+aggressive and its button overflowed a phone). It is a small dismissible card at the top of the feed,
+`components/posts/BirthdayFeedCard.svelte`, that still records itself under the help id
+`prompt-birthday` in `seenHelps`: the cross and "Ajouter" both mark it seen, so it never returns.
+**Shown once, with NO reminder** - a birthday is personal data the member may not want to give; the
+reasoning is on [birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). It reads
+`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, still loaded by `GuideOverlay.svelte`
+beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned by
+`BirthdayFeedCard.svelte.test.ts`.
 
 ## The server store
 

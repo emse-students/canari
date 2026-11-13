@@ -116,6 +116,11 @@ chord. 96 BPM, 8 beats: ONE seamless loop of exactly 5.000 s.
   Resources from the `CallSounds` group of the hand-maintained `project.pbxproj`
   (`iosNotificationSounds.test.ts`). A missing file is logged at ERROR and CallKit rings the system
   tone.
+- **The iPhone with no VoIP token** gets the generic ring ALERT through FCM (`ringViaFcm` in
+  chat-delivery's `calls.service.ts`), whose APNs `sound` is the same file (`IOS_CALL_RING_SOUND`
+  in `push-payload.ts`; it named `default` until the backlog triage of 2026-11-11). The extension
+  keeps the server's sound for a `call_ring`. `iosNotificationSounds.test.ts` holds the name, the
+  service's use of it and the bundle together.
 - **In the open app**: [calls](modules/calls.md#the-incoming-ring-canaris-own-owner-2026-11-01).
 
 ## The tone output, in detail

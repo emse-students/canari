@@ -95,11 +95,16 @@ secret_value() {
 }
 
 # ── The computed values ───────────────────────────────────────────────────────
-# ALLOW_ORIGIN is the chat-gateway's CORS list. Every entry is a Canari client, and dropping one
-# costs that client the gateway with no server-side error to show for it. The three tauri spellings
+# ALLOW_ORIGIN is the chat-gateway's CORS list, and the origins a socket upgrade may name on
+# call-service and on the gateway. Every entry is a Canari client, and dropping one costs that
+# client the gateway and its calls. The three tauri spellings
 # are the app itself, one per platform - `http(s)://tauri.localhost` on Android/Windows,
 # `tauri://localhost` on iOS/macOS/Linux; omitting the iOS spelling from the Nest list once cost
-# that platform its login. `127.0.0.1:1420` is how tauri.conf.json's devUrl spells the dev server.
+# that platform its login.
+#
+# THE LIST IS EXACT, AND PRODUCTION'S NAMES NO LOOPBACK ORIGIN. The dev-server pair (`localhost:1420`,
+# and `127.0.0.1:1420` as tauri.conf.json's devUrl spells it) is a client of the dev estate only:
+# dev's list carries it, and the Nest services there accept it from this same list.
 #
 # THE DEPLOY'S COLOUR DOES NOT PROVE THIS VALUE: an origin that is merely WRONG parses fine and
 # simply matches nothing. Read the served header back after deploying.
@@ -117,10 +122,11 @@ secret_value() {
 # what the paragraph above warns about. Deduplicated, because while the secret still names the
 # legacy apex the two are the same string and the rendered list must not grow a twin.
 compute_allow_origin() {
-  local frontend_url="$1" tauri
-  tauri="http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  local frontend_url="$1" tauri dev_server
+  tauri="http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  dev_server="http://localhost:1420,http://127.0.0.1:1420"
   if [ "$ENVIRONMENT" = "dev" ]; then
-    printf '%s,%s' "$frontend_url" "$tauri"
+    printf '%s,%s,%s' "$frontend_url" "$dev_server" "$tauri"
   else
     printf '%s,https://%s,https://dev.%s,%s' "$frontend_url" "$DOMAIN" "$DOMAIN" "$tauri" |
       awk -v RS=, -v ORS= '!seen[$0]++ { printf "%s%s", (n++ ? "," : ""), $0 }'

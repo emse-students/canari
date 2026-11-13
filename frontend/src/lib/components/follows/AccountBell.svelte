@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Bell, BellOff, BellRing, ChevronDown } from '@lucide/svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -25,9 +26,25 @@
   interface Props {
     kind: BellTargetKind;
     targetId: string;
+    /**
+     * Only the glyph of the level (Bell, BellRing, BellOff) in a square target: for a header whose
+     * row of actions has no room for a wide select. The accessible name stays the label plus the
+     * level, so the choice is still read out.
+     */
+    iconOnly?: boolean;
+    /**
+     * The level's read, ALREADY STARTED by a page that knows it will mount this bell once its other
+     * reads have ended (an association's page asks it beside them: one round trip less on a slow
+     * link). A TAKER, not a value: the page hands the read over ONCE (and forgets it), so a remount
+     * - a guest who signs in, a bell remounted after a pick - asks for itself and never reads a
+     * promise that predates a write.
+     */
+    takeInitial?: () => Promise<BellLevel> | undefined;
   }
 
-  let { kind, targetId }: Props = $props();
+  let { kind, targetId, iconOnly = false, takeInitial }: Props = $props();
+  /** The head start is for the first read only. */
+  let headStartSpent = false;
 
   let level = $state<BellLevel>('all');
   let loaded = $state(false);
@@ -39,7 +56,10 @@
     const id = targetId;
     loaded = false;
     let stale = false;
-    getBellLevel(k, id)
+    const head = headStartSpent ? undefined : untrack(() => takeInitial?.());
+    headStartSpent = true;
+    const read = head ?? getBellLevel(k, id);
+    read
       .then((read) => {
         if (stale) return;
         level = read;
@@ -78,13 +98,17 @@
   onValueChange={(v) => void choose(v)}
   label={m.bell_label()}
   disabled={!loaded || saving}
-  triggerClass="ui-control bg-cn-surface text-text-main inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 py-1.5 text-base font-semibold transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+  triggerClass={iconOnly
+    ? 'ui-control ui-control--icon bg-cn-surface text-text-main inline-flex min-h-11 w-11 shrink-0 cursor-pointer items-center justify-center transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10'
+    : 'ui-control bg-cn-surface text-text-main inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 py-1.5 text-base font-semibold transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10'}
 >
   {#snippet trigger(selected)}
     <span class="inline-flex items-center gap-2" data-testid="account-bell" data-level={level}>
-      <Icon size={16} aria-hidden="true" />
-      <span>{selected?.label ?? m.bell_label()}</span>
-      <ChevronDown size={14} aria-hidden="true" class="text-text-muted" />
+      <Icon size={16} class="shrink-0" aria-hidden="true" />
+      {#if !iconOnly}
+        <span>{selected?.label ?? m.bell_label()}</span>
+        <ChevronDown size={14} aria-hidden="true" class="text-text-muted" />
+      {/if}
     </span>
   {/snippet}
 </Picker>

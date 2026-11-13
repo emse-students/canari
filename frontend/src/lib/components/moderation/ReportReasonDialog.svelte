@@ -13,21 +13,11 @@
     /** True while the report is in flight; disables every control. */
     submitting?: boolean;
     /** Called with the chosen reason. The caller owns the request and its outcome. */
-    /** `critical` when raised over a full-screen viewer (see `Modal`). */
-    layer?: 'modal' | 'critical';
     onSubmit: (reason: ReportReason) => void;
     onClose: () => void;
   }
 
-  let {
-    open,
-    title,
-    targetPreview = '',
-    submitting = false,
-    layer = 'modal',
-    onSubmit,
-    onClose,
-  }: Props = $props();
+  let { open, title, targetPreview = '', submitting = false, onSubmit, onClose }: Props = $props();
 
   const reasons = $derived(reportReasons());
   let selected = $state<ReportReason | ''>('');
@@ -38,7 +28,7 @@
   });
 </script>
 
-<Modal {open} {onClose} {layer} {title} maxWidth="max-w-sm" dismissible={!submitting}>
+<Modal {open} {onClose} {title} maxWidth="max-w-sm" dismissible={!submitting}>
   <div class="space-y-4 px-1 pb-2">
     {#if targetPreview}
       <p class="text-text-muted line-clamp-3 text-sm italic">{targetPreview}</p>
@@ -48,9 +38,9 @@
       {#each reasons as reason (reason.value)}
         <button
           type="button"
-          class="border-cn-border text-text-main w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors hover:border-amber-400 disabled:opacity-40 {selected ===
+          class="border-cn-border text-text-main hover:border-accent-icon w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-40 {selected ===
           reason.value
-            ? 'border-amber-400 bg-amber-400/10'
+            ? 'border-accent-icon bg-accent/10'
             : ''}"
           onclick={() => (selected = reason.value)}
           disabled={submitting}

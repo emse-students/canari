@@ -157,7 +157,7 @@
     <label class="mx-auto flex h-11 w-11 cursor-pointer items-center justify-center">
       <input
         type="checkbox"
-        class="accent-cn-yellow h-5 w-5"
+        class="accent-accent h-5 w-5"
         checked={qty > 0}
         aria-label={name}
         {disabled}
@@ -181,7 +181,7 @@
       role="group"
       aria-label={name}
       data-cell-stepper
-      class="border-cn-yellow bg-cn-yellow/20 text-text-main mx-auto flex w-fit items-center rounded-full border"
+      class="border-accent-icon bg-accent/20 text-text-main mx-auto flex w-fit items-center rounded-full border"
     >
       <button
         type="button"
@@ -226,7 +226,7 @@
       data-cell-pill
       class="flex h-11 min-w-12 items-center justify-center gap-1.5 rounded-full border px-3 font-bold transition-colors disabled:opacity-50 {qty >
       0
-        ? 'border-cn-yellow bg-cn-yellow/20 text-text-main'
+        ? 'border-accent-icon bg-accent/20 text-text-main'
         : 'border-cn-border text-text-main bg-(--cn-surface)'}"
       aria-label={checkbox ? name : m.form_grid_add_cell({ name })}
       aria-pressed={checkbox ? qty > 0 : undefined}
@@ -244,7 +244,7 @@
       role="group"
       aria-label={name}
       data-cell-stepper
-      class="border-cn-yellow bg-cn-yellow/20 text-text-main flex h-11 items-center rounded-full border"
+      class="border-accent-icon bg-accent/20 text-text-main flex h-11 items-center rounded-full border"
     >
       <button
         type="button"
@@ -284,14 +284,17 @@
     <img
       src={item.imageUrl}
       alt=""
-      class="bg-cn-border/40 h-40 w-full object-cover sm:h-52"
+      class="bg-cn-bg h-auto max-h-96 w-full object-contain"
       loading="lazy"
     />
   {/if}
   <div class="flex flex-col gap-3 p-4 sm:px-6 sm:py-5">
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <!-- No asterisk: a grid is never required on its own, the ORDER is (`firstMissingAnswer`). -->
-      <h2 id={headingId} class="text-text-main flex-1 text-sm font-bold sm:text-base">
+      <h2
+        id={headingId}
+        class="text-text-main flex-1 text-sm font-bold whitespace-pre-line sm:text-base"
+      >
         {item.label}
       </h2>
       {#if headerPrice}
@@ -301,7 +304,9 @@
       {/if}
     </div>
     {#if item.description}
-      <p class="text-text-muted -mt-2 text-xs italic sm:text-sm">{item.description}</p>
+      <p class="text-text-muted -mt-2 text-xs whitespace-pre-line italic sm:text-sm">
+        {item.description}
+      </p>
     {/if}
 
     <!-- From 640px: a table. Scrolls sideways only past what the column holds (15 sizes). -->

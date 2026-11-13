@@ -1,24 +1,69 @@
+<script module lang="ts">
+  /**
+   * The surface a player is (owner, 2026-11-09: one player, a `variant` each): the full-screen
+   * viewer, a CanaReel, a feed card's inline video, a conversation's, a conversation's viewer.
+   */
+  import type { VideoVariant as TapVariant } from '$lib/utils/videoTapAction';
+  export type VideoVariant = TapVariant;
+</script>
+
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { videoTapAction } from '$lib/utils/videoTapAction';
+  import { useViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
+  import { CircleAlert, Ellipsis, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
+  import { videoGestures } from '$lib/actions/videoGestures';
+  import { videoGlass } from '$lib/utils/videoGlass';
+  import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
+  import VideoPlayGlyph from '$lib/components/ui/player/VideoPlayGlyph.svelte';
+  import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
+  import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
+  import VideoExpandButton from '$lib/components/ui/player/VideoExpandButton.svelte';
+  import VideoFeedbackGlyph, {
+    type VideoFeedbackKind,
+  } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
+  import {
+    followVideoSound,
+    markReaderPaused,
+    playWhileVisible,
+    type VideoSoundScope,
+  } from '$lib/actions/playWhileVisible';
+  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
+  import { feedAutoplayPermitted } from '$lib/video/autoplayPolicy';
+  import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
+  import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
+  import BlurredBackdrop from './BlurredBackdrop.svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import {
     CONTROLS_FADE_MS,
     bufferedFraction,
-    clampFraction,
     formatVideoTime,
+    scrubLength,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
-  import { resumePosition, takeVideoPosition } from '$lib/utils/videoResume';
+  import {
+    awaitVideoHandBack,
+    handBackVideoPosition,
+    rememberVideoPosition,
+    resumePosition,
+    takeVideoPosition,
+  } from '$lib/utils/videoResume';
   import {
     decideAutoplayRejection,
     playRejectionName,
     type AutoplayBlockCause,
   } from '$lib/utils/videoAutoplay';
   import VideoPoster from './VideoPoster.svelte';
+  import {
+    isTimeBuffered,
+    streamProgressOf,
+    streamSeekFloor,
+  } from '$lib/utils/segmentedMediaStream';
   import { Log } from '$lib/utils/Log';
+  import { reelVideoFit } from '$lib/reels/reelFrame';
   import { m } from '$lib/paraglide/messages';
   import MediaSpinner from './MediaSpinner.svelte';
 
@@ -31,12 +76,20 @@
    * every engine: play/pause, a seek bar showing what is buffered, elapsed/duration, the app's ONE
    * sound answer (`followVideoSound`) and full screen where the engine offers it.
    *
+   * THE FULL PLAYER IS THE SHARED KIT'S (owner, 2026-11-09, `docs/wiki/frontend/modules/video-player.md`):
+   * one floating glass bar (`ui/player/`: play/pause, time, scrubber with its time bubble, the speaker,
+   * full screen), the glass play disc, and the gestures of every video surface (`videoGestures`): a
+   * TAP toggles the sound and brings the bar up, a PRESS HELD pauses while held and resumes on
+   * release. The tap used to toggle the bar (user, 2026-10-02); it now only RAISES it - the bar goes
+   * by itself after the fade.
+   *
    * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on
    * ANY mouse movement over the player, a tap ANYWHERE on it, a key, or a pause (user, 2026-10-02:
-   * *"sur web, afficher les controles lors de tout mouvement de souris, sur mobile un appui
-   * n'importe ou sur l'ecran de la video ouverte en grand est un toggle des controles"*). Anywhere
-   * means the black around a letterboxed clip too, which a tap listener on the `<video>` alone never
-   * reached. A paused video keeps them: there is nothing to watch.
+   * *"sur web, afficher les controles lors de tout mouvement de souris"*). Anywhere means the black
+   * around a letterboxed clip too, which a tap listener on the `<video>` alone never reached. A paused
+   * video keeps them: there is nothing to watch - except a pause the reader is HOLDING, which is for
+   * watching the frame. A faded bar is UNMOUNTED, not transparent: a transparent layer with a backdrop
+   * filter still pays its blur over every frame.
    *
    * NO NATIVE POSTER, EVER: `poster` stays `TRANSPARENT_VIDEO_POSTER` (the Android WebView would
    * otherwise draw its grey play button), and until `loadeddata` says the first frame is in the
@@ -44,9 +97,11 @@
    * `VideoPoster` - except the minimal reel player, which shows black: its play button answers an
    * autoplay REFUSAL and nothing else.
    *
-   * A STREAMED `src` (a segmented video's MSE URL, `segmentedMediaStream.ts`) reaches the element
-   * exactly as minted - this component never appends to a URL, so the rule `InlineVideo` states for
-   * `#t=0.1` holds here by construction.
+   * `#t=0.1` IS WHAT MAKES THE ANDROID WEBVIEW DECODE A FIRST FRAME of an inline video (the feed's,
+   * a conversation's) instead of its grey default poster. NEVER ON A STREAM (`streamed`): an MSE URL
+   * names a `MediaSource` in the engine's registry, and a URL with a fragment is a different URL -
+   * Chromium refuses it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`,
+   * measured on the Mi 9T (2026-10-01). The viewers never append it: they open on a playing clip.
    *
    * INSIDE `MediaLightbox` the bar carries `data-video-controls`, which the viewer's swipe, pinch and
    * pan read as "not mine" exactly as they read a `<button>`: a drag on the seek bar is a seek, never
@@ -84,20 +139,76 @@
      */
     safeBottom?: boolean;
     /**
-     * THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus epures,
-     * la barre de lecture est discrete et collee en bas, sans timecode"*): no control row, no
-     * timecode, no big play button. One thin progress line on the very bottom edge, ABOVE the
-     * caption's vignette (`z-40` over its `z-20`) so the scrim never dims it, thickening with a handle
-     * only while touched; a tap on the picture plays or pauses, with a centred glyph. Sound and save
-     * are the reel rail's (`ReelActionRail`), the sound through the same `videoSound` answer.
+     * WHICH SURFACE THIS PLAYER IS (owner, 2026-11-09: one player, a `variant` each):
+     *
+     * - `lightbox` (the default): the full-screen viewer's glass bar, disc and fade;
+     * - `feed`: a post's video, playing while on screen, muted by the app's answer: a speaker chip
+     *   bottom-right and an expand chip top-right, no bar, no disc (Instagram's);
+     * - `chat`: a conversation's video, played when asked (user, 2026-10-02, Discord's way): the
+     *   glass disc until started, then its own speaker and progress line; never looped, its sound
+     *   its own;
+     * - `conversation`: a conversation's MEDIA VIEWER (owner, 2026-11-10: "moche et casse", make it
+     *   minimal like the CanaReels): the line on the bottom edge (dragged to seek), its speaker in
+     *   the bottom-right corner, the glass play glyph while paused - no bar, no time, no fade. The
+     *   tap PAUSES and PLAYS (`videoTapAction`); never looped; its sound the caller's scope;
+     * - `reel`: THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus
+     *   epures, la barre de lecture est discrete et collee en bas, sans timecode"*): no control row,
+     *   no timecode, no big play button except on an autoplay refusal. One thin progress line on the
+     *   very bottom edge, ABOVE the caption's vignette (`z-40` over its `z-20`) so the scrim never dims
+     *   it, thickening with a handle only while touched. Its speaker is the reel rail's
+     *   (`ReelActionRail`, the kit's `VideoSoundButton`), on the same `videoSound` answer.
+     *
+     * The tap is `videoTapAction`'s table (a feed tap opens full screen, a full-screen tap is the
+     * sound, a conversation viewer's the pause); a hold pauses everywhere (`videoGestures`).
      */
-    minimal?: boolean;
+    variant?: VideoVariant;
+    /**
+     * WHAT NAMES THIS VIDEO across the two players of an opening (`videoResume`): a post's media id,
+     * so the feed card and the CanaReels viewer - two downloads, two URLs - hand the time over. The
+     * URL when absent (a conversation's inline video and its viewer share one blob URL).
+     */
+    positionKey?: string;
+    /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
+    streamed?: boolean;
+    /**
+     * Opens the full-screen viewer: an inline video's expand chip (`feed`, `chat`), which replaced the
+     * tap that used to open it - the tap is the sound now. Where it is, the viewer resumes
+     * (`videoResume`). Without it, no chip.
+     */
+    onOpen?: () => void;
+    /** The expand chip's accessible name (the surface's own "open in full screen"). */
+    openLabel?: string;
+    /**
+     * A conversation's video: opens the MESSAGE's actions (the bubble's long-press sheet). A hold on
+     * the picture is the pause only (owner, 2026-11-09), so a bubble that is nothing but its video
+     * keeps its menu through this chip. Without it, no chip.
+     */
+    onActions?: () => void;
+    /** The element's `loadedmetadata` - a `MediaFrame` reads an undeclared clip's size from it. */
+    onMetadata?: (event: Event) => void;
+    /**
+     * Handed the `<video>` once it exists, and again with a new callback; the function it returns
+     * runs when either goes. A PACED stream reads its demand from this element (`PostMedia`,
+     * `SegmentedStreamHandle.attach`): what it plays decides what is fetched.
+     */
+    onVideo?: (video: HTMLVideoElement) => (() => void) | void;
+    /**
+     * Fill the bands a CONTAINED inline clip leaves with a blurred copy of its own first frame, drawn
+     * once to a tiny canvas (`captureVideoFrame`) - the same backdrop a picture has. The caller's box
+     * should be `bg-cn-surface`, which is what shows until that frame exists.
+     */
+    backdrop?: boolean;
     /**
      * A picture of the video's first frame, drawn in its place until the element holds that frame
      * (a reel's: `reelPosters.svelte.ts` or the publisher's ThumbHash). Given, it replaces Canari's
      * glyph poster: a loading reel shows its picture, never a play button (owner, 2026-10-31).
      */
     poster?: string | null;
+    /**
+     * How {@link poster} sits in the box: the caller's `videoClass` fit, so a cropped grid cell
+     * (`cover`) shows a cropped poster and never changes stage when its frame arrives.
+     */
+    posterFit?: 'contain' | 'cover';
     /**
      * Told once when this video will NOT play by itself and the reader has to act: the engine
      * refused the autoplay (`refused`), something paused it while it was asked (`interrupted`), it
@@ -106,6 +217,12 @@
      * next reel preloads.
      */
     onPlaybackBlocked?: (cause: AutoplayBlockCause | 'unplayable') => void;
+    /**
+     * The video's sound as its author's device measured it (`MediaRef.loudness`): the player brings
+     * it toward one loudness through Web Audio (`loudnessPlayback.ts`, owner 2026-11-11). Absent (a
+     * video sent before, a live replay) it plays exactly as it always did.
+     */
+    loudness?: MediaLoudness | null;
   }
 
   let {
@@ -117,10 +234,51 @@
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
     safeBottom = true,
-    minimal = false,
+    variant = 'lightbox',
     poster = null,
+    posterFit = 'contain',
     onPlaybackBlocked,
+    streamed = false,
+    onOpen,
+    openLabel,
+    onActions,
+    onMetadata,
+    onVideo,
+    backdrop = false,
+    positionKey,
+    loudness = null,
   }: Props = $props();
+
+  /** The key positions travel under (`positionKey`, else the URL). */
+  const resumeKey = $derived(positionKey ?? src);
+
+  /**
+   * HOW THE ELEMENT TAKES TURNS, chosen once at mount - the variant is not live:
+   * - `feed`: plays while it is on screen, muted by the app's answer (`playWhileVisible`);
+   * - `chat`: plays when asked, and pauses whatever else plays (`arbitratePlayback`); its sound is
+   *   its own (`local`), never the app's (user, 2026-10-02);
+   * - a viewer (`lightbox`, `reel`): the only media playing while open, on its scope's sound
+   *   (`followVideoSound`).
+   */
+  function playback(node: HTMLVideoElement, scope: VideoSoundScope) {
+    Log.d('VideoPlayer', `mounted as ${variant}`);
+    if (variant === 'feed') return playWhileVisible(node);
+    if (variant === 'chat') return arbitratePlayback(node);
+    return followVideoSound(node, scope);
+  }
+
+  /** An inline video (the feed's, a conversation's): no bar, chips in its corners. */
+  const inline = $derived(variant === 'feed' || variant === 'chat');
+  /** A conversation's viewer: the minimal chrome (a line, a speaker, the glyph while paused). */
+  const conversation = $derived(variant === 'conversation');
+  /** A conversation's sound is the element's own, whatever the caller says. */
+  const scope = $derived<VideoSoundScope>(variant === 'chat' ? 'local' : soundScope);
+  /** What the element is given: a decrypted file seeks to its first frame inline (see above). */
+  const elementSrc = $derived(inline && !streamed ? `${src}#t=0.1` : src);
+  /** The blurred backdrop's picture: one frame of THIS element, taken once per source. */
+  let backdropUrl = $state<string | null>(null);
+  /** A conversation's video has been started once: its line and speaker show from then on. */
+  let started = $state(false);
 
   /**
    * WHERE THE INLINE VIDEO THIS ONE WAS OPENED FROM HAD GOT TO (`videoResume`), taken once at mount.
@@ -129,8 +287,82 @@
    */
   let resumeFrom = 0;
   onMount(() => {
-    resumeFrom = takeVideoPosition(src);
+    // An inline video is where a position is WRITTEN for the viewer about to open; it takes none.
+    if (!inline) resumeFrom = takeVideoPosition(resumeKey);
   });
+
+  /** The inline player waits for the viewer it opened to hand its time back (`videoResume`). */
+  let stopAwaiting: (() => void) | null = null;
+  onDestroy(() => {
+    stopAwaiting?.();
+    // A VIEWER HANDS BACK WHERE IT GOT TO as it leaves, so the inline video resumes there - or, if
+    // it never reached its resume point (closed before the metadata), the point it was opened at.
+    if (!inline) handBackVideoPosition(resumeKey, resumeFrom > 0 ? resumeFrom : currentTime);
+  });
+
+  $effect(() => {
+    if (!video || !onVideo) return;
+    return onVideo(video) ?? undefined;
+  });
+
+  // ONE LOUDNESS FOR EVERY VIDEO (owner, 2026-11-11): the wiring lives as long as the ELEMENT (an
+  // element takes one source node in its life), and the measurement is applied to it - keyed on its
+  // two NUMBERS, so a parent handing a new object with the same values changes nothing.
+  let loudnessHandle: LoudnessHandle | null = null;
+  $effect(() => {
+    if (!video) return;
+    const handle = loudnessAudio.attach(video, { streamed: untrack(() => streamed) });
+    loudnessHandle = handle;
+    return () => {
+      handle.destroy();
+      if (loudnessHandle === handle) loudnessHandle = null;
+    };
+  });
+  const loudnessLufs = $derived(loudness?.integratedLufs);
+  const loudnessPeak = $derived(loudness?.samplePeakDbfs);
+  $effect(() => {
+    const integratedLufs = loudnessLufs;
+    const samplePeakDbfs = loudnessPeak;
+    if (!video) return;
+    untrack(() => loudnessHandle)?.setLoudness(
+      integratedLufs === undefined || samplePeakDbfs === undefined
+        ? null
+        : { integratedLufs, samplePeakDbfs }
+    );
+  });
+
+  /**
+   * Opens the viewer from a tap, the expand chip or `f`, noting where this video had got to, and
+   * waiting for the viewer to hand back where it left it (owner, 2026-11-10: entering and leaving
+   * full screen never restart at 0).
+   */
+  function openViewer() {
+    if (!onOpen) return;
+    Log.d('VideoPlayer', `${variant}: the viewer is opened`);
+    rememberVideoPosition(resumeKey, video?.currentTime ?? 0);
+    stopAwaiting?.();
+    stopAwaiting = awaitVideoHandBack(resumeKey, (seconds) => {
+      if (!video) return;
+      // A STREAMED CARD TAKES THE TIME ONLY IF IT HOLDS IT (review of #3311): the viewer is its own
+      // download, and a card sought outside its buffer fetches every segment up to there - a third
+      // copy of the clip - or stalls behind a cut. It stays where it was instead. A whole file seeks
+      // for free.
+      if (streamed && !isTimeBuffered(video.buffered, seconds)) {
+        Log.d(
+          'VideoPlayer',
+          `${variant}: the viewer's ${seconds.toFixed(1)} s is not buffered here - kept at ${video.currentTime.toFixed(1)} s`
+        );
+        return;
+      }
+      Log.d(
+        'VideoPlayer',
+        `${variant}: resumes at ${seconds.toFixed(1)} s, where the viewer left it`
+      );
+      video.currentTime = seconds;
+      currentTime = seconds;
+    });
+    onOpen();
+  }
 
   /** Seeks to {@link resumeFrom} once, as soon as the element knows its duration. */
   function resumeOnce() {
@@ -143,13 +375,35 @@
     }
   }
 
+  /** The reel's spare player: a line, no bar, its play disc only on a decided refusal. */
+  const minimal = $derived(variant === 'reel');
+
   let root: HTMLDivElement | null = $state(null);
   let video: HTMLVideoElement | null = $state(null);
+  /**
+   * THE REEL'S VIDEO FILLS ITS FRAME (owner, 2026-11-09: "Certains posts ont des bords noirs, ils ne
+   * sont pas etires"). An element with no size of its own is drawn at the clip's intrinsic size under
+   * `max-h/max-w`, which leaves bands on ALL FOUR sides when the clip is smaller than its frame; the
+   * reel's is the whole box, fitted by `reelVideoFit` (cover unless the clip is clearly another shape).
+   */
+  const REEL_VIDEO_CLASS = 'absolute inset-0 h-full w-full';
+  let boxWidth = $state(0);
+  let boxHeight = $state(0);
+  let naturalWidth = $state(0);
+  let naturalHeight = $state(0);
+  const reelFit = $derived(
+    reelVideoFit(
+      naturalHeight > 0 ? naturalWidth / naturalHeight : 0,
+      boxHeight > 0 ? boxWidth / boxHeight : 0
+    )
+  );
 
   let paused = $state(true);
   let muted = $state(true);
   let currentTime = $state(0);
   let duration = $state(Number.NaN);
+  /** What the seek line maps onto (`scrubLength`): the duration, else what can be sought so far. */
+  let length = $state(0);
   let buffered = $state(0);
   /** The first frame is in the element: the poster gives way to it. */
   let frameReady = $state(false);
@@ -183,20 +437,47 @@
   /** Capability, not a fallback: an engine without element full screen draws no button for it. */
   const canFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled === true;
 
-  const played = $derived(
-    Number.isFinite(duration) && duration > 0 ? clampFraction(currentTime / duration) : 0
-  );
-  const timeText = $derived(
-    m.video_time_value({
-      elapsed: formatVideoTime(currentTime),
-      duration: formatVideoTime(duration),
-    })
-  );
+  /**
+   * A PRESS IS HELD (`videoGestures`): the video is paused for the reader to look at a frame, so
+   * neither the bar nor the play disc comes up for that pause. `heldWasPlaying` is what the release
+   * restores - a hold on a paused video resumes nothing.
+   */
+  let holding = $state(false);
+  let heldWasPlaying = false;
+
+  /** What the reader's last gesture did, for the glyph (`VideoFeedbackGlyph`). */
+  let feedback = $state<{ kind: VideoFeedbackKind; n: number } | null>(null);
+  let feedbackCount = 0;
+  function showFeedback(kind: VideoFeedbackKind) {
+    feedback = { kind, n: ++feedbackCount };
+  }
+
+  // THE VIEWER'S BARS FOLLOW THESE CONTROLS (`videoViewerChrome`): the header fades with the glass bar
+  // on the same clock, comes back with it, and a player that leaves - another slide, the next video
+  // of a gallery - gives the bars back. Only the viewer's own player reports.
+  const viewerChrome = useViewerChrome();
+  const chromeOwner = {};
+  $effect(() => {
+    if (variant !== 'lightbox') return;
+    viewerChrome?.report(chromeOwner, !controlsVisible);
+  });
+  $effect(() => () => viewerChrome?.leave(chromeOwner));
+  // Any variant counts as "a video is on show" for the viewer's rotation (not only the lightbox one).
+  $effect(() => {
+    viewerChrome?.enter();
+    return () => viewerChrome?.exit();
+  });
+  // The reader reached for the header (a mouse over it, a focus on Back): the controls come up.
+  $effect(() => {
+    const raised = viewerChrome?.raised ?? 0;
+    if (raised > 0 && variant === 'lightbox') untrack(showControls);
+  });
 
   // The fade: only while playing, never mid-scrub, restarted by every `poke`.
   $effect(() => {
     void poke;
-    if (paused || scrubbing || !controlsVisible) return;
+    // An unplayable video has no bar to fade: the viewer's header stays up with its message.
+    if (paused || scrubbing || unplayable || !controlsVisible) return;
     const timer = setTimeout(() => (controlsVisible = false), CONTROLS_FADE_MS);
     return () => clearTimeout(timer);
   });
@@ -205,8 +486,34 @@
   // store, and this carries a change made elsewhere (the reel rail's sound button) to the element.
   $effect(() => {
     const muted = videoSound.muted;
-    if (soundScope === 'app' && video && video.muted !== muted) video.muted = muted;
+    if (scope === 'app' && video && video.muted !== muted) {
+      video.muted = muted;
+      sync();
+    }
   });
+
+  // THE APP'S ONE VOLUME LEVEL (owner, 2026-11-11), on every video that follows the app or a chat's
+  // own mute: a newly bound element starts at the stored level, the slider moves them all at once.
+  $effect(() => {
+    const level = videoSound.level;
+    if (scope !== 'silent' && video) applyVideoLevel(video, level);
+  });
+
+  /**
+   * The volume slider's answer. `app`: the app's one volume (0 is mute, a drag up unmutes, for every
+   * video at once); `local` (a chat's video): the shared level, with the mute of this element only.
+   */
+  function changeLevel(next: number) {
+    if (!video || scope === 'silent') return;
+    showControls();
+    if (scope === 'app') {
+      videoSound.setVolume(next);
+    } else {
+      videoSound.setLevel(next);
+    }
+    video.muted = scope === 'app' ? videoSound.muted : next <= 0;
+    muted = video.muted;
+  }
 
   function showControls() {
     controlsVisible = true;
@@ -219,39 +526,147 @@
     muted = video.muted;
     currentTime = video.currentTime;
     duration = video.duration;
+    length = seekLength(video);
+    // Against the REAL length only: mapped onto what is buffered, the buffered bar would always read
+    // full. No length yet, no buffered bar.
     buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
   }
 
-  /** The reel player's tap feedback: the icon of the state the reader just chose. */
-  let tapGlyph = $state<{ kind: 'play' | 'pause'; n: number } | null>(null);
-  let glyphCount = 0;
+  /** {@link scrubLength} of the element - `seekable` absent (a test double) reads as nothing sought. */
+  function seekLength(el: HTMLVideoElement): number {
+    return scrubLength(el.duration, el.seekable ?? { length: 0, start: () => 0, end: () => 0 });
+  }
 
   function togglePlay() {
     if (!video) return;
     showControls();
-    if (minimal) tapGlyph = { kind: video.paused ? 'play' : 'pause', n: ++glyphCount };
+    if (minimal || inline || conversation) showFeedback(video.paused ? 'play' : 'pause');
     if (video.paused) {
-      video.play().catch((err: unknown) => {
-        console.warn('[VideoPlayer] play() refused', {
-          name: err instanceof Error ? err.name : String(err),
-          muted: video?.muted,
-        });
-      });
+      playNow();
     } else {
-      video.pause();
+      pauseByReader();
     }
   }
 
+  /** Asks the element to play; a refusal is logged with what it was asked with. */
+  function playNow() {
+    video?.play().catch((err: unknown) => {
+      console.warn('[VideoPlayer] play() refused', {
+        name: err instanceof Error ? err.name : String(err),
+        muted: video?.muted,
+      });
+    });
+  }
+
+  /** A pause the READER made: a feed video then stays paused (`markReaderPaused`). */
+  function pauseByReader() {
+    if (!video) return;
+    if (variant === 'feed') markReaderPaused(video);
+    video.pause();
+  }
+
+  /**
+   * THE PICTURE'S TAP (stack review, 2026-11-09): the sound everywhere, and two cases where a sound
+   * toggle alone would leave the reader with a still picture and nothing to press:
+   * - a conversation's video NOT YET STARTED: the tap plays it, audible, as its disc does - its sound
+   *   is the tap's once it has started;
+   * - a feed video ON SCREEN BUT PAUSED (an autoplay the engine refused, the reader's own pause): the
+   *   tap gives the sound, then plays it.
+   */
+  function onPictureTap() {
+    if (!video) return;
+    const action = videoTapAction({
+      variant,
+      canOpen: !!onOpen,
+      paused: video.paused,
+      started,
+      muted: video.muted,
+    });
+    Log.d('VideoPlayer', `${variant}: tap -> ${action}`);
+    switch (action) {
+      case 'open-viewer':
+        openViewer();
+        break;
+      case 'toggle-play':
+        togglePlay();
+        break;
+      case 'toggle-sound':
+        toggleMute();
+        break;
+      case 'toggle-sound-and-play':
+        toggleMute();
+        playNow();
+        break;
+      case 'sound-on':
+        turnSoundOn();
+        break;
+    }
+  }
+
+  /**
+   * A tap's sound is only ever ON (owner, 2026-11-10): the same write as the speaker's unmute, so the
+   * app's one answer follows the same way (a viewer's `followVideoSound` reads the element's change).
+   * A `silent` video has none to give and only raises the bar.
+   */
+  function turnSoundOn() {
+    if (!video) return;
+    if (video.muted && scope !== 'silent') toggleMute();
+    else showControls();
+  }
+
+  /**
+   * The sound, from the speaker, the `m` key or a tap on the picture. In the `app` scope it becomes
+   * the app's one answer, remembered (a viewer's `followVideoSound` reads the element's change; an
+   * inline video writes it, having no viewer action); `local` mutes this element only; a `silent`
+   * video has no sound to give and only raises the bar.
+   */
   function toggleMute() {
     if (!video) return;
     showControls();
-    // In the `app` scope `followVideoSound` turns this element's change into the app's one answer.
+    if (scope === 'silent') return;
     video.muted = !video.muted;
+    // The unmute is the reader's GESTURE: a measured video's AudioContext is resumed inside it.
+    if (!video.muted) void loudnessHandle?.prime();
+    // Drawn from the element at once, not at its `volumechange`: the speaker is the answer.
+    muted = video.muted;
+    if (inline && scope === 'app') videoSound.setMuted(video.muted);
+    showFeedback(video.muted ? 'sound-off' : 'sound-on');
   }
 
+  /** A press held on the picture: pause for as long as it is held. */
+  function onHoldStart() {
+    if (!video) return;
+    holding = true;
+    heldWasPlaying = !video.paused;
+    if (heldWasPlaying) pauseByReader();
+  }
+
+  /** The hold ended: resume what it paused, and nothing it did not. */
+  function onHoldEnd() {
+    holding = false;
+    if (!video || !heldWasPlaying) return;
+    heldWasPlaying = false;
+    video.play().catch((err: unknown) => {
+      console.warn('[VideoPlayer] play() refused after a hold', {
+        name: err instanceof Error ? err.name : String(err),
+      });
+    });
+  }
+
+  /**
+   * Seeks within the clip. A STREAM IS CLAMPED TO WHAT IT STILL HOLDS (`streamSeekFloor`): its
+   * declared duration makes the whole clip seekable to the engine, but a segment trimmed or evicted
+   * behind the playhead is never appended again, and a seek there would stall for ever.
+   */
   function seekTo(seconds: number) {
-    if (!video || !Number.isFinite(video.duration)) return;
-    video.currentTime = Math.min(video.duration, Math.max(0, seconds));
+    if (!video) return;
+    const end = seekLength(video);
+    if (end <= 0) return;
+    const floor = streamed ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
+    if (seconds < floor) {
+      Log.d('VideoPlayer', `seek to ${seconds.toFixed(1)} s clamped to ${floor.toFixed(1)} s`);
+    }
+    video.currentTime = Math.min(end, Math.max(floor, seconds));
     currentTime = video.currentTime;
   }
 
@@ -269,6 +684,13 @@
   function onKeydown(e: KeyboardEvent) {
     // A focused button answers its own space bar: the sound button must not play the video.
     if (e.key === ' ' && (e.target as HTMLElement).closest('button')) return;
+    // A feed card's tap is the viewer, so its keyboard twin is Enter on the focused card.
+    if (e.key === 'Enter' && variant === 'feed' && onOpen && e.target === root) {
+      e.preventDefault();
+      e.stopPropagation();
+      openViewer();
+      return;
+    }
     const action = videoKeyAction(e.key);
     if (!action) return;
     // The viewer around uses the same arrows for previous/next: the player's focus wins.
@@ -285,13 +707,15 @@
         break;
       case 'seek-to':
         showControls();
-        if (Number.isFinite(duration)) seekTo(action.fraction * duration);
+        if (length > 0) seekTo(action.fraction * length);
         break;
       case 'toggle-mute':
         toggleMute();
         break;
       case 'toggle-fullscreen':
-        void toggleFullscreen();
+        // An inline video's full screen is the viewer.
+        if (inline) openViewer();
+        else void toggleFullscreen();
         break;
     }
   }
@@ -312,51 +736,16 @@
    * show anything by itself.
    */
   function onPointerMove(e: PointerEvent) {
-    if (e.pointerType === 'mouse') showControls();
+    // Only a player with a bar has controls to raise; elsewhere this would restart the fade timer on
+    // every mouse movement for nothing.
+    if (e.pointerType === 'mouse' && !minimal && !inline && !conversation) showControls();
   }
 
-  /**
-   * A tap anywhere on the player - the picture or the black around it - brings the controls back, or
-   * hides them when they are up. Controls, the play button and the seek bar stop their own clicks, so
-   * only a tap that is nobody else's gets here.
-   */
-  function onPictureTap(e: MouseEvent) {
-    e.stopPropagation();
-    if (minimal) {
-      togglePlay();
-      return;
-    }
-    if (controlsVisible && !paused) controlsVisible = false;
-    else showControls();
-  }
-
-  // ---- seek bar: a pointer drag, captured, so a finger leaving the bar keeps scrubbing ----
-  let track: HTMLDivElement | null = $state(null);
-
-  function fractionAt(clientX: number): number {
-    if (!track) return 0;
-    const rect = track.getBoundingClientRect();
-    return rect.width > 0 ? clampFraction((clientX - rect.left) / rect.width) : 0;
-  }
-
-  function onScrubStart(e: PointerEvent) {
-    if (!Number.isFinite(duration)) return;
-    e.stopPropagation();
-    scrubbing = true;
-    controlsVisible = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    seekTo(fractionAt(e.clientX) * duration);
-  }
-
-  function onScrubMove(e: PointerEvent) {
-    if (!scrubbing) return;
-    seekTo(fractionAt(e.clientX) * duration);
-  }
-
-  function onScrubEnd() {
-    if (!scrubbing) return;
-    scrubbing = false;
-    poke += 1;
+  /** A drag on the scrubber keeps the controls up; its end restarts the fade. */
+  function onScrubbingChange(next: boolean) {
+    scrubbing = next;
+    if (next) controlsVisible = true;
+    else poke += 1;
   }
 
   function onFullscreenChange() {
@@ -410,6 +799,19 @@
           );
           return;
         }
+        if (verdict.cause === 'refused' && !muted && scope !== 'silent') {
+          // A full-screen viewer opens WITH sound where the app may; the engine refused it, so it
+          // plays muted rather than sit paused (owner, 2026-11-10) - and a tap turns the sound on.
+          console.warn(
+            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, a tap turns the sound on`,
+            err
+          );
+          if (scope === 'app') videoSound.muteForRefusedStart();
+          el.muted = true;
+          sync();
+          askAutoplay(el);
+          return;
+        }
         autoplayDone = true;
         if (verdict.cause === 'interrupted') {
           console.info(
@@ -446,7 +848,20 @@
     autoplayDone = false;
     autoplayRefused = false;
     buffering = false;
+    // A new source has no frame yet: the poster comes back until it decodes one.
+    frameReady = false;
+    backdropUrl = null;
     Log.d('VideoPlayer', `load ${loadGeneration} started`);
+  }
+
+  /** The first frame is decoded: show it, and take the backdrop from it if the box wants one. */
+  function onFirstFrame() {
+    frameReady = true;
+    // A first-frame picture is already the backdrop's source: no second capture, no swap.
+    if (backdrop && video && backdropUrl === null && !poster) {
+      backdropUrl = captureVideoFrame(video);
+      Log.d('VideoPlayer', `backdrop frame taken=${backdropUrl !== null}`);
+    }
   }
 
   /** `waiting`: the element should play but has no data - a slow network, drawn as a spinner. */
@@ -475,6 +890,9 @@
       msg: video?.error?.message,
     });
     unplayable = true;
+    // The error replaces the bar: if the bar had faded, the viewer's header would stay hidden over
+    // a message nobody can dismiss, so the controls (and with them the header) come back.
+    controlsVisible = true;
     tellBlocked('unplayable');
   }
 </script>
@@ -485,38 +903,69 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={root}
-  class="relative flex items-center justify-center overflow-hidden bg-black outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {klass}"
+  class="relative flex items-center justify-center overflow-hidden outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-white {inline
+    ? ''
+    : 'bg-black'} {klass}"
   role="group"
-  aria-label={m.video_player_label()}
+  aria-label={variant === 'feed' && onOpen && openLabel ? openLabel : m.video_player_label()}
   tabindex="0"
-  data-video-player
+  data-video-player={variant}
+  use:videoGestures={{ onTap: onPictureTap, onHoldStart, onHoldEnd }}
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
-  onclick={onPictureTap}
 >
+  {#if backdrop && (backdropUrl ?? poster)}
+    <!-- The bands' blur, from the first-frame picture while there is one, so the picture and its
+         backdrop come in TOGETHER (owner, 2026-11-10: three visible stages before). -->
+    <BlurredBackdrop src={(backdropUrl ?? poster)!} />
+  {/if}
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <video
     bind:this={video}
-    {src}
-    {autoplay}
-    {loop}
+    src={elementSrc}
+    autoplay={autoplay && !inline}
+    loop={loop && variant !== 'chat' && !conversation}
     playsinline
     preload="metadata"
     poster={TRANSPARENT_VIDEO_POSTER}
     disableremoteplayback={disableRemotePlayback || undefined}
-    use:followVideoSound={soundScope}
-    class={videoClass}
+    use:playback={scope}
+    class="{minimal ? REEL_VIDEO_CLASS : videoClass} {backdrop && !frameReady && !unplayable
+      ? 'opacity-0'
+      : ''}"
+    style:object-fit={minimal ? reelFit : undefined}
+    bind:clientWidth={boxWidth}
+    bind:clientHeight={boxHeight}
+    data-reel-video-fit={minimal ? reelFit : undefined}
     style="transform: var(--lightbox-zoom, none); transform-origin: center;"
     onloadstart={onLoadStart}
-    onloadedmetadata={() => {
+    onloadedmetadata={(e) => {
+      if (video) {
+        naturalWidth = video.videoWidth;
+        naturalHeight = video.videoHeight;
+        Log.d(
+          'VideoPlayer',
+          `intrinsic ${naturalWidth}x${naturalHeight} in a ${boxWidth}x${boxHeight} box`
+        );
+        // NO LENGTH, NO SEEK (owner, 2026-11-10): a FILE that declares none is said, so the
+        // population of such videos is countable (`mp4Duration.ts`). A STREAM is not said here: at
+        // its metadata it has only its head, and its length comes later from its tail - the
+        // stream itself says when it cannot (`[media-seg] ... none read from its tail - <why>`).
+        if (!streamed && (!Number.isFinite(video.duration) || video.duration <= 0)) {
+          console.info(
+            `[VideoPlayer] ${variant}: the file declares no duration (${video.duration}) - the line maps onto what can be sought`
+          );
+        }
+      }
       resumeOnce();
       sync();
       tryAutoplay();
+      onMetadata?.(e);
     }}
     onloadeddata={() => {
-      frameReady = true;
+      onFirstFrame();
       sync();
       tryAutoplay();
     }}
@@ -526,6 +975,7 @@
     onprogress={sync}
     onplay={() => {
       autoplayRefused = false;
+      started = true;
       sync();
       poke += 1;
     }}
@@ -535,7 +985,8 @@
     onpause={() => {
       buffering = false;
       sync();
-      controlsVisible = true;
+      // A pause the reader holds is for looking at the frame: the bar stays where it was.
+      if (!holding) controlsVisible = true;
     }}
     onvolumechange={sync}
     onerror={onVideoError}
@@ -552,13 +1003,16 @@
   {:else}
     {#if !frameReady}
       {#if poster}
-        <!-- The first frame's picture, in the place the frame will take (`object-contain` in the
-             same box), so the frame replaces it without a jump. -->
+        <!-- The first frame's picture, in the place the frame will take (fitted as the video is,
+             `posterFit`, in the same box), so the frame replaces it without a jump. -->
         <img
           src={poster}
           alt=""
           aria-hidden="true"
-          class="pointer-events-none absolute inset-0 h-full w-full object-contain select-none"
+          class="pointer-events-none absolute inset-0 h-full w-full select-none {posterFit ===
+          'cover'
+            ? 'object-cover'
+            : 'object-contain'}"
           data-video-first-frame-poster
         />
       {:else if !minimal}
@@ -568,21 +1022,12 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if paused && (minimal ? autoplayRefused : frameReady)}
+    {#if (variant !== 'feed' || !feedAutoplayPermitted()) && paused && !holding && (minimal ? autoplayRefused : frameReady)}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
-           minimal player draws it on a decided outcome only, with or without a first frame. -->
-      <button
-        type="button"
-        class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
-        aria-label={m.video_play_label()}
-        tabindex="-1"
-        onclick={(e) => {
-          e.stopPropagation();
-          togglePlay();
-        }}
-      >
-        <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
-      </button>
+           minimal player draws it on a decided outcome only, with or without a first frame; the
+           feed's only when the reader's "Lecture automatique des vidéos" keeps it from starting
+           (`video/autoplayPolicy.ts`) - otherwise it plays by being on screen, as Instagram's does. -->
+      <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
     {/if}
 
     {#if minimal && buffering}
@@ -590,184 +1035,196 @@
       <MediaSpinner />
     {/if}
 
-    {#if minimal}
-      <!-- THE GLYPH IS THE FEEDBACK OF A TAP, NEVER A STATE (user, 2026-10-23): nothing at load, at
-           autoplay or at the end, only the icon of what the reader's tap (or key) just did, popping
-           and fading in 600 ms. Hidden under `prefers-reduced-motion`. Never a target. -->
-      {#key tapGlyph?.n}
-        {#if tapGlyph}
-          <div
-            class="reel-glyph pointer-events-none absolute top-1/2 left-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-black/45 text-white motion-reduce:hidden"
-            aria-hidden="true"
-            data-video-glyph={tapGlyph.kind}
-          >
-            {#if tapGlyph.kind === 'pause'}
-              <Pause size={30} strokeWidth={2.25} fill="currentColor" />
-            {:else}
-              <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
-            {/if}
-          </div>
-        {/if}
-      {/key}
+    <!-- THE GLYPH IS THE FEEDBACK OF A GESTURE, NEVER A STATE: a tap's sound, a reel's pause. -->
+    <VideoFeedbackGlyph {feedback} />
 
-      <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), 32 px
-           tall to touch and 2 px to see. A drag on it is a seek (`data-video-controls` keeps the
-           viewer's swipe off it); the handle and the thicker line show only while touched or
-           focused from the keyboard. Always drawn: it is not part of the controls' fade. -->
-      <div
-        data-video-controls
-        data-video-progress
-        class="absolute inset-x-0 bottom-0 z-40"
-        style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
-        onpointerdown={(e) => e.stopPropagation()}
-        onclick={(e) => e.stopPropagation()}
-        role="presentation"
-      >
-        <div
-          bind:this={track}
-          class="group/seek relative flex h-8 w-full cursor-pointer touch-none items-end outline-none"
-          role="slider"
-          tabindex="0"
-          aria-label={m.video_seek_label()}
-          aria-valuemin={0}
-          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
-          aria-valuenow={Math.floor(currentTime)}
-          aria-valuetext={timeText}
-          onpointerdown={onScrubStart}
-          onpointermove={onScrubMove}
-          onpointerup={onScrubEnd}
-          onpointercancel={onScrubEnd}
+    {#if inline}
+      <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels). The
+           CHAT's expand chip top-right (its tap is the sound, not the viewer); the FEED has none,
+           its tap opens the viewer and the root carries `openLabel` (Enter and `f` open it from the
+           keyboard). The speaker bottom-right: the feed's a bare quiet glyph drawn only while the
+           video plays (nothing on a poster that is not playing), a conversation's a chip once
+           started, with its progress line. No bar: there is nothing to fade. -->
+      {#if onOpen && variant !== 'feed'}
+        <VideoExpandButton
+          label={openLabel}
+          onclick={openViewer}
+          class="absolute top-0.5 right-0.5 z-20"
+        />
+      {/if}
+      {#if variant === 'feed' ? !paused : started}
+        <VideoSoundButton
+          {muted}
+          onToggle={toggleMute}
+          onLevel={changeLevel}
+          quiet={variant === 'feed'}
+          class="absolute right-0.5 bottom-0.5 z-20"
+        />
+      {/if}
+      {#if onActions}
+        <!-- The message's actions: a hold on the picture is the pause, so the menu is a chip. -->
+        <VideoChipButton
+          label={m.msg_more_actions_label()}
+          onclick={onActions}
+          class="absolute top-0.5 left-0.5 z-20"
+          data-video-actions
         >
-          <div
-            class="relative w-full overflow-hidden bg-white/30 drop-shadow-sm transition-[height] duration-150 group-focus-visible/seek:h-1 motion-reduce:transition-none {scrubbing
-              ? 'h-1'
-              : 'h-0.5'}"
-            data-video-line
-          >
-            <div class="absolute inset-y-0 left-0 bg-white" style="width: {played * 100}%"></div>
-          </div>
-          <div
-            class="pointer-events-none absolute bottom-0 h-3 w-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow transition-opacity duration-150 group-focus-visible/seek:opacity-100 motion-reduce:transition-none {scrubbing
-              ? 'opacity-100'
-              : 'opacity-0'}"
-            style="left: {played * 100}%"
-            data-video-handle
-          ></div>
-        </div>
-      </div>
-    {:else}
-      <div
-        data-video-controls
-        class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 text-white transition-opacity duration-300 {safeBottom
-          ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
-          : 'pb-2'} {controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}"
-        onpointerdown={(e) => e.stopPropagation()}
-        onclick={(e) => e.stopPropagation()}
-        role="presentation"
-      >
-        <button
-          type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-          aria-label={paused ? m.video_play_label() : m.video_pause_label()}
+          <Ellipsis size={16} strokeWidth={2.5} class="drop-shadow" />
+        </VideoChipButton>
+      {/if}
+      {#if variant === 'chat' && started}
+        <!-- Pause and play again without the keyboard: the tap is the sound once started. -->
+        <VideoChipButton
+          label={paused ? m.video_play_label() : m.video_pause_label()}
           onclick={togglePlay}
+          class="absolute bottom-0.5 left-0.5 z-20"
+          data-video-toggle
         >
           {#if paused}
-            <Play size={20} strokeWidth={2.25} fill="currentColor" />
+            <Play size={14} strokeWidth={2.5} fill="currentColor" class="ml-0.5 drop-shadow" />
           {:else}
-            <Pause size={20} strokeWidth={2.25} fill="currentColor" />
+            <Pause size={14} strokeWidth={2.5} fill="currentColor" class="drop-shadow" />
           {/if}
-        </button>
-
-        <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
-          {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
-        </span>
-
-        <div
-          bind:this={track}
-          class="group/seek relative mx-2 flex h-11 min-w-0 flex-1 cursor-pointer touch-none items-center outline-none"
-          role="slider"
-          tabindex="0"
-          aria-label={m.video_seek_label()}
-          aria-valuemin={0}
-          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
-          aria-valuenow={Math.floor(currentTime)}
-          aria-valuetext={timeText}
-          onpointerdown={onScrubStart}
-          onpointermove={onScrubMove}
-          onpointerup={onScrubEnd}
-          onpointercancel={onScrubEnd}
-        >
-          <div class="relative h-1 w-full overflow-hidden rounded-full bg-white/25">
-            <div
-              class="absolute inset-y-0 left-0 bg-white/45"
-              style="width: {buffered * 100}%"
-            ></div>
-            <div
-              class="bg-cn-yellow absolute inset-y-0 left-0"
-              style="width: {played * 100}%"
-            ></div>
-          </div>
-          <div
-            class="bg-cn-yellow absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
-              ? 'scale-125'
-              : ''}"
-            style="left: {played * 100}%"
-          ></div>
+        </VideoChipButton>
+        <div class="absolute inset-x-0 bottom-0 z-10" data-video-line-slot>
+          <VideoScrubber
+            variant="line"
+            {currentTime}
+            duration={length}
+            onSeek={seekTo}
+            {onScrubbingChange}
+          />
         </div>
-
-        <button
-          type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500 {muted
-            ? ''
-            : 'text-cn-yellow'}"
-          aria-label={m.video_sound_label()}
-          aria-pressed={!muted}
-          disabled={soundScope === 'silent'}
-          onclick={toggleMute}
+      {/if}
+    {:else if conversation}
+      <!-- A CONVERSATION'S VIEWER, MINIMAL (owner, 2026-11-10): the line on the bottom edge, always
+           drawn and dragged to seek, and the speaker in the corner above it. No bar, no time, no
+           fade - so nothing hides the viewer's header either. -->
+      <VideoSoundButton
+        {muted}
+        onToggle={toggleMute}
+        onLevel={changeLevel}
+        disabled={scope === 'silent'}
+        class="absolute right-1 z-40 {safeBottom
+          ? 'bottom-[calc(var(--safe-area-inset-bottom,0px)+2rem)]'
+          : 'bottom-8'}"
+      />
+      <div
+        class="absolute inset-x-0 bottom-0 z-40"
+        style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
+        data-video-line-slot
+      >
+        <VideoScrubber
+          variant="line"
+          {currentTime}
+          duration={length}
+          onSeek={seekTo}
+          {onScrubbingChange}
+        />
+      </div>
+    {:else if minimal}
+      <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), above
+           the caption's vignette (`z-40` over its `z-20`). Always drawn: it is not part of the
+           controls' fade. -->
+      <div
+        class="absolute inset-x-0 bottom-0 z-40"
+        style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
+        data-video-line-slot
+      >
+        <VideoScrubber
+          variant="line"
+          {currentTime}
+          duration={length}
+          onSeek={seekTo}
+          {onScrubbingChange}
+        />
+      </div>
+    {:else if controlsVisible}
+      <!-- THE BAR, ONE FLOATING GLASS PILL over a free scrim gradient, UNMOUNTED when faded. Its
+           buttons draw no chip of their own: one blur per player. -->
+      <div
+        data-video-controls
+        class="video-controls-in from-cn-scrim/60 absolute inset-x-0 bottom-0 bg-linear-to-t to-transparent px-3 pt-10 {safeBottom
+          ? 'pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+          : 'pb-3'}"
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <div
+          class="glass-video flex w-full items-center gap-1 rounded-3xl px-1.5"
+          data-glass={videoGlass()}
+          data-video-bar
         >
-          {#if muted}
-            <VolumeX size={20} strokeWidth={2.25} />
-          {:else}
-            <Volume2 size={20} strokeWidth={2.25} />
-          {/if}
-        </button>
-
-        {#if canFullscreen}
-          <button
-            type="button"
-            class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-            aria-label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
-            onclick={() => void toggleFullscreen()}
+          <VideoChipButton
+            label={paused ? m.video_play_label() : m.video_pause_label()}
+            onclick={togglePlay}
+            glass={false}
           >
-            {#if fullscreen}
-              <Minimize size={20} strokeWidth={2.25} />
+            {#if paused}
+              <Play size={20} strokeWidth={2.25} fill="currentColor" class="drop-shadow" />
             {:else}
-              <Maximize size={20} strokeWidth={2.25} />
+              <Pause size={20} strokeWidth={2.25} fill="currentColor" class="drop-shadow" />
             {/if}
-          </button>
-        {/if}
+          </VideoChipButton>
+
+          <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
+            {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
+          </span>
+
+          <VideoScrubber
+            variant="bar"
+            class="mx-2 min-w-0 flex-1"
+            {currentTime}
+            duration={length}
+            {buffered}
+            onSeek={seekTo}
+            {onScrubbingChange}
+          />
+
+          <VideoSoundButton
+            {muted}
+            onToggle={toggleMute}
+            onLevel={changeLevel}
+            glass={false}
+            disabled={scope === 'silent'}
+          />
+
+          {#if canFullscreen}
+            <VideoChipButton
+              label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
+              onclick={() => void toggleFullscreen()}
+              glass={false}
+            >
+              {#if fullscreen}
+                <Minimize size={20} strokeWidth={2.25} class="drop-shadow" />
+              {:else}
+                <Maximize size={20} strokeWidth={2.25} class="drop-shadow" />
+              {/if}
+            </VideoChipButton>
+          {/if}
+        </div>
       </div>
     {/if}
   {/if}
 </div>
 
 <style>
-  /* The tap feedback of the reel player: pops in, fades out, and ends invisible. */
-  .reel-glyph {
-    animation: reel-glyph-pop 600ms ease-out forwards;
+  /* The bar comes in with a short fade; it leaves by being unmounted (a hidden blur must not pay). */
+  .video-controls-in {
+    animation: video-controls-in 150ms ease-out;
   }
-  @keyframes reel-glyph-pop {
-    0% {
-      opacity: 0;
-      transform: translate(-50%, -50%) scale(0.7);
+  @media (prefers-reduced-motion: reduce) {
+    .video-controls-in {
+      animation: none;
     }
-    25% {
+  }
+  @keyframes video-controls-in {
+    from {
+      opacity: 0;
+    }
+    to {
       opacity: 1;
-      transform: translate(-50%, -50%) scale(1);
-    }
-    100% {
-      opacity: 0;
-      transform: translate(-50%, -50%) scale(1.15);
     }
   }
 </style>

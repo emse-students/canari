@@ -38,6 +38,12 @@ const ALLOWED = new Set([
   // switch and not on its `off` default. Both run in an OPEN session, never in front of an unlock
   // prompt, and the wait is skipped once any answer exists.
   'lib/utils/callsAvailability.ts',
+  // DECIDED 2026-11-10 (alpha.6, Pour toi showed the old Suivis rows): `rankedFeedsKnown` in
+  // `listPosts` waits for the FIRST answer only for a RANKED list (Pour toi, the ranked CanaReels
+  // list) while the capability is `null`, so the list is never asked as another list on a default
+  // nobody measured. The feed runs in an OPEN session, never in front of an unlock prompt; the
+  // device's stored copy is drawn meanwhile, and the wait is skipped once any answer exists.
+  'lib/posts/api.ts',
 ]);
 
 describe('the version probe never sits in front of an unlock', () => {

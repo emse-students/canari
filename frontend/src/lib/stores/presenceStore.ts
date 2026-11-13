@@ -4,6 +4,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { gatewayUrl } from '$lib/utils/apiUrl';
 import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 import { Log } from '$lib/utils/Log';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
  * Svelte store mapping each watched user ID to a boolean indicating whether
@@ -11,6 +12,8 @@ import { Log } from '$lib/utils/Log';
  */
 export const presenceMap = writable<Record<string, boolean>>({});
 const peerIdsToPoll = new Set<string>();
+/** How many holders watch each id in {@link peerIdsToPoll}: {@link unwatchUsers} drops an id at zero. */
+const watchHolds = new Map<string, number>();
 let _destroyInterval: (() => void) | null = null;
 
 /**
@@ -99,7 +102,9 @@ export function whenAnyComesOnline(userIds: string[], fn: (userIds: string[]) =>
  */
 export function watchUsers(userIds: string[]) {
   userIds.forEach((id) => {
-    if (id) peerIdsToPoll.add(id);
+    if (!id) return;
+    peerIdsToPoll.add(id);
+    watchHolds.set(id, (watchHolds.get(id) ?? 0) + 1);
   });
   if (!_destroyInterval) {
     _destroyInterval = createPausableInterval(checkPresenceNow, 10_000);
@@ -107,11 +112,24 @@ export function watchUsers(userIds: string[]) {
 }
 
 /**
- * Removes the given user IDs from the polling watchlist. When the set becomes
- * empty the interval is stopped entirely (saves battery when no presence is needed).
+ * Releases one hold on each of the given user IDs; an id leaves the polling watchlist only when its
+ * LAST holder releases it. When the set becomes empty the interval is stopped entirely (saves
+ * battery when no presence is needed).
+ *
+ * A COUNT, NOT A SET (review of #2618, 2026-10-27): a DM's header, its sidebar tile and a salon's
+ * member list watch the same peer at once, and one of them releasing used to stop the poll for
+ * all of them - the tile's dot froze once its DM was left.
  */
 export function unwatchUsers(userIds: string[]) {
-  userIds.forEach((id) => peerIdsToPoll.delete(id));
+  userIds.forEach((id) => {
+    const holds = (watchHolds.get(id) ?? 0) - 1;
+    if (holds > 0) {
+      watchHolds.set(id, holds);
+      return;
+    }
+    watchHolds.delete(id);
+    peerIdsToPoll.delete(id);
+  });
   if (peerIdsToPoll.size === 0 && _destroyInterval) {
     _destroyInterval();
     _destroyInterval = null;
@@ -240,7 +258,14 @@ async function pollPresence(): Promise<void> {
     if (hidden.length > 0) Log.d(`[presence] ${hidden.length} watched user(s) no longer visible`);
     if (cameOnline.length > 0) notifyCameOnline(cameOnline);
   } catch (err) {
-    console.error('Failed to fetch presence', err);
+    // A request that got no answer is the link being down, which the connectivity store already
+    // says once; the map simply stays as it was until the next poll (1.6.8 logs, 2026-11-09: an
+    // ERROR with a stack for every poll while offline). Anything else is a defect and accuses.
+    if (isTransportFailure(err)) {
+      console.log('[presence] the poll got no answer - the map stays as it was');
+    } else {
+      console.error('Failed to fetch presence', err);
+    }
   }
 }
 
@@ -258,6 +283,7 @@ function notifyCameOnline(userIds: string[]): void {
 /** @internal Resets module state between Vitest cases. */
 export function resetPresenceForTests(): void {
   peerIdsToPoll.clear();
+  watchHolds.clear();
   cameOnlineListeners.clear();
   inFlight = null;
   legacyRouteAnnounced = false;

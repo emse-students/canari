@@ -128,7 +128,7 @@ describe('CommentsPreview', () => {
     const { target } = mountPreview([comment('g', 1, { text: '', media: gif })]);
     const thumb = target.querySelector('[data-comment-media]');
     expect(thumb).not.toBeNull();
-    expect(thumb!.className).toContain('max-w-32');
+    expect(thumb!.className).toContain('max-w-24');
   });
 
   it('holds the picture back until the card comes near the viewport', () => {

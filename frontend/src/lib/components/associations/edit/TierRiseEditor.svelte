@@ -75,7 +75,7 @@
       checked={enabled}
       disabled={sources.length === 0}
       onchange={(e) => toggle(e.currentTarget.checked)}
-      class="accent-cn-yellow mt-0.5 size-4"
+      class="accent-accent mt-0.5 size-4"
     />
     <span>
       <span class="text-text-main block text-xs font-semibold">
@@ -114,13 +114,15 @@
       <span>{m.asso_cotisations_rise_sentence_instead({ full: tierPriceLabel(fullCents) })}</span>
     </div>
     {#if riseGivesNoDiscount(quote)}
-      <p class="text-amber-warn text-xs font-semibold">{m.asso_cotisations_rise_no_discount()}</p>
+      <p class="text-amber-warn-text text-xs font-semibold">
+        {m.asso_cotisations_rise_no_discount()}
+      </p>
     {/if}
   {/if}
 
   <!-- The preview: the sentence, and the line the member would read in the shop. -->
   <div class="bg-cn-surface space-y-2 rounded-xl p-3">
-    <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
+    <p class="text-text-muted text-xs font-bold">
       {m.asso_cotisations_rise_preview_title()}
     </p>
     <p class="text-text-main text-sm">{riseSentence(quote)}</p>

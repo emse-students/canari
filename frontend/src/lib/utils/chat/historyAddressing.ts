@@ -76,10 +76,12 @@ export function mintHistoryRequestId(): string {
 }
 
 /**
- * The `requestId` a history frame carries, or `undefined` when it carries none usable - an older
- * asker, or a value shaped like nothing this build mints (a UUID: letters, digits and hyphens).
- * Echoed verbatim by the answerer, so it is checked where it enters rather than trusted into a log
- * line or a map key.
+ * The `requestId` a history frame carries, or `undefined` when it carries none usable (absent, or a
+ * value shaped like nothing this build mints - a UUID: letters, digits and hyphens). An ASK must
+ * carry one, and is refused without it where it is parsed (`historyAskId`, D211); an incoming
+ * `history_bundle` may still carry none, since the inviter's push names `join` instead. Echoed
+ * verbatim by the answerer, so it is checked where it enters rather than trusted into a log line or
+ * a map key.
  */
 export function parseHistoryRequestId(raw: unknown): string | undefined {
   return typeof raw === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(raw) ? raw : undefined;

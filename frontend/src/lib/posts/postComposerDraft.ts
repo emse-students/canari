@@ -1,6 +1,8 @@
+import { intlLocale } from '$lib/utils/intlLocale';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { getSavedUserId } from '$lib/stores/user';
 import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
+import { reachDraftFrom, type InstitutionReachDraft } from './institutionReach';
 
 /**
  * Sentinel value of `selectedAssociationId`/`PostComposerDraft.selectedAssociationId` meaning "post
@@ -40,6 +42,11 @@ export interface PostComposerDraft {
    * the default, so a draft from before the switch, or one that never touched it, reads as OFF.
    */
   studentsOnly?: boolean;
+  /**
+   * The reach an institution was choosing (owner, 2026-11-10), written only once something was
+   * chosen: a draft without it restores with nothing ticked, which is the reach's only start.
+   */
+  reach?: InstitutionReachDraft;
 }
 
 /**
@@ -143,6 +150,7 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
               ? parsed.selectedLinkedCalendarEventId
               : '',
           ...(parsed.studentsOnly === true ? { studentsOnly: true } : {}),
+          ...(parsed.reach !== undefined ? { reach: reachDraftFrom(parsed.reach) } : {}),
         });
         if (isPostComposerDraftWorthKeeping(draft)) return draft;
         console.log('[POST_COMPOSER] stored draft held only abandoned attachments - not restored');
@@ -271,7 +279,7 @@ export function formOpensAtIso(opensAt?: string | null): string | null {
 }
 
 export function formatFormOpensAt(opensAt: string): string {
-  return new Date(opensAt).toLocaleString('fr-FR', {
+  return new Date(opensAt).toLocaleString(intlLocale(), {
     weekday: 'short',
     day: 'numeric',
     month: 'short',

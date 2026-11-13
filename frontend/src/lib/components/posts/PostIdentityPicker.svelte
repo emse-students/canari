@@ -101,7 +101,7 @@
       options={identityOptions}
       onValueChange={(v) => (value = v)}
       label={label ?? m.post_create_post_as_label()}
-      triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
+      triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-accent/40 dark:hover:bg-white/10"
     >
       {#snippet leading(option)}
         <span class="block h-9 w-9">

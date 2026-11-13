@@ -62,7 +62,7 @@
   const accentVars = $derived(
     accentColor
       ? `--tile-accent: ${accentColor}; --tile-accent-ink: ${contrastColor(accentColor)};`
-      : '--tile-accent: var(--color-cn-yellow); --tile-accent-ink: var(--color-cn-ink);'
+      : '--tile-accent: var(--color-accent); --tile-accent-ink: var(--color-cn-ink);'
   );
 </script>
 
@@ -86,6 +86,11 @@
   <div class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-(--tile-accent)"></div>
 
   <!--
+    NO IMAGE IS A DELIBERATE PLACEHOLDER, NOT A FAILED ONE (tour of dev, 2026-11-10): the fallback
+    glyph used to sit alone on the right of an empty row in a neutral frame, which read as a logo
+    that did not load. Without a badge or an uploaded logo it now leads the row (the left edge the title below uses),
+    in a frame tinted with the card's own accent, like an avatar's initials tile.
+
     Header row: the badge as a pill, and the icon in a frame of its own. The icon used to be a
     64px watermark absolutely positioned in this corner at 40% opacity behind a radial mask, which
     cost a card nothing in height but two real things: an uploaded brand logo - the one piece of
@@ -97,14 +102,16 @@
     <div class="flex items-start gap-3 px-4 pt-4">
       {#if trimmedBadge}
         <span
-          class="text-2xs rounded-full bg-(--tile-accent) px-2.5 py-0.5 font-bold tracking-wide text-(--tile-accent-ink) uppercase"
+          class="text-2xs rounded-full bg-(--tile-accent) px-2.5 py-0.5 font-bold text-(--tile-accent-ink)"
         >
           {trimmedBadge}
         </span>
       {/if}
       {#if resolvedIconUrl || FallbackIcon}
         <div
-          class="border-cn-border bg-cn-surface-alt ml-auto flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5"
+          class="border-cn-border flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5 {resolvedIconUrl
+            ? 'bg-cn-surface-alt'
+            : 'bg-(--tile-accent)/15'} {trimmedBadge || resolvedIconUrl ? 'ml-auto' : ''}"
         >
           {#if resolvedIconUrl}
             <!-- Decorative: the caller renders the name this logo stands for as text in `children`,

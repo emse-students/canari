@@ -83,6 +83,7 @@ export async function prepareQueuedChatReel(
       width: prepared.width,
       height: prepared.height,
       durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
   } catch (e) {
     // Cancelled while it waited for the encoder: the member's act, exactly like a cancel mid-encode.

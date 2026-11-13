@@ -137,18 +137,48 @@ export async function submitMinesweeperChallenge(
   return res.json();
 }
 
-/** Fetches one page of the verified leaderboard (best time per user), `offset` places down. */
+/** One promo that has a ranking, with how many ranked players it holds. */
+export interface MinesweeperPromo {
+  promo: number;
+  players: number;
+}
+
+/** The promos that have a ranking (newest first) and the caller's own (null without a cursus). */
+export interface MinesweeperPromos {
+  promos: MinesweeperPromo[];
+  mine: number | null;
+}
+
+/**
+ * Fetches one page of the verified leaderboard (best time per user), `offset` places down. With
+ * `promo` the board is that entry year's alone, ranks counted inside it: only an account with a
+ * cursus appears there.
+ */
 export async function fetchMinesweeperLeaderboard(
   limit = 25,
-  offset = 0
+  offset = 0,
+  promo?: number
 ): Promise<LeaderboardPage> {
-  const res = await apiFetch(`${minesweeperBase()}/leaderboard?limit=${limit}&offset=${offset}`);
+  const promoQuery = promo === undefined ? '' : `&promo=${promo}`;
+  const res = await apiFetch(
+    `${minesweeperBase()}/leaderboard?limit=${limit}&offset=${offset}${promoQuery}`
+  );
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to load leaderboard');
   }
   const data = (await res.json()) as Partial<LeaderboardPage>;
   const entries = data.entries ?? [];
   return { entries, total: data.total ?? entries.length };
+}
+
+/** The promos that have a ranking, for the per-promo tab of the Games page. */
+export async function fetchMinesweeperPromos(): Promise<MinesweeperPromos> {
+  const res = await apiFetch(`${minesweeperBase()}/promos`);
+  if (!res.ok) {
+    throw await refusalFromResponse(res, 'Failed to load the promos');
+  }
+  const data = (await res.json()) as Partial<MinesweeperPromos>;
+  return { promos: data.promos ?? [], mine: data.mine ?? null };
 }
 
 /** The caller's own ranked record: played, won, best / average / median, latest wins, rank. */

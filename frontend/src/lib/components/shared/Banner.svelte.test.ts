@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * A BANNER WITH ACTIONS MUST LET THEM WRAP BELOW THE LABEL. On a 392 px phone (Mi 9T) the three
- * device-notice actions sat beside the text and squeezed it into a ~170 px column twelve lines tall.
- * happy-dom has no layout, so this pins the classes that carry the behaviour: the row wraps and the
- * label grows from a readable basis instead of shrinking to whatever the actions leave.
+ * A BANNER IS ONE LINE AND ONE HEIGHT (owner, 2026-11-09). happy-dom has no layout, so this pins the
+ * classes that carry it: the row never wraps, it takes the height token, the label truncates beside
+ * its actions, and the thin variant takes the thin token.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
@@ -17,20 +16,35 @@ afterEach(() => {
 
 const snippet = (html: string) => createRawSnippet(() => ({ render: () => html }));
 
+function mountBanner(props: Record<string, unknown>) {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const app = mount(Banner, {
+    target,
+    props: { children: snippet('<span id="label">text</span>'), ...props } as never,
+  });
+  mounted.push(() => void unmount(app));
+  flushSync();
+  return target.firstElementChild as HTMLElement;
+}
+
 describe('Banner', () => {
-  it('wraps its actions below a label that keeps a basis and grows', () => {
-    const target = document.createElement('div');
-    document.body.appendChild(target);
-    const app = mount(Banner, {
-      target,
-      props: { children: snippet('<span id="label">text</span>'), action: snippet('<b>go</b>') },
-    });
-    mounted.push(() => void unmount(app));
-    flushSync();
-    const row = target.firstElementChild as HTMLElement;
-    expect(row.classList.contains('flex-wrap')).toBe(true);
+  it('never wraps and carries the one height token', () => {
+    const row = mountBanner({});
+    expect(row.classList.contains('flex-wrap')).toBe(false);
+    expect(row.classList.contains('min-h-(--banner-height)')).toBe(true);
+  });
+
+  it('keeps the label shrinkable beside its actions', () => {
+    const row = mountBanner({ action: snippet('<b>go</b>') });
     const label = row.querySelector('#label')!.parentElement as HTMLElement;
     expect(label.classList.contains('flex-1')).toBe(true);
-    expect(label.classList.contains('basis-56')).toBe(true);
+    expect(label.classList.contains('min-w-0')).toBe(true);
+  });
+
+  it('the thin variant takes the thin token', () => {
+    expect(mountBanner({ thin: true }).classList.contains('min-h-(--banner-height-thin)')).toBe(
+      true
+    );
   });
 });

@@ -63,6 +63,46 @@ describe('avatarPhotoPresence', () => {
     expect(apiFetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('a face asked again while its answer is on the wire joins that request (dev boot, 2026-11-10)', async () => {
+    let release: (r: Response) => void = () => {};
+    apiFetchMock.mockReturnValueOnce(new Promise<Response>((r) => (release = r)));
+
+    // Two separate turns of the event loop, as the tiles and the members list mount.
+    const first = avatarPhotoPresence('a');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    const second = avatarPhotoPresence('a');
+    const third = avatarPhotoPresence('a');
+
+    release(answer(['a']));
+    expect(await Promise.all([first, second, third])).toEqual([true, true, true]);
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again once an unanswered request is over - a join never outlives its request', async () => {
+    apiFetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    apiFetchMock.mockResolvedValueOnce(answer(['b']));
+
+    expect(await avatarPhotoPresence('b')).toBeNull();
+    expect(await avatarPhotoPresence('b')).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('an answer asked for the previous reader is not remembered for the next one', async () => {
+    let release: (r: Response) => void = () => {};
+    apiFetchMock.mockReturnValueOnce(new Promise<Response>((r) => (release = r)));
+    const before = avatarPhotoPresence('c');
+    await Promise.resolve();
+    forgetReaderCaches();
+    release(answer(['c']));
+    expect(await before).toBe(true);
+
+    apiFetchMock.mockResolvedValueOnce(answer([]));
+    expect(await avatarPhotoPresence('c')).toBe(false);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('forgets what it was told when the reader changes', async () => {
     apiFetchMock.mockResolvedValue(answer([]));
     await avatarPhotoPresence('y');

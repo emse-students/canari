@@ -71,7 +71,7 @@
   <a
     href={inAppPath}
     title={linkTitle}
-    class="canari-app-link inline-flex items-center gap-0.5 font-medium text-amber-700 underline decoration-amber-500/50 underline-offset-2 transition-colors hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300 {className}"
+    class="canari-app-link text-accent-text decoration-accent-text hover:text-accent-text inline-flex items-center gap-0.5 font-medium underline underline-offset-2 transition-colors {className}"
     onclick={handleInAppClick}
   >
     {#if children}

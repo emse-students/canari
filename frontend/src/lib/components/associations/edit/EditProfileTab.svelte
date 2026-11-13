@@ -190,7 +190,7 @@
 </script>
 
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
-  <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_edit_profile_title()}</h2>
+  <h2 class="text-text-main text-lg font-bold">{m.asso_edit_profile_title()}</h2>
   <!--
     ONE LOGO CONTROL, CALLED TWICE. The second theme's logo had every half of its plumbing - column,
     DTO, public projection, frontend type, detail-page rendering - and no way to SET it, so the
@@ -314,7 +314,7 @@
           title={c}
           class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
  {editColor === c
-            ? 'border-cn-dark ring-cn-yellow/70 scale-110 ring-2 ring-offset-1'
+            ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
             : 'border-transparent hover:border-white/60'}"
           style="background:{c};"
           aria-label={c}
@@ -353,7 +353,7 @@
         type="button"
         onclick={handleSaveProfile}
         disabled={saving}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {saving ? m.asso_edit_saving_label() : m.asso_edit_save_profile_button()}
       </button>

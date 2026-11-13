@@ -88,3 +88,28 @@ export function onCoarsePointerChange(listener: (coarse: boolean) => void): () =
     coarseWatch = null;
   };
 }
+
+/** A mouse or trackpad that can hover: the desktop, never a phone or a tablet's finger. */
+export const FINE_HOVER_QUERY = '(hover: hover) and (pointer: fine)';
+
+/**
+ * Whether the reader can HOVER with a fine pointer (the video volume slider opens on hover, which a
+ * finger cannot do - owner, 2026-11-11). `false` where it cannot know (SSR, a bare test environment).
+ */
+export function isFineHoverDevice(): boolean {
+  if (!canQuery()) return false;
+  return window.matchMedia(FINE_HOVER_QUERY).matches;
+}
+
+/**
+ * Calls `listener` now and whenever the answer of {@link isFineHoverDevice} changes (a tablet gaining
+ * a mouse). Returns the teardown; a no-op one where nothing can be observed.
+ */
+export function watchFineHover(listener: (fineHover: boolean) => void): () => void {
+  if (!canQuery()) return () => {};
+  const query = window.matchMedia(FINE_HOVER_QUERY);
+  const onChange = () => listener(query.matches);
+  listener(query.matches);
+  query.addEventListener?.('change', onChange);
+  return () => query.removeEventListener?.('change', onChange);
+}

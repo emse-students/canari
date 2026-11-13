@@ -809,9 +809,13 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   resubmission. A typed
   `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
   client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
-  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
-  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
-  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. The
+  route's two refusals taken BEFORE the gate (the membership guard, `not_a_member`, and the link
+  ask, `awaiting_admission`) ask the commit log for these bytes first (`answerIfAlreadyAccepted`,
+  since 2026-11-11, hoisted above both the same day): a retry of an accepted commit whose target was
+  removed in between - or removed and asked back by link - is answered `accepted`, never a refusal,
+  and every new re-add of a removed user and every push answer to a link's ask is still refused
+  there (`push.controller.welcome-commit.spec.ts`).
 - **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
   key-group join's writer). In a process whose foreground manager is loaded
   (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint
@@ -1490,7 +1494,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
 | PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
 | PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member, or its creator while nobody holds a seat; never a key-distribution group) |
 
 **A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
 says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
@@ -1510,7 +1514,16 @@ and never one in a key-distribution group. The condition rides the delete itself
 after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
 locking the device row first would invert it and can deadlock; a row left behind is active and is the
 403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
-sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. One
+exception lets a delete through without a seat (2026-11-12): the group's recorded creator
+(`createdBy`) may end a live conversation that has NO seat at all and no device of another account -
+the row a creation leaves when it fails between `POST mls/groups` and the creator's `registerMember`,
+whose cleanup delete used to meet the 403 and leave the row for ever. A seat of ANY account counts,
+one awaiting admission included. The condition is read twice: once to choose the path, then again
+under the group's seat lock inside the transaction that tombstones it (`tombstoneGroupsIf` in
+`utils/group-purge.ts`), and a seat or a device written in between turns it into the 403 - an
+unlocked check followed by a tombstone would end a conversation someone had just entered (review of
+#3383). Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
@@ -1693,14 +1706,14 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + the wake it understands: `wakeVersion` (0, 1 MLS frames, 2 envelopes; capped at 2) or the step-1 `wake: true` (= 1) - `push_token.wakeVersion`, written 0 when absent, `wakeCapable` beside it for a rollback). Then deletes every `push_envelope` of the device: the app is open ([content-free-push](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)) |
+| POST | `/api/mls/push/register` | JWT, 10/min per user (`UserThrottlerGuard`; the stock guard keyed on nginx's address, one bucket for the estate, until 2026-11-10: [audit](../frontend/weak-network-audit-2026-11-10.md)) | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + the wake it understands: `wakeVersion` (0, 1 MLS frames, 2 envelopes; capped at 2) or the step-1 `wake: true` (= 1) - `push_token.wakeVersion`, written 0 when absent, `wakeCapable` beside it for a rollback). Then deletes every `push_envelope` of the device: the app is open ([content-free-push](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/wake` | PushSecret (`PushSecretGuard` on the query, then `PushSecretThrottlerGuard`, 600/min) | What a content-free wake-up push left here. `?messageId=&silent=` (an MLS frame): `{status: 'frame', fields, presentation}` (the full push's data map, `describeQueuedFrame`, ciphertext inline) or `{status: 'gone'}`; `silent` is the bit the wake carried. `?envelopeId=` (a `sendPushToUser` push, migration 046): `{status: 'push', fields, presentation}` (exactly what the full push handed this platform, inline group always in) or `gone`; serving never deletes (`served again times=n`), another registration's id is `foreign` and answered `gone`. `presentation` is what iOS's `aps` would have said (title, body, thread, sound). One `[PUSH_WAKE] served|gone` line per fetch ([design](../protocols/content-free-push.md)) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
-| POST | `/api/mls/push/channel-read` | PushSecret | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
+| POST | `/api/mls/push/channel-read` | PushSecret, 10/min per user once the secret is proven (`PushSecretGuard`, then `PushSecretThrottlerGuard`) | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token and/or PushKit `voipToken` |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active after push-triggered add |
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock from background service |
@@ -1712,7 +1725,7 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
-| POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
+| POST | `/api/mls/push/unavailable` | JWT, 10/min per user (`UserThrottlerGuard`) | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
 
 #### A device that cannot get a push token at all
 
@@ -2263,8 +2276,10 @@ because one is not enough:
 
 - **`assertSafeExternalUrl`** rejects non-http(s) schemes, embedded credentials, `localhost`, and
   any host that DNS-resolves to a non-public address. Redirects are handled manually
-  (`redirect: 'manual'`, 3 max) and each hop is re-validated - an allowed host that answers `302
-  http://127.0.0.1/` is the obvious bypass otherwise.
+  (`redirect: 'manual'`) and each hop is re-validated before anything is sent to it - an allowed
+  host that answers `302 http://127.0.0.1/` is the obvious bypass otherwise. ONE walk does it for
+  every preview fetch, `fetchThroughCheckedHops` in the controller: 3 redirects for a page, 5 for
+  an image.
 - **`ssrfSafeDispatcher`** re-checks at connect time through undici's `lookup`, so the IP the
   socket reaches is the IP that was validated. This closes the DNS-rebinding window: the two
   resolutions are separate events and an attacker-controlled zone can answer differently.
@@ -2393,9 +2408,10 @@ reader's IP, their user agent, and the moment they scrolled to the message. Encr
 then fetching its illustration in clear gives a good part of that back.
 
 - Same SSRF guard as the page fetch - the URL is caller-supplied, so it is exactly as
-  attacker-controlled as the pasted link. Redirects are *followed* here rather than walked by hand
-  (a CDN answers image requests with two or three), which is safe because `ssrfSafeDispatcher`
-  re-validates at every connect.
+  attacker-controlled as the pasted link - and the same redirect walk, each hop judged by
+  `assertSafeExternalUrl` before it is fetched. The allowance is 5 rather than 3 because a CDN
+  answers an image request with two or three redirects; a hop that is refused, or a chain that is
+  longer, is a 502 with no body.
 - `image/*` only, **SVG excluded**: an SVG is a document that can carry script, and it would be
   served from our own origin. `X-Content-Type-Options: nosniff` on the way out.
 - 3 MB ceiling, checked on `content-length` *and* on the received body, because the header can be

@@ -25,6 +25,7 @@
   } from '$lib/utils/historyOverlayStack';
   import type { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
   import LiveBroadcaster from './LiveBroadcaster.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Broadcast AS this association, or null for the member. */
@@ -44,6 +45,9 @@
     broadcast,
     readBattery,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'LiveOverlay');
 
   const narrow = isMobileOverlayLayout();
   let screen = $state<LiveBroadcaster | null>(null);
@@ -87,7 +91,8 @@
     onArm: () => (gestureArm = armHistoryOverlayGesture()),
     enabled: narrow,
   }}
-  class="fixed inset-0 z-(--z-viewer) bg-black text-white outline-none"
+  style:z-index={layer.z}
+  class="fixed inset-0 bg-black text-white outline-none"
   role="dialog"
   aria-modal="true"
   tabindex="-1"
