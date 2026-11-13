@@ -51,6 +51,8 @@ describe('the removed channels-MVP members/join route', () => {
   });
 
   afterAll(async () => {
+    // Sockets a test left idle or half-read must not outlive the worker (open handle at teardown).
+    app?.getHttpServer().closeAllConnections();
     await app?.close();
     if (previousSecret === undefined) delete process.env.INTERNAL_SHARED_SECRET;
     else process.env.INTERNAL_SHARED_SECRET = previousSecret;

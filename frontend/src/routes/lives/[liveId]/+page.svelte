@@ -87,22 +87,22 @@
     {:else}
       <Radio size={40} class="opacity-80" aria-hidden="true" />
       {#if screen.problem === 'gone'}
-        <h1 class="text-lg font-bold">{m.live_route_gone_title()}</h1>
+        <h1 class="font-body text-lg font-bold">{m.live_route_gone_title()}</h1>
         <p class="max-w-sm text-sm opacity-90">{m.live_route_gone_body()}</p>
       {:else if screen.problem === 'full'}
-        <h1 class="text-lg font-bold">{m.live_viewer_full_title()}</h1>
+        <h1 class="font-body text-lg font-bold">{m.live_viewer_full_title()}</h1>
         <p class="max-w-sm text-sm opacity-90">{m.live_viewer_full_body()}</p>
       {:else if screen.problem === 'retry'}
-        <h1 class="text-lg font-bold">{m.live_viewer_unavailable_title()}</h1>
+        <h1 class="font-body text-lg font-bold">{m.live_viewer_unavailable_title()}</h1>
         <p class="max-w-sm text-sm opacity-90">{m.live_route_retry_body()}</p>
       {:else}
-        <h1 class="text-lg font-bold">{m.live_viewer_unavailable_title()}</h1>
+        <h1 class="font-body text-lg font-bold">{m.live_viewer_unavailable_title()}</h1>
         <p class="max-w-sm text-sm opacity-90">{m.live_viewer_unavailable_body()}</p>
       {/if}
       {#if screen.problem === 'full' || screen.problem === 'retry'}
         <button
           type="button"
-          class="bg-cn-yellow text-cn-ink mt-2 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+          class="bg-accent text-on-accent mt-2 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => attempt++}
           data-live-route-retry
         >

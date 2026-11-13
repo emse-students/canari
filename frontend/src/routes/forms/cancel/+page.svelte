@@ -68,14 +68,14 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold">
           {m.form_success_confirmed_heading()}
         </h1>
         <p class="text-text-muted mt-2">{m.form_success_confirmed_desc()}</p>
       </div>
     {:else if view === 'overCapacity'}
       <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold">
           {m.form_success_over_capacity_heading()}
         </h1>
         <p class="text-text-muted mt-2">{m.form_success_over_capacity_desc()}</p>
@@ -87,7 +87,7 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold">
           {#if view === 'stillOpen'}
             {m.form_cancel_still_open_title()}
           {:else if view === 'unconfirmed'}
@@ -110,7 +110,7 @@
     {#if view !== 'loading'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {#if view === 'paid' || view === 'overCapacity'}
           {m.form_success_back_to_form()}

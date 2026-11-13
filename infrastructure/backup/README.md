@@ -15,6 +15,11 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 
 Non sauvegarde car transitoire : Redis.
 
+Jamais sauvegarde, par decision (D2, 2026-11-09) : `${CANARI_COMPOSE_PROJECT}_live_segments`, les
+segments des directs et leurs rediffusions (gardees 3 jours). `backup-objects.sh` monte une liste
+fermee de volumes qui ne le nomme pas, et `.github/scripts/tests/backup-sources.test.sh` echoue s il
+le montait ([live-replays](../../docs/wiki/live-replays.md)).
+
 Chaque execution produit une archive unique `canari-backup-AAAAMMJJ-HHMMSS.tar.gz`.
 
 > **MongoDB a ete SUPPRIME de la stack le 2026-08-18**, et son dump avec. L instance ne

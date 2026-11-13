@@ -349,6 +349,8 @@ therefore placed by what an error would take down with it, not by how important 
 | `src/routes/+layout.svelte` | `<ChatBackgroundService />` | invisible service - `onerror` that LOGS, no fallback UI |
 | SvelteKit's root (`kit/src/runtime/components/root.svelte`) | every route node | every page - `routes/+error.svelte`, reported by `handleClientError` ([below](#a-page-that-crashes)) |
 | `src/lib/components/MainChatPage.svelte` | the `{#key}` around `ChatArea` | component - `onerror` that logs |
+| `src/lib/components/reels/ReelViewer.svelte` | the whole full-screen viewer | visible feature - `onerror` logs, toasts and CLOSES the viewer, the page behind it kept ([reels](modules/reels.md#the-order-of-the-stream-and-a-change-of-order-is-a-new-list-owner-2026-11-10-crash-fixed-2026-11-11)) |
+| `src/routes/posts/+page.svelte` | each feed card (`guardedCard`) | visible feature - a `failed` snippet with Retry |
 
 The rule for anything new: a global service or a layout takes a logging `onerror` with no fallback; a
 visible feature inside a page takes a `failed` snippet with a reset; a whole page takes NOTHING (Kit
@@ -754,7 +756,12 @@ check in the same file, which is also what catches a fourteenth builder.
 - Import: `import { m } from '$lib/paraglide/messages'`.
 - Usage in templates: `{m.key()}` or `m.key({ param })`.
 - Locale-reactive in `<script>`: `const label = $derived(m.some_key())`.
-- Date/number locale: `import { getLocale } from '$lib/paraglide/runtime'` -> `getLocale() === 'en' ? 'en-US' : 'fr-FR'`.
+- Date/number locale: `intlLocale()` (`$lib/utils/intlLocale.ts`), the one place a region tag is chosen - never a
+  literal tag handed to `Intl` or `toLocale...String`, which reads right in French and wrong in English.
+  `intlLocale.guard.test.ts` reads the sources for one and names the few formatters whose output is
+  computed with, not read (a `YYYY-MM-DD` key, a zone's wall clock). An amount in cents is `formatAmount`
+  (`$lib/forms/fillAnswers.ts`). Older call sites still spell the choice inline
+  (`getLocale() === 'en' ? 'en-US' : 'fr-FR'`); they are equivalent, and new code calls the helper.
 - User-visible strings must always go through Paraglide — never inline string literals, in either
   language. English ones are the easier mistake to miss: they look like the rest of the codebase.
 - **Nothing types a string as user-visible**, so the compiler cannot enforce the rule above.

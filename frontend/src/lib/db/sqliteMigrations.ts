@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 20;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -72,6 +72,20 @@ export function outboxServerErrorsStatement(columns: readonly string[]): string 
   return columns.includes('server_errors')
     ? null
     : 'ALTER TABLE outbox ADD COLUMN server_errors INTEGER DEFAULT 0';
+}
+
+/**
+ * The v18 -> v19 step: the outbox row gains `unavailable_answers`, its count of "not now" answers
+ * (502, 503, 504) since it was queued (`OutboxEntry.unavailableAnswers`). `DEFAULT 0`, so every row
+ * already queued reads as never answered "not now". Returns `null` when the column is there - a
+ * fresh database, or a rerun - so the step is a no-op twice.
+ *
+ * @param columns Column names of the `outbox` table, from `PRAGMA table_info(outbox)`.
+ */
+export function outboxUnavailableAnswersStatement(columns: readonly string[]): string | null {
+  return columns.includes('unavailable_answers')
+    ? null
+    : 'ALTER TABLE outbox ADD COLUMN unavailable_answers INTEGER DEFAULT 0';
 }
 
 /**
@@ -171,6 +185,52 @@ export function conversationStartedAtStatement(columns: readonly string[]): stri
     ? null
     : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
 }
+
+/**
+ * The v19 -> v20 step, first half: the conversation row gains `local_read_seed`
+ * (`ConversationMeta.localReadSeed`), the upgrade's one-time LOCAL read point. Returns `null` when
+ * the column is there. The second half, {@link CONVERSATION_LOCAL_READ_SEED_FILL}, writes it.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationLocalReadSeedStatement(columns: readonly string[]): string | null {
+  return columns.includes('local_read_seed')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN local_read_seed INTEGER';
+}
+
+/**
+ * The v19 -> v20 step, second half: EVERY conversation's local read seed, written INSIDE THE
+ * MIGRATION. It runs at open, before `init` resolves, so no app code - no push-cache poll, no boot
+ * pull, no socket - can have stored a message yet: "held before the upgrade" is a property of the
+ * store, never of an app-level order.
+ *
+ * PER ROW, from its OWN messages: the newest server time among them, read in the clear from the order
+ * key (`order_at` is `messageTime`: the server's time when the row knows it, its `sentAt` otherwise,
+ * `messagePayload.ts`). A row whose `order_at` equals its `timestamp` is undated (or still
+ * provisional, `order_pending`) and says nothing about the server's clock - one phone running fast
+ * would otherwise push the seed past messages not received yet - so it is skipped. A conversation
+ * with no dated row reads 0: nothing held before the upgrade is covered, everything later counts.
+ * `WHERE local_read_seed IS NULL`, so a second run - a crash before the version stamp - changes
+ * nothing it already wrote.
+ */
+export const CONVERSATION_LOCAL_READ_SEED_FILL =
+  'UPDATE conversations SET local_read_seed = COALESCE((' +
+  'SELECT MAX(m.order_at) FROM messages m WHERE m.conversation_id = conversations.id ' +
+  'AND m.order_at IS NOT NULL AND m.order_at > 0 AND m.order_at <> m.timestamp ' +
+  'AND (m.order_pending IS NULL OR m.order_pending <> 1)' +
+  '), 0) WHERE local_read_seed IS NULL';
+
+/**
+ * The value `saveConversation` writes into `local_read_seed` (parameters: `$1` the id, `$11` the
+ * caller's value or NULL). The caller's value when it states one; else what the row already holds
+ * (a save that does not know the seed must not erase it); else, for a row that does not exist yet,
+ * 0 - new on this install, nothing to cover.
+ */
+export const CONVERSATION_LOCAL_READ_SEED_VALUE =
+  'CASE WHEN $11 IS NOT NULL THEN $11 ' +
+  'WHEN EXISTS (SELECT 1 FROM conversations WHERE id = $1) ' +
+  'THEN (SELECT local_read_seed FROM conversations WHERE id = $1) ELSE 0 END';
 
 /**
  * The v17 -> v18 table: mutations whose message is not here yet (`PendingMutation`). Created by

@@ -76,7 +76,7 @@
   open={blocked}
   onClose={() => {}}
   dismissible={false}
-  layer="critical"
+  gate="BootGate"
   scrim={false}
   label={unreachable ? copy.title : m.boot_connecting()}
   panelClass="bg-cn-bg text-text-main fixed inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center"
@@ -91,7 +91,7 @@
       <button
         bind:this={retryButton}
         type="button"
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-bold"
         onclick={retryBootSession}
       >
         {m.boot_unreachable_retry()}

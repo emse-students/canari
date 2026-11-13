@@ -23,7 +23,7 @@
 {#snippet group(label: string, members: SkyEntourageMember[])}
   {#if members.length > 0}
     <div class="space-y-2">
-      <p class="text-text-muted text-xs font-bold tracking-wider uppercase">{label}</p>
+      <p class="text-text-muted text-xs font-bold">{label}</p>
       <ul class="space-y-2">
         <!-- KEYED BY POSITION: no identity here is unique (same-name placeholders, one person as parrain AND adoption), and a duplicate key throws in Svelte 5 and took the whole profile page down. -->
         {#each members as member, i (i)}
@@ -33,7 +33,7 @@
               this={member.sub ? 'a' : 'div'}
               href={member.sub ? `/profile/${encodeURIComponent(member.sub)}` : undefined}
               class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border px-4 py-3 {member.sub
-                ? 'hover:border-cn-yellow/30 transition-colors'
+                ? 'hover:border-accent/30 transition-colors'
                 : ''}"
             >
               <Avatar userId={member.sub ?? ''} size="sm" fallbackLabel={inner} />

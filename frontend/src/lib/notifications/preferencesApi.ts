@@ -3,7 +3,8 @@ import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { deliveryUrl } from '$lib/utils/apiUrl';
 import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
-import { isNotificationCategory, type NotificationCategory } from './categories';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
+import { isNotificationCategory, OPT_IN_CATEGORIES, type NotificationCategory } from './categories';
 import {
   isConversationNotificationLevel,
   type ConversationNotificationLevel,
@@ -11,11 +12,21 @@ import {
 
 const PATH = '/api/mls/notification-preferences';
 const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The shape of a category id: what an id this build does not know must look like to be kept. */
+const CATEGORY_ID_RE = /^[a-z][a-z_]{0,63}$/;
 
 /** What the account's notification preferences read answers. */
 export interface NotificationPreferencesSnapshot {
   /** The categories switched off. */
   disabled: NotificationCategory[];
+  /**
+   * Switched-off ids THIS BUILD DOES NOT KNOW - a category added after it (a newer server). It draws
+   * no switch for them, so it has no choice to make about them: they are kept as read and sent back
+   * on every save, so a save from here never switches back on what another device switched off.
+   */
+  unknownDisabled: string[];
+  /** The opt-in categories (`OPT_IN_CATEGORIES`) whose PUSH the account turned on. */
+  pushEnabled: NotificationCategory[];
   /** Every private conversation made quieter than `all`, keyed by group id (absent = `all`). */
   groupLevels: Record<string, ConversationNotificationLevel>;
   /**
@@ -32,10 +43,19 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
   const body = (await res.json()) as {
     disabled?: unknown;
+    enabled?: unknown;
     groupLevels?: unknown;
     groupCalls?: unknown;
   };
-  const disabled = Array.isArray(body.disabled) ? body.disabled.filter(isNotificationCategory) : [];
+  const disabledIds: unknown[] = Array.isArray(body.disabled) ? body.disabled : [];
+  const disabled = disabledIds.filter(isNotificationCategory);
+  const unknownDisabled = disabledIds.filter(
+    (id): id is string =>
+      typeof id === 'string' && !isNotificationCategory(id) && CATEGORY_ID_RE.test(id)
+  );
+  if (unknownDisabled.length) {
+    Log.d(`notificationPreferences.fetch keeps ids this build does not know: ${unknownDisabled}`);
+  }
   const groupLevels: Record<string, ConversationNotificationLevel> = {};
   if (body.groupLevels && typeof body.groupLevels === 'object') {
     for (const [groupId, level] of Object.entries(body.groupLevels)) {
@@ -52,7 +72,11 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
       if (GROUP_ID_RE.test(groupId) && typeof allowed === 'boolean') groupCalls[groupId] = allowed;
     }
   }
-  return { disabled, groupLevels, groupCalls };
+  const enabledIds: unknown[] = Array.isArray(body.enabled) ? body.enabled : [];
+  const pushEnabled = enabledIds
+    .filter(isNotificationCategory)
+    .filter((c) => OPT_IN_CATEGORIES.includes(c));
+  return { disabled, unknownDisabled, pushEnabled, groupLevels, groupCalls };
 }
 
 /**
@@ -97,17 +121,27 @@ export async function saveGroupNotificationLevel(
 }
 
 /**
- * Replaces the account's disabled set on the server, which applies it before every push. Throws on
- * any non-2xx answer, and `NotFromApiError` on a 2xx that is not the API's JSON.
+ * Replaces the account's disabled set on the server, which applies it before every push. The ids
+ * this build does not know (`unknownDisabled`, as read) go back unchanged, and the request NAMES THIS
+ * BUILD (`X-Canari-Client-Version`): the server keeps the stored choice of any category the build
+ * cannot name, so neither side alone has to be right. `pushEnabled` (the opt-in categories whose
+ * push is on) is ALWAYS sent: its presence is how this build declares it knows the opt-in reading -
+ * the server never lets a save without it turn a push on. Throws on any non-2xx answer, and
+ * `NotFromApiError` on a 2xx that is not the API's JSON.
  */
 export async function saveDisabledCategories(
-  disabled: readonly NotificationCategory[]
+  disabled: readonly NotificationCategory[],
+  unknownDisabled: readonly string[] = [],
+  pushEnabled: readonly NotificationCategory[] = []
 ): Promise<void> {
-  Log.d('notificationPreferences.save', disabled);
+  Log.d('notificationPreferences.save', { disabled, unknownDisabled, pushEnabled });
   const res = await apiFetch(`${deliveryUrl()}${PATH}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ disabled }),
+    headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      disabled: [...disabled, ...unknownDisabled],
+      enabled: [...pushEnabled],
+    }),
   });
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
   assertAnsweredByApi(res, `PUT ${PATH}`);

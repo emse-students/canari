@@ -235,13 +235,19 @@ export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collisi
  * `ended` is not the guard's: the document itself refused the write, because a rotation it ran was
  * refused and what it holds in memory is on no disk ({@link MlsStateWriteLatch}). That refusal is
  * said once, by the document, the first time it refuses.
+ *
+ * `follower-tab` is not the guard's either: the document does not own the account's MLS state - a
+ * follower tab, whose copy was loaded once and is never written back (`stateAuthority.ts`). Refused
+ * BEFORE anything is captured, and said once per document by `BaseMlsService.persistCheckpoint`.
  */
 export class MlsStateWriteRefusedError extends Error {
-  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
+  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'> | 'follower-tab') {
     super(
       outcome === 'ended'
         ? 'the MLS state write was refused: this document ended after a refused rotation'
-        : `the MLS state write was refused by the version guard (${outcome})`
+        : outcome === 'follower-tab'
+          ? 'the MLS state write was refused: this tab does not own the MLS state (a follower tab, or one promoted from a follower whose reload is owed)'
+          : `the MLS state write was refused by the version guard (${outcome})`
     );
     this.name = 'MlsStateWriteRefusedError';
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { HardDrive, Trash2, LoaderCircle } from '@lucide/svelte';
+  import { Trash2, LoaderCircle } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     getDeviceStorageUsage,
@@ -49,23 +49,18 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-300 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <HardDrive size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.settings_storage_heading()}</h2>
-  </div>
-  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
+  <h2 class="sr-only">{m.settings_storage_heading()}</h2>
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium">
     {m.settings_storage_desc()}
   </p>
 
   {#if loading}
-    <div class="text-text-muted flex items-center gap-2 text-sm sm:pl-[3.75rem]">
+    <div class="text-text-muted flex items-center gap-2 text-sm">
       <LoaderCircle size={16} class="animate-spin" />
       {m.settings_storage_measuring()}
     </div>
   {:else if usage}
-    <div class="space-y-3 sm:pl-[3.75rem]">
+    <div class="space-y-3">
       <div class="flex items-center justify-between text-sm">
         <span class="text-text-muted">{m.settings_storage_media_cache_label()}</span>
         <span class="text-text-main font-bold">{formatStorageBytes(usage.mediaCacheBytes)}</span>
@@ -92,7 +87,7 @@
       type="button"
       onclick={handleClearCache}
       disabled={clearing || usage.mediaCacheBytes === 0}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
+      class="border-cn-border text-text-main hover:border-accent/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
     >
       {#if clearing}
         <LoaderCircle size={16} class="animate-spin" />

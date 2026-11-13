@@ -115,7 +115,7 @@
   {#if loading}
     <div class="flex justify-center py-6">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if requests.length === 0}
@@ -170,7 +170,7 @@
             {/if}
             <a
               href="/posts/{encodeURIComponent(request.subjectId)}"
-              class="text-amber-warn text-xs font-semibold hover:underline"
+              class="text-amber-warn-text text-xs font-semibold hover:underline"
             >
               {m.asso_republications_view_post()}
             </a>
@@ -188,7 +188,7 @@
             </button>
             <button
               type="button"
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+              class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
               disabled={busy !== null || !request.details}
               onclick={() => answer(request, 'accept')}
             >

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
@@ -55,7 +56,6 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   const TABS = ['reports', 'hidden', 'muted'] as const;
   type Tab = (typeof TABS)[number];
@@ -336,7 +336,7 @@
   }
 
   function formatDate(iso: string): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
+    const locale = intlLocale();
     return new Date(iso).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
   }
 
@@ -359,7 +359,7 @@
   });
 
   const statusClass: Record<ContentReport['status'], string> = {
-    pending: 'bg-amber-100 text-amber-700',
+    pending: 'bg-amber-warn/15 text-amber-warn-text',
     reviewed: 'bg-green-100 text-green-700',
     dismissed: 'bg-gray-100 text-text-muted',
   };
@@ -480,7 +480,7 @@
   {:else}
     <!-- Pending reports -->
     {#if pendingReports.length > 0}
-      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+      <h2 class="text-text-muted mb-3 text-sm font-bold">
         {m.moderation_pending_header_label({ count: pendingReports.length })}
       </h2>
       <div class="mb-8 space-y-3">
@@ -494,7 +494,7 @@
                 {contentTypeLabel[report.contentType]}
               </span>
               <span
-                class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
+                class="text-amber-warn-text bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
               >
                 {reasonLabel[report.reason] ?? report.reason}
               </span>
@@ -586,7 +586,7 @@
                 <button
                   type="button"
                   onclick={() => openPostPreview(report.contentId)}
-                  class="text-cn-yellow text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
+                  class="text-accent-text text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
                   title={m.moderation_preview_post_label()}
                 >
                   <Eye size={11} />
@@ -723,7 +723,7 @@
 
     <!-- Resolved reports -->
     {#if resolvedReports.length > 0}
-      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+      <h2 class="text-text-muted mb-3 text-sm font-bold">
         {m.moderation_resolved_header_label({ count: resolvedReports.length })}
       </h2>
       <div class="space-y-2">
@@ -753,7 +753,7 @@
               <button
                 type="button"
                 onclick={() => openPostPreview(report.contentId)}
-                class="text-cn-yellow text-2xs flex shrink-0 items-center gap-1 hover:underline"
+                class="text-accent-text text-2xs flex shrink-0 items-center gap-1 hover:underline"
                 title={m.moderation_preview_post_label()}
               >
                 <Eye size={11} />

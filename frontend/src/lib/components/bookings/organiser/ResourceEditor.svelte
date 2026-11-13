@@ -221,7 +221,7 @@
       type="button"
       onclick={save}
       disabled={!name.trim() || saving}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      class="border-cn-border text-text-main hover:border-accent/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     >
       <Save size={16} />
       {saving ? m.form_saving_label() : m.bookings_resource_save()}

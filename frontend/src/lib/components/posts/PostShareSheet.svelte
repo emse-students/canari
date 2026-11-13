@@ -13,7 +13,7 @@
    * the post sees "unavailable" and no word of it. See `docs/wiki/frontend/sharing.md`.
    *
    * Mounted by the post menu (`PostActionsMenu`) and by the reel viewer (`ReelViewer`): from inside
-   * the viewer, `Modal` takes the viewer's dialog rung on its own (`utils/viewerLayer.ts`).
+   * the viewer, `Modal` opens later and so is drawn above it (`utils/overlayStack.ts`).
    */
   import { Hash, Link, Repeat2, Search, Share2 } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
@@ -130,7 +130,7 @@
         bind:value={query}
         placeholder={m.chat_search_discussion_placeholder()}
         aria-label={m.chat_search_discussion_label()}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
       />
     </div>
 

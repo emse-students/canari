@@ -70,6 +70,7 @@ function input(overrides: Partial<Parameters<typeof publishReel>[0]> = {}) {
     caption: 'hello',
     identity: '',
     maxDurationMs: 90_000,
+    rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
     video: {},
     ...overrides,
   };
@@ -97,7 +98,50 @@ describe('publishReel', () => {
       clip.blob,
       expect.objectContaining({ maxSeconds: 90, maxBytes: 1000 })
     );
-    expect(d.upload).toHaveBeenCalledWith(expect.any(File), 'tok', { width: 720, height: 1280 });
+    expect(d.upload).toHaveBeenCalledWith(
+      expect.any(File),
+      'tok',
+      { width: 720, height: 1280 },
+      'reel-pending'
+    );
+  });
+
+  it('publishes a take whose PREPARED frame is not vertical as an ordinary post, uploaded archive (owner, 2026-11-09)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = deps();
+    vi.mocked(d.prepare).mockResolvedValueOnce({
+      file: new File([new Uint8Array(4)], 'wide.mp4', { type: 'video/mp4' }),
+      width: 1280,
+      height: 720,
+      durationSeconds: 12,
+      sourceBytes: 8,
+      outputBytes: 4,
+    });
+    const onUploaded = vi.fn(async () => {});
+    await publishReel(input({ onUploaded }), d);
+    expect(d.upload).toHaveBeenCalledWith(
+      expect.any(File),
+      'tok',
+      { width: 1280, height: 720 },
+      'archive'
+    );
+    expect(d.createPost).toHaveBeenCalledWith({ markdown: 'hello', media: [ref] });
+    expect(onUploaded).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not vertical'));
+  });
+
+  it('against an estate that serves no vertical rule, the take stays a reel as it did there', async () => {
+    const d = deps();
+    vi.mocked(d.prepare).mockResolvedValueOnce({
+      file: new File([new Uint8Array(4)], 'wide.mp4', { type: 'video/mp4' }),
+      width: 1280,
+      height: 720,
+      durationSeconds: 12,
+      sourceBytes: 8,
+      outputBytes: 4,
+    });
+    await publishReel(input({ rule: null }), d);
+    expect(d.createPost).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reel' }));
   });
 
   it('keeps the sound by default and asks the encoder to REMOVE the audio track when the member did', async () => {
@@ -235,7 +279,7 @@ describe('defaultPublishReelDeps', () => {
       .mockResolvedValue(ref as never);
     const file = new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' });
 
-    await defaultPublishReelDeps().upload(file, 'token', { width: 9, height: 16 });
+    await defaultPublishReelDeps().upload(file, 'token', { width: 9, height: 16 }, 'reel-pending');
 
     expect(upload).toHaveBeenCalledWith(file, 'token', { width: 9, height: 16 }, 'reel-pending');
     upload.mockRestore();

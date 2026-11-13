@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Ban, LoaderCircle } from '@lucide/svelte';
+  import { LoaderCircle } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { listBlockedUsers, unblockUser, type BlockedUser } from '$lib/users/blocks';
   import { PERSON_LIST_ERROR, PERSON_ROW_BUTTON } from '$lib/components/follows/personListStyles';
@@ -60,12 +60,9 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-6 flex items-center gap-3">
-    <div class="rounded-xl bg-red-500/10 p-2.5 text-red-600 dark:text-red-400">
-      <Ban size={22} strokeWidth={2.5} />
-    </div>
     <div>
-      <h2 class="text-text-main text-lg font-bold">{m.settings_blocked_heading()}</h2>
-      <p class="text-text-muted mt-0.5 text-xs font-medium">
+      <h2 class="sr-only">{m.settings_blocked_heading()}</h2>
+      <p class="text-text-muted text-xs font-medium">
         {m.settings_blocked_subtitle()}
       </p>
     </div>

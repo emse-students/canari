@@ -532,7 +532,19 @@ wizard is ONE call and a space is never half made.
   "Occupe", listed or link only).
 - **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
   else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
-  mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
+  mockup's: a working week 8h-20h, bookings of any length by 30 min steps, everybody, names hidden, listed.
+- **A new space has NO longest booking** (owner, 2026-11-09, migration 153): `create` stores
+  `maxSteps` NULL, and `booking_spaces_step_shape` accepts NULL on a step space (a non-NULL value is
+  still >= 1). The organiser sets "Duree maximale d'une reservation" (minutes, a multiple of the step,
+  at most 96 steps) in "Regles de reservation"; empty = no limit, and the live line under it says
+  steps x length in words. The editor stores `maxSteps` = minutes / step (`maxStepsFromMinutes`).
+  With no maximum the booker's picker is bounded by the openings alone (`bookingUnitLimit` is
+  `Infinity`: a run of free touching units ends where the opening does), and the server keeps ONE
+  safety cap of 14 days (`UNBOUNDED_MAX_MS` in `slots.ts`) so a request cannot make it build windows
+  for years. Existing spaces are NOT touched (no backfill): an organiser empties the field to lift
+  theirs. The creation wizard's "longest booking" select opens on "Pas de limite" (`maxMinutes` null, sends
+  `maxSteps` null); picking a duration sends minutes / step. The editor's field also shows the
+  hint pointing at the per-person and per-period quotas just below.
 - **Fixed slots are cut on the client** (`fixedSlotLines`): in a `slots` space each line IS a slot
   (WP-B2), so the painted hours become one line per slot; a tail shorter than a slot is not
   offered and no slot crosses midnight. More than `MAX_AVAILABILITY_LINES` (200) is said on the
@@ -1253,6 +1265,11 @@ id to the organiser and the linked account, not to a booker.
   sheet and re-reads the grid and my bookings, so the reader sees why.
 - **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
   participant, so the page indexes my own bookings by id - which also carries the private texts.
+- **"Ma reservation" is the booker's alone** (owner, 2026-11-10): `mine` also covers an INVITED
+  participant, so the grid and the planning read the role from the payload - `mine` with
+  `holderId` (sent exactly where the name is) other than the viewer is invited (`isInvitedUnit`,
+  `grid.ts`). An invited unit keeps the highlight, shows the booker's avatar and name and a small
+  "Invite" mention; a viewer id not yet known is never called invited.
 - **THE KNOWN COSTS ARE SAID ON SCREEN, NOT HIDDEN**: no notification (D13, on both pages and in
   the organiser's cancel confirmation); people added directly, no acceptance (D34); a booking is
   never edited, cancel and book again (D36); a personal space's coming bookings vanish with its
@@ -1398,7 +1415,7 @@ the cross-client rig (nothing there asserts the module yet).
 
 ## The space page and the booking sheet against the mockup (2026-10-30)
 
-The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).
+The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. The owner line under the title is drawn since 2026-11-13 as the person responsible, [below](#the-person-responsible-for-a-space-owner-2026-11-13).
 
 ## The rolling week and the narrow block (2026-11-01, owner)
 
@@ -1485,3 +1502,13 @@ offers no "Modifier" and logs why. An organiser who is also a participant is kep
 (`editPeople`), told from `booking.holderId`, never from the reader's capped own list (`MINE_LIMIT`). Proof: `bookings.service.integration.spec.ts` ("editing a booking"),
 `editRange.test.ts`, `BookingSheet.edit.svelte.test.ts`, `refusals.test.ts`. **Not yet seen on a
 phone.**
+
+## The person responsible for a space (owner, 2026-11-13)
+
+The space page shows "Responsable : <name>" and a "Contacter" button (`SpaceBanner`) that hands the chat page the DM with that person, found or created there (`requestDirectConversationWith`, the profile's "Message" path, [pendingChatOpening](../../frontend/src/lib/utils/chat/pendingChatOpening.ts)).
+
+- **Who**: a PERSONAL space - its owner (`ownerId`); an association, list or institution space - **the first member whose ROW grants `MANAGE_BOOKINGS`**, in the order the entity shows its team in: `sortOrder` (the president first, as the members grid), then `createdAt` (the longest-standing), then `userId`. Stable across reloads and the same as what a reader sees on the entity's page. A global admin or BDE super-admin holds the right by inheritance only and is nobody's named contact.
+- **Nobody**: no holder, an unnamed account, or every candidate blocked with the reader (D21: a refused DM, and showing one would say who blocked whom) or across the review-cohort boundary -> `contact: null`, the screen shows nothing, NO fallback contact; the server logs `[BOOKING_CONTACT]` at debug. A reader who IS the responsible sees nothing either (nobody writes to themselves).
+- **Exposure**: `GET bookings/spaces/:id` carries `contact: { userId, displayName }`, read behind the same `assertMayUse` as the rest of the space, so nobody who cannot open the space receives it. The name is the one precedence every surface uses (`formatUserDisplayName`).
+- Code: `apps/social-service/src/bookings/booking-contact.ts` (`spaceContact`, test `booking-contact.spec.ts`), `SpaceBanner.svelte.test.ts`.
+

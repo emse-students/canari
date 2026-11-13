@@ -154,7 +154,7 @@
               </p>
               {#if card.membersOnly}
                 <span
-                  class="bg-amber-warn/15 text-amber-warn text-2xs rounded-full px-2 py-0.5 font-bold uppercase"
+                  class="bg-amber-warn/15 text-amber-warn-text text-2xs rounded-full px-2 py-0.5 font-bold"
                 >
                   {m.shop_partnership_members_only_badge()}
                 </span>
@@ -194,7 +194,7 @@
               <!-- A static instruction is not a code being handed out - nothing to claim, so
                    nothing to gate behind a button. Already present on the public listing (only
                    sharedCode is stripped there). -->
-              <div class="bg-cn-accent/10 border-cn-accent/30 min-w-0 rounded-lg border px-3 py-2">
+              <div class="bg-accent/10 border-accent/30 min-w-0 rounded-lg border px-3 py-2">
                 <p class="text-text-main text-sm break-words">{card.staticText}</p>
               </div>
               <!-- THE CODE AND NOT THE RESULT: a claim that answered with no code is a failure
@@ -202,7 +202,7 @@
                  of the value - so it binds the thing it draws rather than its container. -->
             {:else if claimedCode}
               <div
-                class="bg-cn-accent/10 border-cn-accent/30 flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2"
+                class="bg-accent/10 border-accent/30 flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2"
               >
                 <div class="min-w-0 flex-1">
                   <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
@@ -216,7 +216,7 @@
                 <button
                   type="button"
                   onclick={() => void handleCopy(claimedCode)}
-                  class="ui-icon-button text-text-muted hover:bg-cn-accent/20 hover:text-text-main shrink-0 rounded-lg transition-colors"
+                  class="ui-icon-button text-text-muted hover:bg-accent/20 hover:text-text-main shrink-0 rounded-lg transition-colors"
                   aria-label={m.shop_partnership_copy_code()}
                   title={m.shop_partnership_copy_code()}
                 >
@@ -231,7 +231,7 @@
                 type="button"
                 onclick={() => handleClaim(card)}
                 disabled={claiming === card.id}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
+                class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
               >
                 {claiming === card.id
                   ? m.shop_partnership_claiming()

@@ -13,6 +13,7 @@ import {
 } from './live-segments.service';
 import { MediaController } from './media.controller';
 import { livesModeUrl } from './lives-mode';
+import type { LiveSegmentStore } from './live-segment-store';
 import type { StorageService, StoredObject } from './storage.service';
 
 const LIVE = '11111111-1111-4111-8111-111111111111';
@@ -20,7 +21,11 @@ const OTHER = '22222222-2222-4222-8222-222222222222';
 const SEG_A = '33333333-3333-4333-8333-333333333333';
 const SEG_B = '44444444-4444-4444-8444-444444444444';
 
-/** A bucket in memory, with a set of keys whose delete the store refuses. */
+/**
+ * A store in memory, with a set of keys whose delete the store refuses. It holds any key, so the
+ * cases below can prove a purge or a listing never reaches beyond `live/` (the real store,
+ * live-segment-store.spec.ts, refuses such keys outright).
+ */
 function bucket() {
   const objects = new Map<string, Buffer>();
   const undeletable = new Set<string>();
@@ -44,10 +49,15 @@ function bucket() {
       ),
     ],
   };
+  /** The backed-up object store: the segment service only drains it, never writes it. */
+  const objectStore = { listObjects: async () => [], delete: async () => {} };
   return {
     objects,
     undeletable,
-    svc: new LiveSegmentsService(storage as unknown as StorageService),
+    svc: new LiveSegmentsService(
+      storage as unknown as LiveSegmentStore,
+      objectStore as unknown as StorageService
+    ),
   };
 }
 

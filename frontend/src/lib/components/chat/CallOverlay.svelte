@@ -325,7 +325,7 @@
     applyCallMediaSession(navigator, {
       title: peerTitle,
       artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
-      muted: call.isMuted,
+      muted: call.micShownMuted,
       // iOS app: CallKit owns hang-up (`CallMediaSessionParams.onHangup`).
       onHangup: isIosTauriRuntime()
         ? null
@@ -335,7 +335,7 @@
           },
       onToggleMicrophone: () => {
         appendLog('[Call] microphone toggled from the OS media controls');
-        callService.toggleMute();
+        callService.muteButtonTap();
       },
     });
   });
@@ -349,12 +349,20 @@
   const androidCall = isAndroidTauriRuntime()
     ? openAndroidCallSession(window, {
         onHangUp: () => callService.endCall(),
-        onMute: () => callService.toggleMute(),
+        onMute: () => callService.muteButtonTap(),
+        onFocus: (state) => callService.onAudioFocus(state),
         onRoute: (available) => (androidRouteAvailable = available),
         onOutput: (speaker) => (routedSpeaker = speaker),
       })
     : null;
   $effect(() => () => androidCall?.dispose());
+  // The way back from a focus loss no GAIN follows: the call asks the focus again through this
+  // session (a mute or unmute tap while held, D056).
+  $effect(() => {
+    if (!androidCall) return;
+    callService.setAudioFocusAsker((why) => androidCall.askFocus(why));
+    return () => callService.setAudioFocusAsker(null);
+  });
   $effect(() => {
     if (!androidCall) return;
     androidCall.publish(
@@ -365,7 +373,9 @@
         speaker: isSpeakerOn,
         // A default yields to a connected headset natively; the user's tap does not.
         speakerChosen: speakerChoice !== null,
-        muted: call.isMuted,
+        // Held for a focus loss, the microphone is silent whatever the member's own mute: the
+        // notification says so, and its action then asks the focus again (`muteButtonTap`).
+        muted: call.micShownMuted,
       }),
       `kind=${call.kind}`
     );
@@ -662,7 +672,7 @@
         ></div>
         {#if isIncoming}
           <div
-            class="bg-cn-yellow/15 absolute top-1/3 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
+            class="bg-accent/15 absolute top-1/3 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
             data-testid="call-ring-glow"
           ></div>
         {/if}
@@ -794,16 +804,16 @@
                  the call rings on either side. `motion-safe` only: under reduced motion they stay
                  behind the photo, unseen, and the accent ring alone says "ringing". -->
             <div
-              class="bg-cn-yellow/30 motion-safe:animate-call-halo absolute inset-0 rounded-full"
+              class="bg-accent/30 motion-safe:animate-call-halo absolute inset-0 rounded-full"
               data-testid="call-halo"
             ></div>
             <div
-              class="bg-cn-yellow/20 motion-safe:animate-call-halo-late absolute inset-0 rounded-full"
+              class="bg-accent/20 motion-safe:animate-call-halo-late absolute inset-0 rounded-full"
             ></div>
           {/if}
           <div
             class="relative h-full w-full overflow-hidden rounded-full shadow-xl ring-4 {isIncoming
-              ? 'ring-cn-yellow/60'
+              ? 'ring-accent/60'
               : 'ring-white/10'}"
             data-testid="call-avatar"
           >
@@ -856,7 +866,7 @@
         {/if}
         {#if micNotice}
           <p
-            class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
+            class="text-accent-text mt-1 inline-flex max-w-full items-center gap-2 text-sm"
             data-testid="call-mic-notice"
           >
             <MicOff size={16} class="shrink-0" />
@@ -866,7 +876,7 @@
         {#if call.kind === 'live' && !call.isVideoOff && call.videoSendReduced}
           <!-- The quality ladder had to shrink THIS side's picture (CallService.videoSendReduced). -->
           <p
-            class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
+            class="text-accent-text mt-1 inline-flex max-w-full items-center gap-2 text-sm"
             data-testid="call-video-reduced"
           >
             <Video size={16} class="shrink-0" />
@@ -952,14 +962,14 @@
             )}
           {/if}
           {#snippet micIcon()}
-            {#if call.isMuted}<MicOff size={26} />{:else}<Mic size={26} />{/if}
+            {#if call.micShownMuted}<MicOff size={26} />{:else}<Mic size={26} />{/if}
           {/snippet}
           {@render control(
             'call-mute',
-            call.isMuted ? m.call_unmute_label() : m.call_mute_label(),
+            call.micShownMuted ? m.call_unmute_label() : m.call_mute_label(),
             m.call_mute_short_label(),
-            () => callService.toggleMute(),
-            call.isMuted ? 'on' : 'neutral',
+            () => callService.muteButtonTap(),
+            call.micShownMuted ? 'on' : 'neutral',
             micIcon
           )}
           {#snippet endIcon()}<PhoneOff size={28} />{/snippet}

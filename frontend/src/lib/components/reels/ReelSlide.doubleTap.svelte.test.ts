@@ -1,13 +1,16 @@
 // @vitest-environment happy-dom
 /**
  * A DOUBLE TAP ON A REEL LIKES IT (user, 2026-10-19), and the reel's SINGLE tap is still the
- * player's: it toggles the controls at once, with no wait - the double tap's two taps toggle them
- * there and back, so the like leaves them as they were. Driven against the real `VideoPlayer`.
+ * player's - the sound since the shared player (owner, 2026-11-09). On a surface that likes, the
+ * single tap waits for the double-tap window (`videoGestures` reads `data-double-tap-likes`), so a
+ * like leaves the sound exactly as it was, never flipped twice. Driven against the real `VideoPlayer`.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { videoSound } from '$lib/stores/videoSound.svelte';
+import { GESTURE } from '$lib/utils/viewerGestures';
 
 vi.mock('$lib/reels/reelPreload', () => ({
   ReelPreload: class {
@@ -26,6 +29,8 @@ afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  videoSound.setMuted(true);
 });
 
 const reel: PostEntity = {
@@ -79,27 +84,44 @@ function tapOn(el: Element, detail: number) {
 
 const hearts = (target: HTMLElement) => target.querySelectorAll('[data-double-tap-heart]').length;
 
-it("a single tap is still the player's, at once: the controls go and come back", () => {
+it("a single tap is still the player's: the sound ON, once the double-tap window has passed", () => {
+  vi.useFakeTimers();
   const onLike = vi.fn(() => true);
-  const { video, bar } = mountSlide({ onLike });
-  expect(bar.className).toContain('opacity-100');
+  const { video } = mountSlide({ onLike });
+  expect(video.muted).toBe(true);
 
   tapOn(video, 1);
-  expect(bar.className).toContain('opacity-0');
+  expect(video.muted, 'a second tap could still make it a like').toBe(true);
+  vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+  expect(video.muted).toBe(false);
+  expect(onLike).not.toHaveBeenCalled();
 
+  // A tap on a video that has its sound never mutes it (owner, 2026-11-10).
+  tapOn(video, 1);
+  vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+  expect(video.muted, 'a single tap never turns the sound off').toBe(false);
   expect(onLike).not.toHaveBeenCalled();
 });
 
-it('a double tap likes once, draws the heart, and leaves the controls as they were', () => {
+it('a double tap likes once, draws the heart, and leaves the sound as it was', () => {
+  vi.useFakeTimers();
   const onLike = vi.fn(() => true);
-  const { target, video, bar } = mountSlide({ onLike });
+  const { target, video } = mountSlide({ onLike });
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play');
+  pause.mockClear();
+  play.mockClear();
 
   tapOn(video, 1);
   tapOn(video, 2);
+  vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 2);
 
   expect(onLike).toHaveBeenCalledTimes(1);
   expect(hearts(target)).toBe(1);
-  expect(bar.className).toContain('opacity-100');
+  expect(video.muted).toBe(true);
+  // The pair is no single tap: playback is as it was.
+  expect(pause).not.toHaveBeenCalled();
+  expect(play).not.toHaveBeenCalled();
 });
 
 it('a like the viewer refused draws no heart', () => {

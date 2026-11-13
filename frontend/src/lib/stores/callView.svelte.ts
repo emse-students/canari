@@ -34,8 +34,8 @@ export const callView = {
   },
   /**
    * Whether the full screen is drawn now: not minimised, and not held under the PIN lock. The lock
-   * (`PinModal`, `--z-modal`) sits BELOW the call's rung, so a full-screen call would paint over the
-   * one gate of the app that must stay on top; while it is up the call is the banner, which the
+   * (`PinModal`, a pinned gate of `utils/overlayStack.ts`) sits BELOW the call's rung, so a
+   * full-screen call would paint over the one gate of the app that must stay on top; while it is up the call is the banner, which the
    * gate covers, and it comes back full screen when the gate goes - unless the reader minimised it.
    */
   get showsFullScreen(): boolean {

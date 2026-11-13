@@ -76,7 +76,7 @@ async function settle() {
   flushSync();
 }
 
-async function render() {
+async function render(startMediaIndex?: number) {
   const onClose = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -88,6 +88,7 @@ async function render() {
         authToken: 'tok',
         onClose,
         loadPage: vi.fn(async () => [carousel, nextReel]),
+        ...(startMediaIndex !== undefined ? { startMediaIndex } : {}),
       },
     })
   );
@@ -161,6 +162,34 @@ describe('a carousel page in the reel viewer', () => {
     // Only the visible picture is fetched until it settles: nothing competes with it.
     expect(drawn()).toEqual(['p1']);
     expect(preloads).toEqual([]);
+  });
+
+  /**
+   * The dots are the FIRST ROW of the caption block, inside the frame: on the media's bottom edge,
+   * directly above the author line, rising with the unfolded caption, and nowhere near the top
+   * bar's order switch (owner, 2026-11-11: the switch covered them under the top bar).
+   */
+  it('puts the dots in the caption block above the author line, away from the order switch', async () => {
+    await render();
+    const dots = document.querySelector('[data-reel-carousel-dots]')!;
+    const caption = document.querySelector('[data-reel-caption]')!;
+    expect(caption.firstElementChild).toBe(dots);
+    expect(dots.nextElementSibling?.querySelector('[data-reel-author]')).not.toBeNull();
+    expect(dots.closest('[data-reel-frame]')).not.toBeNull();
+    // Not in the top bar's area, and not styled as a top-anchored overlay.
+    expect(dots.closest('[data-reel-order]')).toBeNull();
+    expect(dots.className).not.toContain('top-');
+    // Purely informative: no control, transparent to the pointer, still named.
+    expect(dots.className).toContain('pointer-events-none');
+    expect(dots.querySelector('button, a, [tabindex]')).toBeNull();
+    expect(dots.getAttribute('role')).toBe('img');
+  });
+
+  /** A tap on a grid's video in the feed opens full screen on THAT video (owner, 2026-11-10). */
+  it('opens on the media it was asked for, the tapped video playing', async () => {
+    const { current, players } = await render(1);
+    expect(current()).toBe(1);
+    expect(players()).toEqual(['v2']);
   });
 
   it('a swipe left shows the next media, and only the VISIBLE video has a player', async () => {

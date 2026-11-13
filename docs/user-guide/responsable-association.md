@@ -127,14 +127,14 @@ Dans l'onglet **Formulaires** :
    - **Periode d'ouverture** : date/heure de debut et de fin.
    - **Limite de reponses** (optionnel).
    - **Prix** : 0 pour un formulaire gratuit, ou un montant en euros.
-   - **Paiement en especes autorise** : si oui, les soumissions "especes" seront en attente
+   - **Paiement sur place autorise** : si oui, les soumissions "sur place" seront en attente
      de validation manuelle.
 3. Cliquez sur **"Creer"**.
 
 ### Gerer les soumissions
 
 - Cliquez sur un formulaire pour voir la liste des soumissions.
-- Pour les **paiements en especes en attente** :
+- Pour les **paiements sur place en attente** :
   - Cliquez sur **"Valider"** une fois le paiement recu, ou **"Refuser"** si le membre
     ne s'est pas presente.
 - Exportez les reponses en **fichier Excel** (.xlsx) via le bouton **"Exporter"**.
@@ -195,7 +195,7 @@ Le bouton **"Ouvrir le tableau de bord Lydia"** ouvre l'espace Lydia de l'associ
 **"Retirer Lydia"** detache le compte de Canari (le compte Lydia lui-meme n'est pas supprime, mais il
 faudra refaire toute la configuration pour accepter a nouveau des paiements en ligne).
 
-> Tant que le compte Lydia n'est pas **Actif**, seul le paiement en especes est disponible pour les
+> Tant que le compte Lydia n'est pas **Actif**, seul le paiement sur place est disponible pour les
 > formulaires payants, et les produits de la boutique restent inactifs. Ils se remettent en vente
 > d'eux-memes des que les paiements sont prets. Si l'onglet indique qu'aucun prestataire de paiement
 > n'est configure, les paiements en ligne sont coupes sur toute la plateforme : ce n'est pas un
@@ -251,8 +251,8 @@ d'achat est enregistree separement : un paiement refuse ou abandonne peut etre r
 ### Suivre les ventes
 
 L'onglet **Achats** liste l'historique des paiements de la boutique et des formulaires payants
-(date, acheteur, article, type, mode de paiement **"En ligne"** ou **"Especes / manuel"**, montant).
-Il permet aussi d'attribuer un produit a la main (especes, paiement anterieur a Canari).
+(date, acheteur, article, type, mode de paiement **"En ligne"** ou **"Sur place / manuel"**, montant).
+Il permet aussi d'attribuer un produit a la main (paiement sur place, paiement anterieur a Canari).
 Pour le detail cote Lydia, utilisez **"Ouvrir le tableau de bord Lydia"** dans l'onglet
 **Paiements**.
 
@@ -279,5 +279,5 @@ des participants.
 
 - **Nommez les channels clairement** : "general", "evenements-2025", "logistique-gala", etc.
 - **Archivez les channels inactifs** plutot que de les supprimer (les messages sont conserves).
-- **Verifiez vos soumissions de formulaires** regulierement, surtout les paiements en especes.
+- **Verifiez vos soumissions de formulaires** regulierement, surtout les paiements sur place.
 - **Mettez a jour le profil** de l'association chaque annee (logo, description, contacts).

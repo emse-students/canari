@@ -103,10 +103,12 @@ jobs:
       # about to move.
       - name: Put the deployment tree on the released commit
         working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          git fetch origin "${{ inputs.sha }}"
-          git reset --hard "${{ inputs.sha }}"
+          git fetch origin "$INPUT_SHA"
+          git reset --hard "$INPUT_SHA"
           echo "production tree at $(git rev-parse --short HEAD)"
 
       # Renders infrastructure/.env for production and NOTHING ELSE, from the unprefixed secrets.
@@ -155,6 +157,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_TURN_ANALYTICS_TOKEN }}
           CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${{ secrets.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB }}
+          LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.LIVE_REPLAY_TOTAL_MAX_GB }}
           GARAGE_RPC_SECRET: ${{ secrets.GARAGE_RPC_SECRET }}
           GARAGE_ADMIN_TOKEN: ${{ secrets.GARAGE_ADMIN_TOKEN }}
           GARAGE_ACCESS_KEY_ID: ${{ secrets.GARAGE_ACCESS_KEY_ID }}
@@ -163,6 +166,8 @@ jobs:
           MICONNECT_EDITOR_TOKEN: ${{ secrets.MICONNECT_EDITOR_TOKEN }}
           # Signs the one-time sign-in handoff to the MiConnect sites (ES256, base64 PKCS#8 DER).
           HANDOFF_SIGNING_KEY: ${{ secrets.HANDOFF_SIGNING_KEY }}
+          # The READ-ONLY MiConnect account a handoff mint asks whether the user may enter (F3-bound).
+          MICONNECT_READER_TOKEN: ${{ secrets.MICONNECT_READER_TOKEN }}
           GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
@@ -178,13 +183,13 @@ jobs:
           set -euo pipefail
           bash infrastructure/deploy/render-env.sh \
             --environment prod \
-            --domain "${{ env.DOMAIN }}" \
+            --domain "$DOMAIN" \
             --out infrastructure/.env
 
       # THE RELEASE'S OWN TAG, `v<version>`, AND NOT `latest` (2026-10-06). `latest` is whatever the
       # newest stable pushed, so re-running an OLD release's deploy passed twenty steps and
       # redeployed the NEWEST one (v0.16.1's rerun put v0.16.4 up on 2026-09-06): a version could be
-      # shipped and never unshipped. `build.yml` pushes `v<version>` for ALL EIGHT services on every
+      # shipped and never unshipped. `build.yml` pushes `v<version>` for EVERY service it builds on every
       # release - the selective rebuild that once made a moving tag the only one resolving for every
       # service was deleted on 2026-09-03 - so the immutable tag always exists and a rerun IS a
       # rollback. `latest` still moves, for a human typing `docker pull`, and decides nothing here.
@@ -203,17 +208,19 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SERVICES_ARGS: ${{ inputs.services_args }}
         run: |
           set -euo pipefail
           # EXEC, so a cancelled job signals the deploy itself and its INT/TERM traps put a service
           # in flight back in rotation (docs/wiki/cicd.md, the rollback invariant).
           exec bash infrastructure/deploy/deploy-environment.sh \
             --environment prod \
-            --path "${{ env.DEPLOY_PATH }}" \
-            --tag "v${{ inputs.version }}" \
-            --registry "${{ env.REGISTRY }}" \
-            --image-prefix "${{ env.IMAGE_PREFIX }}" \
-            --pull-services "${{ inputs.services_args }}"
+            --path "$DEPLOY_PATH" \
+            --tag "v$INPUT_VERSION" \
+            --registry "$REGISTRY" \
+            --image-prefix "$IMAGE_PREFIX" \
+            --pull-services "$INPUT_SERVICES_ARGS"
 
       # A RENDERED .env PROVES NOTHING ABOUT WHAT IS RUNNING - a container keeps the environment it
       # was created with. This step used to verify five keys in four services by hand; it is derived
@@ -226,7 +233,7 @@ jobs:
           set -euo pipefail
           bash infrastructure/deploy/verify-secrets.sh \
             --environment prod \
-            --path "${{ env.DEPLOY_PATH }}"
+            --path "$DEPLOY_PATH"
 
       # THE EDGE HOLDS THE PREVIOUS BUILD'S SHELL, AND THAT SHELL NAMES CHUNKS THIS IMAGE DOES NOT
       # CONTAIN. Since 2026-09-17 nginx offers the SSR page to a shared cache
@@ -258,6 +265,7 @@ jobs:
       - name: Purge the edge cache
         env:
           CLOUDFLARE_CACHE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_PURGE_TOKEN }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
@@ -293,7 +301,7 @@ jobs:
 
           case "$purged" in
             *'"success":true'*)
-              echo "🧹 edge cache purged for v${{ inputs.version }}"
+              echo "🧹 edge cache purged for v${INPUT_VERSION}"
               ;;
             *)
               echo "::error::Cloudflare refused the purge: ${purged}"
@@ -320,18 +328,25 @@ jobs:
       # succeeded, and it is the ONLY record of the commit after an emergency push, which is why it
       # survived the deletion of its old purpose.
       - name: Record the released commit
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REPO_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          git -C "${{ env.DEPLOY_PATH }}" tag -f prod-released "${{ inputs.sha }}"
-          git -C "${{ env.DEPLOY_PATH }}" push -f \
-            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+          git -C "$DEPLOY_PATH" tag -f prod-released "$INPUT_SHA"
+          git -C "$DEPLOY_PATH" push -f \
+            "https://x-access-token:${REPO_TOKEN}@github.com/${REPO}.git" \
             refs/tags/prod-released
-          echo "📌 prod-released -> ${{ inputs.sha }} (v${{ inputs.version }})"
+          echo "📌 prod-released -> ${INPUT_SHA} (v${INPUT_VERSION})"
 
       - name: Notify deployment
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
         run: |
-          if [ "${{ job.status }}" == "success" ]; then
+          if [ "$JOB_STATUS" == "success" ]; then
             echo "✅ Deployment to production succeeded"
           else
             echo "❌ Deployment to production failed"

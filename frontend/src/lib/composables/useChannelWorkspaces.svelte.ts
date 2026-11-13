@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { slugify } from '$lib/utils/textFold';
 import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import {
@@ -14,7 +15,13 @@ import {
   TransientAnswerError,
 } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
-import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
+import type {
+  CommunityBootReads,
+  WorkspaceDto,
+  ChannelDto,
+  ChannelWritePolicy,
+  WriteVerdicts,
+} from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -68,7 +75,10 @@ import {
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
-import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  salonGateRefusalMessage,
+  sealUnavailableMessage,
+} from '$lib/utils/graine/sealUnavailableMessage';
 import {
   beginSalonEntry,
   beginSalonListing,
@@ -76,6 +86,7 @@ import {
   isCurrentSalonSession,
   openSalonSendGate,
   resetSalonSendGate,
+  SalonNotLoadableError,
   settleSalonEntry,
   settleSalonListing,
   type SettledListing,
@@ -120,6 +131,27 @@ export interface ChannelSidebarItem {
    * whether the product OFFERS the control, never whether the message is accepted.
    */
   canWrite?: boolean;
+  /**
+   * The salon's write policy, from the listing and from `channel.updated`. Never applied on this
+   * side: it is the key under which a role change's `canWriteByPolicy` holds this row's verdict,
+   * and what the read-only line names ("only admins can write").
+   */
+  writePolicy?: ChannelWritePolicy;
+}
+
+/**
+ * The write fields a server answer or event states about a salon - its policy and the viewer's
+ * verdict - as row fields, ONLY those it states: a row merged with an absent field keeps its own
+ * (`upsertChannelRow` spreads), so nothing here may write `undefined` over a known value.
+ */
+export function writeFieldsOf(source: {
+  writePolicy?: ChannelWritePolicy;
+  viewerCanWrite?: boolean;
+}): Pick<ChannelSidebarItem, 'writePolicy' | 'canWrite'> {
+  return {
+    ...(source.writePolicy ? { writePolicy: source.writePolicy } : {}),
+    ...(typeof source.viewerCanWrite === 'boolean' ? { canWrite: source.viewerCanWrite } : {}),
+  };
 }
 
 /** One workspace (community) shown in the sidebar, containing its channels. */
@@ -422,18 +454,35 @@ export function useChannelWorkspaces() {
       prepared.push({ sidebarWorkspace, workspaceId });
     }
 
-    const outcomes = await Promise.allSettled(
-      prepared.map(({ sidebarWorkspace, workspaceId }) =>
-        loadCommunitySalons(
-          ctx,
-          sidebarWorkspace,
-          workspaceId,
-          validChannelConversationIds,
-          session,
-          epochAtRequest
-        )
-      )
+    // THE SALON LISTINGS OF EVERY COMMUNITY LEAVE IN ONE REQUEST (nine communities: 27 requests
+    // become 19 - the key-group reference and the roster stay per community, read where they always
+    // were, because the reference carries a device roster that is only safe to read once MLS is
+    // ready). The answers belong to THIS walk through the `bootReads` handle it passes down: no other
+    // caller of the shared service can take one, and the release drops only this walk's. Settling
+    // every chain below is what makes "the walk is over" a fact. Never throws; a failed batch leaves
+    // the per-community routes to answer, said in `ctx.log`.
+    const bootReads = service.startCommunityBootReads(
+      prepared.map((p) => p.workspaceId),
+      ctx.log
     );
+    let outcomes: PromiseSettledResult<void>[];
+    try {
+      outcomes = await Promise.allSettled(
+        prepared.map(({ sidebarWorkspace, workspaceId }) =>
+          loadCommunitySalons(
+            ctx,
+            sidebarWorkspace,
+            workspaceId,
+            validChannelConversationIds,
+            session,
+            epochAtRequest,
+            bootReads
+          )
+        )
+      );
+    } finally {
+      bootReads.release();
+    }
     const firstFailure = outcomes.find(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
     );
@@ -472,7 +521,8 @@ export function useChannelWorkspaces() {
     workspaceId: string,
     validChannelConversationIds: string[],
     session: number,
-    epochAtRequest: number
+    epochAtRequest: number,
+    bootReads: CommunityBootReads
   ): Promise<void> {
     // THE KEY GROUP AND THE SALON ROWS GO SIDE BY SIDE (F3, 2026-10-14). The salons used to be
     // listed only once the key group had answered - `distribution-group`, then `members`, then the
@@ -494,7 +544,8 @@ export function useChannelWorkspaces() {
 
     let channels: ChannelDto[];
     try {
-      channels = (await service.listChannels(workspaceId)) as ChannelDto[];
+      // Through THIS walk's handle: the batched listing when it answered, the route otherwise.
+      channels = (await bootReads.listChannels(workspaceId)) as ChannelDto[];
     } catch (error) {
       // SETTLED, NOT RACED (see `executeWorkspaceLoadAttempt`): the key-group chain is still this
       // attempt's, and a retry must not start beside it.
@@ -546,6 +597,7 @@ export function useChannelWorkspaces() {
         isPrivate,
         hasAccess: viewerHasAccess,
         canWrite: channel.viewerCanWrite !== false,
+        ...writeFieldsOf(channel),
       });
 
       // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
@@ -907,6 +959,10 @@ export function useChannelWorkspaces() {
       // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
       // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
       message = sealUnavailableMessage(error.reason);
+    } else if (error instanceof SalonNotLoadableError) {
+      // Nothing was sealed: the salon cannot be loaded (here, or in the leader tab that seals for
+      // this one) without something new happening.
+      message = salonGateRefusalMessage(error.reason);
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that
@@ -1763,6 +1819,7 @@ export function useChannelWorkspaces() {
             id: channelConversationId,
             name: channel.name,
             isPrivate: channel.visibility === 'private',
+            ...writeFieldsOf(channel),
           });
           // `messages: []` USED TO BE WRITTEN HERE UNCONDITIONALLY, over a row this same statement
           // had just read for its unread count. Hydrating the workspace emptied a channel the user
@@ -1856,6 +1913,7 @@ export function useChannelWorkspaces() {
           id: channelId,
           name: normalizedChannelName,
           isPrivate,
+          ...writeFieldsOf(createdChannel ?? {}),
         });
       }
 
@@ -1980,7 +2038,8 @@ export function useChannelWorkspaces() {
                 )
               );
               try {
-                await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+                // From whichever tab invites: a follower hands it to the leader (`frameFromAnyTab`).
+                await sendFrameFromThisTab(mlsService, directConvo[1].id, invitationMsg);
                 // MLS never hands a device back its own application message, so the inviter's
                 // copy of the card would never appear on THIS device. Insert it locally; their
                 // other devices build the same envelope from the incoming event.
@@ -2585,8 +2644,10 @@ export function useChannelWorkspaces() {
     canManage: boolean;
     canManageChannels?: boolean;
     canModerate?: boolean;
+    canWriteByPolicy?: WriteVerdicts;
     permissions: string[];
   }) {
+    const verdicts = event.canWriteByPolicy;
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {
@@ -2596,9 +2657,37 @@ export function useChannelWorkspaces() {
               ? {}
               : { viewerCanManageChannels: event.canManageChannels }),
             ...(event.canModerate === undefined ? {} : { viewerCanModerate: event.canModerate }),
+            // EVERY SALON'S COMPOSER FOLLOWS THE NEW ROLE, looked up from the server's table by the
+            // salon's own policy. Until 2026-11-10 only the three flags above moved, so a moderator
+            // whose role lost its moderation grant kept a composer in every "admins and moderators"
+            // salon until the next full load, and each post came back a 403.
+            // A row that does not know its policy (an older server) keeps its `canWrite`: absent
+            // means unchanged, never "everyone".
+            channels: verdicts
+              ? ws.channels.map((ch) =>
+                  ch.writePolicy ? { ...ch, canWrite: verdicts[ch.writePolicy] } : ch
+                )
+              : ws.channels,
           }
         : ws
     );
+  }
+
+  /**
+   * The server refused a post in this salon by its write policy: the row's `canWrite` was stale.
+   * The refusal IS the server's verdict for this viewer, so the composer goes, replaced by the line
+   * saying who may write - instead of offering again a control the next post would be refused by.
+   */
+  function handleChannelWriteRefused(
+    channelConversationId: string,
+    policy: Exclude<ChannelWritePolicy, 'everyone'>
+  ) {
+    channelWorkspaces = channelWorkspaces.map((ws) => ({
+      ...ws,
+      channels: ws.channels.map((ch) =>
+        ch.id === channelConversationId ? { ...ch, canWrite: false, writePolicy: policy } : ch
+      ),
+    }));
   }
 
   /**
@@ -2782,6 +2871,8 @@ export function useChannelWorkspaces() {
     refreshChannelOrder,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceRoleChanged,
+    /** Takes the composer from a salon whose post the server refused by its write policy. */
+    handleChannelWriteRefused,
     /** What each workspace role grants right now, keyed by role id - see the state's own note. */
     get rolePermissions() {
       return rolePermissions;

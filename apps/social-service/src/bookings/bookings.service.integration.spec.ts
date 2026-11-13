@@ -171,7 +171,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     // file is an ICM Saint-Etienne student unless a test says otherwise, and every association
     // reaches every space (`newAssociation`) - so only the tests about the campus see a border.
     await q(
-      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+      `CREATE TABLE users (id varchar PRIMARY KEY, "displayName" varchar, "firstName" varchar, "lastName" varchar,
          admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
          cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
     );
@@ -181,12 +181,21 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
     );
     await q(
-      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL,
+         permissions integer NOT NULL DEFAULT 0, "sortOrder" integer NOT NULL DEFAULT 0,
+         "createdAt" timestamptz NOT NULL DEFAULT now())`
     );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
     await q(MIGRATION);
+    // A listed space tells its association's followers of its opening (engagement WP-4): the
+    // follows, in the shape the follow writes them, and the opening reminders 151 creates.
+    await q(
+      `CREATE TABLE association_follows (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         "followerUserId" varchar NOT NULL, "associationId" uuid NOT NULL)`
+    );
+    await q(readFileSync(join(MIGRATION_DIR, '151_opening_reminders.sql'), 'utf8'));
     for (const [id, first] of [
       [ALICE, 'Alice'],
       [BOB, 'Bob'],
@@ -790,6 +799,40 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         code: 'block-not-found',
       });
       expect(space.slotMode).toBe('step');
+    });
+  });
+
+  describe('the person responsible for a space (owner, 2026-11-13)', () => {
+    it('is the first member whose row holds the booking right, in roster order', async () => {
+      const { space } = await setup({ name: 'contact asso' });
+      const member = (user: string, permissions: number, sortOrder: number) =>
+        q(
+          `INSERT INTO association_members ("associationId", "userId", permissions, "sortOrder")
+           VALUES ($1, $2, $3, $4)`,
+          [space.associationId, user, permissions, sortOrder]
+        );
+      // BOB has no right at all, CAROL holds it at position 2, DAN at position 1: DAN is first.
+      await member(BOB, 0, 0);
+      await member(CAROL, 1 << 11, 2);
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toEqual({
+        userId: CAROL,
+        displayName: 'Carol X',
+      });
+      await member(DAN, 1 << 11, 1);
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toEqual({
+        userId: DAN,
+        displayName: 'Dan X',
+      });
+    });
+
+    it('is nobody when no row holds the right, and the owner of a personal space', async () => {
+      const { space } = await setup({ name: 'contact none' });
+      expect((await service.getSpace(space.id, as(STRANGER))).contact).toBeNull();
+      const personal = await setup({ name: 'contact personal', associationId: null, ownerId: DAN });
+      expect((await service.getSpace(personal.space.id, as(STRANGER))).contact).toEqual({
+        userId: DAN,
+        displayName: 'Dan X',
+      });
     });
   });
 
@@ -1839,6 +1882,16 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       });
     });
 
+    it('a new space has NO longest booking, and an organiser may set one then lift it (migration 153)', async () => {
+      const { id } = await organiser.create({ name: 'Libre' }, as(ALICE));
+      const read = async () => (await organiser.managedSpaceView(id, as(ALICE))).maxSteps;
+      expect(await read()).toBeNull();
+      await organiser.update(id, { maxSteps: 4 } as never, as(ALICE), NOW);
+      expect(await read()).toBe(4);
+      await organiser.update(id, { maxSteps: null } as never, as(ALICE), NOW);
+      expect(await read()).toBeNull();
+    });
+
     it('refuses settings the database would refuse, as codes', async () => {
       const { id } = await organiser.create({ name: 'x' }, as(ALICE));
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
@@ -2066,6 +2119,32 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       );
       await organiser.remove(space.id, as(ORGA), NOW);
       expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
+    });
+
+    it('tells the followers of a listed space once its audience is cleared (engagement WP-4, L29)', async () => {
+      const { space } = await setup({
+        discoverability: 'listed',
+        audience: { promo: { values: [2024] } } as never,
+        opensAt: new Date(Date.now() + 86_400_000),
+      });
+      await q(
+        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2)`,
+        [ALICE, space.associationId]
+      );
+      const told = async () =>
+        (
+          await q(
+            `SELECT "userId", origin FROM opening_reminders WHERE kind = 'booking' AND "targetId" = $1`,
+            [space.id]
+          )
+        ).map((r: { userId: string; origin: string }) => `${r.userId}:${r.origin}`);
+      await organiser.update(space.id, { name: 'renamed' } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([]);
+      await organiser.update(space.id, { audience: null } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([`${ALICE}:followed`]);
+      // Saved again with no audience: nothing new, nothing twice.
+      await organiser.update(space.id, { audience: null } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([`${ALICE}:followed`]);
     });
 
     it('refuses duplicate question ids, a question image, a zoneless opening, an entity that does not exist', async () => {

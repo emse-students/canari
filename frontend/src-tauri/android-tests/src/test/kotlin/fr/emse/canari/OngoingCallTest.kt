@@ -144,6 +144,16 @@ class OngoingCallTest {
     }
 
     @Test
+    fun `a focus ask reaches the running call only - none, or an earlier call's, acts on nothing`() {
+        assertEquals(
+            CallServiceEffect.AskFocus("A", "unmute tap"),
+            decide("A", CallServiceCommand.AskFocus("A", "unmute tap")),
+        )
+        assertTrue(decide(null, CallServiceCommand.AskFocus("A", "tap")) is CallServiceEffect.Ignore)
+        assertTrue(decide("B", CallServiceCommand.AskFocus("A", "tap")) is CallServiceEffect.Ignore)
+    }
+
+    @Test
     fun `the screen goes dark against the cheek on the earpiece only, and only with the call on screen`() {
         assertTrue(holdsProximityScreenOff(CallOutput.EARPIECE, appOnScreen = true))
         // The user in another app during the call: that app's screen is not the call's to darken.

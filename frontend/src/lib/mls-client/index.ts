@@ -4,6 +4,7 @@
  */
 export type {
   IMlsService,
+  DismissedGroupsRead,
   GroupMeta,
   UserGroupRow,
   MlsInitOptions,

@@ -19,6 +19,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { SalonNotLoadableError } from '$lib/utils/graine/salonSendGate';
 
 /** One owed write: delivers it and classifies its own outcome (it may owe itself again). */
 export type OwedSalonWrite = () => Promise<void>;
@@ -124,7 +125,9 @@ export async function deliverSalonWrite(
  * write was stored, so it is not nothing either.
  */
 export function nothingLeftTheDevice(error: unknown): boolean {
-  if (error instanceof GraineSealUnavailableError) return true;
+  if (error instanceof GraineSealUnavailableError || error instanceof SalonNotLoadableError) {
+    return true;
+  }
   const status = refusalStatus(error);
   return status !== null && status < 500;
 }

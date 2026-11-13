@@ -112,3 +112,74 @@ describe('AccountBell', () => {
     expect(api.setBellLevel).not.toHaveBeenCalled();
   });
 });
+
+describe('AccountBell, icon only (a profile header)', () => {
+  it('draws the glyph alone, keeps the level in its name, and opens the same three-level menu', async () => {
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u-bob', iconOnly: true },
+    });
+    await settle();
+    expect(bell().textContent?.trim()).toBe('');
+    expect(trigger().getAttribute('aria-label')).toContain(m.bell_label());
+    expect(trigger().getAttribute('aria-label')).toContain(m.bell_level_all());
+    trigger().click();
+    await settle();
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(3);
+    option(m.bell_level_none()).click();
+    await settle();
+    expect(api.setBellLevel).toHaveBeenCalledWith('user', 'u-bob', 'none');
+  });
+});
+
+describe('AccountBell, a read started by the page (weak-network audit, C3)', () => {
+  it('shows the level the page asked for and asks nothing itself', async () => {
+    component = mount(AccountBell, {
+      target: document.body,
+      props: {
+        kind: 'association',
+        targetId: 'a1',
+        takeInitial: () => Promise.resolve('none' as const),
+      },
+    });
+    await settle();
+    expect(bell().dataset.level).toBe('none');
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+  });
+
+  it('a refused head-start read leaves the control disabled, and asks no second time', async () => {
+    const refused = Promise.reject(new Error('x'));
+    refused.catch(() => {});
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', takeInitial: () => refused },
+    });
+    await settle();
+    expect(trigger().disabled).toBe(true);
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+  });
+
+  it('a remount after the head start was taken asks for itself, never reading a stale promise', async () => {
+    let held: Promise<'none'> | undefined = Promise.resolve('none' as const);
+    const take = () => {
+      const read = held;
+      held = undefined;
+      return read;
+    };
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', takeInitial: take },
+    });
+    await settle();
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+    unmount(component);
+    api.getBellLevel.mockResolvedValue('lives');
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', takeInitial: take },
+    });
+    await settle();
+    expect(api.getBellLevel).toHaveBeenCalledTimes(1);
+    expect(bell().dataset.level).toBe('lives');
+  });
+});

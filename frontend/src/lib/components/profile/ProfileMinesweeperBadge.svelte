@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Trophy } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import { fetchMinesweeperUserStanding, formatDurationMs } from '$lib/minesweeper/api';
   import { m } from '$lib/paraglide/messages';
 
@@ -37,17 +37,15 @@
   });
 </script>
 
+<!-- ONE SMALL BADGE, "🏆 Démineur #16", LINKING TO THE GAMES PAGE (owner, 2026-11-10); the time is
+     only its tooltip. -->
 {#if rank != null && personalBestMs != null}
-  <div
-    class="border-cn-yellow/25 bg-cn-yellow/10 text-cn-dark text-2xs mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-bold"
-    title={m.minesweeper_profile_badge_title()}
+  <a
+    href={resolve('/games')}
+    class="border-accent/25 bg-accent/10 text-cn-dark text-2xs focus-visible:ring-accent-icon mt-2 inline-flex items-center rounded-full border px-2.5 py-0.5 font-bold outline-none focus-visible:ring-2"
+    title={m.minesweeper_profile_badge_title({ time: formatDurationMs(personalBestMs) })}
+    data-testid="minesweeper-badge"
   >
-    <Trophy size={12} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
-    <span>
-      {m.minesweeper_profile_badge({
-        rank: String(rank),
-        time: formatDurationMs(personalBestMs),
-      })}
-    </span>
-  </div>
+    {m.minesweeper_profile_badge({ rank: String(rank) })}
+  </a>
 {/if}

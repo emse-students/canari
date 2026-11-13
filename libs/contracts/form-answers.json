@@ -24,6 +24,7 @@
     "gridTooManyRows": "FORM_GRID_TOO_MANY_ROWS",
     "tooManyQuestions": "FORM_TOO_MANY_QUESTIONS",
     "guestIdentityMissing": "FORM_GUEST_IDENTITY_MISSING",
-    "guestIdentityNotAsked": "FORM_GUEST_IDENTITY_NOT_ASKED"
+    "guestIdentityNotAsked": "FORM_GUEST_IDENTITY_NOT_ASKED",
+    "gridMultipleChoiceSplit": "FORM_GRID_MULTIPLE_CHOICE_SPLIT"
   }
 }

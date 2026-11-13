@@ -8,6 +8,7 @@ import {
   type CallsMode,
   type CheckpointSkipMode,
   type LivesMode,
+  type LiveReplaysMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
@@ -52,6 +53,19 @@ function hydrateFromCachedServerInfo(): void {
   }
 }
 
+/**
+ * Whether this process's version check has SETTLED - answered, fallen back to the cached verdict, or
+ * skipped offline with it. `lastCheck` cannot say so: it stays `null` after a check that settled on
+ * a non-blocking verdict. A surface that must never flash in front of a below-minimum gate (the
+ * announcement drawn from the device) waits for this fact, not for a clock.
+ */
+let verdictSettled = $state(false);
+
+/** See {@link verdictSettled}. Reactive. */
+export function isVersionVerdictSettled(): boolean {
+  return verdictSettled;
+}
+
 /** Latest version check result, or null before the first run. */
 export function getAppVersionCheck(): AppVersionCheckResult | null {
   return lastCheck;
@@ -85,6 +99,16 @@ export function serverCallsMode(): CallsMode {
  */
 export function serverLivesMode(): LivesMode {
   return lastCheck?.livesMode ?? 'off';
+}
+
+/**
+ * The server's live-replays switch as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverLivesMode}. A CLIENT THAT READS `off` NEVER ASKS FOR A REPLAY
+ * (`withReplays` is not sent) and draws none: the switch is the server's, the question is the
+ * client's (`live/replayAvailability.ts`).
+ */
+export function serverLiveReplaysMode(): LiveReplaysMode {
+  return lastCheck?.liveReplaysMode ?? 'off';
 }
 
 /**
@@ -139,6 +163,18 @@ export function serverFormDrafts(): boolean | null {
   return loadCachedServerInfo()?.formDrafts ?? null;
 }
 
+/**
+ * Whether this estate serves the ranked lists (`rankedFeeds`: Pour toi and the ranked CanaReels
+ * viewer), as the last `/api/version` answer said - or `null` when no server has ever answered. Read
+ * by `listPosts` (`posts/api.ts`, `rankedFeedsKnown`, which waits for the answer while it is `null`): only `true` asks them (docs/wiki/legacy-compatibility.md,
+ * "a feed client newer than its server"). The cached answer counts, for the reason
+ * {@link serverPresencePost} gives.
+ */
+export function serverRankedFeeds(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.rankedFeeds;
+  return loadCachedServerInfo()?.rankedFeeds ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;
@@ -171,6 +207,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
     if (!cached.upToDate || cached.belowMinVersion || cached.maintenance.enabled) {
       lastCheck = cached;
     }
+    verdictSettled = true;
     return lastCheck ?? cached;
   }
 
@@ -199,6 +236,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
       return lastCheck ?? fallback;
     } finally {
       inflight = null;
+      verdictSettled = true;
     }
   })();
 

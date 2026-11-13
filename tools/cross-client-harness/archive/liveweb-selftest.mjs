@@ -46,7 +46,7 @@ for (const t of [
   '`ranges ${seen.spans} -> ${now.spans}`',
   "`[LIVE] viewer ${this.liveId}: waiting at ${at.toFixed(2)} with ${wait.ahead.toFixed(2)} s buffered ahead ${formatLiveRanges(ranges)} - the engine's own wait`",
   "`[LIVE] viewer ${this.liveId}: the engine's own wait at ${held.at.toFixed(2)} ended by itself after ${Math.round(wallMs)} ms, now at ${at.toFixed(2)}: held about ${Math.round(heldMs)} ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`",
-  '`[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`',
+  '`[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round((end - point) * 1000)} ms behind`',
   '`[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`',
   '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
   '`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`',
@@ -208,13 +208,17 @@ const CAM = (how) => `debug: [23:25:20.712] [LIVE-CAM] opening user (${how})`;
 ok('the phone broadcaster asks its lens EXACT: forgiven on A1; IDEAL on a phone stays dirt', forgiven('LIVE-WEB-2', 'A1', CAM('exact')) && !forgiven('LIVE-WEB-2', 'A1', CAM('ideal')));
 ok('a web broadcaster asks it IDEAL: forgiven; EXACT on the web stays dirt', webForgiven(CAM('ideal')) && !webForgiven(CAM('exact')));
 ok('... and the lens line is NOT forgiven on a viewer', !forgiven('LIVE-WEB-2', 'W2', CAM('exact')));
+// The margin (owner, 2026-11-09): the backward `short` re-anchor is gone; the pace and the stall's end replace it.
 const SHORT_SEEK = `debug: [23:25:37.979] [LIVE] viewer ${S}: seek to the live edge (short) at 14.01, 6021 ms behind`;
-const SHORT_HOLD = `debug: [23:22:08.736] [LIVE] viewer ${S}: 5.98 s buffered, under the 6015 ms target - no seek (short)`;
+const PACE = `debug: [23:22:08.736] [LIVE] viewer ${S}: pace slow (0.9x), 2.10 s ahead, target 6000 ms`;
+const JOIN_HOLD = `debug: [23:22:08.736] [LIVE] viewer ${S}: at 0.00, the anchor is not ahead in [0.00-6.00] - no seek (join)`;
+const STALL_END_LINE = `log: [23:22:09.736] [LIVE] viewer ${S}: stalled 2400 ms (resumed), from a margin of 3100 ms, target 6000 ms`;
 const LEAVE = `debug: [23:25:39.280] [LIVE] leave ${S}`;
-ok('a short re-anchor, its held form and the seat given back are forgiven on a viewer', forgiven('LIVE-WEB-2', 'W4', SHORT_SEEK) && forgiven('LIVE-STALL-1', 'W2', SHORT_HOLD) && forgiven('LIVE-WEB-2', 'W2', LEAVE));
-ok('... NOT on the broadcaster', !forgiven('LIVE-WEB-2', 'A1', SHORT_SEEK) && !forgiven('LIVE-WEB-2', 'A1', SHORT_HOLD) && !forgiven('LIVE-WEB-2', 'A1', LEAVE));
-ok('a no-seek line for any other reason stays dirt', !forgiven('LIVE-STALL-1', 'W2', SHORT_HOLD.replace('(short)', '(drift)')));
-ok('livePlayer.ts still writes the held short re-anchor sentence', SOURCE.includes('s buffered, under the ${Math.round(target)} ms target - no seek (short)'));
+ok('a pace change, a join already at its anchor, a stall resumed and the seat given back are forgiven on a viewer', forgiven('LIVE-WEB-2', 'W4', PACE) && forgiven('LIVE-STALL-1', 'W2', JOIN_HOLD) && forgiven('LIVE-STALL-1', 'W2', STALL_END_LINE) && forgiven('LIVE-WEB-2', 'W2', LEAVE));
+ok('... NOT on the broadcaster', !forgiven('LIVE-WEB-2', 'A1', PACE) && !forgiven('LIVE-WEB-2', 'A1', JOIN_HOLD) && !forgiven('LIVE-WEB-2', 'A1', LEAVE));
+ok('the retired backward `short` re-anchor stays dirt, and a no-seek line for any other reason too', !forgiven('LIVE-WEB-2', 'W4', SHORT_SEEK) && !forgiven('LIVE-STALL-1', 'W2', JOIN_HOLD.replace('(join)', '(drift)')));
+ok("the stall's end is no stall the judge cannot read", stallsOf([STALL_END_LINE.replace(/^log: \[[\d:.]+\] /, '')]).unread.length === 0);
+ok('livePlayer.ts still writes the pace, no-seek and stall-end sentences', ['pace ${next} (${rate}x), ', 'the anchor is not ahead in ${formatLiveRanges(ranges)} - no seek (${why})', 'stalled ${Math.round(ms)} ms (${how}), from a margin of ${margin} ms, target '].every((t) => SOURCE.includes(t)));
 
 console.log('the refusals');
 const http = (line) => ({ ...rep([]), badHttp: [line] });

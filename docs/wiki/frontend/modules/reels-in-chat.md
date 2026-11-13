@@ -60,7 +60,7 @@ What the review of #1936 added:
 - **Leaving a thread ends the salon selection on every exit** (`onThreadLeft`, registered once in `globalChatSingleton`): the history close (Android's Back, the iOS swipe) left the salon row highlighted, since only the in-app back cleared it.
 - **The iOS app writes NO history entry for an overlay** (`initHistoryOverlayStack({ systemBack: false })`): nothing there ever pops one, and closing N nested overlays by swipe left N ghosts of which only the one under the pointer is taken again - N-1 entries for good per cycle.
 
-Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **NOT covered, named:** a `Modal` or sheet portalled over a conversation still gets no swipe on iOS - the same mechanism, filed in [backlog](../../backlog.md#p3---ios-a-modal-or-sheet-over-a-conversation-has-no-edge-swipe-found-2026-10-16). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
+Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **A `Modal` or sheet portalled over a conversation** carries the same `swipeBack` since 2026-10-17 (`Modal.svelte`, when narrow and `dismissible`); its iPhone reading is a row of [the verification table](../../backlog.md#owed-a-verification-and-nothing-else). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
 
 ### The iPhone 12 reading of v1.2.9-alpha.3 - one gesture, one close (2026-10-16)
 
@@ -1306,7 +1306,7 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   send; on IndexedDB one transaction over `outbox` and `messages`. The echo is drawn with
   `skipDbSave` - it is already on disk.
 - **The cap on targets is ONE number on both engines.** `REEL_TAKE_MAX_SENDS` (`sqliteBatch.ts`) is
-  the sends that fit beside their take in one SQLite statement, 82; IndexedDB has no such bound and is
+  the sends that fit beside their take in one SQLite statement, 75 (82 before the outbox row gained `unavailable_answers`, 2026-11-09); IndexedDB has no such bound and is
   held to it anyway, so a take never queues on the web and fails on a phone. `enqueueTake` refuses past
   it with `ReelTakeTooManySendsError` (an `OutboxEnqueueError`), before anything is written. **RC-12's
   sheet caps at `chatReelTargetCap(limits)`**: the SMALLER of the server's `chatReelMaxTargets` (15,
