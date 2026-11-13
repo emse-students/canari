@@ -6,7 +6,7 @@ import { LYDIA_RESPONSABLE_REFUSAL } from './lydiaResponsableRefusal';
 export { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL };
 
 /** The sentence for a code only the cashier routes answer; null for any other. */
-export function lydiaCashierCodeText(code: string | null | undefined): string | null {
+function lydiaCashierCodeText(code: string | null | undefined): string | null {
   switch (code) {
     case LYDIA_CASHIER_REFUSAL.ADD_DISABLED:
       return m.asso_lydia_cashier_err_add_disabled();

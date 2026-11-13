@@ -27,7 +27,7 @@ export interface EventPosterContext {
   onChanged: () => Promise<void>;
 }
 
-export interface EventPosterControls {
+interface EventPosterControls {
   url: string | null;
   uploading: boolean;
   onUpload: (file: File) => Promise<void>;

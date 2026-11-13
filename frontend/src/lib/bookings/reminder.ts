@@ -8,7 +8,7 @@
 import { m } from '$lib/paraglide/messages';
 
 /** The offered delays, in minutes, shortest first. */
-export const REMINDER_PRESETS = [15, 60, 1440] as const;
+const REMINDER_PRESETS = [15, 60, 1440] as const;
 
 /** A `Select` value for `null` ("no reminder"): a value must be a string, and `''` reads as unset. */
 export const NO_REMINDER = 'none';

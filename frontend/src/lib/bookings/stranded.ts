@@ -8,7 +8,7 @@ import { BookingsApiError } from './api';
 import { refusalCode } from '$lib/utils/apiRefusal';
 
 /** The refusals that name the bookings in the way. */
-export const STRANDING_CODES = ['bookings-inside-change', 'bookings-inside-block'] as const;
+const STRANDING_CODES = ['bookings-inside-change', 'bookings-inside-block'] as const;
 
 /** The server answers at most one page of named bookings; the rest are named by the next refusal. */
 export const STRANDED_PAGE = 200;

@@ -392,6 +392,8 @@ function announceGroupReady(
  * `promoteOfflineSession` takes in one (`initializeConnection`) because by then the conversations
  * are already loaded. ONE bag for all three - a second, hand-copied version would drift the moment
  * any of them gained a callback.
+ *
+ * @public Exported for the source-scanning test `offlineUnlock.test.ts`, which reads the text.
  */
 export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return {
@@ -545,7 +547,7 @@ function releaserFor(ownerId: string): SessionReleaser {
  * came from and in nothing else, so they are one call with one deferral policy; what that policy is,
  * and why a drain must be able to re-defer, is on {@link serveWelcomeRequest}.
  */
-export function makeWelcomeRequestContext(
+function makeWelcomeRequestContext(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): WelcomeRequestContext {
@@ -3625,6 +3627,8 @@ async function recoverPinSteps(
  * It deliberately does NOT clear the auth token or the storage handle: `clearAuth` needs the token
  * to revoke the refresh credential, and the wipe needs the handle to close the connection that
  * would otherwise defer every delete. Each caller owns its own erasure, in its own order.
+ *
+ * @public Exported for `signOutEndsLiveSession.test.ts`, which reads this function's text.
  */
 export function tearDownLiveSession(
   ctx: SessionContext,

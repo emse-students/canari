@@ -50,7 +50,7 @@ export const STAGE_WIDTH = 1600;
 /** Fixed natural height of the A2 landscape frame: STAGE_WIDTH / SQRT2 (A-series aspect). */
 export const STAGE_HEIGHT = Math.round(STAGE_WIDTH / Math.SQRT2);
 /** Width of the right-hand directory column (poster px); bubbles are confined to the left of it. */
-export const DIRECTORY_WIDTH = 500;
+const DIRECTORY_WIDTH = 500;
 /** Base (scale 1) width of an association blob unit (blob + the bureau arc + the name band). */
 export const CARD_WIDTH = 400;
 /**
@@ -143,8 +143,8 @@ export function assoEmailFontSize(name: string, unitScale = 1): number {
 export type MemberSlot = 'bureau' | 'president';
 
 /** Base card width for each slot, before any widening. */
-export const BUREAU_CARD_WIDTH = 64;
-export const PRES_CARD_WIDTH = 73;
+const BUREAU_CARD_WIDTH = 64;
+const PRES_CARD_WIDTH = 73;
 /** Padding inside a card, summed over both sides: the text box is the card minus this. */
 export const CARD_PAD_X = 12;
 /** Name font size (px) a short name gets, per slot. Every longer name steps down from here. */
@@ -629,7 +629,7 @@ export function resolveUnitMembers(
 /** Stage side padding shared by the title and the seed grid, also offered as an alignment guide. */
 export const CONTENT_MARGIN = 48;
 /** Title baseline box top. */
-export const TITLE_TOP = 36;
+const TITLE_TOP = 36;
 /** Title font size. */
 export const TITLE_SIZE = 52;
 
@@ -651,7 +651,7 @@ export function titleRect(directoryVisible: boolean): { x: number; y: number; w:
 // Same reason as the unit internals: the publisher resolves the panel for the showcase.
 
 /** Inset of the directory panel from the frame's top / right / bottom edges. */
-export const DIRECTORY_INSET = 48;
+const DIRECTORY_INSET = 48;
 /** Rounded corner of the directory panel. */
 export const DIRECTORY_RADIUS = 20;
 /** Vertical / horizontal padding inside the directory panel. */
@@ -687,11 +687,11 @@ export const TEXT_BASE_SIZE = 34;
 // values are final, so they are plain constants - the publisher resolves them for the showcase.
 
 /** Crown center Y within the unit box. */
-export const BUREAU_CROWN_CY = 147;
+const BUREAU_CROWN_CY = 147;
 /** Ellipse horizontal radius (narrower than the vertical one, so the crown hugs the blob). */
-export const BUREAU_CROWN_RX = 119;
+const BUREAU_CROWN_RX = 119;
 /** Ellipse vertical radius. */
-export const BUREAU_CROWN_RY = 147;
+const BUREAU_CROWN_RY = 147;
 /** Angle (rad) of each slot level, from the lowest pair to the highest. */
 const CROWN_ANGLES = [-0.85, -0.11, 0.57];
 

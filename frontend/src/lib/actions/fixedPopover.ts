@@ -1,7 +1,7 @@
 import { currentKeyboardInsetBottom } from '$lib/stores/keyboardViewport.svelte';
 import { Log } from '$lib/utils/Log';
 
-export type FixedPopoverSide = 'top' | 'bottom';
+type FixedPopoverSide = 'top' | 'bottom';
 
 export interface FixedPopoverLayoutOptions {
   /** When true, align the popover's right edge with the anchor's right edge. */

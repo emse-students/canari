@@ -10,7 +10,7 @@
  */
 
 /** One cell of the breakdown: devices, and distinct users, on `platform` running `version`. */
-export interface CensusGroup {
+interface CensusGroup {
   platform: string;
   version: string;
   devices: number;
@@ -47,10 +47,10 @@ export interface CensusHistory {
 }
 
 /** The platforms the gateway counts apart, in drawing order (bottom of the stack first). */
-export const PLATFORM_ORDER = ['web', 'android', 'ios', 'macos', 'windows', 'linux'] as const;
+const PLATFORM_ORDER = ['web', 'android', 'ios', 'macos', 'windows', 'linux'] as const;
 
 /** What the gateway calls a platform it could not name, or a client too old to declare one. */
-export const UNNAMED_PLATFORMS = ['other', 'unknown'] as const;
+const UNNAMED_PLATFORMS = ['other', 'unknown'] as const;
 
 /**
  * The layers of the stack, in order: the named platforms, then the two unnamed ones. A platform the

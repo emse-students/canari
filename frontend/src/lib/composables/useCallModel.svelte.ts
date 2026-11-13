@@ -186,5 +186,3 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     },
   };
 }
-
-export type CallModel = ReturnType<typeof useCallModel>;

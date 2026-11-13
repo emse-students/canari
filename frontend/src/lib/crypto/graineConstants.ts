@@ -59,17 +59,6 @@ export const GRAINE_REUSED_ROTATE_AFTER_MESSAGES = 50;
 export const GRAINE_REUSED_ROTATE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
- * How many sessions per channel the NATIVE mirror keeps, the durable store holding the rest.
- *
- * The mirror exists for exactly one job - decrypting an incoming push before any WebView runs - so
- * it only ever needs the recent end. Epoch keys were few and could be kept whole; seeds accumulate
- * for ever, in an app-private JSON file rewritten on every rotation, which is unbounded growth
- * waiting for a year to pass. A seed too old to be mirrored is not a failure: the notification
- * degrades to a generic "new message", which is the existing behaviour and the correct one.
- */
-export const GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL = 20;
-
-/**
  * Ceiling on the seeds one ANSWER may carry, across all of its pages.
  *
  * Sized on 2026-08-17 for a one-year community with 30 active senders rotating weekly: ~1 500 seeds

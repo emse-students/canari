@@ -13,10 +13,18 @@
     "src/lib/proto/canari.*",
     ".paraglide-test/**"
   ],
+  "ignoreUnresolved": ["^\\$lib/(wasm|proto/canari)", "^\\$lib/paraglide/"],
   "ignoreIssues": {
+    "src/lib/calendar/ics.ts": ["exports", "types"],
+    "src/lib/minesweeper/game.ts": ["exports", "types", "duplicates"],
+    "src/lib/bookings/zonedTime.ts": ["exports", "types"],
+    "src/lib/bookings/bookingWindow.ts": ["exports", "types"],
+    "src/lib/forms/answerText.ts": ["exports", "types"],
+    "src/lib/forms/formOptionRules.ts": ["exports", "types"],
+    "src/lib/forms/productGridContract.ts": ["exports", "types"],
+    "src/lib/carte/publish.ts": ["types"],
     "src/lib/utils/users/visibleText.ts": ["exports", "types"]
   },
-  "ignoreUnresolved": ["^\\$lib/(wasm|proto/canari)", "^\\$lib/paraglide/"],
   "ignoreDependencies": ["emoji-picker-element-data", "husky"],
   "ignoreBinaries": ["wasm-pack"]
 }

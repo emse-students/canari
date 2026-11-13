@@ -123,7 +123,7 @@ export interface PosterBubble {
 }
 
 /** A zone of the map grouping the associations placed in it. */
-export interface PosterZone {
+interface PosterZone {
   /** The map's zone id, or null for the catch-all zone of unzoned associations. */
   zoneId: string | null;
   label: string;
