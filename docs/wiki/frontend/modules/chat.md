@@ -4316,7 +4316,9 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 - **Sticky date**: current date label stays visible during scroll - see
   [The day label and its floating pill](#the-day-label-and-its-floating-pill-2026-10-01).
 - **Search**: in-chat search with prev/next navigation and highlight.
-- **Lightbox**: full-screen image/video with pinch-zoom and download.
+- **Lightbox**: full-screen image/video with pinch-zoom and download, and previous/next over the
+  conversation's media - see
+  [The media viewer of a conversation walks its images and videos](#the-media-viewer-of-a-conversation-walks-its-images-and-videos-2026-11-13).
 - **Radial menu** (mobile): long-press message -> circular action menu
   (`MessageMobileActions.svelte`). The actions are ICONS ONLY on ONE row (owner, 2026-11-08), built
   from one `actions` list (name = aria-label + title): 7 at most (own text message), each `flex-1`
@@ -5790,3 +5792,34 @@ theirs, or blocks.
 ### Channel access is a choice, not a switch (2026-11-10)
 
 Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
+
+## The media viewer of a conversation walks its images and videos (2026-11-13)
+
+Opening an image or a video from a bubble no longer ends at that item (owner, 2026-11-13): the same
+viewer moves to the previous or next image or video of THAT conversation, like a gallery.
+
+- **One viewer, two doors.** [`ConversationMediaViewer`](../../../../frontend/src/lib/components/chat/ConversationMediaViewer.svelte)
+  takes a list and the key of the item to open on; the "Medias" panel and `MessageMediaRenderer`
+  both use it, so they cannot drift. The arrows (pointer devices), the horizontal swipe (touch) and
+  Left/Right are `MediaLightbox`'s own, shared with posts (`showPrev`/`showNext`), as are the
+  rotation and fullscreen of a video ([screen-orientation](../screen-orientation.md)).
+- **The sequence is what the client already holds.** `MainChatPage` provides one loader
+  (`provideChatMediaSequence`, a context, so no prop crosses five components) over the same local
+  read as the panel (`loadSharedContent`: storage for DMs and groups, the in-memory messages of a
+  channel). No history fetch is ever triggered to extend it. `buildViewerSequence` orders it OLDEST
+  FIRST (left = older), and drops a CanaReel sent in the chat (a tile with its own viewer), a media
+  whose expiry hint has passed, one this device met a `410` for (`mediaPurgedAt`) and a deleted
+  message (the aggregate already skips it). One message carries one media; the key is
+  `messageId:mediaId` so a second attachment would be its own item.
+- **It opens at once, then gains neighbours.** The bubble's decrypted URL is passed as `known`
+  (never released by the viewer, it is the bubble's); the list arrives a moment later and the viewer
+  stays on the same item BY KEY - no remount, no second history entry. A neighbour is decrypted when
+  reached, through `MediaService.downloadAndDecrypt` like the panel's.
+- **No wrap-around** (`viewerBounds`): the newest wrapping to the oldest would jump across the whole
+  conversation on one stray swipe, and an end that stops tells the reader there is nothing further.
+- **A video stops when you move**: the next item replaces the player (`{#key}`), which unmounts it.
+- The panel's list stays newest first (its grid order), so there its "previous" is the newer one.
+
+Tests: `viewerSequence.test.ts` (order, skips, bounds), `ConversationMediaViewer.svelte.test.ts`
+(keyboard, ends, video stop, known URL). **Owed: a reading on a phone** - swipe between a photo and
+a video in a conversation with both, rotate a video, then move on.
