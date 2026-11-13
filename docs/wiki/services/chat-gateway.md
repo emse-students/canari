@@ -237,6 +237,13 @@ sent many times a minute that mean nothing a minute later, and the three lines a
 Every other frame keeps INFO, one line per message being the trace of a delivery. `[ROUTE]` no longer
 lists members (nor asks Redis for them): who is online is what presence says.
 
+## The heartbeat close is INFO (2026-11-13)
+
+`[heartbeat] No pong ... closing dead connection` was a WARN, about as often as `Client went away
+without a closing handshake` and for the same reason: a phone that lost its network or a laptop that
+slept never answers, so the missed pongs ARE the ordinary end of most sessions. It sits beside that
+line at the same level, as the two are one event (a session ended) differing in how it was noticed.
+
 ## What one connection sent, said once when it ends (2026-11-13)
 
 Each connection carries a `FrameCensus` (`frame_census.rs`), fed by the receive loop, whose `Drop`

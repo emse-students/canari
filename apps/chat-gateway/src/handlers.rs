@@ -570,7 +570,10 @@ async fn handle_socket(
                     // consecutive unacknowledged pings counting the one about to be sent.
                     let outstanding = pong_flag_send.fetch_add(1, Ordering::Relaxed) + 1;
                     if outstanding > MAX_MISSED_PONGS {
-                        tracing::warn!(
+                        // INFO, like `Client went away without a closing handshake`: a phone that lost
+                        // its network or a laptop that slept never answers, which is the ordinary
+                        // end of most sessions and not a fault of the gateway.
+                        tracing::info!(
                             "[heartbeat] No pong from {} after {} pings - closing dead connection",
                             conn_key_ping,
                             MAX_MISSED_PONGS
