@@ -275,6 +275,38 @@ rotation_seed <<<"$REPLACE_PLAN" || {
   exit 1
 }
 
+# ── A pinned image the host does not hold is fetched HERE, before any `up` ───
+# The pull above names only what the release built. A pinned service (a datastore, the edge) names
+# an image by digest that this repository does not build, and the day that digest moves the host
+# does not hold it: `up -d` would then fetch it itself, as an unnamed side effect of the step that
+# replaces the database - outside `with_registry_retry`, so a registry that hiccups reads as a
+# broken change (exit 1, not 75) and is not re-attempted. Asked of the daemon as a fact (`image
+# inspect`), so an ordinary release pulls nothing here and reaches no registry for these images.
+#
+# pinned_services_missing_image - reads the replacement plan on stdin, prints each pinned service
+# whose image the daemon does not hold, one per line.
+pinned_services_missing_image() {
+  local service mode image
+  while read -r service mode _ _ image; do
+    [ "$mode" = pinned ] || continue
+    [ -n "$image" ] && [ "$image" != "-" ] || continue
+    $DOCKER_CLI image inspect "$image" >/dev/null 2>&1 || printf '%s\n' "$service"
+  done
+}
+
+PINNED_TO_PULL="$(pinned_services_missing_image <<<"$REPLACE_PLAN" | tr '\n' ' ')"
+PINNED_TO_PULL="${PINNED_TO_PULL% }"
+if [ -n "$PINNED_TO_PULL" ]; then
+  printf '\npulling pinned images this host does not hold yet: %s\n' "$PINNED_TO_PULL"
+  # The assignment lasts for this one call: these images come from their own registries, and the
+  # annotation of a failure names what did not answer.
+  # shellcheck disable=SC2086 # deliberate word splitting: a service list
+  REGISTRY="the registry of a pinned image ($PINNED_TO_PULL)" \
+    with_registry_retry "pinned image pull" dc pull $PINNED_TO_PULL
+else
+  printf '\nevery pinned image is already on this host - not pulling\n'
+fi
+
 # ── The database first, and its migrations BEFORE any application service ──────
 # Services used to start first and migrate after, so a deploy had a window in which new code met the
 # old schema: `relation "spaces" does not exist` and `column "Post.publishedAt" does not exist`

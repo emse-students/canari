@@ -709,6 +709,14 @@ declaration cannot hold:
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory), adminer (built here while upstream lacks a fixed `libpq`, [legacy](legacy-compatibility.md)) | -                                                            |
 | `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, `edge`                                                                     | not an image this repository builds                          |
 
+**A PINNED DIGEST THAT MOVES IS PULLED BEFORE ANY `up`, THROUGH THE REGISTRY RETRY.** The release's
+pull names only what it built, so the day a pinned digest moves the host does not hold the image.
+`deploy-environment.sh` asks the daemon which pinned images it lacks (`image inspect`, a fact, so an
+ordinary release pulls nothing) and pulls those through `with_registry_retry` before the database is
+touched: a registry that does not answer exits 75 with nothing changed, instead of failing inside the
+`up` that replaces postgres. The gap a moved datastore pin costs is then a stop and a start
+(`deploy-registry-retry.test.sh`).
+
 **THE HOST PORT MOVED TO A CONTAINER THAT NEVER CHANGES.** Two replicas cannot both bind
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
 `stream` (L4) mode whose configuration is `infrastructure/edge/nginx.conf`, mounted as a DIRECTORY
