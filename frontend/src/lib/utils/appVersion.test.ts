@@ -81,6 +81,7 @@ describe('parseServerVersionInfo', () => {
       minClientVersion: '1.0.0',
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
+      groupCallsMode: 'off',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -234,6 +235,7 @@ describe('buildAppVersionCheckResult', () => {
       minClientVersion: '0.0.0',
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
+      groupCallsMode: 'mesh',
       livesMode: 'on',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -258,6 +260,7 @@ describe('buildAppVersionCheckResult', () => {
       minClientVersion: '99.99.99',
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
+      groupCallsMode: 'off',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -330,6 +333,7 @@ describe('fetchServerAppVersionReliable', () => {
       minClientVersion: '1.0.0',
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
+      groupCallsMode: 'off',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -514,5 +518,30 @@ describe('the live replays switch of /api/version', () => {
     const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
     expect(parseServerVersionInfo(cached)).toEqual(info);
     expect(info?.liveReplaysMode).toBe('on');
+  });
+});
+
+describe('the group calls switch of /api/version (calls.groupMode)', () => {
+  it.each(['off', 'mesh'] as const)('reads %s', (mode) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', calls: { mode: 'audio_video', groupMode: mode } })
+        ?.groupCallsMode
+    ).toBe(mode);
+  });
+  it.each([undefined, 'mesh', { mode: 'audio' }, { groupMode: 'MESH' }, { groupMode: true }])(
+    'reads %j as CLOSED - a switch that cannot be read fails closed',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', calls: raw })?.groupCallsMode).toBe('off');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      calls: { mode: 'audio', groupMode: 'mesh' },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.groupCallsMode).toBe('mesh');
+    expect(info?.callsMode).toBe('audio');
   });
 });

@@ -28,10 +28,19 @@ export class CallsController {
   @UseGuards(HeaderAuthGuard)
   @Post('calls/initiate')
   @HttpCode(200)
-  async initiateCall(@Body() body: { groupId: string }, @Headers('x-user-id') userId?: string) {
+  async initiateCall(
+    @Body() body: { groupId: string; video?: boolean; groupCallVersion?: number },
+    @Headers('x-user-id') userId?: string
+  ) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
-    return this.callsService.initiateCall(userId, safeGroupId);
+    // `video` decides a GROUP call's seat cap (3 in video, 4 in audio); a 1:1 call ignores it.
+    return this.callsService.initiateCall(
+      userId,
+      safeGroupId,
+      body?.video === true,
+      body?.groupCallVersion
+    );
   }
 
   /**
@@ -44,12 +53,13 @@ export class CallsController {
   async getRoomToken(
     @Query('groupId') groupId: string,
     @Query('roomId') roomId: string,
-    @Headers('x-user-id') userId?: string
+    @Headers('x-user-id') userId?: string,
+    @Query('groupCallVersion') groupCallVersion?: string
   ) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeRoomId = sanitizeQueryValue(roomId, 'roomId');
-    return this.callsService.requestRoomToken(userId, safeGroupId, safeRoomId);
+    return this.callsService.requestRoomToken(userId, safeGroupId, safeRoomId, groupCallVersion);
   }
 
   /**

@@ -7,6 +7,7 @@ import {
   type AppVersionCheckResult,
   type CallsMode,
   type CheckpointSkipMode,
+  type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
 } from '$lib/utils/appVersion';
@@ -89,6 +90,16 @@ export function isAppUpdateAvailable(): boolean {
  */
 export function serverCallsMode(): CallsMode {
   return lastCheck?.callsMode ?? 'off';
+}
+
+/**
+ * The server's group calls switch as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverCallsMode}. A group conversation shows a call control only when
+ * this reads `mesh` AND {@link serverCallsMode} is not `off`: the server refuses a group `initiate`
+ * otherwise (403 `GROUP_CALLS_DISABLED`), so the client hides what would be refused.
+ */
+export function serverGroupCallsMode(): GroupCallsMode {
+  return lastCheck?.groupCallsMode ?? 'off';
 }
 
 /**

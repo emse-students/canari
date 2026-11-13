@@ -34,3 +34,22 @@ export async function isBlockedBetween(
   );
   return rows.length > 0;
 }
+
+/**
+ * Every block standing INSIDE a set of accounts, as `[blocker, blocked]` pairs - ONE query whatever
+ * the set's size, where {@link isBlockedBetween} per pair would cost n(n-1)/2 round trips on every
+ * ring of a large conversation. A group call reads it to drop the members a block separates.
+ */
+export async function blocksAmong(
+  manager: EntityManager,
+  userIds: readonly string[]
+): Promise<[string, string][]> {
+  const ids = [...new Set(userIds.filter((id) => !!id))];
+  if (ids.length < 2) return [];
+  const rows: { blockerId: string; blockedId: string }[] = await manager.query(
+    `SELECT "blockerId", "blockedId" FROM user_blocks
+     WHERE "blockerId" = ANY($1) AND "blockedId" = ANY($1)`,
+    [ids]
+  );
+  return rows.map((r) => [r.blockerId, r.blockedId]);
+}

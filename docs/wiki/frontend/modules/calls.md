@@ -1934,6 +1934,51 @@ masking (D4). Per-sender keys and the TURN volume of a relayed mesh stay open, a
 packages that follow are listed in order:
 [backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
 
+## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
+
+**Built, behind a switch that is OFF in production.** The client's mesh (one peer connection per
+other participant, the tile grid, the start control in a group) is the next pull request; until it
+lands nothing in the app can start or join a group call.
+
+- **The switch: `platform_config.group_calls_mode`** (`off` | `mesh`, core-service migration 022,
+  edited at `/admin/platform`, published by `GET /api/version` as `calls.groupMode`). `off` is the
+  default and production's value; the dev seed writes `mesh`. chat-delivery reads it at
+  `initiate`, never cached (`utils/group-calls-mode.ts`): a conversation of more than two admitted
+  members is a group call, refused `403 GROUP_CALLS_DISABLED` while the switch is off.
+  `calls_mode = off` still closes every call first. `groupCallsModesAgree.test.ts` holds the copies
+  together.
+- **The seat cap is signed into the room token.** `initiate` takes `video`; a group call's binding
+  holds `maxSeats` (4 audio, 3 video, D-A) and every token of that room carries `max_seats`, which
+  call-service enforces ([the mesh](../../services/call-service.md#the-mesh-wp-gc2-2026-11-13)).
+  The kind is fixed at `initiate`: an audio group call offers no camera later (interim, reversible).
+  A 1:1 call carries no claim and is unchanged.
+- **Past the cap - INTERIM, reversible, 2026-11-13:** the 5th participant of an audio call or the
+  4th of a video one is refused by call-service (`Refused { room-full }`), worded
+  `call_room_full` ("Cet appel de groupe est complet."). Superseded by D1 once the SFU leg lands
+  (WP-GC3/GC4): everyone then moves to the relay instead.
+- **Old clients are never offered a group call.** A build declares `groupCallVersion` (1 = the
+  mesh) on every push registration (`push_token."groupCallVersion"`, chat-delivery migration 050)
+  and on a group call's `initiate` and `room-token`. A group call rings only devices at `>= 1`
+  (`[ring] ... skipped=N device(s) whose build predates group calls`), and a token request without
+  it is refused `403 GROUP_CALL_CLIENT_TOO_OLD` - an old build would join as a 1:1 call, with the
+  1:1 keys, and break every other leg. The start control was already 1:1 only (`selectedIsDirect`).
+  The in-app ring (the MLS `CallInvite`) is the client PR's to keep from old builds.
+- **WP-C11, a block in a group call - decided 2026-11-13, reversible: ONE BLOCK DROPS THAT MEMBER,
+  NEVER THE CALL.** Every member, the caller excepted, who stands in a block with another admitted
+  member is not rung and gets no token (`USER_BLOCKED`, the neutral sentence): a mesh pairs everyone
+  with everyone and each leg exposes both addresses (D4), so two people who blocked each other are
+  never put in one call, and the caller, who chose to call, is the one kept. One query per ring or
+  token over the whole member set (`blocksAmong`), never one per pair. The review cohort's boundary
+  still refuses the whole call. A 1:1 call keeps `refuseIfBlocked`.
+- **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
+  does not end the call; the call ends for a participant when the last other participant has left.
+  On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
+  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
+  join (interim).
+- **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
+  `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
+  version specs.
+
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 
 **The decision (owner, D-B, 2026-10-31).** The call microphone goes through RNNoise, ON by

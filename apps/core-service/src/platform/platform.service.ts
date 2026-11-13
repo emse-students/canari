@@ -13,6 +13,7 @@ import {
   PlatformConfig,
   type CallsMode,
   type CheckpointSkipMode,
+  type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
   type PushMode,
@@ -37,6 +38,7 @@ export type PlatformConfigPublic = {
   pushMode: PushMode;
   checkpointSkipMode: CheckpointSkipMode;
   liveReplaysMode: LiveReplaysMode;
+  groupCallsMode: GroupCallsMode;
 };
 
 /**
@@ -70,6 +72,7 @@ const DEFAULT_ROW: PlatformConfig = {
   pushMode: 'full',
   checkpointSkipMode: 'off',
   liveReplaysMode: 'off',
+  groupCallsMode: 'off',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -239,6 +242,14 @@ export class PlatformService implements OnModuleInit {
       }
       changes.liveReplaysMode = dto.liveReplaysMode;
     }
+    if (dto.groupCallsMode !== undefined) {
+      // Whether a group conversation may start a call - a peer-to-peer mesh that shows members'
+      // network addresses to each other - so who moved it, and when, is a warn line like callsMode's.
+      if (dto.groupCallsMode !== row.groupCallsMode) {
+        this.logger.warn(`groupCallsMode ${row.groupCallsMode} -> ${dto.groupCallsMode} by=${by}`);
+      }
+      changes.groupCallsMode = dto.groupCallsMode;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -254,7 +265,7 @@ export class PlatformService implements OnModuleInit {
     this.configInFlight = null;
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode}`
     );
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
@@ -347,5 +358,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     pushMode: row.pushMode,
     checkpointSkipMode: row.checkpointSkipMode,
     liveReplaysMode: row.liveReplaysMode,
+    groupCallsMode: row.groupCallsMode,
   };
 }

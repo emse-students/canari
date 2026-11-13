@@ -9,8 +9,22 @@ import {
 import { USER_BLOCKED_CODE } from '$lib/users/blocks';
 import { REVIEW_COHORT_BOUNDARY_CODE, describeRefusalCode } from '$lib/utils/refusalCodes';
 
-/** The server's kill switch refused (`platform_config.calls_mode`): every call, or video only. */
-const CALLS_CLOSED_CODES: readonly string[] = ['CALLS_DISABLED', 'CALLS_VIDEO_DISABLED'];
+/**
+ * The server's switches refused: `platform_config.calls_mode` (every call, or video only) or
+ * `group_calls_mode` (a conversation of more than two members).
+ */
+const CALLS_CLOSED_CODES: readonly string[] = [
+  'CALLS_DISABLED',
+  'CALLS_VIDEO_DISABLED',
+  'GROUP_CALLS_DISABLED',
+];
+
+/**
+ * The relay's `Refused` reason for a join past the seat cap signed into the room token (a 5th
+ * participant of an audio group call, a 4th of a video one - WP-GC2, 2026-11-13). Interim: once the
+ * SFU leg exists (WP-GC3) the call moves to it instead of refusing (D1).
+ */
+export const CALL_ROOM_FULL_REASON = 'room-full';
 
 /**
  * A refusal from `POST /api/calls/initiate`, carrying the STATUS instead of spelling it.
@@ -169,6 +183,9 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
+  if (error instanceof CallSignallingRefusedError && error.reason === CALL_ROOM_FULL_REASON) {
+    return m.call_room_full();
+  }
   if (error instanceof CallRelayWithheldError) {
     // Off by configuration is not "unavailable right now": it will be the same on the next try.
     return error.code === TURN_DISABLED_CODE ? m.call_relay_disabled() : m.call_relay_withheld();
@@ -184,6 +201,8 @@ export function describeCallFailure(error: unknown): string {
   if (code && CALLS_CLOSED_CODES.includes(code)) {
     return describeRefusalCode(code) ?? m.call_calls_disabled();
   }
+  // A group call this build does not speak (`groupCallVersion`): the reader can act - update.
+  if (code === 'GROUP_CALL_CLIENT_TOO_OLD') return m.call_group_client_too_old();
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   if (error instanceof CallInitiateError) {

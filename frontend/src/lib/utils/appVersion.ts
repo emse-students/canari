@@ -98,11 +98,27 @@ export type LiveReplaysMode = 'off' | 'on';
  */
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
 
+/**
+ * The server's switch for group calls (`platform_config.group_calls_mode`, published by
+ * `/api/version` as `calls.groupMode`): `off` - a group conversation shows no call control and the
+ * server refuses a group `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` - group calls go peer to
+ * peer, up to 4 participants in audio and 3 in video. `callsMode = off` still closes everything.
+ */
+export type GroupCallsMode = 'off' | 'mesh';
+
+/**
+ * Every value of {@link GroupCallsMode}. FIVE COPIES of these two strings exist (the SQL CHECK,
+ * core's entity, chat-delivery's reader, this, the admin page through this) and
+ * `groupCallsModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
+  groupCallsMode: GroupCallsMode;
   livesMode: LivesMode;
   liveReplaysMode: LiveReplaysMode;
   checkpointSkipMode: CheckpointSkipMode;
@@ -130,6 +146,8 @@ export type AppVersionCheckResult = {
   maintenance: PlatformMaintenanceInfo;
   /** What the server lets calls do; `off` until a server has said otherwise. */
   callsMode: CallsMode;
+  /** Whether a group conversation may call (`calls.groupMode`); `off` until a server has said otherwise. */
+  groupCallsMode: GroupCallsMode;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
   /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
@@ -208,6 +226,17 @@ function normalizeCallsMode(raw: unknown): CallsMode {
 }
 
 /**
+ * The group calls mode a `/api/version` body carries (`calls.groupMode`). ABSENT OR UNKNOWN READS AS
+ * `off`, for the reason {@link normalizeCallsMode} gives: a switch that cannot be read fails closed,
+ * and a server that predates it refuses group calls anyway.
+ */
+function normalizeGroupCallsMode(raw: unknown): GroupCallsMode {
+  const mode =
+    raw && typeof raw === 'object' ? (raw as { groupMode?: unknown }).groupMode : undefined;
+  return GROUP_CALLS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
  * The lives mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`, for the reason
  * {@link normalizeCallsMode} gives: a kill switch that cannot be read fails closed.
  */
@@ -262,6 +291,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
+    groupCallsMode: normalizeGroupCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
     liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
@@ -284,7 +314,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
-  calls: { mode: CallsMode };
+  calls: { mode: CallsMode; groupMode: GroupCallsMode };
   lives: { mode: LivesMode };
   liveReplays: { mode: LiveReplaysMode };
   checkpointSkip: { mode: CheckpointSkipMode };
@@ -299,7 +329,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     version: info.version,
     minClientVersion: info.minClientVersion,
     maintenance: info.maintenance,
-    calls: { mode: info.callsMode },
+    calls: { mode: info.callsMode, groupMode: info.groupCallsMode },
     lives: { mode: info.livesMode },
     liveReplays: { mode: info.liveReplaysMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
@@ -488,6 +518,7 @@ export function buildAppVersionCheckResult(
     belowMinVersion,
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
+    groupCallsMode: serverInfo?.groupCallsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
     liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',

@@ -73,7 +73,12 @@ Each is one pull request or more; none is built by the D3 change.
    leg need it, so it comes first.
 2. **WP-GC2 - the mesh**: `call-service`'s peer-to-peer room grows from two seats to the cap (4 in
    audio, 3 in video) with addressed signalling (`to`/`from` per frame), and the client holds one
-   peer connection per other participant, each armed as the 1:1 one is.
+   peer connection per other participant, each armed as the 1:1 one is. **Server half BUILT
+   2026-11-13** (the seats, the addressing, the signed cap, `group_calls_mode` OFF in production,
+   the client-version gate, WP-C11's block and ring-end rules:
+   [calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13));
+   **past the cap is REFUSED (`room-full`) as an interim decision, superseded by D1 when WP-GC3
+   lands.** Owed: the client half and its 3-party CI call.
 3. **WP-GC3 - the Cloudflare Realtime SFU leg**: first the Q4 probe (do transformed frames cross
    the raw SFU), then the owner's one-off (a Realtime SFU app and its two secrets), then the backend
    proxy of the sessions/tracks API and the client's SFU leg on it.
@@ -86,11 +91,9 @@ Each is one pull request or more; none is built by the D3 change.
    outside a transform, as `fault-transform-late` does for 1:1.
 6. **Open point 4** is read against the B7 meter once WP-GC2 runs on the bench, not before.
 
-**And one decision WP-C11 owes** (moved here 2026-11-11 from the review of #1997):
-`refuseIfBlocked` (`calls.service.ts`) lets ANY block between the caller and ANY other member refuse
-the whole call, at `initiate`, `ring` and `join-token`. Right for 1:1; for a group, decide whether one
-block refuses the call or only drops that member
-([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+**And one decision WP-C11 owed** (moved here 2026-11-11 from the review of #1997): **decided
+2026-11-13 (reversible) - one block drops that member, never the call**
+([calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13)).
 
 Delete this entry when WP-C11 ships; its rule goes to `durable-rules.md`, the mechanism to
 [calls](../frontend/modules/calls.md).

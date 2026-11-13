@@ -2,11 +2,13 @@ import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class
 import {
   CALLS_MODES,
   CHECKPOINT_SKIP_MODES,
+  GROUP_CALLS_MODES,
   LIVES_MODES,
   LIVE_REPLAYS_MODES,
   PUSH_MODES,
   type CallsMode,
   type CheckpointSkipMode,
+  type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
   type PushMode,
@@ -58,4 +60,9 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(LIVE_REPLAYS_MODES)
   liveReplaysMode?: LiveReplaysMode;
+
+  /** The group calls switch: `off` refuses every group call, `mesh` allows peer-to-peer ones up to the cap. */
+  @IsOptional()
+  @IsIn(GROUP_CALLS_MODES)
+  groupCallsMode?: GroupCallsMode;
 }

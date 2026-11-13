@@ -9,6 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { getApps } from 'firebase-admin/app';
+import * as jwt from 'jsonwebtoken';
 import { CALL_RING_TIMEOUT_SEC, CallsService, readTurnBudget } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
 import { TurnMeterUnavailableError, TurnUsageMeter } from './turn-usage-meter.service';
@@ -42,13 +43,17 @@ describe('CallsService', () => {
   let service: CallsService;
   /** What `platform_config.calls_mode` holds for the test; open by default so the call paths run. */
   let callsMode: string | undefined = 'audio_video';
+  /** What `platform_config.group_calls_mode` holds (WP-GC2); off, the production default. */
+  let groupCallsMode = 'off';
   /**
    * The database as the service reads it with plain SQL: the kill switch's row, and nothing else
    * (no block, no group name) unless a test says otherwise. `undefined` = no platform_config row.
    */
   const baseQuery = (sql: string): Promise<unknown[]> =>
     Promise.resolve(
-      sql.includes('platform_config') && callsMode !== undefined ? [{ calls_mode: callsMode }] : []
+      sql.includes('platform_config') && callsMode !== undefined
+        ? [{ calls_mode: callsMode, group_calls_mode: groupCallsMode }]
+        : []
     );
   const groupMemberRepo = {
     findOne: jest.fn(),
@@ -91,6 +96,7 @@ describe('CallsService', () => {
     jest.clearAllMocks();
     redisStore.clear();
     callsMode = 'audio_video';
+    groupCallsMode = 'off';
     groupMemberRepo.manager.query.mockImplementation((sql: string) => baseQuery(sql));
     turnMeter.monthEgressBytes.mockImplementation(() => Promise.resolve(0));
     // The room every ring test rings: opened by `caller` in `group-1`, its window not yet open.
@@ -1318,6 +1324,215 @@ describe('CallsService', () => {
 
       expect(refusal).toBeInstanceOf(ForbiddenException);
       expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'USER_BLOCKED' });
+    });
+  });
+
+  /**
+   * WP-GC2 (2026-11-13): a conversation of more than two members places a GROUP call - behind its
+   * own switch, with a seat cap signed into every room token, and a block that drops a member
+   * instead of refusing the call (WP-C11).
+   */
+  describe('group calls (WP-GC2)', () => {
+    const members = (...ids: string[]) => ids.map((userId) => ({ userId }));
+    const claimsOf = (token: string) => jwt.verify(token, 'test-secret') as Record<string, unknown>;
+    /** `user_blocks` rows standing inside the member set, as `blocksAmong` reads them. */
+    const blocks = (...pairs: [string, string][]) =>
+      groupMemberRepo.manager.query.mockImplementation((sql: string) =>
+        sql.includes('user_blocks')
+          ? Promise.resolve(pairs.map(([blockerId, blockedId]) => ({ blockerId, blockedId })))
+          : baseQuery(sql)
+      );
+    /** The ring plan, read before the fan-out: who would be rung. */
+    const prepareRing = (callerId: string, callId: string) =>
+      (
+        service as unknown as {
+          prepareRing: (
+            ...a: Parameters<CallsService['ringGroup']>
+          ) => Promise<{ calleeIds: string[] } | null>;
+        }
+      ).prepareRing(callerId, 'group-1', callId, false);
+    /** The user ids a push-token lookup asked for (`In([...])`). */
+    const lastTokenLookup = (): unknown =>
+      (pushTokenRepo.find.mock.lastCall![0] as { where: { userId: { _value: unknown } } }).where
+        .userId._value;
+
+    beforeEach(() => {
+      process.env.CALL_ROOM_SECRET = 'test-secret';
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+    });
+    afterEach(() => {
+      delete process.env.CALL_ROOM_SECRET;
+      groupMemberRepo.manager.query.mockImplementation((sql: string) => baseQuery(sql));
+      jest.restoreAllMocks();
+    });
+
+    it('refuses a client that does not speak the mesh, at initiate and at the token', async () => {
+      groupCallsMode = 'mesh';
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      // An old build says nothing: no room is bound for it.
+      const refusal = await service.initiateCall('caller', 'group-1').catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'GROUP_CALL_CLIENT_TOO_OLD',
+      });
+      expect(redis.set).not.toHaveBeenCalled();
+
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+      groupMemberRepo.find.mockResolvedValue(members('caller'));
+      await service.ringGroup('caller', 'group-1', roomId, false);
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+      for (const declared of [undefined, '0', 'mesh']) {
+        const tokenRefusal = await service
+          .requestRoomToken('b', 'group-1', roomId, declared)
+          .catch((e: unknown) => e);
+        expect((tokenRefusal as ForbiddenException).getResponse()).toMatchObject({
+          code: 'GROUP_CALL_CLIENT_TOO_OLD',
+        });
+      }
+      expect(captured(log)).toContain('groupCallVersion=unreadable');
+    });
+
+    it('rings a group call only on devices whose build speaks the mesh', async () => {
+      groupCallsMode = 'mesh';
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+      fcmSend.mockResolvedValue('msg-id');
+      groupMemberRepo.find.mockResolvedValue(
+        ['b', 'c', 'd'].map((userId) => ({ userId, notifLevel: 'all', callsAllowed: null }))
+      );
+      pushTokenRepo.find.mockResolvedValue([
+        { userId: 'b', deviceId: 'b1', token: 'tb', platform: 'android', groupCallVersion: 1 },
+        { userId: 'c', deviceId: 'c1', token: 'tc', platform: 'android', groupCallVersion: 0 },
+        { userId: 'd', deviceId: 'd1', token: 'td', platform: 'android', groupCallVersion: 1 },
+      ]);
+
+      const { rang } = await ringAndSettle(service, 'caller', 'group-1', roomId, false);
+
+      expect(rang).toBe(2);
+      expect(fcmSend).toHaveBeenCalledTimes(2);
+      expect(captured(log)).toContain('skipped=1 device(s) whose build predates group calls');
+    });
+
+    it('refuses a group call with GROUP_CALLS_DISABLED while the switch is off, and binds no room', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const refusal = await service.initiateCall('caller', 'group-1').catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'GROUP_CALLS_DISABLED',
+      });
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(captured(log)).toContain('group calls are closed (group_calls_mode=off)');
+    });
+
+    it('leaves a 1:1 call untouched by the switch: no seat claim, no seat in the binding', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'callee'));
+
+      const { roomId, roomToken } = await service.initiateCall('caller', 'group-1');
+
+      expect(claimsOf(roomToken)).not.toHaveProperty('max_seats');
+      expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!)).not.toHaveProperty('maxSeats');
+    });
+
+    it.each([
+      [false, 4],
+      [true, 3],
+    ])(
+      'signs the mesh cap into the token and the binding (video=%s -> %i seats)',
+      async (video, seats) => {
+        groupCallsMode = 'mesh';
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+        const { roomId, roomToken } = await service.initiateCall('caller', 'group-1', video, 1);
+
+        expect(claimsOf(roomToken)).toMatchObject({
+          room_id: roomId,
+          sub: 'caller',
+          max_seats: seats,
+        });
+        expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!).maxSeats).toBe(seats);
+      }
+    );
+
+    it('signs the same cap into a joining member token', async () => {
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', true, 1);
+      groupMemberRepo.find.mockResolvedValue(members('caller'));
+      await service.ringGroup('caller', 'group-1', roomId, false);
+
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+      const { roomToken } = await service.requestRoomToken('c', 'group-1', roomId, '1');
+
+      expect(claimsOf(roomToken)).toMatchObject({ sub: 'c', max_seats: 3 });
+    });
+
+    it('a block drops that member from the ring, never the call, and keeps the caller', async () => {
+      groupCallsMode = 'mesh';
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+
+      // b blocked c: both are left out, d is rung.
+      blocks(['b', 'c']);
+      expect((await prepareRing('caller', roomId))?.calleeIds).toEqual(['d']);
+      expect(captured(log)).toContain('not rung: 2 member(s) in a block with another member');
+
+      // d blocked the caller: d is left out, the caller - who chose to call - is kept.
+      blocks(['d', 'caller']);
+      expect((await prepareRing('caller', roomId))?.calleeIds).toEqual(['b', 'c']);
+
+      // One query over the whole set per ring, never one per pair.
+      const blockQueries = groupMemberRepo.manager.query.mock.calls.filter(([sql]) =>
+        String(sql).includes('user_blocks')
+      );
+      expect(blockQueries).toHaveLength(2);
+    });
+
+    it('refuses the join token to a member dropped by a block set while the call rang', async () => {
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+      groupMemberRepo.find.mockResolvedValue(members('caller'));
+      await service.ringGroup('caller', 'group-1', roomId, false);
+
+      groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+      blocks(['c', 'b']);
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+      const refusal = await service
+        .requestRoomToken('b', 'group-1', roomId, '1')
+        .catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'USER_BLOCKED' });
+
+      // A member outside the block still joins.
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'd' });
+      await expect(service.requestRoomToken('d', 'group-1', roomId, '1')).resolves.toHaveProperty(
+        'roomToken'
+      );
+    });
+
+    it('a member ring-end stops their own devices only; the caller ends the ring for all', async () => {
+      groupCallsMode = 'mesh';
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+      pushTokenRepo.find.mockResolvedValue([]);
+
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+      await service.endRing('b', 'group-1', roomId, 'answered');
+
+      expect(lastTokenLookup()).toEqual(['b']);
+      expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
+
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      await service.endRing('caller', 'group-1', roomId, 'cancelled');
+
+      expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
+      expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('cancelled');
     });
   });
 });

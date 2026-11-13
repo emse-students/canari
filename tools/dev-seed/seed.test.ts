@@ -244,6 +244,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "live_replays_mode IN ('off', 'on')",
     holds: oneOf('live_replays_mode', ['off', 'on']),
   },
+  CHK_platform_config_group_calls_mode: {
+    sql: "group_calls_mode IN ('off', 'mesh')",
+    holds: oneOf('group_calls_mode', ['off', 'mesh']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),

@@ -69,14 +69,15 @@ All frames are JSON-encoded `SignalMessage`:
 | Frame | Direction | Description |
 |---|---|---|
 | `Join { room_id, room_token, mode? }` | Client → Server | Join a room. `room_token` is a short-lived HS256 JWT issued by chat-delivery-service (`/api/calls/initiate`) proving group membership; always required (`CALL_ROOM_SECRET` is mandatory at boot). `mode` is `"p2p"` or `"sfu"`; absent means `"sfu"`. |
-| `PeerReady { initiator }` | Server → Client | P2P only: both parties are in the room; `initiator` offers, the other is the polite side. Re-sent to the remaining peer when the other's device is replaced. |
-| `PeerLeft` | Server → Client | P2P only: the other party's socket ended, or THIS device was replaced by a sibling. |
-| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, two other users hold it), `group-mismatch` (P2P, the token names another group than the seated peer's) or `mode-mismatch` (the room id exists in the other mode). |
+| `PeerReady { initiator, peer? }` | Server → Client | P2P only: a pair is formed; `initiator` offers, the other is the polite side. Re-sent to the remaining peer when the other's device is replaced. `peer` names the other party's peer id (always sent; a 1:1 client ignores it, a mesh client keys its leg on it). |
+| `PeerLeft { peer? }` / `PeerAway { peer? }` | Server → Client | P2P only: that party's socket ended (or went away for a resume), or THIS device was replaced by a sibling (`PeerLeft` without `peer`). |
+| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, the seat cap is reached), `group-mismatch` (P2P, the token names another group than the seated peers'), `seats-mismatch` (P2P, the token's seat cap differs from the room's), `seats-refused` (P2P, a `max_seats` claim outside 2..=4) or `mode-mismatch` (the room id exists in the other mode). |
 | `Joined { room_id }` | Server → Client | Room join acknowledged; client is now ready to send `Offer`. |
 | `Offer { sdp }` | Server → Client | Renegotiation offer when tracks are added to a room. |
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
 | `Answer { sdp }` | Client → Server or Server → Client | SDP answer completing a negotiation. |
 | `IceCandidate { candidate }` | Bidirectional | Trickle ICE candidates (JSON-encoded `RTCIceCandidateInit`). |
+| `to` / `from` on `Offer`, `Answer`, `IceCandidate`, `IceRestartRequest`, `MicSuspended` | P2P | Addressing for a mesh: the client names the addressee in `to`, the server clears it and stamps `from` with the sender's peer id - never the client's own claim. In a two-seat room an unaddressed frame still goes to the other party, so a 1:1 client is unchanged ([the mesh](#the-mesh-wp-gc2-2026-11-13)). |
 | `MicSuspended { suspended }` | Client → Server → partner | P2P only, relayed verbatim: the sender's operating system took (`true`) or gave back (`false`) its microphone - the capture track's `mute`, never the user's mute button. One relay line each, no ledger counter. Dropped with a line before `Join`, in an SFU room (`p2p-only frame ... in an SFU room`) and while the partner is away; a drop is never counted as `ice_in_failed`, which counts ICE alone. The partner has no other way to tell it from silence ([calls](../frontend/modules/calls.md#the-call-in-the-background-2026-10-19)). |
 
 ### Room join flow
@@ -201,6 +202,35 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   readiness event). Picking a free port in the test and releasing it for the child to bind later
   let parallel tests collide: a readiness probe answered for another test's service, and a socket
   was reset under it (1 run in 30 failed that way, 0 in 90 since, 2026-10-18).
+
+### The mesh (WP-GC2, 2026-11-13)
+
+A GROUP call is the same p2p room grown past two seats: every pair of participants is one leg,
+negotiated through this service exactly as a 1:1 call is, and no media ever reaches it
+([group calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13)).
+
+- **The cap is signed, not chosen here.** chat-delivery signs `max_seats` into a group call's room
+  token (4 in audio, 3 in video, owner decision D-A); a token without the claim is a 1:1 call, two
+  seats, as before. The first `Join` fixes the room's cap; a later token with another cap is
+  `Refused { seats-mismatch }`, a claim outside `2..=4` (`MAX_MESH_SEATS`) `Refused { seats-refused }`.
+  The user past the cap is `Refused { room-full }` and the room is left untouched - the check runs
+  before any eviction, as before. **Interim** (2026-11-13): once a relay leg exists (WP-GC3/GC4) the
+  call moves everyone to it instead (D1), and this refusal goes.
+- **Pairs.** A newcomer is paired with every present seat in one step (`Seats::pair_up`): the
+  EARLIER seat initiates, the newcomer is polite, and both ends get one `PeerReady { peer }` per pair.
+  `Seats.paired` remembers each pair by user, so a resume or a sibling's replacement re-announces
+  exactly the pairs it broke and no other.
+- **Routing** (`Seats::route`). A frame naming `to` goes to that peer only, stamped `from`;
+  an unknown or away addressee drops it with a line. An unaddressed frame in a two-seat room goes
+  to the other party (the 1:1 wire, unchanged); in a mesh it is dropped as `unaddressed`, except
+  `MicSuspended`, which is broadcast to every present party.
+- **Departures.** A leave, an expired grace or an away seat tells every remaining present party,
+  each with its own `PeerLeft { peer }` / `PeerAway { peer }`; the room ends with its last seat.
+- **Pinned by** the `p2p.rs` unit tests (pairs, routing, the cap) and
+  `a_mesh_pairs_everyone_routes_by_addressee_and_survives_a_departure`,
+  `a_mesh_refuses_the_user_past_its_cap` and `a_seat_count_out_of_range_or_disagreeing_is_refused`
+  in `tests/p2p_signalling.rs`. The 1:1 tests read every frame through a view that strips `peer`
+  and `from`, which is the proof that a two-seat room speaks the pre-mesh wire.
 
 ## Room lifecycle
 
