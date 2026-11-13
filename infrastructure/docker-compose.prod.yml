@@ -124,22 +124,30 @@ services:
 
   adminer:
     logging: *logging
+    # `exclusive`, NOT `pinned`, FOR AS LONG AS THIS REPOSITORY BUILDS THE IMAGE: every release moves the
+    # tag of every image it builds, so every release replaces this container (a gap on a console nobody
+    # but a global admin opens). `replace-modes.py` refuses `pinned` on an image built here.
     labels:
-      canari.deploy.replace: pinned
+      canari.deploy.replace: exclusive
     # REACHED TWO WAYS: loopback on the host (an ssh tunnel), and /adminer/ through the frontend nginx for
     # GLOBAL ADMINS (core-service signs a short cookie; docs/wiki/infrastructure/databases.md). It publishes
     # nothing else.
-    # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
-    # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
-    # name it has.
-    image: adminer@sha256:3a07decd833c2375ea749aa8018250c1db4859a78bd55354f797bfb591733233
+    # BUILT HERE, TEMPORARILY (owner, 2026-11-13): upstream's digest, pinned in the Dockerfile's `FROM`,
+    # with Alpine's `libpq` upgraded past the 38 HIGH advisories its newest build still carried. Back to
+    # `image: adminer@sha256:<digest>` and `pinned` the day upstream ships `libpq >= 18.7-r0`
+    # (infrastructure/local/Dockerfile.adminer, docs/wiki/legacy-compatibility.md).
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/adminer:${TAG:-latest}
+    build:
+      context: ..
+      dockerfile: infrastructure/local/Dockerfile.adminer
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     # upload progress OFF (host IT's request, 2026-10-22): Adminer does not use it, and PHP is patched here
-    # by moving the image digest, not by the host's unattended-upgrades - the container is already php-cli.
+    # by moving the base digest (the Dockerfile's `FROM`), not by the host's unattended-upgrades - the
+    # container is already php-cli.
     volumes:
       - ./adminer/php-hardening.ini:/usr/local/etc/php/conf.d/zz-hardening.ini:ro
     depends_on:
