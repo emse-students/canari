@@ -152,9 +152,10 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
-- [Roadmap](roadmap.md) — everything open, with forecast dates and versions, and the log of date changes; updated at every milestone
-- [Backlog](backlog.md) — the scheduled queue behind `CLAUDE.md`: the substance of every queue item, and the table of what only the user can do
-- [backlog.d](backlog.d/README.md) — the backlog entries written since 2026-10-30, one file each, read together with `backlog.md`
+- [Plan](plan.md) — every open backlog entry under the version it is planned for, GENERATED from each entry's `target:` line; the readings owed are its checklist
+- [Roadmap](roadmap.md) — how the plan is ordered, the dated commitments, and the log of every replanning and milestone
+- [Backlog](backlog.md) — the rules every entry follows, and the table of what only the user can do
+- [backlog.d](backlog.d/README.md) — the backlog itself: one file per entry, each with its `target:` version
 - [Open questions](open-questions.md) — questions parked deliberately, with no code until they are answered; an answer becomes a backlog entry or closes the question
 - [Legacy compatibility](legacy-compatibility.md) — every shim kept alive for older clients, and the date or condition at which each may be removed
 - [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist
