@@ -7,7 +7,10 @@
 -- and every receiver decrypted both. The send route now records (groupId, senderId, senderDeviceId,
 -- messageId) in the transaction that queues the copies; a second send of the id finds the row,
 -- queues nothing, appends nothing to the history stream, pushes nobody, and is answered with the
--- first copy's receive time. Durable state, never a clock.
+-- first copy's receive time. Durable state, never a clock. "protoSha256" names the first copy's
+-- exact ciphertext (its queued rows and history entry carry it), and "settled" says whether the send
+-- that wrote the row finished delivering it: a repeat of an UNSETTLED one (the server died between
+-- the commit and the delivery) finishes that delivery for the copies still queued.
 -- Mechanism: docs/wiki/services/chat-delivery.md ("A message sent twice under one id is stored once").
 --
 -- Additive: a new table, no existing row touched, nothing deleted. A frame sent before this ships
@@ -27,6 +30,8 @@ CREATE TABLE IF NOT EXISTS "dm_sent_frame_receipt" (
     "senderDeviceId" VARCHAR(255) NOT NULL,
     "messageId"      VARCHAR(128) NOT NULL,
     "receivedAt"     TIMESTAMPTZ NOT NULL,
+    "protoSha256"    CHAR(64) NOT NULL,
+    "settled"        BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY ("groupId", "senderId", "senderDeviceId", "messageId")
 );
 

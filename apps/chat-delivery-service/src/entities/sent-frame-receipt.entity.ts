@@ -39,4 +39,15 @@ export class SentFrameReceipt {
   /** The server's receive time of the first accepted copy, the answer every resend is given. */
   @Column({ type: 'timestamptz' })
   receivedAt: Date;
+
+  /** The SHA-256 (hex) of the first copy's ciphertext - what its queued rows and history entry hold. */
+  @Column({ type: 'char', length: 64 })
+  protoSha256: string;
+
+  /**
+   * Whether the send that wrote this row ran its delivery steps. A repeat of an unsettled one
+   * finishes them for the copies still queued (`finishFirstCopy`); a settled one is answered alone.
+   */
+  @Column({ type: 'boolean', default: false })
+  settled: boolean;
 }

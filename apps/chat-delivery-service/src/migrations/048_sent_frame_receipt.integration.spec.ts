@@ -21,6 +21,9 @@ import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import {
   claimSentFrameReceipt,
   deleteSentFrameReceiptsBefore,
+  markSentFrameSettled,
+  protoSha256,
+  takeSentFrameSettlement,
   type SentFrameKey,
 } from '../utils/sent-frame-receipt';
 
@@ -43,6 +46,7 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     senderDeviceId: deviceId,
     messageId,
     receivedAt: new Date(at),
+    protoSha256: protoSha256(`ciphertext of ${messageId} at ${at}`),
   });
   const claim = (k: SentFrameKey) => ds.transaction((m) => claimSentFrameReceipt(m, GROUP, k));
   /** A second session on the same schema, to hold the key a claim must wait for. */
@@ -73,9 +77,9 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     const holder = await connect();
     await holder.query('BEGIN');
     await holder.query(
-      `INSERT INTO dm_sent_frame_receipt ("groupId", "senderId", "senderDeviceId", "messageId", "receivedAt")
-       VALUES ($1, $2, $3, $4, $5)`,
-      [GROUP, k.senderId, k.senderDeviceId, k.messageId, k.receivedAt]
+      `INSERT INTO dm_sent_frame_receipt ("groupId", "senderId", "senderDeviceId", "messageId", "receivedAt", "protoSha256")
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [GROUP, k.senderId, k.senderDeviceId, k.messageId, k.receivedAt, k.protoSha256]
     );
     return holder;
   };
@@ -116,9 +120,14 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
 
     const again = await claim(key('m-1', '2026-11-13T10:00:12.000Z'));
 
+    // The FIRST copy: its time and its ciphertext, not the repeat's - and not settled yet.
     expect(again).toEqual({
       kind: 'repeat',
-      firstReceivedAt: new Date('2026-11-13T10:00:00.000Z'),
+      first: {
+        receivedAt: new Date('2026-11-13T10:00:00.000Z'),
+        protoSha256: key('m-1', '2026-11-13T10:00:00.000Z').protoSha256,
+        settled: false,
+      },
     });
   });
 
@@ -140,7 +149,7 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
 
       await expect(second).resolves.toEqual({
         kind: 'repeat',
-        firstReceivedAt: first.receivedAt,
+        first: { receivedAt: first.receivedAt, protoSha256: first.protoSha256, settled: false },
       });
     } finally {
       await holder.end();
@@ -171,6 +180,29 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     await expect(claim(key('m-5', '2026-11-13T10:04:09.000Z'))).resolves.toEqual({
       kind: 'claimed',
     });
+  });
+
+  it('a settled receipt reads settled, and its settlement cannot be taken', async () => {
+    const k = key('m-6', '2026-11-13T10:05:00.000Z');
+    await claim(k);
+    await expect(markSentFrameSettled(ds.manager, GROUP, k)).resolves.toBe(true);
+
+    await expect(claim(k)).resolves.toEqual(
+      expect.objectContaining({ first: expect.objectContaining({ settled: true }) })
+    );
+    await expect(takeSentFrameSettlement(ds.manager, GROUP, k)).resolves.toBe(false);
+  });
+
+  it('the settlement of an unsettled receipt is taken by exactly one of two repeats', async () => {
+    const k = key('m-7', '2026-11-13T10:06:00.000Z');
+    await claim(k);
+
+    const taken = await Promise.all([
+      takeSentFrameSettlement(ds.manager, GROUP, k),
+      takeSentFrameSettlement(ds.manager, GROUP, k),
+    ]);
+
+    expect(taken.filter(Boolean)).toHaveLength(1);
   });
 
   it('the retention sweep deletes the receipts older than its bound, and only those', async () => {

@@ -88,7 +88,14 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
-import { claimSentFrameReceipt, type SentFrameKey } from '../utils/sent-frame-receipt';
+import {
+  claimSentFrameReceipt,
+  markSentFrameSettled,
+  protoSha256,
+  takeSentFrameSettlement,
+  type FirstCopy,
+  type SentFrameKey,
+} from '../utils/sent-frame-receipt';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import {
@@ -108,6 +115,7 @@ import {
 import { storeEnvelopes, type EnvelopeNotWoken } from '../utils/push-envelope';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
+  PAYLOAD_RELATION,
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
   materializeDeliveries,
@@ -627,15 +635,41 @@ export function readSentMessageId(body: SendMessageBody): string | undefined {
 }
 
 /**
+ * Whether a send appends its frame to the group's shared history stream: a DURABLE application frame
+ * with a group and a sender, addressed to the whole group. Welcome and Commit are MLS epoch
+ * transitions that cannot be replayed out of order; an ADDRESSED frame is for some members, and the
+ * stream is read by every one. (This used to read `!body.silent`, which kept every reaction, edit,
+ * deletion and read receipt out of the only shared copy - docs/wiki/protocols/history-reconciliation.md.)
+ */
+function historyEligible(
+  body: SendMessageBody,
+  durable: boolean,
+  addressed: Set<string> | null
+): boolean {
+  return (
+    !!body.proto &&
+    !body.isWelcome &&
+    !body.isCommit &&
+    durable &&
+    !addressed &&
+    !!body.groupId &&
+    !!body.senderId
+  );
+}
+
+/** How many history-stream entries one `XRANGE` page reads when a repeat looks for its first copy. */
+const HISTORY_SCAN_PAGE = 200;
+
+/**
  * Thrown INSIDE the enqueue transaction when the receipt for this `(group, sender, device,
  * messageId)` already exists: the message was accepted before and this send is its repeat. Nothing
  * is written (the transaction rolls back, and it had written nothing), and {@link
- * MessagingService.sendMessage} answers with the first copy's receive time - no row, no history
- * append, no push. Classified here, as a type, so the one caller that turns it into an answer never
- * reads a message.
+ * MessagingService.sendMessage} answers with the first copy's receive time - queueing nothing new,
+ * and delivering only what the first send may not have delivered (an unsettled receipt). Classified
+ * here, as a type, so the one caller that turns it into an answer never reads a message.
  */
 export class FrameAlreadyReceived extends Error {
-  constructor(readonly receivedAt: Date) {
+  constructor(readonly first: FirstCopy) {
     super('this messageId was already received from this device into this group');
     this.name = 'FrameAlreadyReceived';
   }
@@ -1859,6 +1893,7 @@ export class MessagingService {
             senderDeviceId: body.senderDeviceId,
             messageId: sentMessageId,
             receivedAt,
+            protoSha256: protoSha256(body.proto ?? ''),
           }
         : undefined;
 
@@ -2255,7 +2290,7 @@ export class MessagingService {
     // A REPEAT OF A MESSAGE ALREADY ACCEPTED (`claimSentFrame`) wrote nothing, and is answered here
     // with the first copy's receive time: no row, no history append, no push - one id is one message
     // on every receiver, and the sender dates its copy as every receiver already did.
-    const repeat: { of?: Date } = {};
+    const repeat: { of?: FirstCopy } = {};
     const enqueueOnce = async (
       rows: QueuedMessage[],
       seats?: { exempt: ReadonlySet<string> }
@@ -2267,13 +2302,14 @@ export class MessagingService {
         });
       } catch (e) {
         if (!(e instanceof FrameAlreadyReceived)) throw e;
-        repeat.of = e.receivedAt;
+        repeat.of = e.first;
         return [];
       }
     };
     if (toDeliver.length > 0) {
       queuedRows = await enqueueOnce(toDeliver, { exempt: new Set(partingConsumed) });
-      if (repeat.of) return this.answerRepeatedFrame(traceId, body.groupId, receipt, repeat.of);
+      if (repeat.of)
+        return this.answerRepeat(traceId, body, receipt, repeat.of, durable, addressed);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${queuedRows.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
@@ -2294,7 +2330,8 @@ export class MessagingService {
       // left alone: their own paths decide what a dead group means for them.
       if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
         await enqueueOnce([]);
-        if (repeat.of) return this.answerRepeatedFrame(traceId, body.groupId, receipt, repeat.of);
+        if (repeat.of)
+          return this.answerRepeat(traceId, body, receipt, repeat.of, durable, addressed);
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
@@ -2323,83 +2360,15 @@ export class MessagingService {
     // shared copy that exists - the defect this rework removes
     // (`docs/wiki/protocols/history-reconciliation.md`).
     //  - an ADDRESSED frame: the stream is read by every member, and the frame is for some of them.
-    if (
-      body.proto &&
-      !body.isWelcome &&
-      !body.isCommit &&
-      durable &&
-      !addressed &&
-      body.groupId &&
-      body.senderId
-    ) {
-      try {
-        const historyKey = `history:${body.groupId}`;
-        // ONE ROUND TRIP FOR THE THREE COMMANDS. They are a single statement about the stream -
-        // append it, bound it, keep the key alive - and issuing them one await at a time paid a
-        // round trip each on the hot send path for no added guarantee.
-        const written = await this.redis
-          .pipeline()
-          .xadd(
-            historyKey,
-            'MAXLEN',
-            '~',
-            String(HISTORY_STREAM_MAXLEN),
-            '*',
-            'sender_id',
-            body.senderId,
-            // THE DEVICE, NOT ONLY THE USER - and it is written here because here is the only place
-            // it is still known. `history:{gid}` is ONE stream per group and must hold this device's
-            // own frames, because every other member reads it; MLS then refuses them by construction
-            // (`CannotDecryptOwnMessage`). `sender_id` cannot filter them: a user's OTHER device's
-            // frames are both decryptable and wanted. So without this field a replay learns which
-            // rows are its own only by handing each one to MLS to be refused - measured at 5 certain
-            // failures per capture, every capture, and thousands per full replay of a 4 282-message
-            // DM. Never learn by failing what a fact could have told you.
-            'sender_device_id',
-            body.senderDeviceId ?? '',
-            'content',
-            body.proto,
-            'timestamp',
-            receivedAt.toISOString()
-          )
-          // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
-          // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back
-          // it reaches: a group under the cap kept every frame it ever held, because the cap was
-          // never met and the TTL above is refreshed on every write. Measured on production
-          // 2026-08-17: four of five streams still carried rows from before 2026-08-15, at 1 to 11
-          // entries each. Four compatibility shims are retired on "no row older than the retention
-          // window can still exist" (`docs/wiki/legacy-compatibility.md`), and that sentence was
-          // simply not true of an active group.
-          //
-          // EXACT, NOT `~`: an approximate trim stops at node boundaries and keeps up to a node's
-          // worth of older entries, and a date that nothing may be older than cannot be
-          // approximate. The cost is bounded - each entry is deleted once, ever, and the stream is
-          // capped at `HISTORY_STREAM_MAXLEN`.
-          .xtrim(historyKey, 'MINID', String(Date.now() - RETENTION_WINDOW_MS))
-          // Refresh TTL on every write so abandoned groups are evicted after the offline-recovery
-          // window of inactivity. Same window as every other staleness threshold, by construction.
-          .expire(historyKey, Math.floor(RETENTION_WINDOW_MS / 1000))
-          .exec();
-
-        // A pipeline reports per-command failures in its RESULTS, not by throwing, so the `catch`
-        // below never sees them. Left unread, a stream that stopped being trimmed or expired would
-        // look exactly like one that was.
-        if (!written) {
-          this.logger.warn(`[HISTORY][${traceId}] pipeline aborted group=${body.groupId}`);
-        } else {
-          written.forEach(([err], i) => {
-            if (err) {
-              const name = ['XADD', 'XTRIM', 'EXPIRE'][i] ?? `command ${i}`;
-              this.logger.warn(
-                `[HISTORY][${traceId}] ${name} failed group=${body.groupId}: ${String(err)}`
-              );
-            }
-          });
-        }
-        this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
-      } catch (e) {
-        this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${String(e)}`);
-      }
+    if (historyEligible(body, durable, addressed)) {
+      await this.appendToHistory(
+        body.groupId as string,
+        body.senderId as string,
+        body.senderDeviceId ?? '',
+        body.proto as string,
+        receivedAt,
+        traceId
+      );
     }
 
     // 2. Best-effort real-time delivery for online recipients, through the one delivery.
@@ -2409,38 +2378,25 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
-    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
-    for (const queued of queuedRows) {
-      // Reuses the presence answer taken above rather than asking Redis a second time. A device
-      // that went offline in between is covered the same way it always was: the row survives and
-      // its next pull redelivers it.
-      const delivered = await this.deliverQueuedFrame(queued, {
-        tag: 'SEND',
-        traceId,
-        online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
-        silent,
-        pushable: durable,
-        batch: tally,
-      });
-      if (delivered) sentCount++;
-    }
-    if (tally.pushes.length > 0) {
-      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
-      // the last one settles. Failures and missing tokens already logged themselves per device.
-      const attempted = tally.pushes.length;
-      void Promise.all(tally.pushes).then(() =>
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
-        )
+    sentCount += await this.deliverQueuedRows(queuedRows, online, silent, durable, traceId);
+    // THE RECEIPT IS SETTLED once the steps above ran: a repeat from here on is answered alone. A
+    // crash before this line leaves it unsettled, and the repeat then finishes this delivery for the
+    // copies still queued (`finishFirstCopy`).
+    if (receipt && body.groupId) {
+      const groupId = body.groupId;
+      await markSentFrameSettled(this.queuedMessageRepo.manager, groupId, receipt).catch(
+        (e: unknown) =>
+          this.logger.warn(
+            `[SEND][${traceId}] RECEIPT_NOT_SETTLED group=${groupId} msg=${receipt.messageId.slice(0, 8)} ` +
+              `- a repeat of it will deliver its still-queued copies again: ${String(e)}`
+          )
       );
     }
 
     // The count REPORTED is the count actually written, not the count considered - a transport frame
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
-    this.logger.log(
-      `[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount} offline=${tally.pushes.length}`
-    );
+    this.logger.log(`[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount}`);
 
     return {
       status: 'processed',
@@ -7023,6 +6979,269 @@ export class MessagingService {
   }
 
   /**
+   * The answer to a repeat of a message this device already sent into the group. A SETTLED first
+   * copy (its send ran every delivery step) is answered alone. An UNSETTLED one - the server died
+   * between the commit that queued it and the steps after it - is finished here first
+   * ({@link finishFirstCopy}), so the repeat leaves the message exactly as a whole first send would
+   * have: delivered once, pushed once, one history entry.
+   */
+  private async answerRepeat(
+    traceId: string,
+    body: SendMessageBody,
+    receipt: SentFrameKey | undefined,
+    first: FirstCopy,
+    durable: boolean,
+    addressed: Set<string> | null
+  ): Promise<SendMessageResult> {
+    if (first.settled || !receipt || !body.groupId) {
+      return this.answerRepeatedFrame(traceId, body.groupId, receipt, first.receivedAt);
+    }
+    return this.finishFirstCopy(traceId, body, receipt, first, durable, addressed);
+  }
+
+  /**
+   * FINISHES THE DELIVERY AN INTERRUPTED FIRST SEND OWED, for a repeat of an unsettled receipt.
+   *
+   * The settlement is TAKEN first, atomically ({@link takeSentFrameSettlement}): of two concurrent
+   * repeats exactly one finishes, and a crash during this finish loses no message - every copy it did
+   * not reach is still queued and goes out on its device's next pull, as any undelivered row does.
+   *
+   * What it finishes is read from durable state, never inferred:
+   * - the copies STILL QUEUED: the group's rows from this sender's device received at the first
+   *   copy's instant whose ciphertext is the first copy's (`protoSha256`) - a copy already pulled
+   *   and acknowledged is gone, and nothing is done for it;
+   * - the history entry, appended only when the stream holds none for the first copy
+   *   ({@link historyHoldsFirstCopy}), and then with the first copy's own ciphertext when a queued
+   *   row still carries it.
+   */
+  private async finishFirstCopy(
+    traceId: string,
+    body: SendMessageBody,
+    receipt: SentFrameKey,
+    first: FirstCopy,
+    durable: boolean,
+    addressed: Set<string> | null
+  ): Promise<SendMessageResult> {
+    const groupId = body.groupId as string;
+    const manager = this.queuedMessageRepo.manager;
+    if (!(await takeSentFrameSettlement(manager, groupId, receipt))) {
+      return this.answerRepeatedFrame(traceId, groupId, receipt, first.receivedAt);
+    }
+    const stored = await this.queuedMessageRepo.find({
+      where: {
+        groupId,
+        senderId: body.senderId,
+        senderDeviceId: body.senderDeviceId,
+        createdAt: first.receivedAt,
+      },
+      relations: PAYLOAD_RELATION,
+    });
+    const stillQueued = materializeDeliveries(stored, this.logger, traceId).filter(
+      (row) => !!row.proto && protoSha256(row.proto) === first.protoSha256
+    );
+    let historyAppended = false;
+    if (historyEligible(body, durable, addressed)) {
+      const held = await this.historyHoldsFirstCopy(groupId, receipt.senderDeviceId, first);
+      if (!held) {
+        // The first copy's own ciphertext when a queued row still carries it; when every copy was
+        // already pulled, this repeat's sealing of the same message (receivers deduplicate on the id
+        // inside, and the stream held no copy at all).
+        await this.appendToHistory(
+          groupId,
+          body.senderId as string,
+          receipt.senderDeviceId,
+          stillQueued[0]?.proto ?? (body.proto as string),
+          first.receivedAt,
+          traceId
+        );
+        historyAppended = true;
+      }
+    }
+    const online = new Map<string, boolean>();
+    for (const row of stillQueued) {
+      const k = `${row.recipientId}:${row.deviceId}`;
+      if (!online.has(k)) {
+        online.set(
+          k,
+          !!(await this.redis.exists(devicePresenceKey(row.recipientId, row.deviceId)))
+        );
+      }
+    }
+    const sent = await this.deliverQueuedRows(
+      stillQueued,
+      online,
+      body.silent ?? false,
+      durable,
+      traceId
+    );
+    this.logger.warn(
+      `[SEND][${traceId}] REPEAT_FINISHED_FIRST_COPY group=${groupId} ` +
+        `sender=${receipt.senderId}:${receipt.senderDeviceId} msg=${receipt.messageId.slice(0, 8)} ` +
+        `firstReceivedAt=${first.receivedAt.toISOString()} stillQueued=${stillQueued.length} ` +
+        `realtime=${sent} historyAppended=${historyAppended} - the first send stopped between its ` +
+        `commit and its delivery, and this repeat finished it`
+    );
+    return { status: 'processed', queued: 0, sent, receivedAt: first.receivedAt.getTime() };
+  }
+
+  /**
+   * Whether `history:{groupId}` already holds the first copy: an entry from `senderDeviceId` dated
+   * at the first copy's receive time. Read from the first copy's instant onwards - an append comes
+   * after its receive time, so its stream id is not older - in pages, to the end of the stream
+   * (bounded by `HISTORY_STREAM_MAXLEN`). Asked only by a repeat of an unsettled receipt.
+   */
+  private async historyHoldsFirstCopy(
+    groupId: string,
+    senderDeviceId: string,
+    first: FirstCopy
+  ): Promise<boolean> {
+    const key = `history:${groupId}`;
+    const at = first.receivedAt.toISOString();
+    let start = String(first.receivedAt.getTime());
+    for (;;) {
+      const page = (await this.redis.xrange(key, start, '+', 'COUNT', HISTORY_SCAN_PAGE)) as Array<
+        [string, string[]]
+      >;
+      for (const [, fields] of page) {
+        const entry = new Map<string, string>();
+        for (let i = 0; i + 1 < fields.length; i += 2) entry.set(fields[i], fields[i + 1]);
+        if (entry.get('sender_device_id') === senderDeviceId && entry.get('timestamp') === at) {
+          return true;
+        }
+      }
+      if (page.length < HISTORY_SCAN_PAGE) return false;
+      start = `(${page[page.length - 1][0]}`;
+    }
+  }
+
+  /**
+   * Appends one frame to the group's shared history stream, so a device that was absent can obtain
+   * it without a peer being online. Best-effort: a failure is logged, the queued copies stand.
+   */
+  private async appendToHistory(
+    groupId: string,
+    senderId: string,
+    senderDeviceId: string,
+    proto: string,
+    receivedAt: Date,
+    traceId: string
+  ): Promise<void> {
+    try {
+      const historyKey = `history:${groupId}`;
+      // ONE ROUND TRIP FOR THE THREE COMMANDS. They are a single statement about the stream -
+      // append it, bound it, keep the key alive - and issuing them one await at a time paid a round
+      // trip each on the hot send path for no added guarantee.
+      const written = await this.redis
+        .pipeline()
+        .xadd(
+          historyKey,
+          'MAXLEN',
+          '~',
+          String(HISTORY_STREAM_MAXLEN),
+          '*',
+          'sender_id',
+          senderId,
+          // THE DEVICE, NOT ONLY THE USER - and it is written here because here is the only place it
+          // is still known. `history:{gid}` is ONE stream per group and must hold this device's own
+          // frames, because every other member reads it; MLS then refuses them by construction
+          // (`CannotDecryptOwnMessage`). `sender_id` cannot filter them: a user's OTHER device's
+          // frames are both decryptable and wanted. So without this field a replay learns which rows
+          // are its own only by handing each one to MLS to be refused - measured at 5 certain
+          // failures per capture, every capture, and thousands per full replay of a 4 282-message
+          // DM. Never learn by failing what a fact could have told you.
+          'sender_device_id',
+          senderDeviceId,
+          'content',
+          proto,
+          'timestamp',
+          receivedAt.toISOString()
+        )
+        // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
+        // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back it
+        // reaches: a group under the cap kept every frame it ever held, because the cap was never
+        // met and the TTL above is refreshed on every write. Measured on production 2026-08-17:
+        // four of five streams still carried rows from before 2026-08-15, at 1 to 11 entries each.
+        // Four compatibility shims are retired on "no row older than the retention window can
+        // still exist" (`docs/wiki/legacy-compatibility.md`), and that sentence was simply not true
+        // of an active group.
+        //
+        // EXACT, NOT `~`: an approximate trim stops at node boundaries and keeps up to a node's
+        // worth of older entries, and a date that nothing may be older than cannot be approximate.
+        // The cost is bounded - each entry is deleted once, ever, and the stream is capped at
+        // `HISTORY_STREAM_MAXLEN`.
+        .xtrim(historyKey, 'MINID', String(Date.now() - RETENTION_WINDOW_MS))
+        // Refresh TTL on every write so abandoned groups are evicted after the offline-recovery
+        // window of inactivity. Same window as every other staleness threshold, by construction.
+        .expire(historyKey, Math.floor(RETENTION_WINDOW_MS / 1000))
+        .exec();
+
+      // A pipeline reports per-command failures in its RESULTS, not by throwing, so the `catch`
+      // below never sees them. Left unread, a stream that stopped being trimmed or expired would
+      // look exactly like one that was.
+      if (!written) {
+        this.logger.warn(`[HISTORY][${traceId}] pipeline aborted group=${groupId}`);
+      } else {
+        written.forEach(([err], i) => {
+          if (err) {
+            const name = ['XADD', 'XTRIM', 'EXPIRE'][i] ?? `command ${i}`;
+            this.logger.warn(
+              `[HISTORY][${traceId}] ${name} failed group=${groupId}: ${String(err)}`
+            );
+          }
+        });
+      }
+      this.logger.log(`[HISTORY][${traceId}] XADD group=${groupId}`);
+    } catch (e) {
+      this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${groupId}: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Hands every row to its device through {@link deliverQueuedFrame} - live when `online` says so,
+   * pushed otherwise - and returns how many went out in realtime.
+   *
+   * A handshake frame is always silent: the app processes it without telling anybody. `pushable`
+   * is `durable`, which is false only for a TRANSPORT frame - and the offline branch is then
+   * unreachable anyway, because the send kept only online recipients. Passing it rather than relying
+   * on that keeps the two facts independent.
+   */
+  private async deliverQueuedRows(
+    rows: QueuedMessage[],
+    online: Map<string, boolean>,
+    silent: boolean,
+    durable: boolean,
+    traceId: string
+  ): Promise<number> {
+    let sent = 0;
+    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
+    for (const queued of rows) {
+      // Reuses the presence answer taken by the caller rather than asking Redis a second time. A
+      // device that went offline in between is covered the same way it always was: the row survives
+      // and its next pull redelivers it.
+      const delivered = await this.deliverQueuedFrame(queued, {
+        tag: 'SEND',
+        traceId,
+        online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
+        silent,
+        pushable: durable,
+        batch: tally,
+      });
+      if (delivered) sent++;
+    }
+    if (tally.pushes.length > 0) {
+      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
+      // the last one settles. Failures and missing tokens already logged themselves per device.
+      const attempted = tally.pushes.length;
+      void Promise.all(tally.pushes).then(() =>
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
+        )
+      );
+    }
+    return sent;
+  }
+
+  /**
    * Records `receipt` for `groupId` in the enqueue transaction `m` ({@link claimSentFrameReceipt},
    * whose primary key serialises two concurrent sends of one id), or throws
    * {@link FrameAlreadyReceived} with the first copy's receive time when this device already sent
@@ -7037,7 +7256,7 @@ export class MessagingService {
   ): Promise<void> {
     const claim = await claimSentFrameReceipt(m, groupId, receipt);
     if (claim.kind === 'claimed') return;
-    if (!claim.firstReceivedAt) {
+    if (!claim.first) {
       // The conflict named a row this statement cannot see: only a sweep deletes one (the retention
       // window, the account's erasure) between the two statements. Refused as a server failure, so
       // the sender keeps the frame and its retry inserts afresh - never queued unrecorded.
@@ -7047,7 +7266,7 @@ export class MessagingService {
       );
       throw new ServiceUnavailableException({ error: 'receipt_vanished' });
     }
-    throw new FrameAlreadyReceived(claim.firstReceivedAt);
+    throw new FrameAlreadyReceived(claim.first);
   }
 
   /**

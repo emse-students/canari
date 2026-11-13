@@ -457,15 +457,15 @@ route logged it and dropped it.
 **The mechanism.** `sendMessage` takes an optional `messageId` (validated by `readSentMessageId`:
 1-128 of `[A-Za-z0-9_-]`, anything else is a typed `400 message_id_invalid`, never read as absent).
 For an application frame naming one, `enqueueForLiveGroup` inserts
-`(groupId, senderId, senderDeviceId, messageId, receivedAt)` into `dm_sent_frame_receipt` in the
+`(groupId, senderId, senderDeviceId, messageId, receivedAt, protoSha256)` into `dm_sent_frame_receipt` in the
 SAME transaction that queues the copies, after the group's liveness check and before any row
 (`claimSentFrameReceipt`, `utils/sent-frame-receipt.ts`). `ON CONFLICT DO NOTHING` on the primary
 key is the whole mechanism:
 
 - a repeat finds the row: the transaction throws `FrameAlreadyReceived` (a type, caught by type),
-  writes nothing, and `sendMessage` answers `queued: 0, sent: 0` with the FIRST copy's `receivedAt` -
-  no queued row, no history-stream append, no push. The native sender marks the entry sent with the
-  receive time every receiver already holds;
+  writes nothing, and `sendMessage` answers `queued: 0` with the FIRST copy's `receivedAt`. The
+  native sender marks the entry sent with the receive time every receiver already holds. What else
+  it does depends on whether the first send FINISHED (below);
 - two concurrent sends of one id serialise on the key: the second waits for the first transaction,
   then finds its committed row, or inserts its own if the first rolled back;
 - a first send REFUSED inside the transaction (a deleted group, an evicted seat) leaves no receipt,
@@ -475,6 +475,34 @@ Keyed on the device as well as the author: the same id from another device of th
 not a repeat. The authenticated caller is the `senderId` when there is one. Logged at warn as
 `REPEATED_MESSAGE_ID`, with the first receive time and the gap: a repeat is the visible end of an
 answer the sender lost upstream, and that line is the count the triage asked for.
+
+**A first send that died between its commit and its delivery is finished by its repeat.** The
+receipt and the queued copies commit together, but the history append, the live delivery and the push
+come after that commit; a process killed in between leaves the copies queued and nothing else done.
+So the receipt carries `settled`, set once those steps ran (`markSentFrameSettled`), and
+`protoSha256`, the SHA-256 of the first copy's ciphertext. A repeat of a SETTLED receipt is answered
+alone - no row, no append, no push. A repeat of an UNSETTLED one (`finishFirstCopy`):
+
+- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count): of two
+  concurrent repeats exactly one finishes, and a crash during the finish loses nothing - an
+  undelivered copy is still queued and goes out on its device's next pull;
+- delivers and pushes the copies STILL QUEUED: the group's rows from that device dated at the first
+  copy's instant whose ciphertext hashes to `protoSha256` (another frame received at the same instant
+  is not touched); a copy already pulled and acknowledged is gone, and nothing is done for it;
+- appends to `history:{groupId}` only when no entry from that device carries the first copy's
+  `timestamp` (`historyHoldsFirstCopy`, an `XRANGE` from the first copy's instant - an append comes
+  after its receive time), with the first copy's own ciphertext when a queued row still holds it.
+
+It logs `REPEAT_FINISHED_FIRST_COPY` at warn with what it found. A crash in the MIDDLE of a fan-out
+(some devices pushed, the rest not) is finished the same way, so the devices pushed before the crash
+are pushed once more - the queued row, the only copy a device decrypts, stays one.
+
+**Two consequences, written down.** A frame sealed beyond the past-epoch window is REPORTED
+(`STALE_EPOCH_FRAME`), not refused, so it still claims its receipt: a repeat that re-sealed the same
+message at the group's current epoch is then answered as a repeat, and the members at that epoch keep
+only the stale copy they cannot open. That is the stale-epoch report's measurement to settle, not
+this one's. And `RECEIPT_VANISHED` (below) can let ONE duplicate through: its 503 makes the sender
+insert afresh, behind a receipt deleted by the retention sweep or an erasure.
 
 **Bounded.** Rows older than the retention window go with the hourly queue sweep
 (`cleanupExpiredQueuedMessages`) - past it there is no queued copy left to duplicate. The table is in

@@ -68,10 +68,39 @@ describe('MessagingService - a send cannot outlive its group', () => {
   let payloadSaves: object[];
   /** Builds the service again, so a test can boot it under another writer's switch. */
   let compile: () => Promise<MessagingService>;
-  /** `dm_sent_frame_receipt`, keyed `group|sender|device|messageId` -> its receive time. */
-  let receipts: Map<string, Date>;
+  /** `dm_sent_frame_receipt`, keyed `group|sender|device|messageId`. */
+  let receipts: Map<string, { receivedAt: Date; protoSha256: string; settled: boolean }>;
   /** Every history-stream append (`XADD` through the pipeline), by group key. */
   let historyAppends: string[];
+  /** The stream entries those appends wrote, as `XRANGE` returns them. */
+  let historyEntries: Array<[string, string[]]>;
+
+  /**
+   * The receipt table (migration 048), as the statements in `utils/sent-frame-receipt.ts` use it.
+   * Its primary key is the whole mechanism, so the mock honours exactly that: an insert of a held
+   * key does nothing and returns no row; an UPDATE answers `[rows, rowCount]` as TypeORM does.
+   */
+  const receiptQuery = (sql: string, params: unknown[]): unknown => {
+    const key = params.slice(0, 4).join('|');
+    const row = receipts.get(key);
+    const statement = sql.trimStart();
+    if (statement.startsWith('INSERT')) {
+      if (row) return [];
+      receipts.set(key, {
+        receivedAt: params[4] as Date,
+        protoSha256: params[5] as string,
+        settled: false,
+      });
+      return [{ messageId: params[3] }];
+    }
+    if (statement.startsWith('UPDATE')) {
+      const onlyUnsettled = sql.includes('"settled" = false');
+      if (!row || (onlyUnsettled && row.settled)) return [[], 0];
+      row.settled = true;
+      return [[], 1];
+    }
+    return row ? [{ ...row }] : [];
+  };
 
   const GROUP = 'g-1';
   const SENDER = { userId: 'u-sender', deviceId: 'dev-sender' };
@@ -88,7 +117,7 @@ describe('MessagingService - a send cannot outlive its group', () => {
   const redis = {
     xadd: jest.fn(),
     expire: jest.fn(),
-    xrange: jest.fn().mockResolvedValue([]),
+    xrange: jest.fn(async () => historyEntries),
     xrevrange: jest.fn().mockResolvedValue([]),
     smembers: jest.fn().mockResolvedValue([]),
     sadd: jest.fn().mockResolvedValue(0),
@@ -101,8 +130,10 @@ describe('MessagingService - a send cannot outlive its group', () => {
     hdel: jest.fn().mockResolvedValue(0),
     pipeline: jest.fn(() => {
       const chain = {
-        xadd: (key: string) => {
+        // `key, 'MAXLEN', '~', n, '*', ...fields`
+        xadd: (key: string, ...args: string[]) => {
           historyAppends.push(key);
+          historyEntries.push([`${historyEntries.length + 1}-0`, args.slice(4)]);
           return chain;
         },
         xtrim: () => chain,
@@ -141,6 +172,7 @@ describe('MessagingService - a send cannot outlive its group', () => {
     payloadSaves = [];
     receipts = new Map();
     historyAppends = [];
+    historyEntries = [];
 
     // The transaction the fix runs in. `getRepository` hands back the two repositories it uses, and
     // both record what they were asked - the Group read so the test can see the lock, the queue
@@ -148,18 +180,7 @@ describe('MessagingService - a send cannot outlive its group', () => {
     const transaction = async (cb: (m: unknown) => Promise<unknown>) =>
       cb({
         query: async (sql: string, params: unknown[]) => {
-          // The receipt table (migration 048): its primary key is the whole mechanism, so the mock
-          // honours exactly that - an insert of a held key does nothing and returns no row.
-          if (sql.includes('dm_sent_frame_receipt')) {
-            const key = params.slice(0, 4).join('|');
-            if (sql.trimStart().startsWith('INSERT')) {
-              if (receipts.has(key)) return [];
-              receipts.set(key, params[4] as Date);
-              return [{ messageId: params[3] }];
-            }
-            const at = receipts.get(key);
-            return at ? [{ receivedAt: at }] : [];
-          }
+          if (sql.includes('dm_sent_frame_receipt')) return receiptQuery(sql, params);
           order.push(`${sql.includes('_shared') ? 'shared' : 'exclusive'} ${String(params[0])}`);
           return [];
         },
@@ -204,7 +225,23 @@ describe('MessagingService - a send cannot outlive its group', () => {
         bareSaved.push(...rows);
         return rows;
       }),
-      manager: { transaction: jest.fn(transaction) },
+      // The rows a repeat reads back: what is still queued (`committed`, which a test empties to
+      // stand for copies pulled and acknowledged), matched on the columns the query names.
+      find: jest.fn(
+        async (opts: { where?: { groupId?: string; senderDeviceId?: string; createdAt?: Date } }) =>
+          committed
+            .filter(
+              (r) =>
+                r.groupId === opts.where?.groupId &&
+                r.senderDeviceId === opts.where?.senderDeviceId &&
+                r.createdAt?.getTime() === opts.where?.createdAt?.getTime()
+            )
+            .map((r) => ({ ...r }))
+      ),
+      manager: {
+        transaction: jest.fn(transaction),
+        query: jest.fn(async (sql: string, params: unknown[]) => receiptQuery(sql, params)),
+      },
     };
 
     const deviceGroupRepo = {
@@ -621,6 +658,106 @@ describe('MessagingService - a send cannot outlive its group', () => {
       await expect(sendId('not an id; DROP')).rejects.toBeInstanceOf(BadRequestException);
       await expect(sendId(42)).rejects.toBeInstanceOf(BadRequestException);
       expect(committed).toEqual([]);
+    });
+
+    /**
+     * THE FIRST SEND MAY DIE BETWEEN ITS COMMIT AND ITS DELIVERY: its rows are queued and its receipt
+     * written, but no history entry, no live delivery and no push happened. Its receipt is then
+     * unsettled, and the repeat finishes exactly what is left - from durable state (the rows still
+     * queued, the stream's own entries), never from a clock.
+     */
+    describe('a repeat of a first send that died before its delivery', () => {
+      const offlinePeer = () => redis.exists.mockResolvedValue(0);
+      afterEach(() => redis.exists.mockResolvedValue(1));
+      const pushes = () =>
+        jest
+          .spyOn(
+            service as unknown as { sendFcmForQueued: () => Promise<void> },
+            'sendFcmForQueued'
+          )
+          .mockResolvedValue(undefined);
+      const dieOnce = (step: 'appendToHistory' | 'deliverQueuedRows') =>
+        jest
+          .spyOn(service as unknown as Record<typeof step, () => Promise<unknown>>, step)
+          .mockRejectedValueOnce(new Error('the process died here'));
+      const receipt = () => receipts.get(`${GROUP}|${SENDER.userId}|${SENDER.deviceId}|${MSG}`);
+
+      it('settles the receipt once a whole send ran its delivery', async () => {
+        await sendId(MSG);
+
+        expect(receipt()?.settled).toBe(true);
+      });
+
+      it('died before the history append: the repeat appends once, delivers once, pushes once', async () => {
+        offlinePeer();
+        const push = pushes();
+        dieOnce('appendToHistory');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        expect(committed.map((r) => r.deviceId)).toEqual([PEER.deviceId]);
+        expect(historyAppends).toEqual([]);
+        expect(push).not.toHaveBeenCalled();
+        expect(receipt()?.settled).toBe(false);
+
+        const again = await sendId(MSG);
+
+        expect(historyAppends).toEqual([`history:${GROUP}`]);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(committed).toHaveLength(1);
+        expect(again.receivedAt).toBe(receipt()?.receivedAt.getTime());
+        expect(receipt()?.settled).toBe(true);
+        expect(warnings.find((w) => w.includes('REPEAT_FINISHED_FIRST_COPY'))).toContain(
+          'stillQueued=1'
+        );
+
+        // And a further repeat finds it settled: nothing new, no second push.
+        await sendId(MSG);
+        expect(historyAppends).toHaveLength(1);
+        expect(push).toHaveBeenCalledTimes(1);
+      });
+
+      it('died after the history append: the repeat appends NOTHING and delivers once', async () => {
+        offlinePeer();
+        const push = pushes();
+        dieOnce('deliverQueuedRows');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        expect(historyAppends).toHaveLength(1);
+
+        await sendId(MSG);
+
+        // The stream already held the first copy (same device, same receive time): one entry.
+        expect(historyAppends).toHaveLength(1);
+        expect(push).toHaveBeenCalledTimes(1);
+      });
+
+      it('delivers nothing for a copy already pulled and acknowledged', async () => {
+        const deliver = jest.spyOn(
+          service as unknown as { deliverQueuedFrame: () => Promise<boolean> },
+          'deliverQueuedFrame'
+        );
+        dieOnce('deliverQueuedRows');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        committed = [];
+
+        await sendId(MSG);
+
+        expect(deliver).not.toHaveBeenCalled();
+        expect(historyAppends).toHaveLength(1);
+      });
+
+      it('delivers nothing for a queued row of ANOTHER frame received at the same instant', async () => {
+        const deliver = jest.spyOn(
+          service as unknown as { deliverQueuedFrame: () => Promise<boolean> },
+          'deliverQueuedFrame'
+        );
+        dieOnce('deliverQueuedRows');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        // Same group, device and instant, another ciphertext: not the first copy's row.
+        committed = committed.map((r) => ({ ...r, proto: 'YW5vdGhlciBmcmFtZQ==' }));
+
+        await sendId(MSG);
+
+        expect(deliver).not.toHaveBeenCalled();
+      });
     });
   });
 });
