@@ -247,6 +247,20 @@ jobs:
             --image-prefix "$IMAGE_PREFIX" \
             --pull-services "$pull"
 
+      # THE TEST MICONNECT REHEARSES THE VERSION THE STABLE WILL PUT ON PRODUCTION (owner,
+      # 2026-11-13). The same script the stable runs, on the test stack (`miconnect-test`): restarts
+      # only when what runs differs from this tree's pin, dumps first, checks Docker's health verdict,
+      # `/-/health/ready/` and the OIDC discovery after, rolls back and FAILS otherwise - which keeps
+      # `dev-deployed` where it was, so gate 4 refuses the stable that would carry that version.
+      # Dev itself still signs in through PRODUCTION's MiConnect; nothing here touches it.
+      - name: Put the test MiConnect on the pinned authentik version
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test
+
       # MICONNECT'S CONFIGURATION, TRIED AND NOT WRITTEN. Dev signs in through the PRODUCTION
       # MiConnect - there is no dev instance yet - so a pre-release must not change it. It applies
       # every blueprint inside one transaction, prints what the stable release WILL change, and rolls

@@ -1,0 +1,6 @@
+# DRIFTS WITH A KNOWN CAUSE, EACH WITH A DATE - read by image-drift-report.sh --known (scheduled.yml,
+# job `drift`). One per line: <project> <service> <the exact running image> <expires YYYY-MM-DD> <why>.
+# Until its date the line is a warning; the day after, it is red again. Only that exact image of that
+# service passes. An entry leaves this file in the pull request that removes its cause; a date is moved
+# only with a reason written into the entry it points at. docs/wiki/infrastructure/authentik.md.
+miconnect-test postgresql postgres:16-alpine 2026-12-31 docs/wiki/backlog.d/miconnect-compose-file-is-not-deployed.md

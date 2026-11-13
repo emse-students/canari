@@ -1,9 +1,10 @@
 # Stack Authentik (fournisseur OIDC de Canari), projet Docker Compose "miconnect".
 #
-# Source de verite versionnee, et REFERENCE DE RECONSTRUCTION : aucun pipeline ne
-# deploie cette stack. Elle tourne sur l hote mutualise depuis
-# le 2026-09-24, et son .env est ecrit a la main a cote de ce fichier. Le README
-# de ce dossier porte l histoire et la procedure de reconstruction.
+# Source de verite versionnee, et REFERENCE DE RECONSTRUCTION. Elle tourne sur l hote
+# mutualise depuis le 2026-09-24, et son .env est ecrit a la main a cote de ce fichier.
+# DEPUIS LE 2026-11-13, LA RELEASE DEPLOIE SA VERSION (l image de server et worker, ci-dessous) :
+# un pre-release sur la stack de test, une stable sur la production (deploy-stack.sh). Le reste de
+# ce fichier n est pas copie sur l hote. Le README de ce dossier porte l histoire et la procedure.
 #
 # Les montages relatifs (./data, ./certs, ./custom-templates) sont resolus depuis
 # le dossier d ou la commande est lancee. Le volume nomme "database" porte la base.
@@ -61,7 +62,12 @@ services:
 
   server:
     logging: *logging
-    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.5}
+    # THE PIN THE RELEASE DEPLOYS, written literally so Dependabot can move it (2026-11-13). A
+    # pre-release puts the test stack on it, a stable puts production on it, through
+    # deploy-stack.sh, which writes this tag into the stack's `.env` line AUTHENTIK_TAG - the host's
+    # copy of this file still reads `${AUTHENTIK_TAG}` - and restarts only when what RUNS differs.
+    # The worker names the SAME image; deploy-stack.sh refuses a pair that differs.
+    image: ghcr.io/goauthentik/server:2026.8.5
     restart: unless-stopped
     command: server
     env_file:
@@ -99,7 +105,7 @@ services:
 
   worker:
     logging: *logging
-    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.5}
+    image: ghcr.io/goauthentik/server:2026.8.5
     restart: unless-stopped
     command: worker
     # STILL root, and no longer for the reason it was: the Docker socket below is gone. What is

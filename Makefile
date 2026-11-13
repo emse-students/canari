@@ -363,6 +363,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
 	@bash .github/scripts/tests/image-scan-targets.test.sh
+	@bash .github/scripts/tests/authentik-release.test.sh
 	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh

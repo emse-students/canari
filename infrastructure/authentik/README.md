@@ -2,12 +2,25 @@
 
 Fournisseur d identite OIDC de Canari.
 
-## Ou elle tourne, et par quoi elle est deployee : la stack a la main, sa configuration par la release
+## Ou elle tourne, et par quoi elle est deployee : sa VERSION et sa configuration par la release, le reste a la main
+
+**Depuis le 2026-11-13, la release deploie sa VERSION** (le proprietaire : *"Pourquoi on a du
+authentik dans notre repo si ce n'est pour ça ?"*) : l image de `server` et `worker`, ecrite en
+LITTERAL dans `compose.yml` pour que Dependabot la suive. Un pre-release met la stack de TEST
+(projet `miconnect-test`) sur cette version, une stable la PRODUCTION (projet `miconnect`), par
+`deploy-stack.sh` : rien ne redemarre si ce qui TOURNE est deja la version epinglee ; sinon dump de
+la base, ligne `AUTHENTIK_TAG` du `.env` reecrite, `server` et `worker` recrees seuls, puis
+verification (sante Docker, `/-/health/ready/`, decouverte OIDC) et retour arriere automatique en
+cas d echec. Le compte du runner doit pouvoir lire et ecrire le `.env` de chaque stack
+([MIGRATION](../MIGRATION.md)). Le detail et ses raisons : le
+[wiki](../../docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
+Ce qui suit decrit le RESTE de la stack, qui est toujours deploye a la main.
 
 **Cette stack a rejoint l hote mutualise le 2026-09-24** : elle tourne dans
 dans le dossier de la stack sur l hote de production, publiee sur `127.0.0.1:9000`, et le nginx
 de l hote termine TLS devant elle. Elle a eu sa propre VM du 2026-06-22 au
-2026-09-24, et **aucun pipeline ne la deploie**, avant comme apres.
+2026-09-24, et **aucun pipeline n en deploie le fichier compose ni le `.env`** (seule la ligne de
+version, depuis le 2026-11-13).
 
 > **L ancienne VM n est pas vide, et ce n est pas un oubli.** Son PostgreSQL y
 > tourne encore avec une copie FIGEE de la base, comme retour arriere ; seuls
@@ -33,13 +46,13 @@ un artefact deploye**, et il a derive de celui qui tourne :
 | | Ce dossier | L ancienne VM | L hote cible, depuis le 2026-09-24 |
 | --- | --- | --- | --- |
 | Image | `ghcr.io/goauthentik/server` | `docker.io/authentik/server` | `ghcr.io/...` - **ce fichier** |
-| Version | `2026.8.5` (2026-10-23, version corrective courante) | `2026.8.0` | `2026.8.0` jusqu a la mise a jour de l operateur |
+| Version | `2026.8.5` (2026-10-23, version corrective courante), deployee par la release depuis le 2026-11-13 | `2026.8.0` | `2026.8.0`, mise a jour a la main le 2026-11-13, puis par la release |
 | Volume | `database_18` (nomme `miconnect_database_18` par le projet) | `miconnect_database`, `external: true` | `database_18` depuis le passage a PostgreSQL 18 du 2026-10-31 ; l ancien volume (16) a ete supprime le meme jour |
 
 **La derive est fermee : c est ce `compose.yml` qui tourne maintenant**, au `.env`
-pres - sauf la version, que ce fichier porte en avance : aucun pipeline ne relance
-la stack, donc l hote prend `2026.8.5` quand l operateur y fait `docker compose pull`
-puis `up -d`, apres le dump `authentik_db` du jour. La CI (`test-blueprints.sh`,
+pres - et la version, que ce fichier portait en avance, est depuis le 2026-11-13 celle que la
+release deploie ; le job quotidien `drift` de `scheduled.yml` signale toute image qui tourne
+autrement que la release l a epinglee. La CI (`test-blueprints.sh`,
 vierge et mise a niveau) a valide les blueprints sur cette version. Les deux images ne se ressemblent pas, elles sont la MEME - `RepoDigests`
 identiques (`sha256:7421753c...`), verifie le 2026-09-24 apres une fausse alerte
 ou c est le digest de CONFIG local, propre a chaque machine, qui avait ete compare.
@@ -163,8 +176,10 @@ cible - ce qui est la seule preuve qu ils l ont ete.
 
 ## Reconstruire la stack sur une autre machine
 
-1. Copier ce `compose.yml` et ecrire le `.env` (les deux secrets ci-dessus,
-   `AUTHENTIK_VERSION`).
+1. Copier ce `compose.yml` et ecrire le `.env` (les secrets ci-dessus ; la version est la ligne
+   `image:` du fichier, et `AUTHENTIK_VERSION` n est lue par rien). Donner au compte du runner la
+   lecture et l ecriture de ce `.env` ([MIGRATION](../MIGRATION.md)), sinon la release suivante
+   refuse de deployer la version.
 2. `docker compose up -d`, depuis n importe quel dossier - **`name: miconnect` est
    DECLARE dans le `compose.yml` depuis le 2026-09-24**, donc le volume s appelle
    `miconnect_database_18` quel que soit le chemin. Cette ligne manquait : le nom

@@ -39,7 +39,7 @@ if grep -qxF "$adminer_base" <<< "$list"; then ko "$adminer_base, the base the p
 if grep -q '^rust:' <<< "$list"; then ko "a rust builder image is scanned, and it never reaches an estate"; else ok "no rust builder image is in the list"; fi
 
 echo "an interpolated reference is read as its default, and this repository's own images are left out:"
-if grep -qE '^ghcr\.io/goauthentik/server:[0-9]' <<< "$list"; then ok "the identity provider's server image is resolved to its default tag"; else ko "the identity provider's server image is missing or unresolved"; fi
+if grep -qE '^ghcr\.io/goauthentik/server:[0-9]' <<< "$list"; then ok "the identity provider's server image is in the list at its pinned tag"; else ko "the identity provider's server image is missing or unresolved"; fi
 if grep -qF 'ghcr.io/emse-students/canari/' <<< "$list"; then ko "an image this repository builds is in the list"; else ok "no image this repository builds is in the list"; fi
 
 echo "a source that cannot be read fails instead of shrinking the list:"

@@ -387,11 +387,13 @@ updates:
   # the one above: the branch then names this directory, and `ceiling_compose_from_ref` reads it to
   # judge a PostgreSQL update against THIS stack's major rather than production's - they differ.
   #
-  # WHAT THIS DOES NOT WATCH: the authentik server and worker. Their image is
-  # `${AUTHENTIK_IMAGE:-...}:${AUTHENTIK_TAG:-...}` so the host's `.env` can override it, and
-  # Dependabot does not resolve an interpolated reference. Writing it literally would make it
-  # visible here and take that override away; that is a decision for the operator of the shared
-  # host, recorded in docs/wiki/cicd.md ("Native and identity-provider manifests").
+  # AND THE AUTHENTIK SERVER AND WORKER SINCE 2026-11-13, because the RELEASE deploys that image now
+  # (owner: "Pourquoi on a du authentik dans notre repo si ce n'est pour ça ?"): a pre-release puts
+  # the test MiConnect on it, a stable production (infrastructure/authentik/deploy-stack.sh). It was
+  # `${AUTHENTIK_IMAGE:-...}:${AUTHENTIK_TAG:-...}` until then, which Dependabot does not resolve, and
+  # production ran 2026.8.0 while this file said 2026.8.5. The reference is literal now, so an update
+  # opens here, is gated by `test-miconnect-blueprints` (which boots this file), and ships with the
+  # next release. The two lines are ONE dependency, and the group keeps them in ONE pull request.
   - package-ecosystem: "docker-compose"
     directory: "/infrastructure/authentik"
     rebase-strategy: auto
@@ -405,3 +407,8 @@ updates:
       - "dependencies"
       - "docker"
     open-pull-requests-limit: 5
+    groups:
+      authentik:
+        patterns:
+          - "*goauthentik/server"
+        update-types: ["major", "minor", "patch"]
