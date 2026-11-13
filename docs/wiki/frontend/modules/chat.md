@@ -623,6 +623,17 @@ it always did.
   MEASURED 2026-10-18 over 144 GIFs (trending and searches): `sm` max 2.9 MB; `md` median 1.1 MB,
   p90 4.4 MB, max 11.7 MB. **Ceiling 12 MiB** (`GIF_MEDIA_MAX_BYTES`), checked on the declared
   length (413 before a byte is read) and on the bytes (the stream is cut, logged `too-large`).
+  **The picker never offers a rendition over it, and never retries a 413 (2026-11-13).** A 413 was
+  re-sent by the grid tile a moment later (an `<img>` cannot read the status) and the search could
+  hand out a rendition above the ceiling. Now the search carries the `bytes` KLIPY declared per
+  rendition (`klipy.ts`, `rendition()`), `mapKlipyItems` passes over any whose declared size exceeds
+  `GIF_MEDIA_MAX_BYTES` (imported from where it is defined; md -> sm -> xs, never the other way, and a
+  result with nothing that fits is left out and counted `oversized`), the client's `pickGridRendition`
+  and `commentGifRendition` apply the same test (`fitsRelay`), and `GifTileImage` fails a rendition
+  declared over the ceiling at once instead of asking twice. **Only a declared size is acted on**: a
+  rendition whose size KLIPY did not state is offered as before, and whether KLIPY states one for
+  every rendition is not measured here (no production access when this was written) - the debug line
+  `[GIF_SEARCH] N of M results had a rendition over the relay ceiling` counts how often it matters.
 - **One host, no query.** `static.klipy.com`, https, no credentials, no explicit port, and NO query
   (400 `query-not-allowed`: KLIPY's paths are content-addressed, and `?x=N` would make every request
   a new cache key) (`parseKlipyCdnUrl`), then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
@@ -1861,7 +1872,8 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
 - **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
   answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
   `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
-  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses (a live row only:
+  a retired DM is never a destination). A
   conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
   (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
   the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
@@ -3648,9 +3660,35 @@ The writers, which are the mechanism that holds the invariant:
 | --- | --- |
 | boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
 | `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
-| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed, pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a LIVE DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed; a RETIRED one (`removed`) is never matched, see [a deleted DM is not carried into the next](#a-deleted-dm-is-not-carried-into-the-next-one) - pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
 | `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
 | every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+
+### A deleted DM is not carried into the next one
+
+Decided by the owner on 2026-11-10. When a peer deletes a DM, this device keeps it as a RETIRED
+conversation (`lifecycle: 'removed'`, with its "a supprime cette conversation" line). A later DM
+with the same peer is a NEW group, and its Welcome used to ADOPT the retired row:
+`findDirectConversationByPeer` did not skip tombstones, so `upsertConversation` moved the retired
+conversation's stored rows onto the new group. Those rows carry author proofs naming the OLD group,
+so every device that later received them in a history bundle marked them "non verifie"
+([history-reconciliation](../../protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)). The startup merge
+(`mergeDirectConversationDuplicates`) and discovery already refused a tombstone - the paths disagreed.
+
+**One predicate now answers "the conversation with that peer" everywhere: `canRepresentThePeer`,
+applied inside `findDirectConversationByPeer`.** The callers, each decided:
+
+| Caller | Skips a tombstone | Why |
+| --- | --- | --- |
+| `upsertConversation` (`setupMessageHandler.ts`, the Welcome) | yes, for ANOTHER group's row | the retired DM keeps its own entry and rows, the new group starts empty (`[WELCOME] ... starts empty` names the retired ids); the joined group's OWN DM row is still revived whatever its lifecycle - a re-Welcome into the same group is a re-add |
+| the media send following a re-keyed DM (`useMessaging.svelte.ts`) | yes | it follows the row the Welcome moved, so it asks the same question; a file is never sent into a retired DM |
+| discovery's local de-dup (`serverGroupConversation.ts`) | yes (already did, inline) | a record pending removal must not refuse its own replacement (user report, 2026-08-23) |
+| `startNewConversation` (`groupCreation.ts`) | yes (inline before, same outcome) | a non-active row fell through to the server check anyway; a retired row listed before a live one no longer hides it |
+| the community invitation DM (`useChannelWorkspaces.svelte.ts`) | yes | an invitation written into a deleted DM reaches nobody |
+| `mergeDirectConversationDuplicates` (startup) | yes (already did) | a tombstone competing on `updatedAt` destroyed the fresh group for both parties |
+
+Pinned by `setupMessageHandler.test.ts` (*"the stored rows of the previous DM with that peer"*) and
+`conversations.directPeer.test.ts` (*"findDirectConversationByPeer"*).
 
 The consumers that look a conversation up by a group id, and the verdict on each:
 
@@ -4316,7 +4354,9 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 - **Sticky date**: current date label stays visible during scroll - see
   [The day label and its floating pill](#the-day-label-and-its-floating-pill-2026-10-01).
 - **Search**: in-chat search with prev/next navigation and highlight.
-- **Lightbox**: full-screen image/video with pinch-zoom and download.
+- **Lightbox**: full-screen image/video with pinch-zoom and download, and previous/next over the
+  conversation's media - see
+  [The media viewer of a conversation walks its images and videos](#the-media-viewer-of-a-conversation-walks-its-images-and-videos-2026-11-13).
 - **Radial menu** (mobile): long-press message -> circular action menu
   (`MessageMobileActions.svelte`). The actions are ICONS ONLY on ONE row (owner, 2026-11-08), built
   from one `actions` list (name = aria-label + title): 7 at most (own text message), each `flex-1`
@@ -4325,7 +4365,13 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   `select-text` beats the bubble's `select-none`, which let iOS select a word under the sheet);
   "Copier" is the touch way to copy.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
-  reader's head and a double check sit under the sender's own last read message. **In a group or a
+  reader's "Lu" marker sits under the NEWEST message of the conversation the peer has read, which must
+  be the viewer's own (`dmReadAnchorId`, owner, 2026-11-13, the Messenger placement - it reuses
+  `seenByAnchors`, so a DM and a group agree on "the last thing they saw"): everything read puts it
+  under the conversation's last message, a peer behind by N keeps it N rows up, a system line at the
+  bottom never carries it, and a peer's reply below the last read own message removes it (the reply
+  is the proof; the old rule left "Lu" on that older message). Computed over every row in
+  `ChatArea`, passed down as `dmReadAnchor`. **In a group or a
   salon, each member's head sits under the LAST message THEY read, whoever wrote it** (user,
   2026-10-02, the Messenger placement): `seenByAnchors` in `utils/chat/readState.ts` places them over
   the WHOLE sorted conversation (a render window ending above a reader's anchor would pin the head
@@ -5784,3 +5830,34 @@ theirs, or blocks.
 ### Channel access is a choice, not a switch (2026-11-10)
 
 Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
+
+## The media viewer of a conversation walks its images and videos (2026-11-13)
+
+Opening an image or a video from a bubble no longer ends at that item (owner, 2026-11-13): the same
+viewer moves to the previous or next image or video of THAT conversation, like a gallery.
+
+- **One viewer, two doors.** [`ConversationMediaViewer`](../../../../frontend/src/lib/components/chat/ConversationMediaViewer.svelte)
+  takes a list and the key of the item to open on; the "Medias" panel and `MessageMediaRenderer`
+  both use it, so they cannot drift. The arrows (pointer devices), the horizontal swipe (touch) and
+  Left/Right are `MediaLightbox`'s own, shared with posts (`showPrev`/`showNext`), as are the
+  rotation and fullscreen of a video ([screen-orientation](../screen-orientation.md)).
+- **The sequence is what the client already holds.** `MainChatPage` provides one loader
+  (`provideChatMediaSequence`, a context, so no prop crosses five components) over the same local
+  read as the panel (`loadSharedContent`: storage for DMs and groups, the in-memory messages of a
+  channel). No history fetch is ever triggered to extend it. `buildViewerSequence` orders it OLDEST
+  FIRST (left = older), and drops a CanaReel sent in the chat (a tile with its own viewer), a media
+  whose expiry hint has passed, one this device met a `410` for (`mediaPurgedAt`) and a deleted
+  message (the aggregate already skips it). One message carries one media; the key is
+  `messageId:mediaId` so a second attachment would be its own item.
+- **It opens at once, then gains neighbours.** The bubble's decrypted URL is passed as `known`
+  (never released by the viewer, it is the bubble's); the list arrives a moment later and the viewer
+  stays on the same item BY KEY - no remount, no second history entry. A neighbour is decrypted when
+  reached, through `MediaService.downloadAndDecrypt` like the panel's.
+- **No wrap-around** (`viewerBounds`): the newest wrapping to the oldest would jump across the whole
+  conversation on one stray swipe, and an end that stops tells the reader there is nothing further.
+- **A video stops when you move**: the next item replaces the player (`{#key}`), which unmounts it.
+- The panel's list stays newest first (its grid order), so there its "previous" is the newer one.
+
+Tests: `viewerSequence.test.ts` (order, skips, bounds), `ConversationMediaViewer.svelte.test.ts`
+(keyboard, ends, video stop, known URL). **Owed: a reading on a phone** - swipe between a photo and
+a video in a conversation with both, rotate a video, then move on.

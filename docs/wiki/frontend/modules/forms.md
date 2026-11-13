@@ -4,6 +4,8 @@
 **Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
 **Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
 
+**What forms cannot do yet, and the decided priced grid**: [forms capability audit, 2026-11-06](../../forms-capability-audit-2026-11-06.md).
+
 ## Responsibilities
 
 - Render dynamic association forms for member submissions.
@@ -1419,15 +1421,75 @@ Each row therefore says whose form it is, by NAME (`Form.associationName`, resol
 null for a personal form and for a form whose association has since been deleted). That line used to
 print the raw form id, which told a person nothing.
 
-`EditFormsTab` offers edit and delete on the same set from the association's own space. Its actions
-are unconditional because the tab itself only renders for a caller holding `MANAGE_FORMS`.
+### ONE list for `/forms` and for an association's tab (owner, 2026-11-13)
 
-**The global list's row carries SIX actions** (edit, share link, QR, export, responses, delete) -
-labelled pill buttons for all six demanded more width than a row had to give, and the name (the only
-flex item with a `min-w-0` floor) lost that fight first, truncating to almost nothing. All six are
-now icon-only (`.ui-icon-button`, `title=` for the label), matching the delete button, which already
-was. `EditFormsTab`'s three-action row kept its text labels (it never ran out of room) but gained the
-same `min-w-0`/`truncate` floor on its name, for the same reason (2026-09-20).
+*"Les interfaces /associations/[slug]/edit/formulaires et /forms sont tres differentes, on ne
+pourrait pas homogeneiser tout ca, et avoir le meilleur des deux mondes ?"* They were two products:
+`/forms` had six icon-only buttons and the responses accordion; the tab had three text buttons, the
+price line, the cash strip and the payments banner. **Both now draw `FormsManagerList`**
+(`components/forms/FormsManagerList.svelte`), which carries the UNION. Scope is data, not a fork:
+
+| | `/forms` | the tab (`EditFormsTab`) |
+|---|---|---|
+| Source (`load`) | `getForms()`: forms the caller owns, plus those of associations where they hold `MANAGE_FORMS` | `listAssociationForms(asso.id)`: `GET /associations/:id/forms` |
+| `scoped` | no: each row names its association, or says "Personnel" | yes: the association is implied, the name is omitted |
+| Header and "Nouveau formulaire" | the page's `PageHeader`, `/forms/create` | the tab's header, `/forms/create?association=<id>&returnTo=<this tab>` |
+| `paymentsReady` | absent (rows span associations): no warning | the association's: a PAID row carries "Paiements non configurees" |
+| `notice` snippet | none | the paid-forms banner (it is about the association, so it stays the tab's) |
+| Row heading | `h2` (an `h1` above) | `h3` (an `h2` above) |
+
+**The tab's source is the association's route, which returns the WHOLE form.** `GET
+/associations/:id/forms` is the authority on which forms belong to it - it also admits a global
+admin or a super-admin holding no `MANAGE_FORMS` flag, who are in no `GET /forms` list - and
+`listFormsByAssociation` returns the same row `FormsService.list` does (every column, plus
+`associationName` and `hasUnpublishedChanges`, archived forms excluded). One read, no per-form
+follow-up: a first version read each missing form by id, which was an N+1 where one deleted form
+sank the tab, and whose rows lacked the unpublished flag (so a global admin saw no badge and "view"
+opened the published page instead of the preview).
+
+**What a row is, everywhere.** The name has the whole width (two lines, `min-w-0`). Under it, the
+price ("Gratuit" or the amount, "Paiement sur place accepte") and the states, which read the same in
+both places: **Brouillon** (the managers' alone, nobody links it believing it live) and
+**Modifications non publiees** on a published form. An archived form (a form with answers that was
+deleted) is in neither list: the server's `deletedAt` filter drops it, so there is no archived
+badge to draw. Then ONE row of actions, the same at every width:
+
+- **"Modifier" and "Reponses", labelled.** They are what a manager does most; a word costs less
+  than guessing a glyph. Under the row's own `md` (a CONTAINER query, `@container`, so the narrow
+  settings column and a phone both count) the two share the width equally and the "..." keeps its
+  square; from `md` they sit beside the name.
+- **Everything else behind one "..."** (`FormRowMenu`: `FloatingSurface` holding `MenuList`, a sheet
+  on a phone and a popover on a wide window, the shape of the profile's "..." and the editor's
+  menus): the respondent view (the live page, or the preview of a draft or of unpublished edits),
+  copy the link, the QR code, the exports, the delete in the error colour. **A draft is offered no
+  link and no QR code**, which nobody could open.
+
+*Why this pattern.* Six icon buttons wrapped a phone's row and made every glyph a riddle; three
+text buttons crushed the name to a sliver of letters on an iPhone (2026-11-08); two labelled
+buttons and a menu fit a 390 px row beside nothing, leave the name its width, and keep every
+capability one tap away. The export menu is no longer a second dropdown: its entries (`exportEntries`
+in `forms/exportEntries.ts`, workbook plus the two grid CSVs on a priced-grid form) are a section
+of the same menu, and `downloadFormExport` is the one place that writes the file.
+
+**Cash awaiting validation: a strip on the tab's rows, the accordion everywhere.** The strip
+(validate or cancel a payment, with the same guest naming, `submitterName`, as the responses
+screen) is the tab's: one association's forms, a handful of reads. `/forms` spans every association
+the caller manages, so a strip there would fire one `pending-cash` read per cash form on every open;
+it validates cash in the responses accordion, which holds the same actions (no capability lost).
+Validating from the strip re-reads an open accordion, and the accordion's payment actions re-read
+the strip (`reloadResponses`).
+
+**Two in-flight guards.** A delete is guarded from the moment its confirmation OPENS (two quick
+selections would queue two confirmations and the second delete would 404), and an export disables
+the row's "..." with a spinner until the file is written, so a second tap starts no second export.
+The empty state draws a create button only when the screen has none of its own (`createHref`): the
+tab's header has one.
+
+**A failed read says so** (`common_load_error`) in both places; `/forms` used to render an empty
+list for a failed `GET /forms`, which read as "you have no forms".
+
+`/forms?responses=<form id>` (the organiser alert for a payment over capacity) works through the
+list, so it opens the accordion on either screen the form is on.
 
 ### The responses accordion shows the ANSWERS, and the form decides its own layout (2026-09-20)
 
@@ -1527,6 +1589,13 @@ The colspan is the case neither file shows on its own: it is a number written be
 that now has two lengths, and a short one leaves the panel ending mid-table. `answers.svelte.test.ts`
 asserts it equals the rendered header count on both.
 
+### The sheet is named after the title, made acceptable to Excel (2026-11-13)
+
+ExcelJS THROWS at `addWorksheet` on `* ? : \ / [ ]`, a quote at either end, an empty name or
+`History`, so a form titled "Service ... 19/11" made every export of it a 500 in production.
+`safeWorksheetName` (`apps/social-service/src/utils/worksheet-name.ts`) turns a refused character
+into `-`, cuts at 31 characters and trims after the cut; the form and booking exports both call it.
+
 ### THE XLSX IS WRITTEN IN WORDS THE SERVER DOES NOT HAVE (2026-09-22)
 
 The same report that asked about the chevrons carried a second half:
@@ -1577,8 +1646,8 @@ A file question is refused on a public or an anonymous form, and `fileRetentionD
 
 ## Sharing a form: the link, and the same link as a QR code
 
-Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
-it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
+Both the list's "..." menu (`FormRowMenu`) and the detail screen offer two entries: copy the public
+link, and show it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
 it an already absolute URL (`publicAppUrl`), the label the plate and the file name are built from, an
 optional owner line, and the sentence saying what scanning it opens. That is what lets whatever comes
 next reuse it without a prop naming a feature.
@@ -1627,15 +1696,17 @@ renders the page in its own webview never consults the resolver at all.
 
 ## Note on form management
 
-Association admins also reach a form's submissions, cash validation, edit and delete through the
-associations module (`edit/EditFormsTab.svelte`). Building and configuring a form happens in the two
-admin routes above.
+Association admins reach the same list, scoped to their association, through the associations
+module (`edit/EditFormsTab.svelte`, [one list](#one-list-for-forms-and-for-an-associations-tab-owner-2026-11-13)).
+Building and configuring a form happens in the two admin routes above.
 
 ## Tests
 
 `apps/social-service/src/forms/forms.service.cotisation.spec.ts` (the config refusals, the
 `MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (both
-sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
+sources, dedup, ordering, naming). The unified list is tested in `FormsManagerList.svelte.test.ts`
+(the row, both scopes, the menu, the responses link, cash), `EditFormsTab.svelte.test.ts` (what is
+the tab's own) and `associations.service.list-forms.spec.ts` (its source). The forms module had no test at all before 2026-08-23.
 
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s
@@ -1771,6 +1842,25 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **The form page asks once on load.** `GET forms/:id/check` now answers the caller's own `submissionId`; when it is `pending` the page calls `confirm-payment` once, and on a dead request it re-enables the pay button (the retry) with `form_view_payment_declined_note` / `form_view_payment_ended_note`. The same mechanism covers an expired or cancelled request whose callback was lost (state 6 while the row still reads `pending`).
 - **A stale state is never answered** (review of #2210): a retry may replace the request between `confirmPayment`'s read and its answer (two tabs, the success page polling while the payer retries). `requestState` is answered only while the row still names the uuid that was read, and the client never derives `declined` / `ended` from a row still `pending`: either would offer a retry that cancels the request being paid.
 - **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.md#p2---an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for-up-to-28-minutes-2026-10-21)).
+
+### The native payer's return: read on resume, and an https return on Android (2026-11-13)
+
+**What broke (owner, production, Android store app 1.6.10).** "Payer" opened Lydia's payer page in the phone's DEFAULT BROWSER (`navigateExternal`, the opener plugin); the owner paid THERE, and the browser never brought him back to Canari. He switched back by hand to a form page exactly as he had left it: nothing said the payment was in progress or done. The payment was recorded by the confirm callback 43 s later - only the payer's view was wrong.
+
+**What is measured, what is inferred.** Measured: Lydia redirects to an **https** `browser_success_url` after a payment (sandbox, from the dev web page, 2026-10-21, [lydia-api](../../lydia-api.md#4-where-the-payer-goes-back)). Never measured: a redirect to the **custom scheme** `fr.emse.canari://payment/success` the native builds sent - the hand-typed deep link of [device-verification](../../device-verification.md) proves the router, not Lydia. Inferred, not separated: either Lydia does not follow a non-https return, or the browser refuses to leave for an external scheme on a redirect with no fresh gesture.
+
+**Which half depends on that cause.** The read on return does NOT: it needs no return URL at all. The https return DOES: if the browser is what refuses (no gesture), the same rule can keep a verified App Link in the browser too, and the payer lands on the web return page instead of the app - the browser half below is what makes that landing say the right thing. If Lydia is what refuses, https fixes it outright. A phone reading of an Android payment separates the two.
+
+**The fix, in three parts.**
+
+- **The form page reads the answer when the payer comes back** (`checkoutReturn.ts`). After `navigateExternal`, the submit keeps the answer's id and Lydia's page (`pendingCheckout`, with its own `PaymentReader`), and the page switches to `paymentPending`: "Paiement en cours sur Lydia" with a "Rouvrir la page de paiement" button. While it is pending, `watchReturnsToApp` listens to the app's ONE screen-transition source (`onAppScreenChange`, `appForeground.ts`: `canari:foreground` on the phones, `visibilitychange` elsewhere) and each return to the screen reads the answer ONCE through `confirm-payment` - the read `/forms/success` polls, which asks Lydia itself, so a lost callback is still caught. No timer.
+  - **One read at a time, and only about the checkout shown.** The load-time read, the return read and the desktop tap all go through the checkout's reader, which answers `null` without asking while a read is in flight. The reader's IDENTITY is the checkout's generation: a read that lands after its checkout ended (released, then paid again under the SAME answer id; or the page moved from form A to form B, which reuses the component and resets everything per form, the reminder bell included) is dropped (`page.paymentReturn.svelte.test.ts`, with a control that fails without the check).
+  - **The outcome** goes through `returnOutcomeOf` (`paymentReturnPoll.ts`), the mapping the return pages' poll uses: paid shows `form_success_confirmed_*` in the success banner, over capacity the `form_success_over_capacity_*` sentence, declined / ended the existing retry path, a final unpaid state (cancelled elsewhere) leaves the in-progress block and re-reads whether the person answered, and anything that can still change keeps "pending". A 429 is "pending" (`isConfirmThrottled`, shared with `/forms/success` and the guest receipt page); a failed read decides nothing and the next return asks again.
+  - **Desktop.** A window switch fires no return edge there, so the desktop note promises nothing (`form_view_payment_in_progress_note_desktop`) and offers "Vérifier le paiement", the same single read on a tap.
+- **Android returns on an https App Link** (`formCheckoutCallbacks`): `https://<public origin>/forms/success?...` instead of the custom scheme. `/forms/success` is under the `/forms/` prefix both platforms claim (`MOBILE_UNIVERSAL_LINK_PATHS`), and the server's allowlist (`isAllowedCheckoutCallbackUrl`) already accepted it - no server change. **iOS keeps the scheme** until a reading says otherwise (Safari prompts for a custom scheme rather than dropping it). The router keeps the `payment` host for builds already installed.
+- **A browser landing never accuses.** When the https return stays in the phone's browser - a redirect the browser does not hand to the app, and ALWAYS on a pre-release build, since `dev.canari-emse.fr` is not an App Link host - `/forms/success` is read with whatever session that browser has. With none, the boot sends it to `/login` with the return behind it, and the login page now says "Paiement transmis à Lydia - retournez dans l'application Canari pour voir sa confirmation" with an "Ouvrir Canari" link (`paymentReturnSubmissionId`, `formPaymentReturnDeepLink`: the app's own `payment/success` link, which a TAP may open where a redirect could not). With a session that may not read the answer (401 / 403, `isConfirmUnreadableHere`), `/forms/success` says the same instead of "Paiement introuvable".
+
+**Not covered.** The shop (`ProductPurchaseButton.svelte`) and the public form (`/f/:id`) hand the payer to Lydia the same way and still rely on their return URLs (the shop's `/shop` IS an App Link path, `android:path="/shop"`; its return keeps the custom scheme on phones). `dev.canari-emse.fr` is not an App Link host, so a pre-release's https return always stays in the browser - adding it is a separate change. A WebView killed while the payer is in the browser reloads the form, whose load-time read covers it but without the reopen button. Lydia's page inside the app is [a separate question](../../backlog.d/lydia-payer-page-inside-the-app.md).
 
 ### D1-D3 (user, 2026-10-15) and where each stands
 

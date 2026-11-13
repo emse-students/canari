@@ -1,3 +1,4 @@
+import { GIF_MEDIA_MAX_BYTES } from './gif-media';
 import { OUTBOUND_BUDGET_MS } from './url-guard';
 
 /**
@@ -36,6 +37,12 @@ export interface GifRendition {
   url: string;
   width: number;
   height: number;
+  /**
+   * The byte size KLIPY declared for this file, when it sent one. It is what lets the picker offer
+   * only a rendition the relay will carry (`GIF_MEDIA_MAX_BYTES`): the relay answers 413 above it,
+   * and an `<img>` that failed cannot say why.
+   */
+  bytes?: number;
 }
 
 export interface GifResult {
@@ -84,7 +91,9 @@ export class KlipyMalformedAnswerError extends Error {
   }
 }
 
-type RawRendition = { gif?: { url?: unknown; width?: unknown; height?: unknown } };
+type RawRendition = {
+  gif?: { url?: unknown; width?: unknown; height?: unknown; size?: unknown };
+};
 
 function rendition(raw: RawRendition | undefined): GifRendition | null {
   const g = raw?.gif;
@@ -92,7 +101,18 @@ function rendition(raw: RawRendition | undefined): GifRendition | null {
   const width = Number(g.width);
   const height = Number(g.height);
   if (!(width > 0) || !(height > 0)) return null;
-  return { url: g.url, width, height };
+  const bytes = Number(g.size);
+  return { url: g.url, width, height, ...(bytes > 0 && Number.isFinite(bytes) ? { bytes } : {}) };
+}
+
+/**
+ * Whether the relay would carry this rendition: one whose declared size is over
+ * {@link GIF_MEDIA_MAX_BYTES} (the relay's ceiling, read from the one place it is defined) would be
+ * refused 413 before a byte is read. A rendition that declared no size is offered, as before - the
+ * limit is only ever applied to a fact KLIPY stated.
+ */
+export function fitsRelay(r: GifRendition | null): r is GifRendition {
+  return r !== null && !(r.bytes !== undefined && r.bytes > GIF_MEDIA_MAX_BYTES);
 }
 
 /**
@@ -100,20 +120,37 @@ function rendition(raw: RawRendition | undefined): GifRendition | null {
  * Only the id, the renditions' URLs and their sizes leave this function: nothing else KLIPY sends reaches
  * a client.
  */
-export function mapKlipyItems(items: unknown[]): { gifs: GifResult[]; dropped: number } {
+export function mapKlipyItems(items: unknown[]): {
+  gifs: GifResult[];
+  dropped: number;
+  /** Results where a rendition over the relay's ceiling was passed over for a lighter one (or the result left out). */
+  oversized: number;
+} {
   const gifs: GifResult[] = [];
   let dropped = 0;
+  let oversized = 0;
   for (const raw of items ?? []) {
     const item = (raw ?? {}) as { id?: string | number; file?: Record<string, RawRendition> };
     const file = item.file ?? {};
-    const preview = rendition(file.sm) ?? rendition(file.xs) ?? rendition(file.md);
-    const full = rendition(file.md) ?? rendition(file.hd) ?? rendition(file.sm);
+    // The first candidate IN PREFERENCE ORDER that the relay will carry. A heavier rendition is only
+    // ever passed over for a lighter one (md -> sm -> xs), never the other way.
+    const firstThatFits = (candidates: Array<RawRendition | undefined>) =>
+      candidates.map(rendition).find(fitsRelay) ?? null;
+    const anyOver = ['xs', 'sm', 'md', 'hd'].some((k) => {
+      const r = rendition(file[k]);
+      return r !== null && !fitsRelay(r);
+    });
+    const preview = firstThatFits([file.sm, file.xs, file.md]);
+    const full = firstThatFits([file.md, file.hd, file.sm, file.xs]);
     const id = String(item.id ?? '');
+    if (anyOver) oversized++;
     if (!id || !preview || !full) {
-      dropped++;
+      // Left out for its SIZE is counted as oversized, not as "declared no size".
+      if (!anyOver) dropped++;
       continue;
     }
-    const tiny = rendition(file.xs);
+    const tinyRaw = rendition(file.xs);
+    const tiny = fitsRelay(tinyRaw) ? tinyRaw : null;
     gifs.push({
       id,
       ...(tiny && tiny.width < preview.width ? { tiny } : {}),
@@ -121,7 +158,7 @@ export function mapKlipyItems(items: unknown[]): { gifs: GifResult[]; dropped: n
       full,
     });
   }
-  return { gifs, dropped };
+  return { gifs, dropped, oversized };
 }
 
 /**
@@ -149,7 +186,7 @@ export async function fetchKlipyPage(
   apiKey: string,
   query: string,
   page: number
-): Promise<{ page: GifPage; received: number; dropped: number }> {
+): Promise<{ page: GifPage; received: number; dropped: number; oversized: number }> {
   // Each failure is typed where it happens, so the caller never reads a message to tell "KLIPY
   // never answered" from "KLIPY answered something unusable".
   let res: Response;
@@ -176,9 +213,9 @@ export async function fetchKlipyPage(
     throw new KlipyMalformedAnswerError(`a body that is not JSON (${text.length} bytes)`);
   }
   const items = Array.isArray(json?.data?.data) ? json.data.data : [];
-  const { gifs, dropped } = mapKlipyItems(items);
+  const { gifs, dropped, oversized } = mapKlipyItems(items);
   // `has_next` when KLIPY sends it; a short page is the end either way.
   const hasNext =
     typeof json?.data?.has_next === 'boolean' ? json.data.has_next : items.length >= GIF_PAGE_SIZE;
-  return { page: { gifs, hasNext }, received: items.length, dropped };
+  return { page: { gifs, hasNext }, received: items.length, dropped, oversized };
 }

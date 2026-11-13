@@ -59,6 +59,10 @@ services:
   postgres:
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
     image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
+    # Postgres logs every checkpoint by default (several lines an hour, 2026-11-13) and a checkpoint is
+    # routine, not an event: `log_checkpoints=off`. Changing a datastore's command recreates it at the
+    # next ordinary deploy (docs/wiki/infrastructure/logging.md).
+    command: ["postgres", "-c", "log_checkpoints=off"]
     ports:
       - "5432:5432"
     environment:
@@ -232,6 +236,9 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?run 'make local-env' - infrastructure/.env carries no GARAGE_ACCESS_KEY_ID}
       GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
       GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
+      # Garage logs every S3 request and every health check at INFO (~53k lines a day on production,
+      # 2026-11-13) and nothing else worth keeping: warn and above only (docs/wiki/infrastructure/logging.md).
+      RUST_LOG: warn
     volumes:
       - ../garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -260,6 +267,8 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
       # which this service accepts on no other ground (cors-origins.ts).
       ALLOW_ORIGIN: *local-origins

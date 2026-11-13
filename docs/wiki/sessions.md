@@ -328,7 +328,10 @@ infers the other's platform, and nothing is learnt by being refused.
   until `save()` has. The Android incident above is what this is copying.
 - **An empty store is NOT proof of no session.** On the same origin a desktop build may hold a working
   HttpOnly cookie that this code cannot see by design, so the request is still made; the header is
-  added only when a copy is actually held.
+  added only when a copy is actually held. **Except where no cookie can exist at all** - iOS, and a
+  `tauri.localhost` shell against a plain-HTTP API (`onlyCarriedCredentialCanExist`): there the empty
+  store IS the answer, so a cold start with no saved user sends no recovery refresh
+  (`hasStoredSession`, 2026-11-13); macOS and Linux still ask, their cookie never measured.
 
 **What it costs, stated plainly:** on those platforms the credential is readable by the app's own
 JavaScript instead of being `httpOnly`. It is the same trade Android already makes in substance - its

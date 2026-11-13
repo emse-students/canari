@@ -67,6 +67,7 @@
   import { deliverSalonWrite, nothingLeftTheDevice } from '$lib/utils/chat/salonOwed';
   import { channelReactionMap } from '$lib/stores/reactionStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
+  import { provideChatMediaSequence } from '$lib/utils/chat/chatMediaSequence';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
   import {
@@ -1455,6 +1456,10 @@
     const msgs = await session.storage.getMessages(conversationId, session.deviceKeyB64);
     return aggregateSharedContent(msgs);
   }
+
+  // The bubbles' media viewer walks the OPEN conversation's images and videos from this same local
+  // read (never a history fetch); the id is read when a viewer opens, not when this mounts.
+  provideChatMediaSequence(async () => (await loadSharedContent(selectedConversationId)).media);
 
   /**
    * Full-conversation search returning matching message IDs oldest-first: over the local store for

@@ -103,6 +103,8 @@
      * read message, so the two shapes never draw together.
      */
     seenBy?: Map<string, string[]>;
+    /** A DM: the id of the own message carrying the "Lu" marker (`dmReadAnchorId`), or null. */
+    dmReadAnchor?: string | null;
   }
 
   let {
@@ -137,6 +139,7 @@
     readWatermarks,
     serverReadWatermarks,
     seenBy,
+    dmReadAnchor = null,
   }: Props = $props();
 
   /** Everyone who has read `msg`, its author excluded. */
@@ -157,20 +160,9 @@
       )?.message.id ?? null
   );
 
-  // Last sent message read by at least one recipient (Read indicator).
-  const lastReadOwnMessageId = $derived(
-    seenBy
-      ? null
-      : ([...visibleMessageGroups]
-          .reverse()
-          .find(
-            (g): g is MessageGroupMessageRow =>
-              isMessageGroupRow(g) &&
-              g.message.isOwn &&
-              !g.message.isSystem &&
-              readersOfMessage(g.message).length > 0
-          )?.message.id ?? null)
-  );
+  // The "Lu" marker of a DM: under the newest message the peer read, computed by the parent over
+  // the whole conversation (`dmReadAnchorId`) - never the last own message that has a reader.
+  const lastReadOwnMessageId = $derived(seenBy ? null : dmReadAnchor);
 
   $effect(() => {
     const senderIds = new SvelteSet<string>();

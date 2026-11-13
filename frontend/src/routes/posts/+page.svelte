@@ -12,14 +12,12 @@
   import {
     listPosts,
     searchPosts,
-    getMyScheduledPosts,
+    getScheduledPostsToEdit,
     type PostEntity,
     type PostFeed,
-    type ScheduledPost,
   } from '$lib/posts/api';
   import { FEED_FIRST_PAGE_SIZE, FEED_PAGE_SIZE, firstPageHasMore } from '$lib/posts/feedPageSize';
-  import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
-  import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
+  import { applyScheduledEdit, msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import {
     feedCacheKey,
@@ -49,7 +47,6 @@
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
-  import ScheduledPostsPanel from '$lib/components/posts/ScheduledPostsPanel.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
   import { overlayLayout } from '$lib/stores/phoneViewport.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -80,7 +77,7 @@
   import { isTransportFailure } from '$lib/utils/transportFailure';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, SquarePen, Inbox, Search, X } from '@lucide/svelte';
+  import { RefreshCw, SquarePen, Inbox, Search, X, Clock } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -389,14 +386,13 @@
   let searching = $state(false);
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  let scheduledPosts = $state<ScheduledPost[]>([]);
-  /** Shown under the scheduled strip when a confirmed deletion failed; cleared by the next try. */
-  let scheduledDeleteError = $state('');
+  /** The scheduled posts the reader may edit, soonest first: the strip above the feed, on every tab. */
+  let scheduledPosts = $state<PostEntity[]>([]);
 
   async function loadScheduled() {
     if (!currentUserId()) return;
     try {
-      scheduledPosts = await getMyScheduledPosts();
+      scheduledPosts = await getScheduledPostsToEdit();
     } catch (err) {
       // The strip stays as it was; the next load reads it again.
       Log.d('POSTS scheduled posts could not be loaded', err);
@@ -426,18 +422,21 @@
     return () => clearTimeout(timer);
   });
 
-  /** Deletes a scheduled post once its author confirms, through the one deletion path. */
-  async function deleteScheduled(id: string) {
-    scheduledDeleteError = '';
-    try {
-      if ((await deletePostAfterConfirm(id)) === 'declined') return;
-      scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
-    } catch (err) {
-      // The post stays listed, which is the truth: it was not deleted - and the author who
-      // confirmed is told so, rather than left reading a tap that did nothing.
-      Log.d(`POSTS scheduled post ${id} could not be deleted`, err);
-      scheduledDeleteError = m.post_unable_to_delete_post();
-    }
+  /**
+   * A scheduled post was saved from its card. One moved to another future date takes the new date
+   * and its place in the order; one the edit published now (or un-scheduled) leaves the strip and
+   * the feed is re-read, where the server now serves it.
+   */
+  function onScheduledEdited(edited: PostEntity) {
+    const out = applyScheduledEdit(scheduledPosts, edited, Date.now());
+    Log.d('POSTS', `scheduled post  edited, published=${out.published}`);
+    scheduledPosts = out.posts;
+    if (out.published && !searchResults) void refreshPosts();
+  }
+
+  /** A scheduled post was deleted from its card (the card confirmed and deleted it). */
+  function onScheduledDeleted(id: string) {
+    scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
   }
 
   function onSearchInput(e: Event) {
@@ -886,12 +885,24 @@
   (`attachedFormsLoader`); this keeps the next one to its own card and NAMES the post in the log,
   which the layout's line could not - a production Svelte error carries only its code.
 -->
-{#snippet guardedCard(post: PostEntity, onDelete: () => void)}
+{#snippet guardedCard(
+  post: PostEntity,
+  onDelete: () => void,
+  onScheduledEdited?: (edited: PostEntity) => void
+)}
   <svelte:boundary
     onerror={(e) =>
       console.error(`[POSTS] card ${post.id} failed to draw - the feed keeps the others:`, e)}
   >
-    <PostCard {post} currentUserId={userId} {authToken} onRefresh={refreshPosts} {onDelete} />
+    <PostCard
+      {post}
+      currentUserId={userId}
+      {authToken}
+      onRefresh={refreshPosts}
+      {onDelete}
+      scheduled={!!onScheduledEdited}
+      onEdited={onScheduledEdited}
+    />
     {#snippet failed(_error, reset)}
       <div
         class="border-cn-border bg-cn-surface text-text-muted flex items-center gap-3 rounded-3xl border border-dashed p-5 text-sm"
@@ -1038,6 +1049,23 @@
   {#if userId && !searchQuery}
     <BirthdayFeedCard />
   {/if}
+  <!-- THE SCHEDULED POSTS, above the first post of EVERY tab (owner, 2026-11-13), only for those who may
+       edit them (the server hands nobody else one): the same cards, dimmed and dashed like a proposed
+       event, until the post is due. Hidden while a search replaces the feed. -->
+  {#if scheduledPosts.length > 0 && !searchQuery}
+    <section
+      class="mb-4"
+      aria-label={m.post_scheduled_strip_title({ count: scheduledPosts.length })}
+    >
+      <p class="text-text-muted mb-2 flex items-center gap-1.5 px-1 text-xs font-bold">
+        <Clock size={14} class="shrink-0" />
+        {m.post_scheduled_strip_title({ count: scheduledPosts.length })}
+      </p>
+      {#each scheduledPosts as sp (sp.id)}
+        {guardedCard(sp, () => onScheduledDeleted(sp.id), onScheduledEdited)}
+      {/each}
+    </section>
+  {/if}
   {#if livesShown && openLive}
     {#key openLive.id}
       <LiveViewer
@@ -1049,13 +1077,6 @@
         }}
       />
     {/key}
-  {/if}
-
-  {#if scheduledPosts.length > 0}
-    <ScheduledPostsPanel posts={scheduledPosts} onDelete={deleteScheduled} />
-    {#if scheduledDeleteError}
-      <p class="text-red-err mb-4 text-sm" role="alert">{scheduledDeleteError}</p>
-    {/if}
   {/if}
 
   <Modal

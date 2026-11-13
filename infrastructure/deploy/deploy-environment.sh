@@ -289,7 +289,7 @@ pinned_services_missing_image() {
   local service mode image
   while read -r service mode _ _ image; do
     [ "$mode" = pinned ] || continue
-    [ -n "$image" ] && [ "$image" != "-" ] || continue
+    case "$image" in "" | "-") continue ;; esac
     $DOCKER_CLI image inspect "$image" >/dev/null 2>&1 || printf '%s\n' "$service"
   done
 }

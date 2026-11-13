@@ -238,6 +238,7 @@ knows which one it is (Lydia does not say).
 - A card refused at 3-D Secure ends on `payment-error?code=4` and the request stays `state 0` (measured
   2026-10-15, before Lydia's sandbox update).
 - `end_mobile_url`: a deep link should be accepted (csm, 2026-10-20); **Canari has not tested one**.
+- **A custom-scheme `browser_success_url` (`fr.emse.canari://payment/success`) never brought a payer back** (production, Android, 2026-11-13: paid in the phone's browser, no return). Whether Lydia or the browser drops it is not separated; Android now sends an https App Link ([forms](frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
 
 ## 5. The sandbox
 

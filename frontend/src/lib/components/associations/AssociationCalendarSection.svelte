@@ -12,7 +12,6 @@
     listAssociationLinkCandidates,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
-    getCalendarEventLinkedToPost,
     listEventCoOrganisers,
     getEventWriteSide,
     type AssociationCalendarEvent,
@@ -56,6 +55,7 @@
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
   import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
+  import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -199,13 +199,8 @@
    * state, so the two do not need to be sequenced.
    */
   onMount(() => {
-    const fromPost = page.url.searchParams.get('fromPost')?.trim();
-    if (!fromPost) return;
-    void getCalendarEventLinkedToPost(fromPost)
-      .then(({ linkedEvent }) => {
-        if (linkedEvent) agenda.openDetail(linkedEvent);
-      })
-      .catch((err) => Log.d('associationCalendarSection.fromPost failed', err));
+    const fromPost = fromPostOf(page.url);
+    if (fromPost) void openEventLinkedToPost(agenda, fromPost);
   });
 
   const validatedEvents = $derived(

@@ -15,6 +15,7 @@ import {
   readWatermarkFrameData,
   readWatermarkFrameMark,
   readersOf,
+  dmReadAnchorId,
   seenByAnchors,
   watermarkAfterReading,
   watermarkFor,
@@ -759,5 +760,45 @@ describe('the read_watermark frame, old and new', () => {
     // Written at 4 500, accepted at 4 600: neither covers it.
     const n = dated('n', 4_500, 4_600, ME);
     expect(hasRead(convo.readWatermarks, PEER, n, convo.serverReadWatermarks)).toBe(false);
+  });
+});
+
+describe('where a DM "Lu" marker sits (dmReadAnchorId)', () => {
+  const sys = (id: string, at: number) => msg(id, at, 'system', { isSystem: true });
+
+  it('sits under the last message of the conversation when the peer has read everything', () => {
+    const rows = [msg('a', 1000, PEER), msg('b', 2000, ME), msg('c', 3000, ME)];
+    expect(dmReadAnchorId(rows, { [PEER]: 3000 }, ME)).toBe('c');
+  });
+
+  it('stays under the newest message read when the peer is behind by N', () => {
+    const rows = [msg('a', 1000, ME), msg('b', 2000, ME), msg('c', 3000, ME), msg('d', 4000, ME)];
+    expect(dmReadAnchorId(rows, { [PEER]: 2000 }, ME)).toBe('b');
+  });
+
+  it('is absent when the peer has read nothing', () => {
+    expect(dmReadAnchorId([msg('a', 1000, ME)], { [PEER]: 0 }, ME)).toBeNull();
+    expect(dmReadAnchorId([msg('a', 1000, ME)], undefined, ME)).toBeNull();
+  });
+
+  it('is absent when the last message is the one of the peer: the reply is the proof', () => {
+    const rows = [msg('a', 1000, ME), msg('b', 2000, PEER)];
+    expect(dmReadAnchorId(rows, { [PEER]: 2000 }, ME)).toBeNull();
+  });
+
+  it('follows the peer past an own message sent before their reply, not the last own message', () => {
+    const rows = [msg('a', 1000, ME), msg('b', 2000, PEER), msg('c', 3000, ME)];
+    expect(dmReadAnchorId(rows, { [PEER]: 2000 }, ME)).toBeNull();
+    expect(dmReadAnchorId(rows, { [PEER]: 3000 }, ME)).toBe('c');
+  });
+
+  it('ignores a system line at the bottom: the marker stays under the last real message', () => {
+    const rows = [msg('a', 1000, ME), msg('b', 2000, ME), sys('s', 3000)];
+    expect(dmReadAnchorId(rows, { [PEER]: 9000 }, ME)).toBe('b');
+  });
+
+  it('reads the server-clock mark too', () => {
+    const rows = [dated('a', 1000, 1100, ME), dated('b', 2000, 2100, ME)];
+    expect(dmReadAnchorId(rows, undefined, ME, { [PEER]: 2100 })).toBe('b');
   });
 });

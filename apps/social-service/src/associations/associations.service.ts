@@ -38,8 +38,9 @@ import {
 } from '../common/secret-box';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { assertCotisationModeClearable } from './members-only-gate';
 import { isUUID } from 'class-validator';
-import { In, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
+import { In, IsNull, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -148,6 +149,7 @@ import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
+import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -1260,18 +1262,27 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    if (dto.archived !== undefined) {
+    if (dto.archived !== undefined || dto.cotisationMode === null) {
       // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
       // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
       // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      // CLEARING the cotisation mode takes the same lock and counts the members-only rows under it
+      // (`assertCotisationModeClearable`, 409 `COTISATION_MODE_IN_USE`), the order a members-only
+      // save's `FOR SHARE` gate reads the mode in.
       await this.assoRepo.manager.transaction(async (manager) => {
-        await manager.findOne(Association, {
-          where: { id },
-          lock: { mode: 'pessimistic_write' },
-        });
+        if (dto.cotisationMode === null) {
+          await assertCotisationModeClearable(manager, id, this.logger);
+        } else {
+          await manager.findOne(Association, {
+            where: { id },
+            lock: { mode: 'pessimistic_write' },
+          });
+        }
         await manager.update(Association, id, patch);
       });
-      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      if (dto.archived !== undefined) {
+        this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      }
     } else {
       await this.assoRepo.update(id, patch);
     }
@@ -4816,22 +4827,23 @@ ${rejectionReason}`
 
   /** Returns all forms linked to this association, newest first (for the MANAGE_FORMS tab). */
   async listFormsByAssociation(associationId: string) {
-    await this.findById(associationId);
-    return this.formRepo.find({
-      where: { associationId },
+    const asso = await this.findById(associationId);
+    // The WHOLE form, as the managers' list reads it (`FormsService.list`): the unified forms list
+    // draws the export menu, the responses accordion and the preview link from it, so a global
+    // admin's tab and a manager's `/forms` carry the same row. An archived form is in no list.
+    const forms = await this.formRepo.find({
+      where: { associationId, deletedAt: IsNull() },
       order: { createdAt: 'DESC' },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        basePrice: true,
-        currency: true,
-        allowCashPayment: true,
-        // A draft is the managers' alone: the tab marks it, so nobody links it believing it live.
-        status: true,
-        createdAt: true,
-      },
     });
+    const changed = await formsWithUnpublishedChanges(
+      this.formRepo.manager,
+      forms.map((f) => f.id)
+    );
+    return forms.map((form) => ({
+      ...form,
+      associationName: asso.name,
+      hasUnpublishedChanges: changed.has(form.id),
+    }));
   }
 
   // ── Lydia helpers ────────────────────────────────────────────────────────
