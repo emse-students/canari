@@ -37,6 +37,7 @@ afterEach(() => {
   while (mounted.length) mounted.pop()!();
   stopHistoryStack();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.innerHTML = '';
 });
 
@@ -209,5 +210,32 @@ describe('ChangePinModal - the submit does not scroll either', () => {
     expect(changeFormId).toBeTruthy();
     expect(gateFormId).toBeTruthy();
     expect(changeFormId).not.toBe(gateFormId);
+  });
+
+  it('a refusal banner takes the header room, so the keypad does not move down (390 x 844)', () => {
+    // The keypad (and so the compact header) is the touch shape: report a coarse pointer.
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q.includes('coarse'),
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+    }));
+    raiseGate({ externalError: m.auth_pin_mismatch(), onRecoverPin: vi.fn() });
+    flushSync();
+
+    expect(document.querySelector('[data-pin-mark]')).toBeNull();
+    expect(document.querySelector('[data-pin-lead]')).toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(m.auth_pin_mismatch());
+    const keypad = document.querySelector('[role="group"]')!;
+    expect(keypad.textContent).toContain('0');
+    expect(scrollport()?.contains(keypad)).toBe(true);
+  });
+
+  it('without a refusal the header keeps its mark and lead', () => {
+    raiseGate();
+    expect(document.querySelector('[data-pin-mark]')).not.toBeNull();
+    expect(document.querySelector('[data-pin-lead]')).not.toBeNull();
   });
 });
