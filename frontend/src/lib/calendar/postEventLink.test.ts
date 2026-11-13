@@ -5,7 +5,7 @@ let lookup: Lookup = async () => ({ linkedEvent: null });
 vi.mock('$lib/associations/api', () => ({
   getCalendarEventLinkedToPost: (id: string) => lookup(id),
 }));
-vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn() } }));
+vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn(), w: vi.fn() } }));
 
 import { fromPostOf, openEventLinkedToPost, postEventHref } from './postEventLink';
 
@@ -54,11 +54,13 @@ describe('postEventLink', () => {
     expect(a.calls).toEqual(['reload', 'open']);
   });
 
-  it('leaves the phone rolling window alone', async () => {
+  it('leaves the phone rolling window where it is, but still loads it before opening', async () => {
     lookup = async () => ({ linkedEvent: event });
     const a = fakeAgenda(true);
     await openEventLinkedToPost(a as never, 'p1', { showItsMonth: true });
-    expect(a.calls).toEqual(['open']);
+    expect(a.focusDate.getMonth()).toBe(0);
+    expect(a.selectedDay).toBe(4);
+    expect(a.calls).toEqual(['reload', 'open']);
   });
 
   it('opens nothing when the post links no visible event', async () => {
