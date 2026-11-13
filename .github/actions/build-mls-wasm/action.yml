@@ -19,7 +19,7 @@ runs:
 
     - name: Setup Rust
       if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
       with:
         toolchain: stable
         target: wasm32-unknown-unknown

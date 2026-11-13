@@ -112,6 +112,10 @@ services:
     # was a procedure and a window, never a green suite. Moving this line is a deliberate migration
     # with its own written rollback, never a dependency bump.
     image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    # Postgres logs every checkpoint by default (several lines an hour, 2026-11-13) and a checkpoint is
+    # routine, not an event: `log_checkpoints=off`. Changing a datastore's command recreates it at the
+    # next ordinary deploy (docs/wiki/infrastructure/logging.md).
+    command: ["postgres", "-c", "log_checkpoints=off"]
     restart: always
     expose:
       - "5432"
@@ -330,6 +334,9 @@ services:
       # volumes), so this is not what isolates it - but a shared name is how a copy-paste of an
       # endpoint, a tool invocation or a support answer ends up pointed at the wrong one.
       GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
+      # Garage logs every S3 request and every health check at INFO (~53k lines a day on production,
+      # 2026-11-13) and nothing else worth keeping: warn and above only (docs/wiki/infrastructure/logging.md).
+      RUST_LOG: warn
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -365,6 +372,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
       # which this service accepts on no other ground (cors-origins.ts). Production passes none.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}

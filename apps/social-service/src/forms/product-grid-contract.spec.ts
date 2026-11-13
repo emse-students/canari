@@ -8,6 +8,8 @@ import {
   productGridItemRefusal,
   productGridLines,
   productGridLinesOf,
+  productGridOrdered,
+  productGridRequiredOnSave,
   productGridTotalCents,
   productGridTotals,
   productGridView,
@@ -37,10 +39,53 @@ const grid = (over: Partial<ProductGrid> = {}): ProductGrid => ({
   pricing: { mode: 'single', tiers: null, prices: { _all: { '*': 2800 } } },
   ...over,
 });
-const item = (g: unknown = grid(), required: unknown = true) => ({ required, productGrid: g });
 const paidForm = { isPublic: false, requiresPayment: true };
-const refusal = (g: unknown, form = paidForm, required: unknown = true) =>
-  productGridItemRefusal(item(g, required), form)?.code ?? null;
+const refusal = (g: unknown, form = paidForm) =>
+  productGridItemRefusal({ productGrid: g }, form)?.code ?? null;
+
+describe('product grid contract - the "Obligatoire" switch (owner, 2026-11-13)', () => {
+  it('a grid is no longer refused for its flag: optional and required both save', () => {
+    for (const required of [false, true]) {
+      const item = { required, productGrid: grid() };
+      expect(productGridItemRefusal(item, paidForm)).toBeNull();
+    }
+  });
+
+  it('an editor that draws the switch stores what the manager chose', () => {
+    const stored = [{ id: 'g', type: 'product_grid', required: false }];
+    expect(productGridRequiredOnSave({ id: 'g', required: true }, true, stored)).toBe(true);
+    expect(productGridRequiredOnSave({ id: 'g', required: false }, true, stored)).toBe(false);
+    expect(productGridRequiredOnSave({ id: 'new' }, true, stored)).toBe(false);
+  });
+
+  it('[LEGACY] an older editor (required: true on every grid) keeps the stored flag, a new grid optional', () => {
+    const stored = [
+      { id: 'kept-on', type: 'product_grid', required: true },
+      { id: 'kept-off', type: 'product_grid', required: false },
+      { id: 'was-text', type: 'short_text', required: true },
+    ];
+    expect(productGridRequiredOnSave({ id: 'kept-on', required: true }, false, stored)).toBe(true);
+    expect(productGridRequiredOnSave({ id: 'kept-off', required: true }, false, stored)).toBe(
+      false
+    );
+    // A required text question turned into a grid by an old editor: a grid not stored yet.
+    expect(productGridRequiredOnSave({ id: 'was-text', required: true }, false, stored)).toBe(
+      false
+    );
+    expect(productGridRequiredOnSave({ id: 'new', required: true }, false, stored)).toBe(false);
+    expect(productGridRequiredOnSave({ id: 'new', required: true }, false, null)).toBe(false);
+  });
+
+  it('a grid is ordered from by ONE unit, whatever the cell', () => {
+    expect(productGridOrdered({ 'vert:m': 1 })).toBe(true);
+    expect(productGridOrdered({ 'vert:m': 0, 'noir:l': 2 })).toBe(true);
+    expect(productGridOrdered({ 'vert:m': 0 })).toBe(false);
+    expect(productGridOrdered({})).toBe(false);
+    expect(productGridOrdered(undefined)).toBe(false);
+    expect(productGridOrdered('vert:m')).toBe(false);
+    expect(productGridOrdered([1])).toBe(false);
+  });
+});
 
 describe('product grid contract - a definition', () => {
   it('accepts a complete grid in each price mode', () => {
@@ -74,10 +119,7 @@ describe('product grid contract - a definition', () => {
   });
 
   it('refuses each defect with its own code', () => {
-    expect(productGridItemRefusal({ required: true }, paidForm)?.code).toBe(
-      'PRODUCT_GRID_DEFINITION_MISSING'
-    );
-    expect(refusal(grid(), paidForm, false)).toBe('PRODUCT_GRID_NOT_REQUIRED');
+    expect(productGridItemRefusal({}, paidForm)?.code).toBe('PRODUCT_GRID_DEFINITION_MISSING');
     expect(refusal(grid(), { isPublic: false, requiresPayment: false })).toBe(
       'PRODUCT_GRID_REQUIRES_PAYMENT'
     );

@@ -37,6 +37,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
+import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { deleteGroupOwnedRows } from '../utils/group-purge';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
@@ -61,6 +62,8 @@ const BEFORE_041 = [
   GroupMembershipInterval,
   SeatEviction,
   JoinAskPush,
+  // A later table (migration 048), here only because the group purge this spec runs sweeps it.
+  SentFrameReceipt,
   UserDismissedGroup,
 ];
 

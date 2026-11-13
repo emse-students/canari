@@ -88,6 +88,7 @@ describe('parseServerVersionInfo', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
     });
   });
@@ -122,6 +123,14 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
+    // Each priced grid's own switch: the same rule, `true` only, kept through the cache.
+    const grid = parseServerVersionInfo({ version: '1.2.3', gridRequiredSwitch: true });
+    expect(grid?.gridRequiredSwitch).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(grid!))?.gridRequiredSwitch).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.gridRequiredSwitch).toBe(false);
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', gridRequiredSwitch: 'yes' })?.gridRequiredSwitch
+    ).toBe(false);
     const ranked = parseServerVersionInfo({ version: '1.6.9', rankedFeeds: true });
     expect(ranked?.rankedFeeds).toBe(true);
     expect(parseServerVersionInfo(serverVersionInfoToWire(ranked!))?.rankedFeeds).toBe(true);
@@ -232,6 +241,7 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
     });
     expect(result.callsMode).toBe('audio');
@@ -255,6 +265,7 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
     });
     expect(result.belowMinVersion).toBe(true);
@@ -326,6 +337,7 @@ describe('fetchServerAppVersionReliable', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);

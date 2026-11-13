@@ -6,10 +6,12 @@ vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari.test' }));
 
 import {
+  commentGifRendition,
   fetchGifPage,
   GIF_SEARCH_NOT_CONFIGURED,
   GifSearchUnavailableError,
   mergeGifPages,
+  pickGridRendition,
   readGifPage,
 } from './gifSearch';
 import { dropRetiredKlipyCustomerId } from './retiredKlipyCustomerId';
@@ -129,5 +131,44 @@ describe('mergeGifPages', () => {
     const first = [G('a')];
     expect(mergeGifPages(first, [G('b')])).not.toBe(first);
     expect(first).toHaveLength(1);
+  });
+});
+
+describe('renditions over the relay ceiling', () => {
+  const OVER = 13 * 1024 * 1024;
+  const r = (url: string, width: number, bytes?: number) => ({
+    url,
+    width,
+    height: 50,
+    ...(bytes !== undefined ? { bytes } : {}),
+  });
+
+  it('is never the grid rendition while a lighter one fits', () => {
+    const gif = {
+      id: 'g',
+      tiny: r('https://t/x', 90, OVER),
+      preview: r('https://t/p', 220, 90_000),
+      full: r('https://t/f', 498),
+    };
+    expect(pickGridRendition(gif, 60).url).toBe('https://t/p');
+  });
+
+  it('keeps choosing by width when nothing declared a size', () => {
+    const gif = {
+      id: 'g',
+      tiny: r('https://t/x', 90),
+      preview: r('https://t/p', 220),
+      full: r('https://t/f', 498),
+    };
+    expect(pickGridRendition(gif, 60).url).toBe('https://t/x');
+  });
+
+  it('attaches the small rendition to a comment when the medium one is over the ceiling', () => {
+    const gif = {
+      id: 'g',
+      preview: r('https://t/p', 120, 90_000),
+      full: r('https://t/f', 498, OVER),
+    };
+    expect(commentGifRendition(gif).url).toBe('https://t/p');
   });
 });

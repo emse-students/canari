@@ -25,6 +25,9 @@ core-service log: `access=unsigned via=nginx` lines divided by all `[AVATAR]` li
 day at or above 1 % restarts the count. Read it against the store adoption of the floor (`bun
 tools/play-vitals/vitals.mjs` for Android, App Store Connect for iOS) to say WHO the residue is,
 since phase 2 shows those installs initials until they update. Also:
+- **Reading, 2026-11-13 (production, 24 h):** 43 unsigned requests out of about 22 700, about 0.19 %,
+  under the 1 % threshold. One day of the seven consecutive days required, and phase 2 still waits for
+  the `1.6.3` stable and the daily count.
 - `origin=native` and `origin=web` split the residue: a `web` line after the deploy is a page that
   builds the URL by hand (a defect - `avatarUrl.test.ts` should have caught it), not an old build.
 - **`access=unsigned via=direct` must be ZERO.** It is a service on the Docker network calling

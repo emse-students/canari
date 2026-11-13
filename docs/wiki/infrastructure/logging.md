@@ -82,6 +82,21 @@ deploy, or a human's operation on the hand-run Authentik stack. No job, cron or 
 container for that alone: a recreation is a short outage of a service on a host this project does not
 own, and a log setting is never worth one.
 
+### Third-party services told to be quiet (2026-11-13)
+
+A line is demoted only when its own code says it is the ordinary path, and a datastore's own request
+log is one: **Garage** wrote every S3 request and every health check at INFO, about 53k lines a day on
+production and nearly all of its volume, each already visible in media-service's and nginx's logs.
+`RUST_LOG: warn` on the `garage` service of the prod, dev and local compose files (`compose-logging.test.sh`
+asserts all three) keeps warnings and errors. Both settings are properties of the container, so they
+reach it at the next ORDINARY deploy, which recreates a `pinned` service whose definition changed
+(a few seconds of that service); nothing recreates it for this alone (rule above).
+
+**Postgres** logs every checkpoint by default (`log_checkpoints`, on), a routine event several times an
+hour. The `postgres` service of the same three files passes `command: ["postgres", "-c",
+"log_checkpoints=off"]` (the official image's entrypoint keeps initialising the cluster, `postgres`
+being the first word); `compose-logging.test.sh` asserts it. Same deploy-time effect as Garage's.
+
 ## The 90-day ceiling (2026-10-16)
 
 **The promise**, `frontend/src/routes/legal/privacy/+page.svelte`: *"Logs techniques (IP,
@@ -113,6 +128,19 @@ unchanged. `access-log-redaction.test.mjs` asserts the five are present and that
 authorization variable ever enters the format. Reading them: a crawler hit with `deg=1` is the SSR's
 own admission; `urt` near 1.5 s with `deg=-` is a slow enrichment that still answered; `ust=502` with
 `deg=ssr-unavailable` is the container down.
+
+### The error log of a WebSocket location (2026-11-13)
+
+**The error log must not record a WebSocket request line: the access log's redaction does not reach
+it.** `/api/ws` and the call socket (`/api/call`) carry a short-lived credential in their query, and
+nginx's error log prints the raw request line - query included - beside any error on the request,
+an upstream reset of an upgraded connection among them. So both locations declare their own
+`error_log /var/log/nginx/error.log crit;` (same destination, the container's stderr), which records
+only what stops nginx itself. What that costs: a socket's upstream errors are no longer in the error
+log; the access log still writes one redacted line per socket, with its status and `urt=`/`ust=`.
+`access-log-redaction.test.mjs` fails a location that forwards `Upgrade` without that level, and
+fails if it finds neither socket. Moving the credential out of the URL is the design improvement
+that makes the level moot ([backlog](../backlog.d/p3-the-socket-credential-moves-out-of-the-url.md)).
 
 **A SIZE CAP IS NOT AN AGE CAP.** `max-size: 10m` / `max-file: "3"` bounds the bytes, so the oldest
 line held is the one written 30 MB ago. A busy container rolls that over in minutes

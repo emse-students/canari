@@ -54,7 +54,6 @@ export function peekConversationAnchor(conversationId: string): ConversationAnch
  */
 export function dropAnchorsExcept(conversationId: string): number {
   let dropped = 0;
-  // Deleting the entry being visited is defined for a Map iterator: no copy of the keys is needed.
   for (const id of conversationAnchors.keys()) {
     if (id === conversationId) continue;
     conversationAnchors.delete(id);
