@@ -37,7 +37,7 @@ vi.mock('$lib/posts/feedStore', async (orig) => ({
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
   listPosts: () => new Promise(() => {}),
-  getMyScheduledPosts: () => new Promise(() => {}),
+  getScheduledPostsToEdit: () => new Promise(() => {}),
   searchPosts: () => new Promise(() => {}),
 }));
 vi.mock(
