@@ -1067,7 +1067,7 @@ call, more than 60 s), rows 1-5 and 7, then rows 8, 9 and 10 (Wi-Fi off 6 s, 14 
 Row 6 (a killed callee rings nothing) is EXPECTED, not a `FAIL`.
 
 **M3. The feed's left-edge gesture exclusion (#2184)**, gesture navigation. A row of the backlog, Kotlin and unit tests
-only. The nine cells are those of [backlog](backlog.md#owed-a-verification-and-nothing-else) ("the feed's LEFT edge is
+only. The nine cells are those of [backlog](plan.md#readings-owed) ("the feed's LEFT edge is
 excluded"): (1) logcat `gesture exclusion: spans={LEFT=...} -> [ExclusionBand(left=0, ...)]` and the same rect in
 `dumpsys window`; (2) on `/posts`, swipes from x = 20, 50 and 60 physical px at y = 1300 AND at the band's top and bottom
 rows open the camera, 0 Back; (3) just above and below the band the left-edge Back still works; (4) the right edge is
@@ -1089,7 +1089,7 @@ tick on a like with vibrations on in the settings, none with them off. Read `[do
 
 **M5. The FCM banner on dev - BLOCKED until the secret exists.** Only once `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is set on
 the `development` environment and a pre-release has deployed with it: a DM from the other account to the shut Mi 9T shows
-a banner, and T1 (push to banner latency, [backlog](backlog.md#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11))
+a banner, and T1 (push to banner latency, [backlog](backlog.d/p2-a-notification-tap-takes-2-7-s-to-a-usable-conversation-when-killed-5-s.md))
 is measured. Without the secret, record `NOT-OBSERVED`, never `FAIL`.
 
 ### Block I - iPhone 12 only (one driver; WDA for taps, the in-app log for lines)
@@ -1103,7 +1103,7 @@ before every submit. **A double tap is a W3C sequence (one pointer, two 40 ms ho
 | I1 | **CALL-L1 row 12, WP-C-BG-I**, in this order: (a) the iOS job's `UIBackgroundModes of the built app:` line lists `audio`; (b) in a connected call, lock the iPhone 60 s, then background it 60 s; (c) OUT of a call (the mode is app-wide) play a reel with sound, then a voice message, locking then backgrounding during each; (d) in a call, an audio ROUTE change (AirPods in and out, a wired headset) and a 2 s interruption (an alarm or Siri); (e) a call ACCEPTED from the lock screen. Record every `mute`/`unmute` pair with its duration | (b) the Mi 9T's inbound audio packets keep rising (`getStats()` over CDP every 5 s) and the iPhone keeps playing; no `the system took the microphone` line. (c) RECORD whether playback continues (a behaviour to accept or refuse). (d) a route change must NOT log `the system took the microphone`; if it does, how often and for how long. (e) it connects, and a muted start shows the notice until given back. If (b) still mutes, read the syslog (`WebKit`, `mediaserverd`) before any native audio code | [CALL-L1 row 12](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both), [calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20) |
 | I2 | **Double tap, iPhone half**: a REAL W3C double tap with the in-app log, [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones) steps 1-6 (reel viewer, reel card in the feed, photo, text, poll option, VoiceOver) | one heart and one `like` line per double tap; the viewer does NOT open on a card double tap; a poll option votes and the post is NOT liked. Read #2175's log for the FIRST attempts after a sign-in on a stale feed, which missed on alpha.5 and were never explained: a miss with no `[doubleTapLike]` line means the tap never reached the card | [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones), [DT-IOS](#1-double-tap-to-like) |
 | I3 | **The push banner** on the shut phone, from a DM by the other account: BLOCKED like M5 until the dev Firebase secret exists, else `NOT-OBSERVED`. The alpha.5 smoke left it unread | a banner on the locked phone | [alpha.5 item 4](#4-the-smoke), [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks) |
-| I4 | **CALL-OS-BANNER**: one FOREGROUND ring on the iPhone | no "Appel entrant" OS banner over the in-app ring; if one shows, the two native candidates are in the backlog item | [backlog](backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19) |
+| I4 | **CALL-OS-BANNER**: one FOREGROUND ring on the iPhone | no "Appel entrant" OS banner over the in-app ring; if one shows, the two native candidates are in the backlog item | [backlog](backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md) |
 
 The iPhone's video reading is V2 and V3 below.
 
@@ -1122,8 +1122,8 @@ The second is a local build, which costs the Mi 9T's enrolment if installed over
 
 | # | Reading | Pass | Source |
 | --- | --- | --- | --- |
-| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [the verification table](backlog.md#owed-a-verification-and-nothing-else) |
-| N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.md#p3---call-path-line-the-selected-path--relayed-line-over-counts-relayed-calls-2026-10-20-not-built) |
+| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [the readings owed](plan.md#readings-owed) |
+| N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md) |
 | N3 | The Tier B audio cells K1, K9, K12 (Mi 9T / iPhone / desktop) and K6 (both phones) of [the matrix](frontend/modules/calls-revival-plan.md#7-the-test-matrix) | as the cells | calls B10 |
 
 Cellular and campus Wi-Fi stay owed: no SIM on the bench.
@@ -1280,7 +1280,7 @@ tab-swipe gestures (no touch input was driven).
 ## 2026-10-28 - sharing on the Mi 9T (1.5.1 rig builds)
 
 Moved here from the sharing backlog entry when it was closed into
-[the verification table](backlog.md#owed-a-verification-and-nothing-else) (backlog triage of
+[the readings owed](plan.md#readings-owed) (backlog triage of
 2026-11-11); what is still owed is in [sharing](frontend/sharing.md#owed).
 
 **Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,

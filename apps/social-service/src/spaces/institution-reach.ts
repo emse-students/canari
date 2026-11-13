@@ -1,18 +1,21 @@
 import { BadRequestException, Logger } from '@nestjs/common';
-import { ruleReachesSpaceSql } from '../spaces/rule-sql';
+import { ruleReachesSpaceSql } from './rule-sql';
 
 /**
- * THE REACH AN INSTITUTION CHOOSES FOR EACH POST, ITS WRITE SIDE (owner, 2026-11-10;
- * docs/wiki/backlog.d/institution-post-reach.md, amending D19 for institutions only).
+ * THE REACH AN INSTITUTION CHOOSES FOR EACH POST AND EACH CALENDAR EVENT, ITS WRITE SIDE (owner,
+ * 2026-11-10 for posts, 2026-11-13 for events; docs/wiki/backlog.d/institution-post-reach.md and
+ * institution-event-reach.md, amending D19 for institutions only).
  *
- * An institution's post names the SPACES it targets, among the spaces of the institution's own
- * audience (never wider: the server refuses anything else), and the PUBLIC in them - everyone, the
- * students, or the staff. There is no default: a post published as an institution without a reach
- * is refused. Who READS such a post is `institutionReachAdmitsUserSql` and the reach door of
- * `postVisibleToUserSql` (`spaces/reader-spaces.ts`); this file holds only what a WRITE decides.
+ * An institution's post or event names the SPACES it targets, among the spaces of the institution's
+ * own audience (never wider: the server refuses anything else), and the PUBLIC in them - everyone,
+ * the students, or the staff. There is no default: an item filed as an institution without a reach
+ * is refused. ONE model for both (owner, 2026-11-13: "the same refusals"): the same codes, the same
+ * options statement, the same parser. Who READS such an item is `institutionReachAdmitsUserSql` and
+ * the space filter `institutionReachHoldsSpaceSql` inside `postVisibleToUserSql` and
+ * `eventVisibleToUserSql` (`spaces/reader-spaces.ts`); this file holds only what a WRITE decides.
  *
- * Every constant here equals `libs/contracts/institution-reach.json`, which the composers read too
- * (`posts.service.institution-reach.spec.ts` asserts it).
+ * Every constant here equals `libs/contracts/institution-reach.json`, which the composers and the
+ * event form read too (`posts.service.institution-reach.spec.ts` asserts it).
  */
 
 /** Who, in the ticked spaces, reads the post. */
@@ -77,6 +80,15 @@ export const INSTITUTION_REACH_OPTIONS_SQL = `SELECT ro_space.formation, ro_spac
     WHERE ro_rule."associationId" = $1::uuid AND ${ruleReachesSpaceSql('ro_rule', 'ro_space')})
   ORDER BY ro_space.campus, ro_space.formation`;
 
+/** What carries a reach: a post, or a calendar event. Only the refusal's English names it. */
+export type InstitutionReachSubject = 'post' | 'event';
+
+/** The noun a refusal's dev-facing message names the item with. */
+const SUBJECT_NOUN: Record<InstitutionReachSubject, { a: string; the: string }> = {
+  post: { a: 'A post', the: 'a post' },
+  event: { a: 'An event', the: 'an event' },
+};
+
 /** The minimal query surface the reach needs (a TypeORM manager or repository). */
 export interface ReachQueryable {
   query: (sql: string, params?: unknown[]) => Promise<unknown>;
@@ -91,6 +103,32 @@ export async function institutionReachOptions(
     associationId,
   ])) as InstitutionReachSpace[];
   return rows.map((r) => ({ formation: r.formation, campus: r.campus }));
+}
+
+/**
+ * THE OPTIONS ROUTE'S ONE DECISION, for the composer and the event form alike: the spaces entity
+ * `associationId` (of type `associationType`) may target, or `institution_reach_not_offered` (400)
+ * when it is not an institution. The caller has already decided WHO may ask (a publisher for a
+ * post, a filer of its events for an event).
+ */
+export async function institutionReachOptionsOffered(
+  manager: ReachQueryable,
+  associationId: string,
+  associationType: string | null,
+  subject: InstitutionReachSubject
+): Promise<{ spaces: InstitutionReachSpace[] }> {
+  if (!institutionReachOffered(associationType)) {
+    refuse(
+      INSTITUTION_REACH_CODES.notOffered,
+      `Only an institution chooses the reach of ${SUBJECT_NOUN[subject].the}.`,
+      `options asked of ${associationId.slice(0, 8)} (${subject}), which is not an institution`
+    );
+  }
+  const spaces = await institutionReachOptions(manager, associationId);
+  logger.debug(
+    `[INSTITUTION_REACH] ${subject} options of ${associationId.slice(0, 8)}: ${spaces.length} space(s)`
+  );
+  return { spaces };
 }
 
 function refuse(code: string, message: string, detail: string): never {
@@ -154,18 +192,21 @@ export async function resolveInstitutionReachWrite(
     associationId: string | null;
     associationType: string | null;
     raw: unknown;
+    /** What carries the reach; names the item in a refusal's message. Default `post`. */
+    subject?: InstitutionReachSubject;
   }
 ): Promise<
   { reachPublic: InstitutionReachPublic; reachSpaces: InstitutionReachSpace[] } | undefined
 > {
+  const noun = SUBJECT_NOUN[input.subject ?? 'post'];
   const offered = institutionReachOffered(input.associationType);
   const absent = input.raw === undefined || input.raw === null;
   if (absent) {
     if (offered && input.mode === 'create') {
       refuse(
         INSTITUTION_REACH_CODES.required,
-        'A post published as an institution names its spaces and its public.',
-        'an institution post without a reach'
+        `${noun.a} published as an institution names its spaces and its public.`,
+        `an institution ${input.subject ?? 'post'} without a reach`
       );
     }
     return undefined;
@@ -173,10 +214,10 @@ export async function resolveInstitutionReachWrite(
   if (!offered || !input.associationId) {
     refuse(
       INSTITUTION_REACH_CODES.notOffered,
-      'Only an institution chooses the reach of a post.',
+      `Only an institution chooses the reach of ${noun.the}.`,
       input.associationType === null
-        ? 'on a personal post'
-        : `on a post of an entity of type ${input.associationType}`
+        ? `on a personal ${input.subject ?? 'post'}`
+        : `on ${noun.the} of an entity of type ${input.associationType}`
     );
   }
   const reach = parseInstitutionReach(input.raw);
@@ -189,19 +230,19 @@ export async function resolveInstitutionReachWrite(
   if (outside.length > 0) {
     refuse(
       INSTITUTION_REACH_CODES.outsideAudience,
-      "A post's spaces stay inside its institution's audience.",
+      `${noun.a}'s spaces stay inside its institution's audience.`,
       `${outside.length} space(s) outside the audience of ${input.associationId!.slice(0, 8)}`
     );
   }
   logger.debug(
-    `[INSTITUTION_REACH] ${input.mode}: ${reach.spaces.length} space(s), public ${reach.public}`
+    `[INSTITUTION_REACH] ${input.subject ?? 'post'} ${input.mode}: ${reach.spaces.length} space(s), public ${reach.public}`
   );
   return { reachPublic: reach.public, reachSpaces: reach.spaces };
 }
 
 /**
  * Folds a served row's two reach columns into the ONE field the API carries, `reach` (`null` when
- * the post has none), served to every reader so the card can say who the post is for.
+ * the item has none), served to every reader so the card can say who the item is for.
  */
 export function foldServedReach(out: Record<string, unknown>): void {
   out.reach = servedInstitutionReach(
@@ -214,7 +255,7 @@ export function foldServedReach(out: Record<string, unknown>): void {
   delete out.reachSpaces;
 }
 
-/** The served reach of a post row: `null` when it carries none. */
+/** The served reach of a post or event row: `null` when it carries none. */
 export function servedInstitutionReach(row: {
   reachPublic?: InstitutionReachPublic | null;
   reachSpaces?: InstitutionReachSpace[] | null;

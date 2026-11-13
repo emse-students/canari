@@ -1,4 +1,6 @@
-## P3 - a live that seemed to stay up after "Terminer" (`v1.6.8-alpha.3` reading, 2026-11-08)
+## Reading owed - a live that seemed to stay up after 'Terminer' on the iPhone, when seen again
+
+target: 1.7.0
 
 The follower tab's "Hors-ligne" header and its lost conversation on a leadership change, and the
 paid-forms banner's dangling full stop, were filed by the same readings and fixed apart. One is left.

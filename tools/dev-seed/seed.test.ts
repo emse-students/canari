@@ -197,6 +197,12 @@ const oneOf =
   (column: string, values: string[], nullable = false) =>
   (row: Record<string, SqlValue>) =>
     nullable && !given(row[column]) ? true : values.includes(row[column] as string);
+/** An institution's ticked spaces (posts 162, events 165): absent, or a non-empty array. */
+const reachSpacesShapeHolds = (r: Record<string, SqlValue>) => {
+  if (!given(r.reachSpaces)) return true;
+  const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
+  return Array.isArray(v) && v.length > 0;
+};
 const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
 const CAMPUSES = ['saint-etienne', 'gardanne'];
 
@@ -286,16 +292,27 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `"reachSpaces" IS NULL
     OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
          THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
-    holds: (r) => {
-      if (!given(r.reachSpaces)) return true;
-      const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
-      return Array.isArray(v) && v.length > 0;
-    },
+    holds: reachSpacesShapeHolds,
   },
   // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
   association_calendar_events_presentation_check: {
     sql: "presentation IN ('association', 'neutral')",
     holds: oneOf('presentation', ['association', 'neutral'], true),
+  },
+  // An institution event's reach (migration 165) mirrors the posts' columns; the seed writes none.
+  CHK_calendar_events_reach_public: {
+    sql: `"reachPublic" IS NULL OR "reachPublic" IN ('all', 'students', 'staff')`,
+    holds: oneOf('reachPublic', ['all', 'students', 'staff'], true),
+  },
+  CHK_calendar_events_reach_together: {
+    sql: `("reachPublic" IS NULL) = ("reachSpaces" IS NULL)`,
+    holds: (r) => given(r.reachPublic) === given(r.reachSpaces),
+  },
+  CHK_calendar_events_reach_spaces_shape: {
+    sql: `"reachSpaces" IS NULL
+    OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
+         THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
+    holds: reachSpacesShapeHolds,
   },
   association_calendar_events_neutral_no_form_check: {
     sql: `presentation <> 'neutral' OR "linkedFormId" IS NULL`,

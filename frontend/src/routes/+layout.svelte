@@ -93,6 +93,7 @@
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
+  import { sessionPushAuth } from '$lib/services/sessionPushAuth';
   import { setTabUnread, startTabIndicator } from '$lib/stores/tabIndicator';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
@@ -298,7 +299,7 @@
           // so the production origin that used to stand behind it here was a fallback that could
           // only ever have sent a dev or local build's push registration to production.
           globalSession.historyBaseUrl,
-          globalSession.authToken,
+          sessionPushAuth,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));
       }, 500);

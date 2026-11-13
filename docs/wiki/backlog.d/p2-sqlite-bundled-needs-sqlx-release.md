@@ -1,5 +1,7 @@
 ## P2 - the bundled SQLite in the app is 3.46 (RUSTSEC-2026-0459), and only an sqlx release can move it
 
+target: 1.10.0
+
 `frontend/src-tauri` links libsqlite3-sys 0.30.1 with `bundled`, through sqlx 0.8.6 (directly, and
 through tauri-plugin-sql 2.6.0). RUSTSEC-2026-0459 (CVE-2026-119375, 2026-10-30) is fixed only in
 libsqlite3-sys >= 0.39.0 (SQLite 3.54). Measured 2026-11-09: sqlx-sqlite 0.8.6 requires `^0.30.1`,

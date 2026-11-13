@@ -113,6 +113,11 @@ export interface CreateFormPayload {
   /** Allow the same user to submit multiple times (e.g. product orders). */
   allowMultipleSubmissions?: boolean;
   /**
+   * A respondent with an account may change their own answer while the form is open, the questions
+   * that touch the price excepted (migration 166). Refused beside `anonymous`.
+   */
+  allowAnswerEdit?: boolean;
+  /**
    * Answers are stored without their author, address or exact time. Free forms only and fixed at
    * creation: the edit screen never sends it and shows it read-only.
    */
@@ -552,6 +557,8 @@ export interface Submission {
   /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
   lines?: ProductGridLine[] | null;
   createdAt: string;
+  /** When the respondent last changed the answer (migration 166); null if never. */
+  editedAt?: string | null;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
   /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
@@ -652,6 +659,8 @@ export interface ExportLabels {
   email: string;
   /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
   guest: string;
+  /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
+  edited: string;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
@@ -693,6 +702,7 @@ export function exportLabels(): ExportLabels {
     fileDeleted: m.form_answer_file_deleted(),
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
+    edited: m.form_export_col_edited(),
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),
@@ -852,6 +862,46 @@ export async function cancelPendingSubmission(
     { method: 'POST' }
   );
   if (!res.ok) throw await refusal(res, 'Cancellation failed');
+  return res.json();
+}
+
+/** One of the caller's own answers they may still change, as `GET :id/my-answers` serves it. */
+export interface EditableAnswer {
+  id: string;
+  formId: string;
+  answers: Record<string, unknown>;
+  totalPaid: number;
+  paymentStatus: string;
+  createdAt: string;
+  editedAt?: string | null;
+  /** The questions that touch the price: drawn read-only, never sent changed. */
+  lockedItemIds: string[];
+}
+
+/**
+ * The caller's answers to this form they may still change - empty when the form does not allow it,
+ * is anonymous or is closed. Newest first; one on a single-answer form.
+ */
+export async function getMyEditableAnswers(formId: string): Promise<EditableAnswer[]> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/my-answers`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch your answers');
+  return res.json();
+}
+
+/**
+ * Changes the caller's own answer in place. Refusals carry a `code` (`FORM_ANSWER_LOCKED`, ...),
+ * worded by `formSubmitRefusalMessage`; nothing about payment is sent or changed.
+ */
+export async function editFormAnswer(
+  formId: string,
+  submissionId: string,
+  answers: Record<string, unknown>
+): Promise<{ submissionId: string; editedAt: string | null }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/answers`,
+    { method: 'PUT', body: JSON.stringify({ answers }) }
+  );
+  if (!res.ok) throw await refusal(res, 'Answer change failed');
   return res.json();
 }
 

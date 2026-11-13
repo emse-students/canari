@@ -1,4 +1,6 @@
-## P2 - a daily upload bound per member: built, its refusal rate owed after a week
+## Reading owed - the daily upload bound's refusal rate a week after its release
+
+target: 1.7.0
 
 **Decided (lead, 2026-11-13, under the owner's delegation; reversible):** one member may upload
 2 GB per rolling 24 hours, every class and every upload route together (the plain upload, the

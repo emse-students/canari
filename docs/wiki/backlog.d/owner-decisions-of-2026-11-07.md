@@ -1,5 +1,7 @@
 ## Decided - the owner's answers of 2026-11-07
 
+target: 1.7.0
+
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 
 **Carried out and pruned (batch 24, 2026-11-12):** WP-D2 shipped as decided (#3115) and the

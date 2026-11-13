@@ -1,5 +1,7 @@
 ## P3 - `[WS] Gateway connection failed: No address` is an ERROR with a stack while the phone is offline (1.6.8 logs, 2026-11-09)
 
+target: 1.10.0
+
 `mls-client/initializeConnection.ts` (~L271-285) already downgrades a gateway failure to one line when
 the failure is a transport failure by TYPE or `connectivity.isOffline`. The native socket's own
 rejection (`connectNativeSocket`, `services/nativeSocketConnect.ts`, from `NativeWebSocket.connect`)

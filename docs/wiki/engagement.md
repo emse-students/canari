@@ -24,7 +24,7 @@ The owner's engagement chantier (2026-11-07): more people notified, following ma
 Instagram-style follow suggestions, with a ceiling on the noise. This page holds the decisions, the
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 Every work package shipped by `1.6.10`; what each still owes is a row of the
-[verification table](backlog.md#owed-a-verification-and-nothing-else).
+[readings owed](plan.md#readings-owed).
 
 **The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (what the people one follows write
 or repost - an entity's post a followed person reposted included -, ranked by freshness and

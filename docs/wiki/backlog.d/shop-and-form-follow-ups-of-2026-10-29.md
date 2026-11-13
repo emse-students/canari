@@ -1,8 +1,10 @@
 ## P2 - Shop and form follow-ups of 2026-10-29: one money formatter, the unpriced base tier, typed form items and prices, a keyboard for the amount keypad
 
+target: 1.10.0
+
 Filed 2026-10-29 by the #2546 review and the owner's review of `1.5.1-alpha.7`. (The pre-038 link
 seat count once filed under this heading is a row of
-[the verification table](../backlog.md#owed-a-verification-and-nothing-else) since 2026-11-11.)
+[the readings owed](../plan.md#readings-owed) since 2026-11-11.)
 
 - **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
 

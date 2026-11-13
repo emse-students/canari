@@ -78,6 +78,13 @@ describe('VersionService', () => {
 
     expect(out.formDrafts).toBe(true);
     expect(out.rankedFeeds).toBe(true);
+    expect(out.eventReach).toBe(true);
+  });
+
+  it('says its estate lets a respondent change their answer, so a client offers it only then', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formAnswerEdit).toBe(true);
   });
 
   it("says its estate stores each priced grid's own switch, so a form client draws it only then", async () => {

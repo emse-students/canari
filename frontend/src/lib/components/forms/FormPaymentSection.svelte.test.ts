@@ -39,6 +39,7 @@ function render(allowCashPayment: boolean) {
         grantsCotisation: false,
         submitCondition: null,
         items: [],
+        allowAnswerEdit: false,
       }),
       isPublic: false,
       basePrice: 10,

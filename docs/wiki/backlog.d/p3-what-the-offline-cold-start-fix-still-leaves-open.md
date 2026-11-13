@@ -1,9 +1,11 @@
 ## P3 - what the offline cold start fix still leaves open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15; re-read 2026-11-11)
 
+target: 1.8.0
+
 Three of the four items from
 [offline-and-weak-network section 15](../frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15)
 are still true on `main`. The fourth, WP-HOLD-NOTHING, shipped (#2027); its bench reading is a row of
-[the verification table](../backlog.md#owed-a-verification-and-nothing-else).
+[the readings owed](../plan.md#readings-owed).
 
 - **(b) The push context is not written again after an offline start.** `storeSessionPushContext`
   (`TauriMlsService.ts`) is fire-and-forget behind `getToken()`, and on an offline start that throws

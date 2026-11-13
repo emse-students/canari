@@ -1,5 +1,7 @@
 ## P2 - the gateway's frame size and rate limits, sized from a week of its own counts
 
+target: 1.10.0
+
 **The order (lead, 2026-11-13).** First the counter, which changes nothing a client sees: one
 `[WS FRAMES]` line per connection when it ends, with its frames, its largest frame and its busiest
 minute ([chat-gateway](../services/chat-gateway.md#what-one-connection-sent-said-once-when-it-ends-2026-11-13)).
@@ -30,3 +32,9 @@ rate, so both are chosen from the same reading.
 
 **Owed.** The week's reading (aggregates only), the structural bound written here with the code it
 was derived from, then the pull request that sets both limits.
+
+**A follow-up to the counter: one line per closed connection, not two.** A connection the client
+closes politely now ends on TWO lines: `Client closed connection` (`apps/chat-gateway/src/handlers.rs`,
+written on a close FRAME only) and `[WS FRAMES]`. Where a close line already exists, the frame counts
+fold into it; `[WS FRAMES]` stays the line for the endings that write none (a reset, the sender half
+failing).

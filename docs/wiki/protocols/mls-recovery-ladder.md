@@ -285,7 +285,7 @@ keyed on what it was decided on: which sessions were withheld and why. Pinned by
 A Pixel 6a log of production `1.2.7` (2026-10-14, cold start): a group the user's own other device
 created had been joined by the native push service while the app was killed, with no conversation
 row; 47 of its 150 queued frames were lost past their epoch. Moved here from the backlog entry when it
-closed into [the verification table](../backlog.md#owed-a-verification-and-nothing-else) (2026-11-11),
+closed into [the readings owed](../plan.md#readings-owed) (2026-11-11),
 which holds the Mi 9T reading still owed.
 
 **What the log shows, for group `513411dc` (a group the user's own other device created):**

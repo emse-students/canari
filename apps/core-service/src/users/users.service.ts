@@ -389,22 +389,22 @@ export class UsersService implements OnModuleInit {
    * Hides the people this caller may not be shown from a TARGET PICKER: those they blocked, and
    * those who blocked them.
    *
-   * THIS SURFACE ONLY, and deliberately not the directory. `search` is what feeds the New chat
-   * modal, the salon invitation field and the mention autocomplete - it exists to pick somebody to
-   * act on. The directory is a browsing view with promo and cursus filters, and punching a hole in
-   * it would make a block visible in a screen that has nothing to do with it.
+   * Applied by `search` (the New chat modal, the salon invitation field, the mention autocomplete)
+   * AND, since 2026-11-13, by the directory: it was open to staff only, and opening it to every
+   * signed-in member would let someone find, by name, a person who blocked them.
    *
    * The exclusion is SYMMETRIC. Hiding only the blocked party would let them keep finding the
    * blocker, and hiding only the blocker would let the blocker re-open a conversation they closed.
    */
   private async applyBlockVisibility(
     qb: SelectQueryBuilder<User>,
-    requesterId?: string
+    requesterId: string | undefined,
+    caller: 'search' | 'directory'
   ): Promise<void> {
     if (!requesterId) return;
     const hidden = await this.blocksService.invisibleUserIdsFor(requesterId);
     if (hidden.length === 0) return;
-    this.logger.debug(`[search] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
+    this.logger.debug(`[${caller}] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
     qb.andWhere('user.id NOT IN (:...blockedIds)', { blockedIds: hidden });
   }
 
@@ -437,7 +437,7 @@ export class UsersService implements OnModuleInit {
     if (!applied) return [];
 
     await this.applyReviewCohortVisibility(qb, requesterId);
-    await this.applyBlockVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'search');
 
     return qb.take(10).getMany();
   }
@@ -445,7 +445,7 @@ export class UsersService implements OnModuleInit {
   /**
    * Paginated directory search with optional promo, formation and association filters.
    * Requires at least one filter or a name query of ≥ 2 characters. Includes the caller
-   * (requesterId) in results - the directory is a browsing view, not a target picker.
+   * (requesterId) in results, minus accounts blocked in either direction.
    */
   async directory(
     query: DirectoryQueryDto,
@@ -523,11 +523,15 @@ export class UsersService implements OnModuleInit {
     }
 
     await this.applyReviewCohortVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'directory');
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {
       qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
     }
+    // The id is the tie-break of BOTH orderings: with two people of the same name an offset page
+    // would otherwise be free to repeat one and skip the other between two requests.
+    qb.addOrderBy('user.id', 'ASC');
 
     const total = await qb.getCount();
     const rows = await qb.skip(offset).take(limit).getMany();

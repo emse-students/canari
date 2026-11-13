@@ -1,4 +1,6 @@
-## P3 - An ask whose seat holds no device row never expires (review of #2894)
+## Reading owed - awaiting seats with no device row, counted on production
+
+target: 1.7.0
 
 `expireUnansweredAsks` is fed by the stale `pending` device rows the hourly purge finds
 (`runStalePendingCleanup`, `app.controller.ts`), so an awaiting seat holding NO device row in the
