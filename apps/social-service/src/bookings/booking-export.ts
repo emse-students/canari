@@ -3,6 +3,7 @@ import * as ExcelJS from 'exceljs';
 import { answerText, type AnswerQuestion, type AnswerWords } from '../forms/answer-text';
 import { localDate, localTime } from './zoned-time';
 import { splitAnswerFiles, type BookingFileState } from './booking-views';
+import { safeWorksheetName } from '../utils/worksheet-name';
 
 /**
  * THE XLSX EXPORT OF A SPACE'S BOOKINGS (D24, WP-B6) - the forms' export, for a booking.
@@ -128,8 +129,7 @@ export async function bookingsWorkbook(
   files: ReadonlyMap<string, BookingFileState>
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  // Excel's sheet names are at most 31 characters and refuse `\ / ? * [ ] :`.
-  const sheet = workbook.addWorksheet(sheetName.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || '-');
+  const sheet = workbook.addWorksheet(safeWorksheetName(sheetName));
   sheet.columns = [
     { header: labels.date, width: 12 },
     { header: labels.start, width: 8 },

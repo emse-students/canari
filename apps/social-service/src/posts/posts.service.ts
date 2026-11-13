@@ -21,7 +21,7 @@ import {
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
@@ -149,6 +149,7 @@ import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
+import { SCHEDULED_EDIT_CANDIDATES_SQL, SCHEDULED_EDIT_LIMIT } from './scheduled-edit';
 import { assertFormNotDraft } from '../forms/form-status';
 import {
   commentsWithheldPostIds,
@@ -2440,19 +2441,48 @@ export class PostsService {
     return { ok: true };
   }
 
-  /** Returns the author's own future-scheduled posts (max 20), ordered by scheduled date. */
-  async getMyScheduledPosts(userId: string) {
-    const rows: any[] = await this.postRepo.manager.query(
-      `SELECT id, markdown, "scheduledAt", "createdAt"
-       FROM posts
-       WHERE "authorId" = $1
-         AND "scheduledAt" IS NOT NULL
-         AND "scheduledAt" > NOW()
-       ORDER BY "scheduledAt" ASC
-       LIMIT 20`,
-      [userId]
+  /**
+   * The future-scheduled posts THIS CALLER MAY EDIT, soonest first, each as the whole card the feed
+   * draws (`serveToReader`) - what the top of `/posts` shows an editor until the post is due
+   * (owner, 2026-11-13). Nobody else is ever handed one: the feed's audience predicate is untouched
+   * and a scheduled post is still invisible to every reader.
+   *
+   * WHO MAY EDIT is `isPublisherOf` - the very predicate `assertMayEdit` (so `updatePost`) applies:
+   * the author of a personal post, or whoever holds `POST_AS_ASSO` in the association a post speaks
+   * for (authorship grants an officer nothing there). The SQL only narrows to candidates (own
+   * personal posts, every association post); `isPublisherOf` decides, once per association.
+   */
+  async getScheduledPostsIMayEdit(userId: string): Promise<Record<string, any>[]> {
+    if (!userId) return [];
+    const candidates: { id: string; authorId: string | null; associationId: string | null }[] =
+      await this.postRepo.manager.query(SCHEDULED_EDIT_CANDIDATES_SQL, [userId]);
+    const verdictByAssociation = new Map<string, boolean>();
+    const editable: string[] = [];
+    for (const c of candidates) {
+      if (editable.length >= SCHEDULED_EDIT_LIMIT) break;
+      let ok: boolean;
+      if (c.associationId) {
+        if (!verdictByAssociation.has(c.associationId)) {
+          verdictByAssociation.set(c.associationId, await this.isPublisherOf(c as Post, userId));
+        }
+        ok = verdictByAssociation.get(c.associationId) === true;
+      } else {
+        ok = await this.isPublisherOf(c as Post, userId);
+      }
+      if (ok) editable.push(c.id);
+    }
+    this.logger.debug(
+      `[SCHEDULED] ${userId.slice(0, 8)}: ${candidates.length} candidate(s), ${editable.length} editable`
     );
-    return rows;
+    if (editable.length === 0) return [];
+    const posts = await this.postRepo.find({ where: { id: In(editable) } });
+    const order = new Map(editable.map((id, i) => [id, i]));
+    posts.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    const out: Record<string, any>[] = [];
+    for (const post of posts) {
+      out.push(await this.serveToReader(post, { viewerId: userId }));
+    }
+    return out;
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
