@@ -481,17 +481,36 @@ receipt and the queued copies commit together, but the history append, the live 
 come after that commit; a process killed in between leaves the copies queued and nothing else done.
 So the receipt carries `settled`, set once those steps ran (`markSentFrameSettled`), and
 `protoSha256`, the SHA-256 of the first copy's ciphertext. A repeat of a SETTLED receipt is answered
-alone - no row, no append, no push. A repeat of an UNSETTLED one (`finishFirstCopy`):
+alone - no row, no append, no push.
 
-- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count): of two
-  concurrent repeats exactly one finishes, and a crash during the finish loses nothing - an
-  undelivered copy is still queued and goes out on its device's next pull;
+**`settled = false` means "not finished yet", never "the first send died"** - a repeat arriving
+while a slow first send is still in its delivery steps sees the same row. The proof that the first send
+is GONE is a PostgreSQL session advisory lock (`takeSentFrameLock`), keyed on the first 8 bytes of a
+SHA-256 over `group|sender|device|messageId` and held by every named send from before its claim until
+after its settlement, on ONE dedicated connection (a query runner held for the phase: a session lock
+taken through the pool could be released on another connection). A repeat tries the same lock:
+
+- it CANNOT take it - the first send is alive. It finishes nothing: a committed receipt is answered as
+  a plain repeat (`REPEATED_MESSAGE_ID`); none committed yet is `503 send_in_flight`
+  (`SEND_IN_FLIGHT` at warn), and the sender keeps the message and retries;
+- it TAKES it and the receipt is unsettled - the session that wrote it ended, and PostgreSQL ended its
+  lock with it. No clock: the process death IS the release. That repeat finishes the first copy
+  (`finishFirstCopy`).
+
+The lock is released in a `finally`; an unlock that fails destroys the connection instead of handing
+it back to the pool (`SENT_FRAME_UNLOCK_FAILED` at error), which ends the session and its lock. The
+finish:
+
+- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count). A crash
+  after that take and before the steps loses the push and the history entry; the queued copies
+  survive it and go out on each device's next pull;
 - delivers and pushes the copies STILL QUEUED: the group's rows from that device dated at the first
   copy's instant whose ciphertext hashes to `protoSha256` (another frame received at the same instant
   is not touched); a copy already pulled and acknowledged is gone, and nothing is done for it;
 - appends to `history:{groupId}` only when no entry from that device carries the first copy's
-  `timestamp` (`historyHoldsFirstCopy`, an `XRANGE` from the first copy's instant - an append comes
-  after its receive time), with the first copy's own ciphertext when a queued row still holds it.
+  `timestamp` and a `content` hashing to `protoSha256` (`historyHoldsFirstCopy`, an `XRANGE` from the
+  first copy's instant - an append comes after its receive time), with the first copy's own
+  ciphertext when a queued row still holds it.
 
 It logs `REPEAT_FINISHED_FIRST_COPY` at warn with what it found. A crash in the MIDDLE of a fan-out
 (some devices pushed, the rest not) is finished the same way, so the devices pushed before the crash

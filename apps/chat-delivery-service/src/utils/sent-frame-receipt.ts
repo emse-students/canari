@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
-import type { EntityManager } from 'typeorm';
+import type { DataSource, EntityManager } from 'typeorm';
+import { QueuedMessage } from '../entities/queued-message.entity';
+import { PAYLOAD_RELATION, materializeDeliveries } from './queued-payload';
 
 /**
  * The record a send writes beside its queued copies: this sender's device sent `messageId` into
@@ -67,20 +69,26 @@ export async function claimSentFrameReceipt(
     [...id, key.receivedAt, key.protoSha256]
   )) as unknown[];
   if (inserted.length > 0) return { kind: 'claimed' };
+  return { kind: 'repeat', first: await readSentFrameReceipt(m, groupId, key) };
+}
+
+/** The receipt of `key` in `groupId` as committed now, or `null` when there is none. */
+export async function readSentFrameReceipt(
+  m: EntityManager,
+  groupId: string,
+  key: Omit<SentFrameKey, 'receivedAt' | 'protoSha256'>
+): Promise<FirstCopy | null> {
   const [first] = (await m.query(
     `SELECT "receivedAt", "protoSha256", "settled" FROM dm_sent_frame_receipt WHERE ${WHERE_KEY}`,
-    id
+    keyOf(groupId, key)
   )) as { receivedAt: Date | string; protoSha256: string; settled: boolean }[];
-  return {
-    kind: 'repeat',
-    first: first
-      ? {
-          receivedAt: new Date(first.receivedAt),
-          protoSha256: first.protoSha256,
-          settled: first.settled,
-        }
-      : null,
-  };
+  return first
+    ? {
+        receivedAt: new Date(first.receivedAt),
+        protoSha256: first.protoSha256,
+        settled: first.settled,
+      }
+    : null;
 }
 
 /**
@@ -130,4 +138,105 @@ export async function deleteSentFrameReceiptsBefore(
     before,
   ])) as [unknown[], number];
   return removed;
+}
+
+/**
+ * The advisory-lock key of one message's send: the first 8 bytes of a SHA-256 over the receipt's
+ * primary key, as the signed 64-bit integer `pg_advisory_lock` takes (a decimal string, so no
+ * precision is lost on the way to PostgreSQL).
+ */
+export function sentFrameLockKey(
+  groupId: string,
+  key: Omit<SentFrameKey, 'receivedAt' | 'protoSha256'>
+): string {
+  const digest = createHash('sha256').update(keyOf(groupId, key).join('\u0000')).digest();
+  return digest.readBigInt64BE(0).toString();
+}
+
+/** A send's hold on its message's advisory lock: `held`, and how to give it back. */
+export interface SentFrameLock {
+  held: boolean;
+  release(): Promise<void>;
+}
+
+/**
+ * Tries to take the SESSION advisory lock of one message's send, on ONE dedicated connection held
+ * until {@link SentFrameLock.release}.
+ *
+ * THE LOCK IS THE PROOF THAT A SEND IS ALIVE, never a clock. A send naming a `messageId` holds it
+ * from before it claims the receipt until after it settled it (`settled`), so a send that cannot
+ * take it knows another send of the same id is running right now; one that takes it and finds an
+ * unsettled receipt knows the send that wrote it is GONE - its process died, and PostgreSQL ends a
+ * dead session's locks with the session.
+ *
+ * ONE CONNECTION, BECAUSE A SESSION LOCK BELONGS TO ITS SESSION. Taken through the pool, the lock
+ * and its unlock could land on two different connections, and a pooled connection handed back still
+ * holding it would refuse every later send of that id. So the query runner is held for the whole
+ * hold; and if the unlock fails, the connection is DESTROYED rather than returned to the pool, which
+ * ends the session and its lock with it.
+ */
+export async function takeSentFrameLock(
+  dataSource: DataSource,
+  groupId: string,
+  key: Omit<SentFrameKey, 'receivedAt' | 'protoSha256'>,
+  onUnlockFailed: (e: unknown) => void
+): Promise<SentFrameLock> {
+  const lockKey = sentFrameLockKey(groupId, key);
+  const runner = dataSource.createQueryRunner();
+  let held = false;
+  try {
+    await runner.connect();
+    const [row] = (await runner.query('SELECT pg_try_advisory_lock($1::bigint) AS locked', [
+      lockKey,
+    ])) as { locked: boolean }[];
+    held = row?.locked === true;
+  } catch (e) {
+    await runner.release();
+    throw e;
+  }
+  if (!held) {
+    await runner.release();
+    return { held: false, release: async () => undefined };
+  }
+  return {
+    held: true,
+    release: async () => {
+      try {
+        await runner.query('SELECT pg_advisory_unlock($1::bigint)', [lockKey]);
+        await runner.release();
+      } catch (e) {
+        onUnlockFailed(e);
+        // `release()` would return the session to the pool still holding the lock; releasing WITH
+        // an error makes the pool destroy the client, and the session's locks end with it.
+        await (
+          runner as unknown as { releasePostgresConnection(err: unknown): Promise<void> }
+        ).releasePostgresConnection(e);
+      }
+    },
+  };
+}
+
+/**
+ * The first copy's rows STILL QUEUED: the group's rows from this sender's device dated at the first
+ * copy's receive instant whose ciphertext is the first copy's (`protoSha256`) - read with their
+ * shared payload joined and materialised, so an inline row and a key-group row compare alike. A
+ * copy already pulled and acknowledged is gone from the queue, and so from this answer; another
+ * frame received at the same instant has another ciphertext, and is not one of them.
+ */
+export async function findFirstCopyRows(
+  m: EntityManager,
+  groupId: string,
+  senderId: string,
+  senderDeviceId: string,
+  first: FirstCopy,
+  logger: { error(message: string): void },
+  traceId: string
+): Promise<QueuedMessage[]> {
+  const stored = await m.getRepository(QueuedMessage).find({
+    where: { groupId, senderId, senderDeviceId, createdAt: first.receivedAt },
+    relations: PAYLOAD_RELATION,
+  });
+  return materializeDeliveries(stored, logger, traceId).filter(
+    (row) => !!row.proto && protoSha256(row.proto) === first.protoSha256
+  );
 }

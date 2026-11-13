@@ -93,6 +93,9 @@ import {
   markSentFrameSettled,
   protoSha256,
   takeSentFrameSettlement,
+  takeSentFrameLock,
+  readSentFrameReceipt,
+  findFirstCopyRows,
   type FirstCopy,
   type SentFrameKey,
 } from '../utils/sent-frame-receipt';
@@ -115,7 +118,6 @@ import {
 import { storeEnvelopes, type EnvelopeNotWoken } from '../utils/push-envelope';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
-  PAYLOAD_RELATION,
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
   materializeDeliveries,
@@ -622,6 +624,32 @@ const SENT_MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
  * is present but not an id is REFUSED (400 `message_id_invalid`), never read as absent - absent
  * means "queue it as a new frame", which is the very duplicate the field exists to prevent.
  */
+/**
+ * Who sent which named message into which group - the receipt's key without its instant - or
+ * `undefined` for a send no receipt records: one naming no `messageId`, a handshake frame (its own
+ * idempotent protocol step, and no caller names one), or one missing its group, author or device.
+ * Keyed on the authenticated author when there is one. ONE reading, for the lock a named send holds
+ * and the receipt it writes, so the two can never name different messages.
+ */
+export function readSentFrameIdentity(
+  body: SendMessageBody,
+  authUserIdRaw: string | undefined
+): SentFrameIdentity | undefined {
+  const messageId = readSentMessageId(body);
+  const senderId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
+  if (!messageId || body.isCommit || body.isWelcome || !body.groupId || !senderId) return undefined;
+  if (!body.senderDeviceId) return undefined;
+  return { groupId: body.groupId, senderId, senderDeviceId: body.senderDeviceId, messageId };
+}
+
+/** A named send's message: its group, its author's device, and the id the author gave it. */
+export interface SentFrameIdentity {
+  groupId: string;
+  senderId: string;
+  senderDeviceId: string;
+  messageId: string;
+}
+
 export function readSentMessageId(body: SendMessageBody): string | undefined {
   const raw: unknown = body.messageId;
   if (raw === undefined || raw === null) return undefined;
@@ -1854,6 +1882,69 @@ export class MessagingService {
     authUserIdRaw?: string,
     parting: ReadonlyArray<{ userId: string; deviceId: string }> = []
   ): Promise<SendMessageResult> {
+    const named = readSentFrameIdentity(body, authUserIdRaw);
+    if (!named) return this.sendFrame(body, authUserIdRaw, parting);
+    // A NAMED SEND HOLDS ITS MESSAGE'S ADVISORY LOCK FROM BEFORE ITS CLAIM UNTIL AFTER ITS
+    // SETTLEMENT, so a repeat knows from the lock - never from a clock - whether the send that wrote
+    // an unsettled receipt is still running (it cannot take the lock) or gone (it can: a dead
+    // process's session, and its locks, ended with it). See `takeSentFrameLock`.
+    const lock = await takeSentFrameLock(
+      this.queuedMessageRepo.manager.connection,
+      named.groupId,
+      named,
+      (e) =>
+        this.logger.error(
+          `[SEND] SENT_FRAME_UNLOCK_FAILED group=${named.groupId} msg=${named.messageId.slice(0, 8)} ` +
+            `- the connection is destroyed instead, which ends its lock: ${e instanceof Error ? e.message : String(e)}`
+        )
+    );
+    if (!lock.held) return this.answerInFlight(body, authUserIdRaw, named);
+    try {
+      return await this.sendFrame(body, authUserIdRaw, parting);
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /**
+   * The answer to a named send whose message another send of the same id is delivering RIGHT NOW
+   * (it holds the message's lock). That send finishes its own delivery, so this one finishes
+   * nothing: once its receipt is committed, it is answered as a plain repeat with the first copy's
+   * instant; before that, `503 send_in_flight`, and the sender keeps the message and sends it again,
+   * as after any refused send - the next attempt meets either the committed receipt or no send.
+   */
+  private async answerInFlight(
+    body: SendMessageBody,
+    authUserIdRaw: string | undefined,
+    named: SentFrameIdentity
+  ): Promise<SendMessageResult> {
+    const traceId = this.makeTraceId('send');
+    if (body.senderId) {
+      this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'SEND');
+    }
+    const first = await readSentFrameReceipt(this.queuedMessageRepo.manager, named.groupId, named);
+    if (!first) {
+      this.logger.warn(
+        `[SEND][${traceId}] SEND_IN_FLIGHT group=${named.groupId} ` +
+          `sender=${named.senderId}:${named.senderDeviceId} msg=${named.messageId.slice(0, 8)} ` +
+          `- another send of this id holds its lock and has not committed: refused, the sender retries`
+      );
+      throw new ServiceUnavailableException({ error: 'send_in_flight' });
+    }
+    return this.answerRepeatedFrame(
+      traceId,
+      named.groupId,
+      { ...named, receivedAt: new Date(), protoSha256: protoSha256(body.proto ?? '') },
+      first.receivedAt
+    );
+  }
+
+  /** The body of {@link sendMessage}: a named send reaches it holding its message's lock. */
+  private async sendFrame(
+    body: SendMessageBody,
+    authUserIdRaw: string | undefined,
+    parting: ReadonlyArray<{ userId: string; deviceId: string }>
+  ): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
 
     // `senderId` is what the shared log records as the author of the frame, and what a device
@@ -1880,22 +1971,16 @@ export class MessagingService {
     // (`claimSentFrame`). Application frames only: a handshake frame is its own idempotent protocol
     // step, and no caller names one. Keyed on the authenticated author when there is one.
     const sentMessageId = readSentMessageId(body);
-    const receiptSender = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
-    const receipt: SentFrameKey | undefined =
-      sentMessageId &&
-      !body.isCommit &&
-      !body.isWelcome &&
-      body.groupId &&
-      receiptSender &&
-      body.senderDeviceId
-        ? {
-            senderId: receiptSender,
-            senderDeviceId: body.senderDeviceId,
-            messageId: sentMessageId,
-            receivedAt,
-            protoSha256: protoSha256(body.proto ?? ''),
-          }
-        : undefined;
+    const named = readSentFrameIdentity(body, authUserIdRaw);
+    const receipt: SentFrameKey | undefined = named
+      ? {
+          senderId: named.senderId,
+          senderDeviceId: named.senderDeviceId,
+          messageId: named.messageId,
+          receivedAt,
+          protoSha256: protoSha256(body.proto ?? ''),
+        }
+      : undefined;
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
@@ -7002,9 +7087,12 @@ export class MessagingService {
   /**
    * FINISHES THE DELIVERY AN INTERRUPTED FIRST SEND OWED, for a repeat of an unsettled receipt.
    *
-   * The settlement is TAKEN first, atomically ({@link takeSentFrameSettlement}): of two concurrent
-   * repeats exactly one finishes, and a crash during this finish loses no message - every copy it did
-   * not reach is still queued and goes out on its device's next pull, as any undelivered row does.
+   * IT RUNS ONLY WHEN THE FIRST SEND IS PROVEN GONE: this repeat holds the message's advisory lock
+   * ({@link sendMessage}), which the first send held until it settled, so an unsettled receipt seen
+   * under the lock was left by a send whose session ended. The settlement is then TAKEN, atomically
+   * ({@link takeSentFrameSettlement}). A crash after that take and before the steps loses what the
+   * steps would have done - the push and the history entry; the queued copies survive it and go out
+   * on each device's next pull, as any undelivered row does.
    *
    * What it finishes is read from durable state, never inferred:
    * - the copies STILL QUEUED: the group's rows from this sender's device received at the first
@@ -7027,17 +7115,14 @@ export class MessagingService {
     if (!(await takeSentFrameSettlement(manager, groupId, receipt))) {
       return this.answerRepeatedFrame(traceId, groupId, receipt, first.receivedAt);
     }
-    const stored = await this.queuedMessageRepo.find({
-      where: {
-        groupId,
-        senderId: body.senderId,
-        senderDeviceId: body.senderDeviceId,
-        createdAt: first.receivedAt,
-      },
-      relations: PAYLOAD_RELATION,
-    });
-    const stillQueued = materializeDeliveries(stored, this.logger, traceId).filter(
-      (row) => !!row.proto && protoSha256(row.proto) === first.protoSha256
+    const stillQueued = await findFirstCopyRows(
+      manager,
+      groupId,
+      body.senderId as string,
+      receipt.senderDeviceId,
+      first,
+      this.logger,
+      traceId
     );
     let historyAppended = false;
     if (historyEligible(body, durable, addressed)) {
@@ -7086,7 +7171,8 @@ export class MessagingService {
 
   /**
    * Whether `history:{groupId}` already holds the first copy: an entry from `senderDeviceId` dated
-   * at the first copy's receive time. Read from the first copy's instant onwards - an append comes
+   * at the first copy's receive time whose content is the first copy's ciphertext (`protoSha256`).
+   * Read from the first copy's instant onwards - an append comes
    * after its receive time, so its stream id is not older - in pages, to the end of the stream
    * (bounded by `HISTORY_STREAM_MAXLEN`). Asked only by a repeat of an unsettled receipt.
    */
@@ -7105,7 +7191,11 @@ export class MessagingService {
       for (const [, fields] of page) {
         const entry = new Map<string, string>();
         for (let i = 0; i + 1 < fields.length; i += 2) entry.set(fields[i], fields[i + 1]);
-        if (entry.get('sender_device_id') === senderDeviceId && entry.get('timestamp') === at) {
+        if (
+          entry.get('sender_device_id') === senderDeviceId &&
+          entry.get('timestamp') === at &&
+          protoSha256(entry.get('content') ?? '') === first.protoSha256
+        ) {
           return true;
         }
       }

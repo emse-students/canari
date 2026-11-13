@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, GoneException } from '@nestjs/common';
+import { BadRequestException, GoneException, ServiceUnavailableException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -16,6 +16,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { mlsFrame } from '../testing/mlsFrameFixture';
+import { sentFrameLockKey } from '../utils/sent-frame-receipt';
 
 /**
  * A SEND MAY NOT WRITE ROWS FOR A GROUP THAT STOPPED EXISTING WHILE IT WAS IN FLIGHT.
@@ -72,6 +73,15 @@ describe('MessagingService - a send cannot outlive its group', () => {
   let receipts: Map<string, { receivedAt: Date; protoSha256: string; settled: boolean }>;
   /** Every history-stream append (`XADD` through the pipeline), by group key. */
   let historyAppends: string[];
+  /**
+   * The session advisory locks PostgreSQL holds, by key. Each query runner is one session: its
+   * locks end with it, through its unlock or through the connection being destroyed.
+   */
+  let advisoryLocks: Set<string>;
+  /** Whether the next advisory unlock fails - the connection must then be destroyed, not pooled. */
+  let unlockFails: boolean;
+  /** Every query runner a send opened, to see how each one ended. */
+  let runners: Array<{ release: jest.Mock; releasePostgresConnection: jest.Mock }>;
   /** The stream entries those appends wrote, as `XRANGE` returns them. */
   let historyEntries: Array<[string, string[]]>;
 
@@ -173,6 +183,9 @@ describe('MessagingService - a send cannot outlive its group', () => {
     receipts = new Map();
     historyAppends = [];
     historyEntries = [];
+    advisoryLocks = new Set();
+    unlockFails = false;
+    runners = [];
 
     // The transaction the fix runs in. `getRepository` hands back the two repositories it uses, and
     // both record what they were asked - the Group read so the test can see the lock, the queue
@@ -241,6 +254,39 @@ describe('MessagingService - a send cannot outlive its group', () => {
       manager: {
         transaction: jest.fn(transaction),
         query: jest.fn(async (sql: string, params: unknown[]) => receiptQuery(sql, params)),
+        getRepository: jest.fn(() => queuedRepo),
+        // ONE dedicated connection per runner, a session whose advisory locks are its own.
+        connection: {
+          createQueryRunner: jest.fn(() => {
+            const mine = new Set<string>();
+            const runner = {
+              connect: jest.fn(async () => undefined),
+              query: jest.fn(async (sql: string, params: unknown[]) => {
+                const lockKey = String(params[0]);
+                if (sql.includes('pg_try_advisory_lock')) {
+                  if (advisoryLocks.has(lockKey)) return [{ locked: false }];
+                  advisoryLocks.add(lockKey);
+                  mine.add(lockKey);
+                  return [{ locked: true }];
+                }
+                if (sql.includes('pg_advisory_unlock')) {
+                  if (unlockFails) throw new Error('connection reset');
+                  advisoryLocks.delete(lockKey);
+                  mine.delete(lockKey);
+                  return [{ pg_advisory_unlock: true }];
+                }
+                throw new Error(`unexpected runner query: ${sql}`);
+              }),
+              release: jest.fn(async () => undefined),
+              // The pool destroys the client: the session ends, and its locks with it.
+              releasePostgresConnection: jest.fn(async () => {
+                for (const k of mine) advisoryLocks.delete(k);
+              }),
+            };
+            runners.push(runner);
+            return runner;
+          }),
+        },
       },
     };
 
@@ -742,6 +788,117 @@ describe('MessagingService - a send cannot outlive its group', () => {
 
         expect(deliver).not.toHaveBeenCalled();
         expect(historyAppends).toHaveLength(1);
+      });
+
+      /**
+       * `settled = false` MEANS "NOT FINISHED YET", not "the first send died": a repeat arriving while
+       * a slow first send is still in its delivery steps must leave them to it. The proof that the
+       * first send is gone is its advisory lock, which it holds until it settled.
+       */
+      it('a repeat DURING a live first send finishes nothing: one append, one push', async () => {
+        offlinePeer();
+        const push = pushes();
+        const real = (
+          service as unknown as { deliverQueuedRows: (...a: unknown[]) => Promise<number> }
+        ).deliverQueuedRows.bind(service);
+        let reached!: () => void;
+        const atDelivery = new Promise<void>((r) => (reached = r));
+        let resume!: () => void;
+        const held = new Promise<void>((r) => (resume = r));
+        jest
+          .spyOn(
+            service as unknown as { deliverQueuedRows: () => Promise<number> },
+            'deliverQueuedRows'
+          )
+          .mockImplementationOnce(async (...args: unknown[]) => {
+            reached();
+            await held;
+            return real(...args);
+          });
+        const firstSend = sendId(MSG);
+        await atDelivery;
+        expect(receipt()?.settled).toBe(false);
+
+        const again = await sendId(MSG);
+
+        expect(again.queued).toBe(0);
+        expect(again.receivedAt).toBe(receipt()?.receivedAt.getTime());
+        expect(push).not.toHaveBeenCalled();
+        expect(warnings.some((w) => w.includes('REPEAT_FINISHED_FIRST_COPY'))).toBe(false);
+        expect(warnings.find((w) => w.includes('REPEATED_MESSAGE_ID'))).toContain(GROUP);
+
+        resume();
+        await firstSend;
+        expect(historyAppends).toHaveLength(1);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(receipt()?.settled).toBe(true);
+        expect(advisoryLocks.size).toBe(0);
+      });
+
+      it('a repeat while the lock is held and nothing is committed yet is refused, to be retried', async () => {
+        // Another session holds this message's lock, and its claim has not committed.
+        const runner = (
+          service as unknown as {
+            queuedMessageRepo: {
+              manager: { connection: { createQueryRunner: () => { query: jest.Mock } } };
+            };
+          }
+        ).queuedMessageRepo.manager.connection.createQueryRunner();
+        await runner.query('SELECT pg_try_advisory_lock($1::bigint)', [
+          sentFrameLockKey(GROUP, {
+            senderId: SENDER.userId,
+            senderDeviceId: SENDER.deviceId,
+            messageId: MSG,
+          }),
+        ]);
+
+        await expect(sendId(MSG)).rejects.toBeInstanceOf(ServiceUnavailableException);
+        expect(warnings.find((w) => w.includes('SEND_IN_FLIGHT'))).toContain(GROUP);
+        expect(receipt()).toBeUndefined();
+      });
+
+      it("a repeat once the first send's connection is GONE finishes it, once", async () => {
+        offlinePeer();
+        const push = pushes();
+        // The first send stopped between its commit and its delivery, its session still open: a
+        // repeat then cannot tell it from a slow one, and finishes nothing.
+        const lockKey = sentFrameLockKey(GROUP, {
+          senderId: SENDER.userId,
+          senderDeviceId: SENDER.deviceId,
+          messageId: MSG,
+        });
+        dieOnce('appendToHistory');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        // (Here the failure released it; a frozen process would not have.)
+        advisoryLocks.add(lockKey);
+
+        await sendId(MSG);
+        expect(historyAppends).toEqual([]);
+        expect(push).not.toHaveBeenCalled();
+        expect(receipt()?.settled).toBe(false);
+
+        // The connection is gone: PostgreSQL ended the session and its lock with it.
+        advisoryLocks.delete(lockKey);
+        await sendId(MSG);
+        await sendId(MSG);
+
+        expect(historyAppends).toEqual([`history:${GROUP}`]);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(receipt()?.settled).toBe(true);
+      });
+
+      it('destroys the connection whose unlock failed, so no pooled session keeps the lock', async () => {
+        unlockFails = true;
+
+        await sendId(MSG);
+
+        const [runner] = runners;
+        expect(runner.release).not.toHaveBeenCalled();
+        expect(runner.releasePostgresConnection).toHaveBeenCalledTimes(1);
+        expect(advisoryLocks.size).toBe(0);
+        unlockFails = false;
+        await sendId(MSG);
+        expect(warnings.find((w) => w.includes('REPEATED_MESSAGE_ID'))).toContain(GROUP);
       });
 
       it('delivers nothing for a queued row of ANOTHER frame received at the same instant', async () => {

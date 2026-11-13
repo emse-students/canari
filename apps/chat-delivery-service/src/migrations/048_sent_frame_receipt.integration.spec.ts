@@ -6,6 +6,7 @@
  * of one id serialise on the primary key - the second waits for the first, then finds its committed
  * row, or inserts its own when the first rolled back. That last pair is the whole mechanism
  * (`claimSentFrameReceipt`), and a mock can only restate it; here a second session holds the key.
+ * The second block reads a first copy back from the queue by the receipt's instant.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads:
  * skipped without it, and run by the `test-chat-delivery-integration` job in `ci.yml`, which refuses
@@ -18,11 +19,17 @@ import { join } from 'node:path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
+import { saveWithSharedPayload } from '../utils/queued-payload';
 import {
   claimSentFrameReceipt,
   deleteSentFrameReceiptsBefore,
+  findFirstCopyRows,
   markSentFrameSettled,
   protoSha256,
+  readSentFrameReceipt,
+  takeSentFrameLock,
   takeSentFrameSettlement,
   type SentFrameKey,
 } from '../utils/sent-frame-receipt';
@@ -217,5 +224,126 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     await expect(claim(key('m-1', '2026-11-13T11:00:00.000Z'))).resolves.toEqual(
       expect.objectContaining({ kind: 'repeat' })
     );
+  });
+});
+
+/**
+ * THE FIRST COPY IS FOUND BY THE RECEIPT'S INSTANT, ACROSS TWO COLUMN TYPES. A repeat that finishes
+ * an interrupted first send reads its queued copies by `createdAt = receipt.receivedAt` - a
+ * `timestamp without time zone` (`queued_message.createdAt`, a `CreateDateColumn`) compared with an
+ * instant read back from a `timestamptz` (`dm_sent_frame_receipt.receivedAt`). A mock compares two
+ * `Date`s and cannot see a lost offset or a truncated fraction; here both rows go through the real
+ * writes - the inline save and the shared-payload save - and are read back as `findFirstCopyRows`
+ * reads them.
+ */
+maybe('the receipt finds its first copy in the queue, against PostgreSQL', () => {
+  jest.setTimeout(60_000);
+  const schema = `sent_frame_first_copy_it_${Date.now()}`;
+  let admin: Client;
+  let ds: DataSource;
+  const logger = { error: jest.fn() };
+
+  beforeAll(async () => {
+    admin = new Client({ connectionString: URL });
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [QueuedMessage, QueuedPayload],
+      synchronize: true,
+      extra: { options: `-c search_path=${schema}` },
+    });
+    await ds.initialize();
+    await ds.query(MIGRATION);
+  });
+
+  afterAll(async () => {
+    await ds?.destroy();
+    await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin?.end();
+  });
+
+  /**
+   * One send as the service writes it: the copies and the receipt in ONE transaction, every copy
+   * dated at the receipt's instant - a millisecond instant that is not on a second boundary.
+   */
+  const sendOnce = async (messageId: string, proto: string, shared: boolean) => {
+    const receivedAt = new Date();
+    const k: SentFrameKey = {
+      senderId: 'u1',
+      senderDeviceId: 'd1',
+      messageId,
+      receivedAt,
+      protoSha256: protoSha256(proto),
+    };
+    await ds.transaction(async (m) => {
+      const rows = ['d2', 'd3'].map((deviceId) =>
+        m.getRepository(QueuedMessage).create({
+          recipientId: 'u2',
+          deviceId,
+          senderId: 'u1',
+          senderDeviceId: 'd1',
+          groupId: GROUP,
+          proto,
+          createdAt: receivedAt,
+          addressed: false,
+        })
+      );
+      if (shared) await saveWithSharedPayload(m, GROUP, rows);
+      else await m.getRepository(QueuedMessage).save(rows);
+      await expect(claimSentFrameReceipt(m, GROUP, k)).resolves.toEqual({ kind: 'claimed' });
+    });
+    const first = await readSentFrameReceipt(ds.manager, GROUP, k);
+    expect(first).not.toBeNull();
+    return first as NonNullable<typeof first>;
+  };
+
+  it.each([
+    ['an inline save', false],
+    ['a shared-payload save', true],
+  ])("finds the copies of %s by the receipt's receivedAt", async (_label, shared) => {
+    const proto = Buffer.from(`ciphertext ${String(shared)} ${Date.now()}`).toString('base64');
+    const first = await sendOnce(`first-copy-${String(shared)}`, proto, shared);
+
+    const rows = await findFirstCopyRows(ds.manager, GROUP, 'u1', 'd1', first, logger, 'it');
+
+    expect(rows.map((r) => r.deviceId).sort()).toEqual(['d2', 'd3']);
+    expect(rows.every((r) => r.proto === proto)).toBe(true);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("a message's advisory lock is held by one session at a time, and freed by its release", async () => {
+    const id = { senderId: 'u1', senderDeviceId: 'd1', messageId: 'locked' };
+    const unlockFailed = jest.fn();
+
+    const first = await takeSentFrameLock(ds, GROUP, id, unlockFailed);
+    const second = await takeSentFrameLock(ds, GROUP, id, unlockFailed);
+    const other = await takeSentFrameLock(ds, GROUP, { ...id, messageId: 'other' }, unlockFailed);
+
+    expect([first.held, second.held, other.held]).toEqual([true, false, true]);
+    await first.release();
+    await other.release();
+    const third = await takeSentFrameLock(ds, GROUP, id, unlockFailed);
+    expect(third.held).toBe(true);
+    await third.release();
+    expect(unlockFailed).not.toHaveBeenCalled();
+  });
+
+  it('does not take the copies of another frame received at the same instant', async () => {
+    const proto = Buffer.from(`ciphertext same-instant ${Date.now()}`).toString('base64');
+    const first = await sendOnce('same-instant', proto, false);
+
+    const rows = await findFirstCopyRows(
+      ds.manager,
+      GROUP,
+      'u1',
+      'd1',
+      { ...first, protoSha256: protoSha256('another frame') },
+      logger,
+      'it'
+    );
+
+    expect(rows).toEqual([]);
   });
 });
