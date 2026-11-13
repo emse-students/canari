@@ -7,6 +7,7 @@
  */
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
+import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
@@ -821,6 +822,7 @@ async function eraseAccountRecordsLocally(
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
   forgetConversationNicknames(userIdToReset);
   forgetConversationPins(userIdToReset);
+  clearConversationAnchors();
 
   const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];

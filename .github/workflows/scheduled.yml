@@ -453,7 +453,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      # THE SAME EIGHT NAMES `build.yml` PUSHES TO, HARDCODED THE SAME WAY IT HARDCODES THEM - an
+      # THE SAME NAMES `build.yml` PUSHES TO, HARDCODED THE SAME WAY IT HARDCODES THEM - an
       # allowlist of exactly what this destructive step may touch, never a wildcard over the org's
       # packages, and never derived from a listing that could grow to include something else.
       - name: Delete versions beyond the rollback margin, oldest first
@@ -471,12 +471,24 @@ jobs:
             frontend
             frontend-ssr
             media-service
+            adminer
           )
           KEEP=30
 
           for service in "${SERVICES[@]}"; do
             package="canari%2F${service}"
             echo "=== ${service} ==="
+            # A NAME NO RELEASE HAS PUSHED YET (`adminer`, added 2026-11-13, exists from the first
+            # release that builds it) is a package that does not exist. The package's own route
+            # answers that with its status: 404 is "not published", 200 goes on, and anything else
+            # stops the job. (The org listing is no witness: it answered `[]` to a token that reads
+            # every one of these packages, measured 2026-11-13.)
+            status="$(gh api --include "orgs/emse-students/packages/container/${package}" 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+            case "$status" in
+              200) ;;
+              404) echo "  not published to GHCR yet - nothing to prune"; continue ;;
+              *) echo "::error::GHCR answered '${status:-nothing}' for ${service}"; exit 1 ;;
+            esac
 
             # created_at first so a lexicographic sort is a chronological one (ISO 8601), newest
             # first - never trusted from the API's own order, which is not a documented contract.

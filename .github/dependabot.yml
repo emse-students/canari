@@ -358,7 +358,9 @@ updates:
   # is where the third-party images actually live - redis, postgres, adminer - and all three were
   # floating on 2026-09-01: `redis:alpine` was a floating MAJOR serving 8.8.0, `postgres:15-alpine`
   # floated every patch, and `adminer:latest` was a database admin UI on `:latest` in PRODUCTION.
-  # They are pinned by digest now, to what production was proven to be running.
+  # They are pinned by digest now, to what production was proven to be running. (adminer's digest has
+  # moved to the `FROM` of `infrastructure/local/Dockerfile.adminer` while that image is patched here,
+  # owner 2026-11-13, so the `docker` ecosystem above is the one that moves it.)
   #
   # WHICH IS EXACTLY WHY THIS ENTRY HAS TO EXIST. A digest nothing updates is a FREEZE, not a pin -
   # it converts "silently moving" into "silently ageing", and the second failure mode is the one
