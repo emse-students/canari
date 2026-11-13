@@ -3,6 +3,7 @@
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import NeutralEventMark from './NeutralEventMark.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import {
     associationLogoSrc,
@@ -178,13 +179,7 @@
                 class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold"
                 data-event-neutral
               >
-                <AssociationAvatar
-                  id={link.associationId}
-                  name={link.name}
-                  logoUrl={null}
-                  size="sm"
-                  shape="circle"
-                />
+                <NeutralEventMark size="sm" />
                 <span class="truncate">{link.name}</span>
               </span>
             {:else}

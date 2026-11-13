@@ -879,10 +879,10 @@ MASKED, yet knows it is the BDE's by the queue it came in.
 
 | Surface | What it shows for a neutral event |
 | --- | --- |
-| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
-| detail modal | a "Campus" chip that links nowhere; the share / add-to-calendar source URL is `/calendar` |
+| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
+| detail modal | a "Campus" chip (the same `NeutralEventMark`) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
 | `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
-| PDF / PNG export (`calendarExport.ts`) | the "Campus" colour, no logo watermark, no missing-logo warning |
+| PDF / PNG export (`calendarExport.ts`) | the "Campus" colour band only: no logo watermark, no initials, no mark, no missing-logo warning |
 | pending queue (`/admin/agenda`) | "Campus" and, for a steward, "Déposé par <BDE>"; a masked row offers no association link and no delete |
 | post composer's event picker | neutral events are not offered (`listLinkableValidatedCalendarEvents`) |
 | notifications and pushes | unchanged and safe: every event notice (`event_proposed`, `event_validated` / `updated` / `deleted` / `rejected`, the reopen notices) goes to the BDE's own proposers or to its validators - stewards - and carries the TITLE only |
@@ -954,3 +954,7 @@ cutoff of a current promo is one `GROUP BY` nobody has run.
 [profiles-and-access](../../profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05).
 A bare anonymous feed is refused (400); the subscribe modal and the PDF export page therefore carry a
 campus/formation selector (`AgendaSelectionFields`), defaulted from the reader's own spaces.
+
+## A post's event chip opens the global agenda on the event (2026-11-13)
+
+`PostCard`'s "Evenement : ..." chip links to `/calendar?fromPost=<postId>` (`postEventHref`). `/calendar` resolves the post through `openEventLinkedToPost` (`lib/calendar/postEventLink.ts`, shared with `AssociationCalendarSection`, which still honours old `/associations/<slug>/calendar?fromPost=` links): month grid moves to the event's month, then the detail modal opens, REGARDLESS of the space or association filter; no visible event means the plain agenda (debug line). The URL keeps `fromPost` on close, as the association section always did.
