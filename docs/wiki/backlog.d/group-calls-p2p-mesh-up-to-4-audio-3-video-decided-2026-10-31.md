@@ -59,9 +59,9 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
    fact Q4 left unverified - whether Cloudflare's raw SFU forwards transformed frames
    ([calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)) -
    and it is the first step of WP-GC3 below, before any code is written against it.
-3. **Keys in a mesh.** Today's media keys are per DIRECTION of a 1:1 call (`utils/callKeys.ts`,
-   `<callId>|<role>`); a mesh needs one key per sender, derived the same way from the group's MLS
-   exporter. The SFU leg needs the same per-sender keys, so this is settled once for both.
+3. ~~**Keys in a mesh.**~~ **Built (WP-GC1, 2026-11-13)**: one key per sender, label
+   `mls-webrtc-media-group-v1`, context `<callId>|<userId>`; the 1:1 call keeps its v2 per-direction
+   keys, so no shim ([calls](../frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13)).
 4. **TURN volume.** A relayed mesh pays Cloudflare TURN per pair, so a 4-way mesh with every leg
    relayed is 12 streams of egress: read against the B7 budget
    ([calls](../frontend/modules/calls.md#the-turn-budget-reads-cloudflares-meter-b7)).
@@ -70,9 +70,9 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
 
 Each is one pull request or more; none is built by the D3 change.
 
-1. **WP-GC1 - per-sender media keys** (open point 3): one key per sender from the group's MLS
-   exporter, the worker keyed with one send key and N-1 receive keys. Both the mesh and the SFU
-   leg need it, so it comes first.
+1. **WP-GC1 - per-sender media keys** (open point 3): **built 2026-11-13** - the derivation and the
+   worker's per-participant receive keys
+   ([calls](../frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13)).
 2. **WP-GC2 - the mesh**: `call-service`'s peer-to-peer room grows from two seats to the cap (4 in
    audio, 3 in video) with addressed signalling (`to`/`from` per frame), and the client holds one
    peer connection per other participant, each armed as the 1:1 one is. **Server half BUILT

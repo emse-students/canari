@@ -3422,7 +3422,10 @@ export class CallService {
         } else if (type === 'keyError') {
           appendLog(`[Call] E2E worker key error: ${detail ?? 'unknown'}`);
         } else if (type === 'droppedNoKey') {
-          appendLog(`[Call] E2E frames dropped (no key in worker, ${count ?? '?'})`);
+          const d = event.data as unknown as { side?: string; peer?: string };
+          appendLog(
+            `[Call] E2E frames dropped (no key in worker, ${count ?? '?'}; ${d.side ?? '?'}${d.peer ? ` of ${d.peer}` : ''})`
+          );
         } else if (type === 'warn') {
           appendLog(`[Call] E2E worker: ${detail ?? 'warn'}`);
         } else if (type === 'encryptOk') {
