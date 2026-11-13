@@ -30,3 +30,9 @@ rate, so both are chosen from the same reading.
 
 **Owed.** The week's reading (aggregates only), the structural bound written here with the code it
 was derived from, then the pull request that sets both limits.
+
+**A follow-up to the counter: one line per closed connection, not two.** A connection the client
+closes politely now ends on TWO lines: `Client closed connection` (`apps/chat-gateway/src/handlers.rs`,
+written on a close FRAME only) and `[WS FRAMES]`. Where a close line already exists, the frame counts
+fold into it; `[WS FRAMES]` stays the line for the endings that write none (a reset, the sender half
+failing).
