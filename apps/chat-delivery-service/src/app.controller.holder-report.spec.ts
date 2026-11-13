@@ -15,6 +15,10 @@ import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
+import {
+  memoryAccusationLedger,
+  type MemoryAccusationLedger,
+} from './testing/memoryAccusationLedger';
 import { SINGLE_HOLDER_REPORT_TOP_N } from './retention.constants';
 
 /**
@@ -32,6 +36,8 @@ import { SINGLE_HOLDER_REPORT_TOP_N } from './retention.constants';
  */
 describe('AppController - reportSingleHolderGroups', () => {
   let controller: AppController;
+  /** The report's ledger; fresh per test, shared by every run within one. */
+  let ledger: MemoryAccusationLedger;
   let query: jest.Mock;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
@@ -64,9 +70,10 @@ describe('AppController - reportSingleHolderGroups', () => {
   });
 
   beforeEach(async () => {
+    ledger = memoryAccusationLedger();
     jest.clearAllMocks();
     query = jest.fn().mockResolvedValue([]);
-    const groupRepo = { ...emptyRepo(), query };
+    const groupRepo = { ...emptyRepo(), query, manager: ledger };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
@@ -171,5 +178,64 @@ describe('AppController - reportSingleHolderGroups', () => {
     expect(String(warn.mock.calls[0][0])).toContain(
       'k-one(key group, epoch 7, 2 member(s), 0 pending)'
     );
+  });
+
+  describe('each conversation is accused ONCE per holder count (report_accusations)', () => {
+    it('does not re-accuse a closed conversation the next hour, even when its epoch moved', async () => {
+      query.mockResolvedValue([row('g-none', 0, 1)]);
+      await run();
+      query.mockResolvedValue([row('g-none', 0, 1)]);
+      await run();
+
+      expect(error).toHaveBeenCalledTimes(1);
+
+      query.mockResolvedValue([row('g-one', 1, 284)]);
+      await run();
+      query.mockResolvedValue([row('g-one', 1, 290)]);
+      await run();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('accuses again, at ERROR, a conversation that loses its last holder', async () => {
+      query.mockResolvedValue([row('g-a', 1, 9)]);
+      await run();
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      query.mockResolvedValue([row('g-a', 0, 9)]);
+      await run();
+
+      expect(error).toHaveBeenCalledTimes(1);
+      const line = String(error.mock.calls[0][0]);
+      expect(line).toContain('1 conversation(s) have NO holder at all');
+      expect(line).toContain('g-a(epoch 9');
+    });
+
+    it('names only the new one, and says how many are known', async () => {
+      query.mockResolvedValue([row('g-old', 0)]);
+      await run();
+      query.mockResolvedValue([row('g-old', 0), row('g-new', 0)]);
+      await run();
+
+      const line = String(error.mock.calls[1][0]);
+      expect(line).toContain('1 conversation(s) have NO holder');
+      expect(line).toContain('g-new(');
+      expect(line).not.toContain('g-old(');
+      expect(line).toContain('1 conversation(s) accused earlier, unchanged');
+    });
+
+    it('logs a conversation that regained a second holder once at LOG, and forgets it', async () => {
+      query.mockResolvedValue([row('g-heal', 1)]);
+      await run();
+      query.mockResolvedValue([]);
+      await run();
+      await run();
+
+      const healed = log.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('no longer reported'));
+      expect(healed).toHaveLength(1);
+      expect(healed[0]).toContain('g-heal(holders 1, accused ');
+      expect(ledger.rows.get('holders')?.size).toBe(0);
+    });
   });
 });
