@@ -22,7 +22,8 @@ name: Build the estate images
 # `preflight` and then carried DOWN and re-tested in eight places, each re-deriving the same fork
 # for itself. It is a NAME now, decided at the fork in `release.yml`: this file is TOLD which estate
 # it builds for and asks nothing further. Two things genuinely differ by estate, and both read that
-# name directly - the secret set that goes into the frontend `.env`, and the floating docker tag.
+# name directly - the environment whose secrets go into the frontend `.env`, and the floating docker
+# tag.
 on:
   workflow_call:
     inputs:
@@ -36,8 +37,9 @@ on:
         type: string
       estate:
         description: 'Which estate these images are for: `dev` or `production`. THE NAME, not a
-          boolean to re-derive: it selects the frontend secret set and the floating docker tag, and
-          those are the only two things that differ.'
+          boolean to re-derive: it selects the environment the frontend build reads its secrets
+          from (`development` or `production`) and the floating docker tag, and those are the only
+          two things that differ.'
         required: true
         type: string
     outputs:
@@ -203,6 +205,18 @@ jobs:
     # in the registry.
     if: needs.enumerate-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-24.04
+    # THE ESTATE IS AN ENVIRONMENT, SO ONE SET OF NAMES SERVES BOTH (2026-11-13). `BASE_URL`,
+    # `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID` and `ANDROID_APP_LINK_SHA256` exist in `development` AND
+    # in `production` under the same names, and this job sees exactly one of the two: the boundary
+    # that kept a pre-release from building against production is GitHub's, not a `DEV_` prefix
+    # chosen by a shell branch. What could still leak across it is a REPOSITORY-level copy of one of
+    # those names, which an environment that lacks the name would fall back to - and `release.yml`'s
+    # preflight refuses the release while any such copy exists. `deployment: false` because this job
+    # deploys nothing: it borrows the environment's secrets and draws no row in the deployments list
+    # (docs/wiki/cicd.md#where-a-secret-lives-and-why).
+    environment:
+      name: ${{ inputs.estate == 'dev' && 'development' || 'production' }}
+      deployment: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -241,33 +255,26 @@ jobs:
         working-directory: frontend
         run: bun run proto:gen
 
-      # THE THREE SECRETS NEITHER ESTATE CAN BE BUILT WITHOUT, taken from the set the release
-      # selects. A missing one would otherwise produce a bundle whose every API origin is the empty
-      # string, which builds fine and then fails in a browser with no server-side trace.
+      # THE FOUR SECRETS NEITHER ESTATE CAN BE BUILT WITHOUT, read from the environment the job
+      # declares. A missing one would otherwise produce a bundle whose every API origin is the empty
+      # string, which builds fine and then fails in a browser with no server-side trace - or, for
+      # `ANDROID_APP_LINK_SHA256`, a site whose App Links quietly stop opening the app.
       #
-      # THERE IS NO FALLBACK BETWEEN THE TWO SETS, deliberately. Falling back from `DEV_BASE_URL` to
-      # `BASE_URL` would build a pre-release pointing at PRODUCTION and hand it to the store tester
-      # programmes - precisely the accident the second environment exists to prevent. A missing
-      # secret stops the release instead.
+      # THERE IS NO SECOND SET TO FALL BACK TO, and that is structural now: the job sees one
+      # environment, so a name it lacks is empty, never the other estate's value (the preflight
+      # refuses a repository-level copy that could stand in for it).
       - name: Validate the frontend build secrets
         env:
           ESTATE: ${{ inputs.estate }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
-          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
-          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
-          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
         run: |
-          if [ "$ESTATE" = "dev" ]; then
-            required="DEV_BASE_URL DEV_AUTHENTIK_URL DEV_AUTHENTIK_CLIENT_ID"
-          else
-            required="BASE_URL AUTHENTIK_URL AUTHENTIK_CLIENT_ID"
-          fi
           missing=0
-          for name in $required; do
+          for name in BASE_URL AUTHENTIK_URL AUTHENTIK_CLIENT_ID ANDROID_APP_LINK_SHA256; do
             if [ -z "${!name}" ]; then
-              echo "::error::$name is not set, and this build needs it. There is no fallback to the other environment's secrets - that would point this build at the wrong estate."
+              echo "::error::$name is not set in the environment of the $ESTATE estate, and this build needs it. Set it as an environment secret there (docs/wiki/cicd.md#where-a-secret-lives-and-why)."
               missing=1
             fi
           done
@@ -277,34 +284,21 @@ jobs:
         working-directory: frontend
         env:
           ESTATE: ${{ inputs.estate }}
-          BASE_URL: ${{ secrets.BASE_URL }}
-          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
-          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
-          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
-          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
-          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+          APP_URL: ${{ secrets.BASE_URL }}
+          IDP_URL: ${{ secrets.AUTHENTIK_URL }}
+          IDP_CLIENT: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
 
-          if [ "$ESTATE" = "dev" ]; then
-            APP_URL="$DEV_BASE_URL"
-            IDP_URL="$DEV_AUTHENTIK_URL"
-            IDP_CLIENT="$DEV_AUTHENTIK_CLIENT_ID"
-          else
-            APP_URL="$BASE_URL"
-            IDP_URL="$AUTHENTIK_URL"
-            IDP_CLIENT="$AUTHENTIK_CLIENT_ID"
-          fi
-
           # THE ONE PLACE IN THIS CHANTIER WHERE A MISTAKE SHIPS TO PHONES, so it is an ASSERTION
           # and never a convention. A store build carries its backend origin baked in and cannot be
           # re-pointed afterwards: an alpha built against production would let the tester programme
           # write to real data, and a stable built against dev would point every user at a box that
-          # is wiped every Monday. Neither failure is visible in a green pipeline. The secrets are
-          # selected by the release just above, so the only way to reach here wrong is a secret that
-          # holds the other environment's URL - which is exactly what this catches.
+          # is wiped every Monday. Neither failure is visible in a green pipeline. The secrets come
+          # from the environment the job declares, so the only way to reach here wrong is a secret
+          # that holds the other environment's URL - which is exactly what this catches.
           # The names live in ONE function, shared with `android.yml` and `ios.yml`.
           source ../.github/scripts/lib/backend-url.sh
           URL_ENVIRONMENT="$(classify_backend_url "$APP_URL")"
@@ -339,9 +333,7 @@ jobs:
 
           fi
 
-          if [ -n "$ANDROID_APP_LINK_SHA256" ]; then
-            echo "VITE_ANDROID_APP_LINK_SHA256=${ANDROID_APP_LINK_SHA256}" >> .env
-          fi
+          echo "VITE_ANDROID_APP_LINK_SHA256=${ANDROID_APP_LINK_SHA256}" >> .env
           if [ -n "$APPLE_TEAM_ID" ]; then
             echo "VITE_APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> .env
           fi

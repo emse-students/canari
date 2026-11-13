@@ -454,7 +454,8 @@ account instead of asking the gallery.
   pull request until it merges, so this page names the rule, not the file); the bench accounts' ids are
   not public, so they are named in `DEV_AVATAR_OVERRIDE_EXTRA`.
 - **Where `DEV_AVATAR_OVERRIDE_EXTRA` lives.** It is a GitHub secret named `DEV_AVATAR_OVERRIDE_EXTRA`
-  (the same repository-level secret store as every other `DEV_*` one, read by `serve-dev.yml`'s
+  (a secret of the `development` environment like every other `DEV_*` one since 2026-11-13,
+  [cicd](../cicd.md#where-a-secret-lives-and-why), read by `serve-dev.yml`'s
   `Render the dev environment` step), format `<user-id>=<file>.png,<user-id>=<file>.png` with each
   file one of the eight in the directory. It reaches the container through the env manifest row
   `AVATAR_OVERRIDE_EXTRA` (production `skip`, dev `warn`: optional, a warning when absent) and the
@@ -495,7 +496,7 @@ secret, and a silent gate is one nobody can debug.
 
 | job | where | what it does |
 |---|---|---|
-| `build-frontend` | GitHub runner | builds the frontend from the `DEV_*` secrets when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
+| `build-frontend` | GitHub runner | builds the frontend from the secrets of the `development` environment (`BASE_URL`, `AUTHENTIK_*`, `ANDROID_APP_LINK_SHA256`, dev's values under the bare names since 2026-11-13) when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
 | `build-docker-images` | GitHub runner | pushes every changed image, moving `:dev` rather than `:latest` |
 | `deploy-dev` | the server | renders `.env`, then runs [`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) |
 | `dev-reset` in [`scheduled.yml`](../../../.github/workflows/scheduled.yml) | the server | on demand, empties dev and loads the fictional seed |
@@ -716,7 +717,8 @@ would need.**
    production's tunnel, so moving it before a dev deploy had been proved on `127.0.0.1:3080` would
    have turned a name serving production into a 502. The proof that unlocked it was a green
    **deploy** (the data job alone proves only the port), read as `build: dev.<sha7>`.
-2. **The `DEV_*` repository secrets. 12 of the 14 required ones were created on 2026-09-02** - the
+2. **The `DEV_*` secrets (repository-level when created; the `development` environment's since
+   2026-11-13, [cicd](../cicd.md#where-a-secret-lives-and-why)). 12 of the 14 required ones were created on 2026-09-02** - the
    three derived ones (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) and nine generated
    with `openssl rand`, none copied from production, plus `DEV_INTERNAL_SECRET` and
    `DEV_EXTERNAL_API_KEY`. The generated values exist in GitHub Secrets and, once dev has deployed

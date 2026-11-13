@@ -1539,7 +1539,86 @@ the stable fold), `bump-version.test.sh` (`--code`, `--codes`), `release-chain.t
 
 ## GitHub Secrets
 
-See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory.
+See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory,
+with the LEVEL of each secret in one table.
+
+### Where a secret lives, and why
+
+**THE CAP.** GitHub holds at most 100 secrets per repository and 100 per environment. Canari reached
+the repository cap on 2026-11-13: a `PUT` on a 101st secret answers a bare `HTTP 400`, with no message
+saying why (owner, the same day: *"Range TOUS les secrets github"*). Every secret of both estates had
+been born at repository level, and the dev twins (`DEV_*`) doubled the count.
+
+**THE MECHANISM.** A job that declares `environment: X` reads X's secrets, and an environment secret
+OVERRIDES a repository secret of the same name for that job; a name X lacks is read from the
+repository level. A job with no `environment:` sees the repository level only. `secrets: inherit`
+from `release.yml` passes the repository level down, and a called job that declares an environment
+still resolves that environment's secrets - `serve-dev`'s smoke sign-in has read `DEV_SMOKE_*`, which
+exist only in `development`, since 2026-10-18. Neither environment has a protection rule or a branch
+policy (read 2026-11-13), so declaring one never waits for an approval.
+
+**THE THREE LEVELS**, decided by who reads the secret:
+
+- **`repo`** - read by a job with no environment: the Android and Apple signing material and store
+  keys (one keystore, one identity, for testers and stores alike, so there is nothing to split), the
+  auto-merge App, the Dependabot token, and `LYDIA_ENV`, which the preflight reads to refuse a stable
+  BEFORE the stores take it. The exception, never the default.
+- **`production` / `development`** - read only by that estate's deploy job (`deploy-to-server`,
+  `deploy-dev`). **A new secret read only by a deploy job is born in its environment.**
+- **`production, development`** - one name in both environments, each estate its own value: the
+  build-time names (`BASE_URL`, `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `ANDROID_APP_LINK_SHA256`)
+  that `build-frontend`, `build-android` and `build-ios` read. Each of those jobs declares the
+  environment of its estate (`environment: { name: <estate>, deployment: false }`, the estate from
+  `inputs.estate` or `inputs.prerelease`; an iOS local-device build reads `production`, whose identity
+  provider it signs in through). The `DEV_` set those jobs read before, and the shell branch that
+  chose between the two sets, are deleted: a job sees ONE environment, so "no fallback between the two
+  sets" is GitHub's boundary rather than a convention three files restated.
+
+**`deployment: false`** (GitHub, March 2026) lets a job read an environment's secrets without
+creating a deployment, so the three build jobs draw no row in the deployments list and do not become
+the "latest deployment" of `production` on the repository page. It is compatible with the absence of
+protection rules; GitHub documents it as incompatible with a CUSTOM (App) protection rule only.
+
+**THE ONE HOLE, AND THE GATE THAT CLOSES IT.** For a name kept in both environments, an environment
+that LACKS it falls back to a repository copy - the other estate's value. A pre-release would build
+against production's identity client and hand it to the tester programmes, which is exactly what the
+second estate exists to prevent. So those names must NEVER exist at repository level, and
+`release.yml`'s preflight - a job with no environment, which therefore sees only the repository level -
+refuses the release while any of them does (`No estate secret is kept at repository level`). The
+URL half was already caught by `classify_backend_url`; the client id had no such witness.
+
+**DEV'S DEPLOY KEEPS THE `DEV_` NAMES, INSIDE `development`.** `render-env.sh` reads `DEV_<name>`
+for dev and never the bare name, and that indirection is KEPT: while production's bare names still
+exist at repository level (they are deleted only after a green stable reads them from `production`),
+a dev deploy reading a bare name would inherit production's value for every name `development` lacks
+- `cd-dev.yml`'s defect, `JWT_SECRET` included. With the prefix, a name dev lacks is EMPTY whatever
+the repository holds, and a `required` row stops the deploy. **The unification is a later, separate
+step**, safe only once no deploy-read bare name remains at repository level: re-supply each `DEV_X`
+of `development` as `X`, drop the prefix in `secret_value`, rename the `serve-dev.yml` block, extend
+the preflight's guard to every manifest `secret:` row - the guard then proves the precondition on
+every release - and delete the `DEV_X` copies after the alpha that reads `X`. Until then
+`development` holds the four build-time values twice (`BASE_URL` for the build, `DEV_BASE_URL` for the
+deploy, and so on) - the same value, set together.
+
+**THE ORDER OF A MOVE**, so no release ever runs with a secret missing or borrowed: (1) SET the
+environment copy - it shadows the repository one at once, so this leaves no gap; (2) a GREEN RUN that
+reads it - a pre-release for `development`, a stable for `production` - and the estate answers; (3)
+DELETE the repository copy. GitHub never returns a value, so each copy is read from where the value
+is rendered (the estate's `.env`), never printed. A name the build jobs read in both environments is
+the one exception to (2)-before-(3): the preflight refuses every release while its repository copy
+exists, so it is deleted right after the merge that moves its readers, once the environment copies
+are set (listing the names of each environment is the check). A rerun of a release cut BEFORE that
+merge reads the old workflow files, whose build jobs declare no environment, and fails loudly on the
+missing names - the answer is a new tag.
+
+`secret-levels.test.mjs` holds the table and the workflows together: a secret a workflow reads that
+the table does not list, an environment secret read by a job that declares no such environment
+(which would read it EMPTY), or a both-environment name the preflight does not guard, fails
+`make test-ci-scripts`.
+
+**THE RENDERED FILE IS PRIVATE TO ITS OWNER.** `render-env.sh` writes each estate's `.env` with mode
+`0600` (a `umask 077` around the write and a `chmod 600` before the `mv`), whatever umask the runner
+uses; `deploy-env.test.sh` asserts it on Linux.
 
 **A credential is real in THREE places, not two.** The CD regenerates `infrastructure/.env` from the
 repo secrets, so a value set over SSH lasts until the next deploy. It must therefore be a GitHub

@@ -48,9 +48,157 @@ The CD then hard-resets this checkout to **the released commit** on each deploym
 
 ## 3. GitHub Secrets
 
-The CD generates all `.env` files from the repo secrets. On a new repo/fork,
-recreate them (Settings → Secrets and variables → Actions). Secrets required
-for **server deployment**:
+The CD generates all `.env` files from the GitHub secrets. On a new repo/fork, recreate them
+(Settings -> Secrets and variables -> Actions), **each at the level the table below gives it**.
+
+### Where each secret lives (2026-11-13)
+
+GitHub holds at most 100 secrets per repository, and as many per environment; Canari reached the
+repository cap on 2026-11-13. A secret lives at one of three levels, chosen by WHO reads it - the
+reasons, and the order in which a secret moves, are in
+[cicd](../docs/wiki/cicd.md#where-a-secret-lives-and-why):
+
+- **`repo`**: read by a job that declares no environment (signing, store keys, the GitHub App, the
+  preflight's `LYDIA_ENV`). The exception, not the default.
+- **`production`** or **`development`**: read only by that estate's deploy job. **A new secret read
+  only by a deploy job is born in its environment, never at repository level.** Dev's deploy reads
+  the `DEV_`-prefixed name inside `development` (`render-env.sh`'s indirection, kept on purpose).
+- **`production, development`**: the same name in BOTH environments, each estate its own value -
+  the build-time names of the three build jobs, which declare the environment of their estate. These
+  must NEVER exist at repository level: an environment lacking one would fall back to that copy, and
+  `release.yml`'s preflight refuses the release while one does.
+
+`set` it with `gh secret set NAME --env production` (or `--env development`). The table is read by
+`.github/scripts/tests/secret-levels.test.mjs`: a workflow reading a secret absent from it, or an
+environment secret read by a job that does not declare that environment, fails `make test-ci-scripts`.
+
+<!-- secret-levels:start -->
+| Secret | Level | Read by |
+|---|---|---|
+| `AGENDA_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `ANDROID_APP_LINK_SHA256` | production, development | build :: build-frontend, serve-prod :: deploy-to-server |
+| `ANDROID_KEY_ALIAS` | repo | android :: build-android |
+| `ANDROID_KEY_PASSWORD` | repo | android :: build-android |
+| `ANDROID_KEYSTORE_BASE64` | repo | android :: build-android |
+| `ANDROID_STORE_PASSWORD` | repo | android :: build-android |
+| `APNS_VOIP_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `APNS_VOIP_KEY_P8` | production | serve-prod :: deploy-to-server |
+| `APNS_VOIP_TEAM_ID` | production | serve-prod :: deploy-to-server |
+| `APP_STORE_CONNECT_API_KEY_P8` | repo | ios :: build-ios, scheduled :: stores |
+| `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` | repo | ios :: build-ios |
+| `APP_STORE_CONNECT_ISSUER_ID` | repo | ios :: build-ios, scheduled :: stores |
+| `APP_STORE_CONNECT_KEY_ID` | repo | ios :: build-ios, scheduled :: stores |
+| `APPLE_CERTIFICATE_BASE64` | repo | ios :: build-ios |
+| `APPLE_CERTIFICATE_PASSWORD` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE_NSE` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE_SHARE` | repo | ios :: build-ios |
+| `APPLE_SIGNING_IDENTITY` | repo | ios :: build-ios |
+| `APPLE_TEAM_ID` | repo | ios :: build-ios, build :: build-frontend |
+| `AUTHENTIK_CLIENT_ID` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `AUTHENTIK_CLIENT_SECRET` | production | serve-prod :: deploy-to-server |
+| `AUTHENTIK_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `AUTOMERGE_APP_CLIENT_ID` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh |
+| `AUTOMERGE_APP_PRIVATE_KEY` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh |
+| `AVATAR_TOKEN_SECRET` | production | serve-prod :: deploy-to-server |
+| `BASE_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `CALL_ROOM_SECRET` | production | serve-prod :: deploy-to-server |
+| `CERCLE_API_KEY` | production | serve-prod :: deploy-to-server |
+| `CHANNELS_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_ACCOUNT_ID` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_CACHE_PURGE_TOKEN` | repo | serve-prod :: deploy-to-server - its level belongs to `production`, and it moves there at its next rotation: GitHub never returns a value and no other copy exists |
+| `CLOUDFLARE_CALLS_API_TOKEN` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_SFU_APP_ID` | production, development | none yet - the group-call SFU, created ahead of its wiring (see the note below the table) |
+| `CLOUDFLARE_SFU_APP_SECRET` | production, development | none yet - the group-call SFU, created ahead of its wiring (see the note below the table) |
+| `CLOUDFLARE_TURN_ANALYTICS_TOKEN` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_TURN_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` | production | serve-prod :: deploy-to-server |
+| `DEPENDABOT_ALERTS_TOKEN` | repo | scheduled :: alerts |
+| `DEV_AGENDA_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_ANDROID_APP_LINK_SHA256` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_KEY_P8` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_TEAM_ID` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_CLIENT_ID` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_CLIENT_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_URL` | development | serve-dev :: deploy-dev |
+| `DEV_AVATAR_OVERRIDE_EXTRA` | development | serve-dev :: deploy-dev |
+| `DEV_AVATAR_TOKEN_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_BASE_URL` | development | serve-dev :: deploy-dev |
+| `DEV_CALL_ROOM_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_CHANNELS_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_ACCOUNT_ID` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_CALLS_API_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_TURN_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` | development | serve-dev :: deploy-dev |
+| `DEV_EXTERNAL_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_ACCESS_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_ADMIN_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_RPC_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_SECRET_ACCESS_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_GOOGLE_SAFE_BROWSING_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_HANDOFF_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_INTERNAL_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_INTERNAL_SHARED_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_JWT_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_KLIPY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_KEY_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_REPLAY_TOTAL_MAX_GB` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_REPORT_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_KEY_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_PROVIDER_PRIVATE_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_PROVIDER_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_MIGALLERY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_POSTGRES_PASSWORD` | development | serve-dev :: deploy-dev |
+| `DEV_POSTGRES_USER` | development | serve-dev :: deploy-dev |
+| `DEV_SERVICE_ACCOUNT_USER_ID` | development | serve-dev :: deploy-dev |
+| `DEV_SKY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_SMOKE_PASSWORD` | development | serve-dev :: deploy-dev |
+| `DEV_SMOKE_USERNAME` | development | serve-dev :: deploy-dev |
+| `EXTERNAL_API_KEY` | production | serve-prod :: deploy-to-server |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | production | serve-prod :: deploy-to-server |
+| `GARAGE_ACCESS_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `GARAGE_ADMIN_TOKEN` | production | serve-prod :: deploy-to-server |
+| `GARAGE_RPC_SECRET` | production | serve-prod :: deploy-to-server |
+| `GARAGE_SECRET_ACCESS_KEY` | production | serve-prod :: deploy-to-server |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | repo | android :: build-android, scheduled :: stores |
+| `GOOGLE_SAFE_BROWSING_API_KEY` | production | serve-prod :: deploy-to-server |
+| `GOOGLE_SERVICE_INFO_PLIST` | repo | ios :: build-ios |
+| `GOOGLE_SERVICES_JSON` | repo | android :: build-android |
+| `HANDOFF_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `INTERNAL_SECRET` | production | serve-prod :: deploy-to-server |
+| `INTERNAL_SHARED_SECRET` | production | serve-prod :: deploy-to-server |
+| `JWT_SECRET` | production | serve-prod :: deploy-to-server |
+| `KLIPY_API_KEY` | production | serve-prod :: deploy-to-server |
+| `LIVE_KEY_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `LIVE_REPLAY_TOTAL_MAX_GB` | production | serve-prod :: deploy-to-server |
+| `LIVE_REPORT_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `LYDIA_ENV` | repo | release :: preflight (no environment: a stable is refused before the stores take it), serve-prod :: deploy-to-server |
+| `LYDIA_KEY_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `LYDIA_PROVIDER_PRIVATE_TOKEN` | production | serve-prod :: deploy-to-server |
+| `LYDIA_PROVIDER_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MICONNECT_AUTHENTIK_SECRET_KEY` | repo | none - a backup of a value the identity host holds, supplied there by hand |
+| `MICONNECT_EDITOR_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MICONNECT_PG_PASS` | repo | none - a backup of a value the identity host holds, supplied there by hand |
+| `MICONNECT_READER_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MIGALLERY_API_KEY` | production | serve-prod :: deploy-to-server |
+| `POSTGRES_PASSWORD` | production | serve-prod :: deploy-to-server |
+| `POSTGRES_USER` | production | serve-prod :: deploy-to-server |
+| `SERVICE_ACCOUNT_USER_ID` | production | serve-prod :: deploy-to-server |
+| `SKY_API_KEY` | production | serve-prod :: deploy-to-server |
+<!-- secret-levels:end -->
+
+**The Cloudflare SFU pair** (`CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET`, the group-call
+media server's app id and secret) was created on 2026-11-13 in BOTH environments under its bare name,
+before any workflow reads it. Whoever wires it: production's deploy reads it as is; dev's deploy reads
+`DEV_<name>` through `render-env.sh` until the name unification of
+[cicd](../docs/wiki/cicd.md#where-a-secret-lives-and-why) lands, so either that step comes first or
+the dev value is set as `DEV_CLOUDFLARE_SFU_APP_ID` / `DEV_CLOUDFLARE_SFU_APP_SECRET` in
+`development` too.
+
+What each secret is for, by area (server deployment):
 
 | Category | Secrets |
 |---|---|

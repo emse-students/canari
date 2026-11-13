@@ -73,6 +73,15 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # THE TRACK'S ESTATE IS AN ENVIRONMENT (2026-11-13): an alpha reads `BASE_URL` and `AUTHENTIK_*`
+    # from `development`, a stable from `production`, under the same names, so the DEV_ set and the
+    # branch that picked between the two sets are gone. A compile check (`prerelease` defaults to
+    # "true") reads `development`. The signing secrets are repository-level and the same for both:
+    # one keystore signs the tester and the store build. `deployment: false`: this job deploys
+    # nothing, so it draws no row in the deployments list (docs/wiki/cicd.md#where-a-secret-lives-and-why).
+    environment:
+      name: ${{ inputs.prerelease == 'true' && 'development' || 'production' }}
+      deployment: false
 
     steps:
       - uses: actions/checkout@v7
@@ -229,7 +238,7 @@ jobs:
         run: |
           chmod +x scripts/print-android-app-link-fingerprint.sh
           ./scripts/print-android-app-link-fingerprint.sh
-          echo "::notice::Add this SHA-256 to GitHub secret ANDROID_APP_LINK_SHA256, then redeploy frontend (cd workflow)."
+          echo "::notice::This SHA-256 is the value of the secret ANDROID_APP_LINK_SHA256 in BOTH environments (development and production; one keystore signs both); a change reaches the web at the next release."
 
       # AN ALPHA POINTS AT dev.canari-emse.fr AND A STABLE AT PRODUCTION, and the mismatch is an
       # ASSERTION rather than a convention. This is the one place in the whole migration where a
@@ -238,36 +247,28 @@ jobs:
       # real data, and a stable built against dev would point every user at a box wiped every
       # Monday. Neither failure is visible in a green pipeline.
       #
-      # There is NO FALLBACK from the DEV_ secrets to the production ones. Falling back is precisely
-      # how an alpha would end up pointing at production; a missing secret stops the build instead.
+      # There is NO SECOND SET TO FALL BACK TO: the job sees the one environment it declares, so a
+      # missing name is empty and stops the build, never the other estate's value (`release.yml`'s
+      # preflight refuses a repository-level copy that could stand in for it).
       - name: Create frontend .env
         working-directory: frontend
         env:
           IS_PRERELEASE: ${{ steps.release_tag.outputs.prerelease }}
-          BASE_URL: ${{ secrets.BASE_URL }}
-          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
-          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
-          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
-          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
-          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+          APP_URL: ${{ secrets.BASE_URL }}
+          IDP_URL: ${{ secrets.AUTHENTIK_URL }}
+          IDP_CLIENT: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
           set -euo pipefail
 
           if [ "$IS_PRERELEASE" = "true" ]; then
-            APP_URL="$DEV_BASE_URL"
-            IDP_URL="$DEV_AUTHENTIK_URL"
-            IDP_CLIENT="$DEV_AUTHENTIK_CLIENT_ID"
             EXPECTED_HOST="dev.canari-emse.fr"
           else
-            APP_URL="$BASE_URL"
-            IDP_URL="$AUTHENTIK_URL"
-            IDP_CLIENT="$AUTHENTIK_CLIENT_ID"
             EXPECTED_HOST="canari.emse.fr or canari-emse.fr"
           fi
 
           for name in APP_URL IDP_URL IDP_CLIENT; do
             if [ -z "${!name}" ]; then
-              echo "::error::${name} is empty for a $([ "$IS_PRERELEASE" = "true" ] && echo pre-release || echo stable) build. The DEV_ and production secret sets are kept separate on purpose - there is no fallback between them."
+              echo "::error::${name} is empty for a $([ "$IS_PRERELEASE" = "true" ] && echo pre-release || echo stable) build. Each estate's secrets live in its own environment, and there is no fallback between them."
               exit 1
             fi
           done
