@@ -93,6 +93,22 @@ export type AssociationPayoutAccount = Pick<
   enrolmentInFlightSince: string | null;
   /** The Responsable step's claim (`lydiaResponsableStartedAt`), for the global admin's clear. */
   responsableInFlightSince: string | null;
+  /**
+   * A GLOBAL ADMIN's read only, and only on a bridge (lydia-account-bridge.ts): which Business
+   * collects, the historical account's readiness, and the counts. The managers never read it - the
+   * historical account is invisible to them (owner, 2026-11-13).
+   */
+  bridge?: {
+    /** `historical`: the historical account collects; `switched`: the enrolled Business does. */
+    state: 'historical' | 'switched';
+    historicalReady: boolean;
+    /** Whether the enrolment linked its Business yet. */
+    enrolledLinked: boolean;
+    switchedAt: string | null;
+    switchCount: number;
+    switchBackCount: number;
+    reissueCount: number;
+  };
 };
 
 /** Projects an association row onto what a signed-in member may read of it. */

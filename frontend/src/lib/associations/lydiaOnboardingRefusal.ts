@@ -22,7 +22,25 @@ export const LYDIA_ONBOARDING_REFUSAL = {
   CREATE_UNCONFIRMED: 'LYDIA_BUSINESS_CREATE_UNCONFIRMED',
   /** 503: the payout account could not be read first; nothing was created, a retry is safe. */
   PAYOUT_ACCOUNT_UNREADABLE: 'PAYOUT_ACCOUNT_UNREADABLE',
+  /**
+   * 409: the Business an earlier enrolment created still waits for Lydia's validation (an
+   * association on a historical-account bridge); a second one would only be refused by Lydia too.
+   */
+  PENDING_VALIDATION: 'LYDIA_BUSINESS_PENDING_VALIDATION',
 } as const;
+
+/**
+ * 409 of the unlink (a global admin's): the enrolled Business of a historical-account bridge took
+ * payments that may still be confirmed or refunded, so its key stays and it is not unlinked.
+ */
+export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
+
+/** The sentence for a failed unlink: the typed refusal's own, else the generic one. */
+export function lydiaDisconnectErrorText(err: unknown): string {
+  return err instanceof SocialApiError && err.code === LYDIA_BUSINESS_HOLDS_PAYMENTS
+    ? m.asso_lydia_disconnect_holds_payments_error()
+    : m.asso_lydia_disconnect_error();
+}
 
 export type LydiaOnboardingRefusalCode =
   (typeof LYDIA_ONBOARDING_REFUSAL)[keyof typeof LYDIA_ONBOARDING_REFUSAL];
@@ -48,6 +66,8 @@ export function lydiaOnboardingRefusalText(code: LydiaOnboardingRefusalCode): st
       return m.asso_lydia_onboarding_unconfirmed_error();
     case LYDIA_ONBOARDING_REFUSAL.PAYOUT_ACCOUNT_UNREADABLE:
       return m.asso_lydia_account_error();
+    case LYDIA_ONBOARDING_REFUSAL.PENDING_VALIDATION:
+      return m.asso_lydia_pending_validation_error();
   }
 }
 

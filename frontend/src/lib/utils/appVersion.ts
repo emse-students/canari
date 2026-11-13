@@ -120,6 +120,8 @@ export type ServerVersionInfo = {
   rankedFeeds: boolean;
   /** Whether this estate lets a respondent change their answer - see {@link AppVersionCheckResult}. */
   formAnswerEdit: boolean;
+  /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
+  eventReach: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -193,6 +195,14 @@ export type AppVersionCheckResult = {
    * older than the field.
    */
   formAnswerEdit: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service stores an institution calendar event's
+   * reach and serves its options route. The event form draws the reach picker, and requires a
+   * choice, only when this is true: an older server answers the options route `404` and cannot store
+   * a reach, so requiring one there would block every institution's event - and a store build
+   * reaches phones before production deploys. `false` for every server older than the field.
+   */
+  eventReach: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -264,6 +274,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     gridRequiredSwitch?: unknown;
     rankedFeeds?: unknown;
     formAnswerEdit?: unknown;
+    eventReach?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -283,6 +294,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     gridRequiredSwitch: obj.gridRequiredSwitch === true,
     rankedFeeds: obj.rankedFeeds === true,
     formAnswerEdit: obj.formAnswerEdit === true,
+    eventReach: obj.eventReach === true,
   };
 }
 
@@ -307,6 +319,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   gridRequiredSwitch: boolean;
   rankedFeeds: boolean;
   formAnswerEdit: boolean;
+  eventReach: boolean;
 } {
   return {
     version: info.version,
@@ -323,6 +336,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     gridRequiredSwitch: info.gridRequiredSwitch,
     rankedFeeds: info.rankedFeeds,
     formAnswerEdit: info.formAnswerEdit,
+    eventReach: info.eventReach,
   };
 }
 /**
@@ -512,6 +526,7 @@ export function buildAppVersionCheckResult(
     gridRequiredSwitch: serverInfo?.gridRequiredSwitch ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
     formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
+    eventReach: serverInfo?.eventReach ?? false,
   };
 }
 

@@ -91,6 +91,7 @@ describe('parseServerVersionInfo', () => {
       gridRequiredSwitch: false,
       rankedFeeds: false,
       formAnswerEdit: false,
+      eventReach: false,
     });
   });
 
@@ -147,6 +148,16 @@ describe('parseServerVersionInfo', () => {
     expect(
       parseServerVersionInfo({ version: '1.6.12', formAnswerEdit: 'yes' })?.formAnswerEdit
     ).toBe(false);
+  });
+
+  it('reads the event reach capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.6.12', eventReach: true });
+    expect(info?.eventReach).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.eventReach).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.6.11' })?.eventReach).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.6.12', eventReach: 'yes' })?.eventReach).toBe(
+      false
+    );
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -256,6 +267,7 @@ describe('buildAppVersionCheckResult', () => {
       gridRequiredSwitch: false,
       rankedFeeds: false,
       formAnswerEdit: false,
+      eventReach: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -281,6 +293,7 @@ describe('buildAppVersionCheckResult', () => {
       gridRequiredSwitch: false,
       rankedFeeds: false,
       formAnswerEdit: false,
+      eventReach: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -354,6 +367,7 @@ describe('fetchServerAppVersionReliable', () => {
       gridRequiredSwitch: false,
       rankedFeeds: false,
       formAnswerEdit: false,
+      eventReach: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

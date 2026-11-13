@@ -27,6 +27,8 @@ import { getLocale } from '$lib/i18n';
 import { CALLS_NATIVE_RING_COMPILED, PUSH_WAKE_DECLARED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 import { readApiJson } from '$lib/utils/apiJson';
+import { isTransportFailure, RefreshFailedError } from '$lib/utils/transportFailure';
+import { sendRenewingOn401 } from '$lib/utils/renewOn401';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -41,7 +43,67 @@ type PushPlatform = 'android' | 'ios';
  * push secret it returned could not be stored here. Reported to the server as-is, and the server prints
  * whatever it is given rather than guessing.
  */
-export type PushRegistrationFailure = 'no-token' | 'rejected' | 'secret-not-stored';
+export type PushRegistrationFailure =
+  | 'no-token'
+  | 'rejected'
+  | 'secret-not-stored'
+  | 'refused'
+  | 'unauthorized';
+
+/**
+ * The failures another attempt cannot change, so the retry ladder stops on them at once. `refused`
+ * is the server's 4xx ANSWER about the request (a 403, a 400, a 429 - never a 401); `unauthorized`
+ * is a 401 the one renewal did not lift, or a session with no token left to renew. A status is an
+ * answer: sending the same request again would only repeat it. `rejected` (a 5xx, a transport
+ * failure, a renewal nobody answered) and the two device-side failures stay retried.
+ */
+const FINAL_FAILURES: ReadonlySet<PushRegistrationFailure> = new Set(['refused', 'unauthorized']);
+
+/**
+ * Where the registration reads its bearer: the session's CURRENT token for every attempt, and its
+ * renewal on a 401. Injected, never imported from the auth store, which imports this module. The
+ * one construction that ships is `sessionPushAuth`.
+ */
+export interface PushAuth {
+  /** The token in memory now, renewed first when missing or about to expire (`getToken`). */
+  tokenNow: () => Promise<string>;
+  /** Renews the access token through the session's single-flight refresh (`refresh`). */
+  renew: () => Promise<string>;
+}
+
+/**
+ * The server ANSWERED the registration with a 4xx other than 401. Typed at the throw so the ladder
+ * reads the status as a type and never retries it: the same request would get the same answer.
+ */
+export class PushRegistrationRefusedError extends Error {
+  constructor(readonly status: number) {
+    super(`the push registration was refused: HTTP ${status}`);
+    this.name = 'PushRegistrationRefusedError';
+  }
+}
+
+/**
+ * The registration has no token the server accepts: a 401 on a token renewed for it, or no session
+ * left to renew (a dead credential, a sign-out under way, another account). Not retried, and no
+ * gave-up report is sent with it - that report would be refused with the same token.
+ */
+export class PushRegistrationUnauthorizedError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(`the push registration has no accepted token: ${why}`, { cause });
+    this.name = 'PushRegistrationUnauthorizedError';
+  }
+}
+
+/**
+ * What a failure to obtain a token becomes. An ALLOWLIST of the failures that say only "no new
+ * token now" - a refresh that answered with no token (`RefreshFailedError`) or one nobody answered -
+ * which pass as they came and are retried; every other failure is a verdict on the session.
+ */
+function classifyTokenFailure(error: unknown): unknown {
+  if (error instanceof RefreshFailedError || isTransportFailure(error)) return error;
+  const name = error instanceof Error ? error.name : typeof error;
+  return new PushRegistrationUnauthorizedError(`no session token (${name})`, error);
+}
 
 /** The answer of one registration attempt; see {@link PushRegistrationFailure}. */
 export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: PushRegistrationFailure };
@@ -180,6 +242,14 @@ async function registerPushTokenOnce(
       console.error('[Push] registration answered but its push secret was not stored', err.cause);
       return { ok: false, reason: 'secret-not-stored' };
     }
+    if (err instanceof PushRegistrationRefusedError) {
+      console.warn(`[Push] registration refused by the server (HTTP ${err.status}) - not retried`);
+      return { ok: false, reason: 'refused' };
+    }
+    if (err instanceof PushRegistrationUnauthorizedError) {
+      console.warn(`[Push] ${err.message} - not retried`, err.cause);
+      return { ok: false, reason: 'unauthorized' };
+    }
     console.error('[Push] FCM token registration failed', err);
     return { ok: false, reason: 'rejected' };
   }
@@ -190,12 +260,13 @@ async function registerPushTokenOnce(
  * Call at application startup (in ChatBackgroundService or hooks.client.ts).
  *
  * @param apiBaseUrl   Backend API base URL (e.g. "https://api.canari.app")
- * @param authToken    Authentication token for the API
+ * @param auth         Where each attempt reads its CURRENT token, and renews it on a 401 - never a
+ *                     token captured once: the retry ladder outlives an access token
  * @param deviceId     Unique device identifier
  */
 export async function startPushService(
   apiBaseUrl: string,
-  bearerToken: string,
+  auth: PushAuth,
   deviceId: string
 ): Promise<void> {
   if (!isTauriRuntime()) {
@@ -241,30 +312,58 @@ export async function startPushService(
               return null;
             })
           : null;
-      const response = await fetch(`${apiBaseUrl}/api/mls/push/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${bearerToken}`,
-          'x-user-logged-in': 'true',
-          'x-user-id': userId,
-        },
-        body: JSON.stringify({
-          token: pushToken,
-          deviceId,
-          platform,
-          // The one thing the server cannot know and must not guess: `APNS_FALLBACK_BODY` is the
-          // single sentence it still composes, shown when the iOS extension cannot run.
-          locale: getLocale(),
-          ...voipRegistrationField(platform, CALLS_NATIVE_RING_COMPILED, voipToken),
-          // Whether this binary takes a content-free wake-up push ON THIS PLATFORM (iOS declares
-          // false until its P1 is closed - see `PUSH_WAKE_DECLARED`); the server writes
-          // `push_token.wakeCapable` from it on every registration (false if absent).
-          wake: PUSH_WAKE_DECLARED[platform],
-        }),
+      const body = JSON.stringify({
+        token: pushToken,
+        deviceId,
+        platform,
+        // The one thing the server cannot know and must not guess: `APNS_FALLBACK_BODY` is the
+        // single sentence it still composes, shown when the iOS extension cannot run.
+        locale: getLocale(),
+        ...voipRegistrationField(platform, CALLS_NATIVE_RING_COMPILED, voipToken),
+        // Whether this binary takes a content-free wake-up push ON THIS PLATFORM (iOS declares
+        // false until its P1 is closed - see `PUSH_WAKE_DECLARED`); the server writes
+        // `push_token.wakeCapable` from it on every registration (false if absent).
+        wake: PUSH_WAKE_DECLARED[platform],
+      });
+      const send = (token: string): Promise<Response> =>
+        fetch(`${apiBaseUrl}/api/mls/push/register`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'x-user-logged-in': 'true',
+            'x-user-id': userId,
+          },
+          body,
+        });
+      // THE TOKEN IS READ FOR THIS ATTEMPT, never captured when the service started: the ladder
+      // below lasts minutes, and a token captured at its start could expire under it and then be
+      // refused on every attempt, the gave-up report included.
+      let token: string;
+      try {
+        token = await auth.tokenNow();
+      } catch (err) {
+        throw classifyTokenFailure(err);
+      }
+      // A 401 IS AN ANSWER about the bearer: renewed ONCE and sent again (`renewOn401.ts`, the one
+      // copy of that rule); a 401 on the renewed token ends the registration.
+      const response = await sendRenewingOn401(send, token, {
+        tokenNow: auth.tokenNow,
+        renew: auth.renew,
+        where: 'POST /api/mls/push/register',
+        refusedRenewed: () =>
+          new PushRegistrationUnauthorizedError('the token renewed for it was refused too'),
+        renewalFailed: (err) => classifyTokenFailure(err),
       });
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
+        // Any other 4xx is an answer too, and the same request would get it again.
+        if (response.status >= 400 && response.status < 500) {
+          console.warn(
+            `[Push] register answered HTTP ${response.status}${errText ? `: ${errText}` : ''}`
+          );
+          throw new PushRegistrationRefusedError(response.status);
+        }
         throw new Error(`HTTP ${response.status}${errText ? `: ${errText}` : ''}`);
       }
       // A 2xx that is not the API's JSON (a captive portal's page) registered NOTHING: it throws
@@ -304,7 +403,7 @@ export async function startPushService(
     console.info('[Push] startPushService re-check (possible token rotation)');
     const recheck = await registerOnce();
     if (!recheck.ok) {
-      await reportGaveUp(apiBaseUrl, bearerToken, deviceId, platform, recheck.reason);
+      await reportGaveUp(apiBaseUrl, auth, deviceId, platform, recheck.reason);
     }
     return;
   }
@@ -361,12 +460,16 @@ export async function startPushService(
 
   // Fallback: token generation can be delayed on some Android devices.
   for (let i = 0; i < BACKGROUND_RETRY_ATTEMPTS; i++) {
+    if (FINAL_FAILURES.has(outcome.reason)) {
+      console.warn(`[Push] registration ${outcome.reason} - an answer, so no retry`);
+      break;
+    }
     await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
     outcome = await registerOnce();
     if (outcome.ok) return;
   }
 
-  console.warn('[Push] startPushService exhausted retries without successful registration');
+  console.warn(`[Push] startPushService ended without a registration (${outcome.reason})`);
   // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER ON THIS PATH. Every attempt above can fail for
   // a reason the next one fixes - that is what the retries are for - so reporting one of those would
   // file a defect against a device that goes on to work. Reaching this line means the device has
@@ -380,7 +483,7 @@ export async function startPushService(
   // that is a real reason for a silent device. The retries are not a clock this design leans on, so
   // they are not shortened here on a hunch: the window is written down, and shortening it needs a
   // measurement of how long a token really takes to appear on a slow Android.
-  await reportGaveUp(apiBaseUrl, bearerToken, deviceId, platform, outcome.reason);
+  await reportGaveUp(apiBaseUrl, auth, deviceId, platform, outcome.reason);
 }
 
 /**
@@ -394,13 +497,28 @@ export async function startPushService(
  */
 async function reportGaveUp(
   apiBaseUrl: string,
-  bearerToken: string,
+  auth: PushAuth,
   deviceId: string,
   platform: PushPlatform,
   reason: PushRegistrationFailure
 ): Promise<void> {
+  // NOT SENT WITHOUT A TOKEN THE SERVER TAKES: the registration just learned that this session has
+  // none, and the report would be refused with the same bearer - a request whose answer is known.
+  if (reason === 'unauthorized') {
+    console.warn(
+      '[Push] gave up with no accepted token - the unavailable report is not sent (it would be refused too)'
+    );
+    return;
+  }
   if (pushUnavailableReported) {
     console.info('[Push] still unavailable, already reported once this process');
+    return;
+  }
+  let bearerToken: string;
+  try {
+    bearerToken = await auth.tokenNow();
+  } catch (err) {
+    console.warn(`[Push] cannot report unavailable (${reason}): no session token`, err);
     return;
   }
   pushUnavailableReported = true;

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // Stub Tauri internals before any import so the CJS module picks them up (same harness as
 // PushNotificationService.test.ts: vi.mock cannot reach @tauri-apps/api/core).
+import { JWT_AUTH } from '../../test/pushAuth';
 const tauriInvokeStub = vi.fn((cmd: string, _args?: unknown) => {
   if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-123');
@@ -45,8 +46,8 @@ describe('startPushService - one registration at a time', () => {
       return Response.json({ pushSecret: 'the-one' });
     }) as unknown as typeof fetch;
 
-    const first = startPushService('https://api', 'jwt', 'dev-ios');
-    const second = startPushService('https://api', 'jwt', 'dev-ios');
+    const first = startPushService('https://api', JWT_AUTH, 'dev-ios');
+    const second = startPushService('https://api', JWT_AUTH, 'dev-ios');
     // Let both reach the network before the server answers - the window production hit.
     await flushMacrotask();
     answer();

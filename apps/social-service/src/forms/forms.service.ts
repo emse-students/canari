@@ -197,6 +197,7 @@ import {
   PROVIDER_MAX_AMOUNT_CENTS,
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
+import { LYDIA_BRIDGE_LOG_TAG } from '../associations/lydia-account-bridge';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import {
@@ -2752,6 +2753,8 @@ export class FormsService {
       // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
       // readiness of the HOLDER of the vendor token the request was sent to.
       let connectAccountId: string | undefined;
+      // Whether that revert already ran (the bridge's re-issue below runs it itself).
+      let reverted = false;
       try {
         // If the form belongs to an association, route payment via its connected account
         if (form.associationId) {
@@ -2785,8 +2788,6 @@ export class FormsService {
               `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
           );
         }
-        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
-        const idempotencyKey = formOrderRef(savedSubmission.id);
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
         // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
@@ -2811,22 +2812,59 @@ export class FormsService {
               `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
               frontendUrl
             );
-        const res = await axios.post(
-          checkoutUrl,
-          {
-            lineItems: singleLineItem,
-            successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
-            cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
-            metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
+        let idempotencyKey = formOrderRef(savedSubmission.id);
+        const issueOn = (account: string | undefined, orderRef: string) =>
+          axios.post(
+            checkoutUrl,
+            {
+              lineItems: singleLineItem,
+              successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
+              cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
+              metadata: {
+                submissionId: savedSubmission.id,
+                formId: id,
+                userId: input.userId ?? '',
+              },
+              connectAccountId: account,
+              idempotencyKey: orderRef,
+              // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
+              payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
+              // The request dies before the seat is released (`seat-hold.ts`).
+              expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
+            },
+            internalCoreRequestConfig()
+          );
+        let res;
+        try {
+          res = await issueOn(connectAccountId, idempotencyKey);
+        } catch (err: unknown) {
+          const cause = lydiaReadinessRefusal(err);
+          if (!cause || !connectAccountId || !form.associationId) throw err;
+          reverted = true;
+          const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
             connectAccountId,
-            idempotencyKey,
-            // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
-            payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
-            // The request dies before the seat is released (`seat-hold.ts`).
-            expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
-          },
-          internalCoreRequestConfig()
-        );
+            cause,
+            { path: guest ? 'form-guest' : 'form', id: savedSubmission.id }
+          );
+          if (!reissue) throw err;
+          // A bridge's switch back (owner, 2026-11-13): error 5 on the Business a switch made
+          // active, answered before any request existed. The SAME answer is issued ONCE on the
+          // account that collects now - re-resolved and re-checked, with a new order_ref - and a
+          // refusal of that one is the ordinary revert below. NOT a fallback: logged and counted.
+          await this.associationsService.assertPaymentsReady(form.associationId);
+          const historical = await this.associationsService.getPaymentAccountId(form.associationId);
+          if (!historical || historical === connectAccountId) throw err;
+          this.logger.warn(
+            `${LYDIA_BRIDGE_LOG_TAG} submission ${savedSubmission.id}: error 5 on the Business a ` +
+              `bridge switch made active, switched back - the SAME payment is re-issued once on ` +
+              `the historical account (nothing was issued on the first)`
+          );
+          connectAccountId = historical;
+          idempotencyKey = formOrderRef(savedSubmission.id);
+          reverted = false;
+          res = await issueOn(connectAccountId, idempotencyKey);
+        }
 
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;
@@ -2859,12 +2897,17 @@ export class FormsService {
           });
         }
 
+        // Lydia issued a request on this Business: the proof a bridge switch waits for before
+        // telling its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+        if (connectAccountId) {
+          await this.associationsService.noteLydiaRequestIssued(connectAccountId);
+        }
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: unknown) {
         // No request was issued, so nothing is payable: the row stops holding a seat for it.
         await this.releaseUnissuedRow(savedSubmission.id);
         const cause = lydiaReadinessRefusal(err);
-        if (cause && connectAccountId) {
+        if (cause && connectAccountId && !reverted) {
           await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
             path: guest ? 'form-guest' : 'form',
             id: savedSubmission.id,

@@ -71,6 +71,8 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * 357 px keyboard on the Mi 9T), the rows below it moved up, and the anchor "kept the reader's row"
  * by scrolling the pane UP by those 214 px: the last messages went under the composer and the
  * scroll-down arrow appeared. A text-only thread has no viewport-relative row and never showed it.
+ * (Since 2026-11-13 the media ceiling itself holds while a keyboard is up -
+ * `keyboardFreeViewportHeight` - but the rule stays: any box can shrink under a pinned reader.)
  *
  * For a reader at the bottom the bottom IS the anchor: any change of reach is followed.
  *
