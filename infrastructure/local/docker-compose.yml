@@ -90,7 +90,9 @@ services:
       # no wildcard for one (docs/wiki/services/chat-gateway.md). The nginx entry, the Vite dev
       # server and the Tauri WebViews. A phone's chat socket is opened by the native plugin and
       # names no origin, so it needs no entry; a desktop browser loading the page from a LAN address
-      # does, through CANARI_LOCAL_ALLOW_ORIGIN.
+      # does, through CANARI_LOCAL_ALLOW_ORIGIN. THAT OVERRIDE REPLACES THE WHOLE LIST, for the four
+      # Nest services too (they read it below): it must keep the 1420 pair, or `bun run dev` is
+      # refused by them.
       ALLOW_ORIGIN: &local-origins "${CANARI_LOCAL_ALLOW_ORIGIN:-http://localhost:${CANARI_LOCAL_API_PORT:-8081},http://127.0.0.1:${CANARI_LOCAL_API_PORT:-8081},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}"
     depends_on:
       redis:

@@ -55,8 +55,8 @@ export const TAURI_WEBVIEW_ORIGINS = [
  *
  * @param frontendUrl - Value of `FRONTEND_URL`; each segment's trailing slash is stripped, blank
  * segments (including an unset variable) are dropped.
- * @param estateOrigins - Value of `ALLOW_ORIGIN`, read the same way. A `*` segment is no origin a
- * browser sends, so it matches nothing: a wildcard is never a list.
+ * @param estateOrigins - Value of `ALLOW_ORIGIN`, read the same way. A `*` segment is dropped: a
+ * wildcard is never a list, and it is no origin a browser sends.
  */
 export function buildAllowedOrigins(
   frontendUrl: string | undefined,
@@ -65,7 +65,7 @@ export function buildAllowedOrigins(
   const allowed = new Set<string>(TAURI_WEBVIEW_ORIGINS);
   for (const part of `${frontendUrl ?? ''},${estateOrigins ?? ''}`.split(',')) {
     const origin = part.trim().replace(/\/+$/, '');
-    if (origin) allowed.add(origin);
+    if (origin && origin !== '*') allowed.add(origin);
   }
   return allowed;
 }

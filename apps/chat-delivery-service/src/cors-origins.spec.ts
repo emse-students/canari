@@ -70,6 +70,8 @@ describe('cors-origins', () => {
     // A wildcard segment is never a list.
     expect(isAllowedOrigin('https://evil.example', dev)).toBe(false);
     expect(dev.has('')).toBe(false);
+    expect(dev.has('*')).toBe(false);
+    expect(buildAllowedOrigins('*', ' * ').has('*')).toBe(false);
   });
 
   it('treats a missing Origin as nothing to refuse', () => {
