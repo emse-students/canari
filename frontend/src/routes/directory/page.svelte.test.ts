@@ -65,13 +65,21 @@ async function render() {
 }
 const names = () =>
   [...document.querySelectorAll('[data-directory-row] a')].map((a) => a.textContent?.trim());
-async function submitQuery(q: string) {
+async function typeQuery(q: string) {
   const input = document.querySelector('input[type="search"]') as HTMLInputElement;
   input.value = q;
   input.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
+async function submitQuery(q: string) {
+  await typeQuery(q);
   document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
   await settle();
 }
+const loadMoreButton = () =>
+  [...document.querySelectorAll('button')].find((b) =>
+    /voir plus|show more/i.test(b.textContent ?? '')
+  );
 
 beforeEach(() => {
   search.mockReset();
@@ -135,5 +143,48 @@ describe('directory page', () => {
     await settle();
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 1 }));
     expect(names()).toEqual(['A', 'B']);
+  });
+
+  it('keeps asking for the last SUBMITTED name when the field was edited afterwards', async () => {
+    search.mockResolvedValue({ users: [], total: 0 });
+    await render();
+    search.mockResolvedValueOnce({ users: [row('u1', 'A')], total: 2 });
+    await submitQuery('alice');
+    await typeQuery('someone else');
+    search.mockResolvedValueOnce({ users: [row('u2', 'B')], total: 2 });
+    loadMoreButton()!.click();
+    await settle();
+    expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'alice', offset: 1 }));
+  });
+
+  it('keeps the list and says so under the button when "Voir plus" fails', async () => {
+    search.mockResolvedValue({ users: [], total: 0 });
+    await render();
+    search.mockResolvedValueOnce({ users: [row('u1', 'A')], total: 2 });
+    await submitQuery('ab');
+    search.mockRejectedValueOnce(new Error('offline'));
+    loadMoreButton()!.click();
+    await settle();
+    expect(names()).toEqual(['A']);
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(loadMoreButton()).toBeDefined();
+  });
+
+  it('never sends a name over 200 characters, and shows a hint instead', async () => {
+    search.mockResolvedValue({ users: [], total: 0 });
+    await render();
+    search.mockClear();
+    await submitQuery('a'.repeat(201));
+    expect(search).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it('says why the list went away when the last criterion is cleared', async () => {
+    search.mockResolvedValue({ users: [row('u1', 'A')], total: 1 });
+    await render();
+    await submitQuery('ab');
+    expect(document.querySelector('[data-directory-cleared]')).toBeNull();
+    await submitQuery('');
+    expect(document.querySelector('[data-directory-cleared]')).not.toBeNull();
   });
 });

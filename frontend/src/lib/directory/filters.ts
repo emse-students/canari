@@ -30,16 +30,34 @@ export function emptyFilters(): DirectoryFilters {
 
 /** The shortest name the server searches (`UsersService.directory`). */
 export const MIN_NAME_LENGTH = 2;
+/** Mirrors `DirectoryQueryDto` (core-service `user.dto.ts`): a request outside them is refused with a 400. */
+export const MAX_QUERY_LENGTH = 200;
+export const MAX_FORMATION_LENGTH = 120;
+export const MIN_PROMO = 1816;
 
-/** The promo as a number, or `undefined` when the field is empty or not a number. */
+/** The promo as a number, or `undefined` when the field is empty or not a valid year (integer >= 1816). */
 export function promoOf(filters: DirectoryFilters): number | undefined {
   if (filters.promo === '' || filters.promo == null) return undefined;
   const n = Number(filters.promo);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isInteger(n) && n >= MIN_PROMO ? n : undefined;
 }
 
-/** True when the server would answer: a name of two characters, or any one filter. */
+/** The fields whose content the server would refuse; empty means the request may be made. */
+export type FilterIssues = Partial<Record<'query' | 'promo' | 'formation', true>>;
+
+/** What is wrong with the filters, by field: the same limits as the server's DTO, never learned by a 400. */
+export function filterIssues(filters: DirectoryFilters): FilterIssues {
+  const issues: FilterIssues = {};
+  if (filters.query.trim().length > MAX_QUERY_LENGTH) issues.query = true;
+  if (filters.formation.trim().length > MAX_FORMATION_LENGTH) issues.formation = true;
+  const rawPromo = filters.promo;
+  if (rawPromo !== '' && rawPromo != null && promoOf(filters) === undefined) issues.promo = true;
+  return issues;
+}
+
+/** True when the server would answer: a name of two characters, or any one valid filter, and nothing it refuses. */
 export function hasCriteria(filters: DirectoryFilters): boolean {
+  if (Object.keys(filterIssues(filters)).length > 0) return false;
   return (
     filters.query.trim().length >= MIN_NAME_LENGTH ||
     promoOf(filters) !== undefined ||

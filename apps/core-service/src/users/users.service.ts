@@ -398,12 +398,13 @@ export class UsersService implements OnModuleInit {
    */
   private async applyBlockVisibility(
     qb: SelectQueryBuilder<User>,
-    requesterId?: string
+    requesterId: string | undefined,
+    caller: 'search' | 'directory'
   ): Promise<void> {
     if (!requesterId) return;
     const hidden = await this.blocksService.invisibleUserIdsFor(requesterId);
     if (hidden.length === 0) return;
-    this.logger.debug(`[search] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
+    this.logger.debug(`[${caller}] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
     qb.andWhere('user.id NOT IN (:...blockedIds)', { blockedIds: hidden });
   }
 
@@ -436,7 +437,7 @@ export class UsersService implements OnModuleInit {
     if (!applied) return [];
 
     await this.applyReviewCohortVisibility(qb, requesterId);
-    await this.applyBlockVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'search');
 
     return qb.take(10).getMany();
   }
@@ -522,12 +523,15 @@ export class UsersService implements OnModuleInit {
     }
 
     await this.applyReviewCohortVisibility(qb, requesterId);
-    await this.applyBlockVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'directory');
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {
       qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
     }
+    // The id is the tie-break of BOTH orderings: with two people of the same name an offset page
+    // would otherwise be free to repeat one and skip the other between two requests.
+    qb.addOrderBy('user.id', 'ASC');
 
     const total = await qb.getCount();
     const rows = await qb.skip(offset).take(limit).getMany();

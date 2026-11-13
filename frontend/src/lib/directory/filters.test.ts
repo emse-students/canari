@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeChips,
   emptyFilters,
+  filterIssues,
   hasCriteria,
   promoOf,
   withoutFilter,
@@ -23,6 +24,30 @@ describe('hasCriteria', () => {
     expect(hasCriteria(f({ associationId: 'a1' }))).toBe(true);
     expect(hasCriteria(f({ campus: 'gardanne' }))).toBe(true);
     expect(hasCriteria(f({ post: 'ALUMNI' }))).toBe(true);
+  });
+});
+
+describe('what the server would refuse is never a criterion', () => {
+  it('rejects a promo that is not an integer of 1816 or more', () => {
+    expect(promoOf(f({ promo: 1815 }))).toBeUndefined();
+    expect(promoOf(f({ promo: 2024.5 }))).toBeUndefined();
+    expect(promoOf(f({ promo: 'abc' }))).toBeUndefined();
+    expect(promoOf(f({ promo: 1816 }))).toBe(1816);
+    expect(filterIssues(f({ promo: 1815 }))).toEqual({ promo: true });
+    expect(hasCriteria(f({ promo: 1815 }))).toBe(false);
+  });
+
+  it('caps the name at 200 and the programme at 120 characters', () => {
+    expect(filterIssues(f({ query: 'a'.repeat(200) }))).toEqual({});
+    expect(filterIssues(f({ query: 'a'.repeat(201) }))).toEqual({ query: true });
+    expect(filterIssues(f({ formation: 'x'.repeat(121) }))).toEqual({ formation: true });
+    expect(hasCriteria(f({ query: 'a'.repeat(201) }))).toBe(false);
+    expect(hasCriteria(f({ campus: 'gardanne', formation: 'x'.repeat(121) }))).toBe(false);
+  });
+
+  it('reports no issue for an empty or cleared field', () => {
+    expect(filterIssues(emptyFilters())).toEqual({});
+    expect(filterIssues(f({ promo: null }))).toEqual({});
   });
 });
 

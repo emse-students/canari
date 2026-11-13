@@ -41,6 +41,7 @@
   import {
     activeChips,
     emptyFilters,
+    filterIssues,
     hasCriteria,
     promoOf,
     withoutFilter,
@@ -51,8 +52,13 @@
   const PAGE_SIZE = 30;
   const SUGGESTION_SIZE = 12;
 
-  /** What the last submitted search used; the chips and "load more" follow it, not the draft. */
+  /**
+   * What the last SUBMITTED search used; the chips and "load more" follow it. The search field
+   * edits `queryDraft`, copied here only by a submit or the sheet's apply, so a half-typed name never
+   * changes what "Voir plus" asks for.
+   */
   let filters = $state<DirectoryFilters>(emptyFilters());
+  let queryDraft = $state('');
   /** The sheet's working copy, committed by "Afficher les résultats". */
   let draft = $state<DirectoryFilters>(emptyFilters());
   let sheetOpen = $state(false);
@@ -63,6 +69,10 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let error = $state('');
+  /** A failed "Voir plus": its own line under the button, the list stays on screen. */
+  let moreError = $state('');
+  /** The last search was emptied of every criterion: say why the list went away. */
+  let cleared = $state(false);
   let searched = $state(false);
   let suggestions = $state<DirectoryUserRow[]>([]);
   let seq = 0;
@@ -79,6 +89,10 @@
     { value: '', label: m.directory_filter_any() },
     ...POSTS.map((p) => ({ value: p, label: postLabel(p) })),
   ]);
+  const queryIssue = $derived(
+    filterIssues({ ...emptyFilters(), query: queryDraft }).query === true
+  );
+  const draftIssues = $derived(filterIssues(draft));
   const chips = $derived(
     activeChips(filters, (id) => associations.find((a) => a.id === id)?.name ?? null)
   );
@@ -136,7 +150,9 @@
     filters = next;
     const mine = ++seq;
     error = '';
+    moreError = '';
     if (!hasCriteria(next)) {
+      cleared = searched;
       searched = false;
       results = [];
       total = 0;
@@ -145,6 +161,7 @@
     }
     loading = true;
     searched = true;
+    cleared = false;
     try {
       const res = await searchDirectory({ ...paramsOf(next), limit: PAGE_SIZE });
       if (mine !== seq) return;
@@ -165,6 +182,7 @@
     if (loadingMore || loading) return;
     const mine = seq;
     loadingMore = true;
+    moreError = '';
     try {
       const res = await searchDirectory({
         ...paramsOf(filters),
@@ -177,7 +195,7 @@
       total = res.total;
     } catch (err) {
       Log.d('[directory] load more failed', err);
-      error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
+      moreError = describeRefusalCode(refusalCode(err)) ?? m.directory_more_error();
     } finally {
       loadingMore = false;
     }
@@ -185,7 +203,8 @@
 
   function submit(e: Event) {
     e.preventDefault();
-    void runSearch({ ...filters });
+    if (queryIssue) return;
+    void runSearch({ ...filters, query: queryDraft });
   }
 
   function openSheet() {
@@ -194,8 +213,9 @@
   }
 
   function applySheet() {
+    if (Object.keys(draftIssues).length > 0 || queryIssue) return;
     sheetOpen = false;
-    void runSearch({ ...draft, query: filters.query });
+    void runSearch({ ...draft, query: queryDraft });
   }
 
   function removeChip(key: FilterKey) {
@@ -219,7 +239,8 @@
           autocomplete="off"
           aria-label={m.directory_search_aria()}
           placeholder={m.directory_name_placeholder()}
-          bind:value={filters.query}
+          invalid={queryIssue}
+          bind:value={queryDraft}
           class="[&_input]:pl-10"
         />
       </div>
@@ -234,13 +255,17 @@
       </Button>
     </form>
 
+    {#if queryIssue}
+      <p class="text-red-err text-xs" role="alert">{m.directory_issue_query()}</p>
+    {/if}
+
     {#if chips.length > 0}
       <ul class="flex flex-wrap gap-2" aria-label={m.directory_filters_title()}>
         {#each chips as chip (chip.key)}
           <li>
             <button
               type="button"
-              class="bg-cn-surface-alt text-text-main inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
+              class="tap-target bg-cn-surface-alt text-text-main inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
               aria-label={m.directory_chip_remove({ label: chip.label })}
               data-directory-chip={chip.key}
               onclick={() => removeChip(chip.key)}
@@ -289,9 +314,15 @@
               {m.directory_load_more()}
             </Button>
           </div>
+          {#if moreError}
+            <p class="text-red-err pt-2 text-center text-xs" role="alert">{moreError}</p>
+          {/if}
         {/if}
       {/if}
     {:else if suggestions.length > 0}
+      {#if cleared}
+        <p class="text-text-muted px-2 text-xs" data-directory-cleared>{m.directory_cleared()}</p>
+      {/if}
       <section aria-labelledby="dir-suggest">
         <h2 id="dir-suggest" class="text-text-muted mb-1 px-2 text-xs font-semibold">
           {m.directory_suggest_heading()}
@@ -303,7 +334,12 @@
         </ul>
       </section>
     {:else}
-      <p class="text-text-muted px-4 py-12 text-center text-sm">{m.directory_hint()}</p>
+      <p
+        class="text-text-muted px-4 py-12 text-center text-sm"
+        data-directory-cleared={cleared || undefined}
+      >
+        {cleared ? m.directory_cleared() : m.directory_hint()}
+      </p>
     {/if}
   </div>
 </PageContainer>
@@ -320,13 +356,15 @@
         type="number"
         min="1816"
         label={m.directory_label_promo()}
-        placeholder="2024"
+        placeholder={m.directory_promo_placeholder()}
+        error={draftIssues.promo ? m.directory_issue_promo() : undefined}
         bind:value={draft.promo as string | number}
       />
       <Input
         type="text"
         label={m.directory_label_formation()}
-        placeholder="ICM, GC…"
+        placeholder={m.directory_formation_placeholder()}
+        error={draftIssues.formation ? m.directory_issue_formation() : undefined}
         bind:value={draft.formation}
       />
     </div>
@@ -373,6 +411,10 @@
     <Button variant="ghost" onclick={() => (draft = { ...emptyFilters(), query: filters.query })}>
       {m.directory_filters_reset()}
     </Button>
-    <Button variant="primary" onclick={applySheet}>{m.directory_filters_apply()}</Button>
+    <Button
+      variant="primary"
+      disabled={Object.keys(draftIssues).length > 0 || queryIssue}
+      onclick={applySheet}>{m.directory_filters_apply()}</Button
+    >
   {/snippet}
 </Modal>

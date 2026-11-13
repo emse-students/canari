@@ -347,22 +347,36 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
 
 /** The directory's campus and post filters (WP3) must reach the query, and count as a filter. */
 describe('UsersService.directory campus and post filters', () => {
-  function makeService() {
+  function makeService(hidden: string[] = []) {
     const where: Array<[string, unknown]> = [];
+    const orders: string[] = [];
     const qb: Record<string, jest.Mock> = {};
-    for (const m of ['select', 'orderBy', 'skip', 'take', 'andWhere', 'where', 'leftJoin']) {
+    for (const m of [
+      'select',
+      'orderBy',
+      'addOrderBy',
+      'skip',
+      'take',
+      'andWhere',
+      'where',
+      'leftJoin',
+    ]) {
       qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
         if (m === 'andWhere') where.push([sql as string, params]);
+        if (m === 'orderBy' || m === 'addOrderBy') orders.push(`${m}:${sql}`);
         return qb;
       });
     }
     qb.getCount = jest.fn().mockResolvedValue(0);
     qb.getMany = jest.fn().mockResolvedValue([]);
+    const blocks = {
+      invisibleUserIdsFor: jest.fn().mockResolvedValue(hidden),
+    } as unknown as UserBlocksService;
     const userRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(qb),
     } as unknown as Repository<User>;
-    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, where };
+    const service = new UsersService(userRepository, {} as DataSource, blocks);
+    return { service, where, orders, blocks };
   }
 
   it('accepts a campus alone as a filter and applies it', async () => {
@@ -378,30 +392,26 @@ describe('UsersService.directory campus and post filters', () => {
   });
 
   it('hides accounts blocked in either direction, as the New chat search does', async () => {
-    const where: Array<[string, unknown]> = [];
-    const qb: Record<string, jest.Mock> = {};
-    for (const m of ['select', 'orderBy', 'skip', 'take', 'andWhere', 'where', 'leftJoin']) {
-      qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
-        if (m === 'andWhere') where.push([sql as string, params]);
-        return qb;
-      });
-    }
-    qb.getCount = jest.fn().mockResolvedValue(0);
-    qb.getMany = jest.fn().mockResolvedValue([]);
-    const blocks = {
-      invisibleUserIdsFor: jest.fn().mockResolvedValue(['blocked-1', 'blocker-2']),
-    } as unknown as UserBlocksService;
-    const service = new UsersService(
-      { createQueryBuilder: jest.fn().mockReturnValue(qb) } as unknown as Repository<User>,
-      {} as DataSource,
-      blocks
-    );
+    const { service, where, blocks } = makeService(['blocked-1', 'blocker-2']);
     await service.directory({ campus: 'gardanne' }, 'me');
     expect(blocks.invisibleUserIdsFor).toHaveBeenCalledWith('me');
     expect(where).toContainEqual([
       'user.id NOT IN (:...blockedIds)',
       { blockedIds: ['blocked-1', 'blocker-2'] },
     ]);
+  });
+
+  it('adds no block clause when the reader has no block either way', async () => {
+    const { service, where, blocks } = makeService([]);
+    await service.directory({ campus: 'gardanne' }, 'me');
+    expect(blocks.invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(where.some(([sql]) => sql.includes('blockedIds'))).toBe(false);
+  });
+
+  it('breaks ties on the id after the name order, so offset paging is stable', async () => {
+    const { service, orders } = makeService();
+    await service.directory({ campus: 'gardanne' });
+    expect(orders).toEqual(['orderBy:user.displayName', 'addOrderBy:user.id']);
   });
 });
 
