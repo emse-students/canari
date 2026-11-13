@@ -436,10 +436,46 @@ most.
 `offer_out=1 answer_in=1` on its record), the ledger end to end, and a TURN relay on both legs.
 **What it does not:** video and the PLI relay, Cloudflare's TURN (production's provider; the
 School drops the UDP the SFU needs to reach it, [feasibility](../infrastructure/realtime-media-feasibility.md)),
-a phone, more than two participants. First measured on a Windows dev box (Chrome 156, no TURN,
+a phone, more than two participants (the mesh scenario below covers three, peer to peer). First measured on a Windows dev box (Chrome 156, no TURN,
 2026-11-01): PASS, ~250 frames each way decrypted, 0 failed. **First CI run (#2878, 2026-11-01):
 PASS** - `relay/udp->relay` on both browsers through coturn, 253 and 255 frames decrypted, 0
 failed, both sessions `client-close` with `connected_ms` 5758 and 5557.
+
+### The mesh scenario (WP-GC2, 2026-11-13)
+
+`run.mjs --scenario mesh` is the group call's proof, run by the same job as a second step on the
+same coturn (`if: !cancelled()`, so a red pair never hides the mesh's verdict). `--scenario pair`
+is the default and is the run above, unchanged.
+
+| Part | What it is |
+| --- | --- |
+| The room | ONE p2p room whose tokens sign `max_seats: 3`, three headless Chromes on `group-page.ts`, each `Join { mode: "p2p" }` |
+| The legs | one peer connection per other participant, made on that pair's `PeerReady { initiator, peer }` (the earlier seat offers); every frame sent carries `to`, every frame received is routed by the `from` the relay stamped; relay-only with `--turn` |
+| The keys | one key per SENDER: the app's `deriveGroupCallKeys` (`utils/callKeys.ts`, label `mls-webrtc-media-group-v1`) over a stand-in exporter (HKDF of a secret the driver gives all three pages - the MLS exporter is out of scope); the worker keyed with `setGroupKeys` before the first track |
+| The transforms | assigned in the task that created the sender and its transceiver; the SENDER transform names its own user, the RECEIVER transform the remote user (`options.peer`), so the worker opens that leg with that sender's key and no other |
+
+**It passes only on proof that EVERY ONE of the 6 directed legs** opened at least `--frames` (250)
+frames under that sender's key - read from the worker's `byPeer` report, which counts each
+participant's frames apart (`opened`, `failed`, `droppedNoKey`) because a total would hide one dead
+leg behind the others - with 0 frames that failed to open and 0 dropped for want of a key, at least
+as many packets on that leg's peer connection, and, under TURN, a `relay` -> `relay` pair on every
+leg. Then three more proofs, in order:
+
+- **The cap is the server's.** A FOURTH user, holding a valid access token and a valid room token
+  for the same room, joins over a bare socket while the three hold their seats and must be answered
+  `Refused { room-full }`.
+- **The verdict is not vacuous (the negative).** One receiver's key for one sender is replaced with
+  random bytes (`addReceiveKey`). That leg must then fail the very predicate the positive proof used
+  - its frames failing to open - while the five other legs keep passing it, and after the leg's
+  FIRST failed frame not one more of its frames may open: a receiver transform handles its frames one
+  at a time, so every later frame met the new key. A frame opening under a random key would mean the
+  key is not what opens the leg.
+- **The record.** Three `session start ... mode=p2p seats=3`, and after the hangups three
+  `session end ... mode=p2p disposition=client-close` lines whose `paired_ms` is a number.
+
+The same no-clock rule holds; a `PeerLeft` or `PeerAway` before the driver says the call is ending is
+a fault. First measured on a Windows dev box (Chrome, no TURN, 2026-11-13): PASS, 293 to 302 frames
+opened per leg, the fourth user `room-full`, the negative leg 269 frames refused.
 
 **The readiness of coturn is read from the KERNEL** (`ss -lun` shows its UDP socket on the
 runner's address), never from a line of coturn's log: the first two runs waited for good on that

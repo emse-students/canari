@@ -810,6 +810,20 @@ describe('encryption.worker - one key per sender in a group call (WP-GC1, 2026-1
     expect(await receive('bob', [await sealedBy(CAROL, plain)])).toEqual([]);
   });
 
+  it('reports each sender apart - opened, failed and keyless frames per participant', async () => {
+    // Names no other test uses: the worker is loaded once, so its counts span the whole file.
+    await keyAsAlice([['frank', BOB]]);
+    const plain = opus();
+    await receive('frank', [await sealedBy(BOB, plain), await sealedBy(BOB, plain)]);
+    await receive('frank', [await sealedBy(CAROL, plain)]);
+    await receive('gina', [await sealedBy(CAROL, plain)]);
+    await post({ type: 'report', tag: 'per-peer' });
+    const report = posted.find((m) => m.type === 'report' && m.tag === 'per-peer');
+    const byPeer = report?.byPeer as Record<string, unknown>;
+    expect(byPeer.frank).toEqual({ decrypted: 2, failed: 1, droppedNoKey: 0 });
+    expect(byPeer.gina).toEqual({ decrypted: 0, failed: 0, droppedNoKey: 1 });
+  });
+
   it('never opens a frame sealed with its own send key - no reflection in a mesh either', async () => {
     await keyAsAlice();
     expect(await receive('bob', [await sealedBy(ALICE, opus())])).toEqual([]);

@@ -401,7 +401,7 @@ jobs:
           if has '^apps/call-service/' || \
              has '^tools/headless-chrome/' || \
              has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
-             has '^frontend/src/lib/utils/(callAudio|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
+             has '^frontend/src/lib/utils/(callAudio|callKeys|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
              has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
             echo "call_e2e=true" >> "$GITHUB_OUTPUT"
           else
@@ -1489,7 +1489,7 @@ jobs:
   # process exiting); `timeout-minutes` is the only bound, for a run in which nothing happens at all.
   # =================================================================================================
   test-call-service-e2e:
-    name: Call Service E2E (two browsers through the SFU and coturn)
+    name: Call Service E2E (the SFU pair and the p2p mesh, through coturn)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-call-e2e == 'true' }}
     runs-on: ubuntu-24.04
@@ -1548,6 +1548,16 @@ jobs:
       - name: Two browsers call each other through the SFU, encrypted
         run: |
           bun apps/call-service/e2e/run.mjs \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      # The group call's mesh (WP-GC2), on the same coturn: three browsers, one peer connection per
+      # pair, one key per sender (WP-GC1); every directed leg proven, a fourth user refused past the
+      # signed cap, and a wrong key shown to fail its leg. `!cancelled()`: it runs even when the pair
+      # failed, so one red step never hides the other scenario's verdict.
+      - name: Three browsers in a p2p mesh, one key per sender
+        if: ${{ !cancelled() }}
+        run: |
+          bun apps/call-service/e2e/run.mjs --scenario mesh \
             --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
 
       # `always()`, not `failure()`: a run CANCELLED by the job's timeout is the one whose relay's
