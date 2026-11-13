@@ -1,16 +1,17 @@
 // @vitest-environment happy-dom
 /**
- * MINESWEEPER MODERATION IN THE LEADERBOARD (user, 2026-10-02): a global admin can remove a score and
+ * MINESWEEPER MODERATION IN THE ONE LEADERBOARD, the Games page (user, 2026-10-02; moved from the game's sheet, owner, 2026-11-13): a global admin can remove a score and
  * ban a player, and lift a ban. Pinned: the controls exist for an admin and for nobody else, every
  * destructive one asks first and does nothing when refused, a done action refreshes the lists, and a
  * failure is SAID on the tab instead of swallowed.
  */
-import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
-import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 const api = vi.hoisted(() => ({
   leaderboard: vi.fn(),
+  me: vi.fn(),
+  promos: vi.fn(),
   bans: vi.fn(),
   remove: vi.fn(),
   ban: vi.fn(),
@@ -19,18 +20,19 @@ const api = vi.hoisted(() => ({
 const admin = vi.hoisted(() => ({ value: true }));
 const confirmAnswer = vi.hoisted(() => ({ value: true, asked: [] as string[] }));
 
-vi.mock('$lib/minesweeper/api', () => ({
+vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   fetchMinesweeperLeaderboard: api.leaderboard,
+  fetchMinesweeperMe: api.me,
+  fetchMinesweeperPromos: api.promos,
   fetchMinesweeperBans: api.bans,
-  fetchMinesweeperStats: vi.fn(),
   removeMinesweeperScore: api.remove,
   banMinesweeperUser: api.ban,
   unbanMinesweeperUser: api.unban,
-  startMinesweeperChallenge: vi.fn(),
-  submitMinesweeperChallenge: vi.fn(),
   formatDurationMs: (ms: number) => `${ms}ms`,
-  MinesweeperBannedError: class extends Error {},
 }));
+vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u-1' }));
+vi.mock('$lib/components/settings/MinesweeperModal.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/stores/userState.svelte', () => ({ globalAdminState: () => admin.value }));
 vi.mock('$lib/stores/confirm.svelte', () => ({
   showConfirm: async (message: string) => {
@@ -39,9 +41,7 @@ vi.mock('$lib/stores/confirm.svelte', () => ({
   },
 }));
 
-import MinesweeperModal from './MinesweeperModal.svelte';
-
-afterAll(adoptTransitionAnimations());
+import Page from './+page.svelte';
 
 const mounted: (() => void)[] = [];
 const ENTRIES = [
@@ -80,6 +80,8 @@ beforeEach(() => {
   confirmAnswer.asked = [];
   api.leaderboard.mockResolvedValue({ entries: ENTRIES, total: ENTRIES.length });
   api.bans.mockResolvedValue(BANS);
+  api.me.mockResolvedValue({ personalBestMs: null, rank: null });
+  api.promos.mockResolvedValue({ promos: [], mine: null });
   for (const fn of [api.remove, api.ban, api.unban]) fn.mockReset().mockResolvedValue(undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
@@ -90,18 +92,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Opens the modal, presses the floating leaderboard button and lets the lists load. */
+/** Mounts the page and lets the ranking and the bans load. */
 async function openLeaderboard() {
-  const app = mount(MinesweeperModal, {
-    target: document.body,
-    props: { open: true, onClose: () => {} },
-  });
+  const app = mount(Page, { target: document.body });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
-  const opener = document.querySelector<HTMLButtonElement>('button[aria-label="Classement"]');
-  opener!.click();
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     await Promise.resolve();
     flushSync();
   }
@@ -118,7 +115,7 @@ const settle = async () => {
   }
 };
 
-describe('MinesweeperModal - moderation', () => {
+describe('Games page - moderation', () => {
   it('draws the controls for a global admin: a remove and a ban on every row, and the bans', async () => {
     await openLeaderboard();
     expect(button('Retirer ce score')).toHaveLength(2);
