@@ -1107,7 +1107,14 @@ that consumes them next.
   device list has one, when this device learned of it, a link to `/settings/security`, "Not me"
   (confirm, then `revokeNoticedDevice`; the toasts are kept) and "Got it". Durable per account
   (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the last 256 announced keys) until dismissed,
-  revoked or followed.
+  revoked or followed. **An alert goes with its device's revocation** (2026-11-12): opening `/notifications`
+  asks the server, per alerted device, whether it is revoked (`dropAlertsOfRevokedDevices` ->
+  `dropNoticesOfRevokedDevices`, `GET mls/devices/:userId/:deviceId/revoked`), and drops the alert of
+  every device the server says is - revoked from any device of the account. The fact is the
+  revocation row, never the device list: that list comes from published key packages, so an enrolled
+  device with none usable is absent from it, and reading that as a departure would hide the one
+  alert that can still revoke it. A failed read drops nothing; an account switched during the read
+  drops nothing.
 - **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
   SHOWN NOWHERE since 2026-10-30: `noteRefusedOwnDevices` only logs it, as an error (an anomaly),
   once per device per session, from the refusals this device remembers at registration and from each

@@ -709,6 +709,14 @@ const NOTABLE = [
   // and those lines are the entire reason the reports were written.
   /\[CRON\] reportStrandedDeviceMemberships: no pending membership older than /,
   /\[CRON\] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree/,
+  // EACH ITEM IS ACCUSED ONCE (`report_accusations`, migration 049, 2026-11-13): the items a report
+  // already accused are counted by ONE daily line per report (`daily summary - N ... already
+  // accused`), and an item that leaves a report is said once (`... no longer reported ...`). Both are
+  // LOG lines about the estate, never about a row; the accusations themselves (the WARN and ERROR
+  // spellings carrying a count) stay unmatched. `reportCommitLogHealth`'s own two are judged by
+  // `commitreport.mjs` with the rest of that report.
+  /\[CRON\] report(StrandedDeviceMemberships|SingleHolderGroups|StaleExternalJoinBases): daily summary - \d+ [^:]* already accused\b/,
+  /\[CRON\] report(StrandedDeviceMemberships|SingleHolderGroups|StaleExternalJoinBases): \d+ item\(s\) accused earlier are no longer reported \(healed, or gone with their group\) and leave the ledger: /,
   // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`) is not here: it is lifted out of every row's
   // window before anything is classified, and judged once per run (`commitreport.mjs`).
   // THE TURN METER'S HOURLY READING (#2187, `calls.service.ts`, `turn-usage-meter.service.ts`), same

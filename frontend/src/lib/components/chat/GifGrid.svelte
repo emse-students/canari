@@ -258,6 +258,7 @@
                   src={proxiedGifUrl(rendition.url)}
                   width={rendition.width}
                   height={rendition.height}
+                  bytes={rendition.bytes}
                   onLoad={frame.onLoad}
                 />
               {/snippet}

@@ -21,6 +21,7 @@
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from './apiRefusal';
 import { SegmentedMediaError, isWrittenByNewerClient } from '$lib/mediaSegmented';
 import { isTransportFailure } from './transportFailure';
+import { m } from '$lib/paraglide/messages';
 
 /** Wire-level marker kept as the message so existing logs stay greppable. */
 export const MEDIA_PURGED_MESSAGE = 'MEDIA_PURGED_BY_RETENTION';
@@ -202,7 +203,13 @@ export class MediaUploadError extends ApiRefusalError {
      * carries ({@link CHAT_REEL_OVER_BUDGET}) - a verdict for today, never retried (RC-13). Any other
      * 429 (an open-session limit, the edge) has no such code and stays transient.
      */
-    readonly overBudget = false
+    readonly overBudget = false,
+    /**
+     * media-service's OWN refusal for the member's daily bound on everything they upload, read
+     * from the `code` of its JSON body ({@link MEMBER_UPLOAD_OVER_BUDGET}) - a verdict for today
+     * too. Its status is a 422, which an app older than the code already fails for good.
+     */
+    readonly overDailyLimit = false
   ) {
     super(status, null, message);
     this.name = 'MediaUploadError';
@@ -227,7 +234,8 @@ export async function uploadRefusalFrom(
     `${what} (${res.status}${origin === 'edge' ? ', answered by the edge, not the app' : ''})${excerpt}`,
     origin,
     opts.sessionLost === true,
-    res.status === 429 && origin === 'gateway' && isOverBudgetBody(text)
+    res.status === 429 && origin === 'gateway' && isOverBudgetBody(text),
+    origin === 'gateway' && refusalCodeOf(text) === MEMBER_UPLOAD_OVER_BUDGET
   );
 }
 
@@ -237,18 +245,27 @@ export async function uploadRefusalFrom(
  */
 export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
 
-/** Whether an application JSON body carries the over-budget code. A body that is not JSON does not. */
-export function isOverBudgetBody(text: string): boolean {
+/**
+ * The `code` of media-service's 422 for the member's daily bound on everything they upload. The
+ * server's copy is `MEMBER_UPLOAD_OVER_BUDGET` in `apps/media-service/src/media/media.service.ts`.
+ */
+export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
+
+/** The `code` an application JSON body carries, or `null`: a body that is not JSON carries none. */
+function refusalCodeOf(text: string): string | null {
   try {
     const body: unknown = JSON.parse(text);
-    return (
-      typeof body === 'object' &&
-      body !== null &&
-      (body as { code?: unknown }).code === CHAT_REEL_OVER_BUDGET
-    );
+    if (typeof body !== 'object' || body === null) return null;
+    const code = (body as { code?: unknown }).code;
+    return typeof code === 'string' ? code : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Whether an application JSON body carries the over-budget code. A body that is not JSON does not. */
+export function isOverBudgetBody(text: string): boolean {
+  return refusalCodeOf(text) === CHAT_REEL_OVER_BUDGET;
 }
 
 /** The application's own statuses that say no to THIS upload and that no retry changes. */
@@ -270,18 +287,29 @@ const REFUSED_BY_THE_APP = [400, 403, 404, 422];
  *   that says the staged chunk session is gone (`sessionLost`): a new session mends that.
  *
  * - `over-budget`: media-service's own 429 carrying the daily `chat-reel` budget's code (RC-13).
+ * - `over-daily-limit`: its 422 carrying the code of the member's daily bound on every upload.
  *
  * Everything else - 401 (renewed once by `fetchUpload`), 408, 425, any other 429, 5xx, a deadline, a network
  * error - is `null`, retried with backoff.
  */
 export function uploadRefusalCause(
   err: unknown
-): 'too-large' | 'blocked' | 'refused' | 'over-budget' | null {
+): 'too-large' | 'blocked' | 'refused' | 'over-budget' | 'over-daily-limit' | null {
   if (!(err instanceof MediaUploadError)) return null;
   const { status } = err;
   if (status === 413) return 'too-large';
   if (err.overBudget) return 'over-budget';
+  if (err.overDailyLimit) return 'over-daily-limit';
   if (err.origin === 'edge') return status === 403 ? 'blocked' : null;
   if (err.sessionLost) return null;
   return REFUSED_BY_THE_APP.includes(status) ? 'refused' : null;
+}
+
+/**
+ * The member's sentence for an upload refused by the daily bound, or `null` for anything else: the
+ * ONE mapping of that refusal, read by the chat outbox and by every screen that publishes a file
+ * (`publishFailureMessage`), so the same answer is never worded twice.
+ */
+export function overDailyLimitSentence(err: unknown): string | null {
+  return uploadRefusalCause(err) === 'over-daily-limit' ? m.upload_over_daily_limit() : null;
 }

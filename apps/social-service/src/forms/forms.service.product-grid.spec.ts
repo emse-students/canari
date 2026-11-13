@@ -50,7 +50,8 @@ const gridItem = (productGrid: unknown = SINGLE_TIERED, over: Record<string, unk
   id: 'q-grid',
   label: 'Sweat capuche',
   type: 'product_grid',
-  required: true,
+  // The "Obligatoire" switch, off by default (owner, 2026-11-13).
+  required: false,
   productGrid,
   ...over,
 });
@@ -242,11 +243,6 @@ describe('FormsService - product grid: the save', () => {
     );
     expect(
       await refusalCode(
-        service.create(createInput({ items: [gridItem(SINGLE_TIERED, { required: false })] }))
-      )
-    ).toBe('PRODUCT_GRID_NOT_REQUIRED');
-    expect(
-      await refusalCode(
         service.create(
           createInput({
             items: [
@@ -310,7 +306,7 @@ describe('FormsService - product grid: the save', () => {
     });
     // A structural refusal names its question the same way.
     const missing = await service
-      .create(createInput({ items: [gridItem(SINGLE_TIERED, { id: 'q-other', required: false })] }))
+      .create(createInput({ items: [gridItem({ ...SINGLE_TIERED, rows: [] }, { id: 'q-other' })] }))
       .catch((error: unknown) => error);
     expect(((missing as BadRequestException).getResponse() as ProductGridRefusalBody).itemId).toBe(
       'q-other'
@@ -328,6 +324,63 @@ describe('FormsService - product grid: the save', () => {
         service.create(createInput({ isPublic: true, items: [gridItem(noGuestPrice)] }))
       )
     ).toBe('PRODUCT_GRID_GUEST_PRICE_MISSING');
+  });
+
+  it('stores each grid "Obligatoire" switch as an editor that draws it sent it', async () => {
+    const { service } = makeService();
+    const form: any = await service.create(
+      createInput({
+        gridRequiredSwitch: true,
+        items: [
+          gridItem(SINGLE_TIERED, { required: true }),
+          gridItem(SINGLE_TIERED, { id: 'q-2' }),
+        ],
+      })
+    );
+    expect(form.items.map((item: any) => item.required)).toEqual([true, false]);
+    expect(form).not.toHaveProperty('gridRequiredSwitch');
+  });
+
+  it('[LEGACY] an older editor sends required: true on every grid - a new grid is stored optional', async () => {
+    const { service } = makeService();
+    const form: any = await service.create(
+      createInput({ items: [gridItem(SINGLE_TIERED, { required: true })] })
+    );
+    expect(form.items[0].required).toBe(false);
+  });
+
+  it('[LEGACY] an older editor edit keeps each stored grid flag, both ways', async () => {
+    const stored = baseForm({
+      items: [
+        gridItem(SINGLE_TIERED, { required: true }),
+        gridItem(SINGLE_TIERED, { id: 'q-2', required: false }),
+      ],
+    });
+    const { service, formRepo } = makeService({ form: stored });
+    const sent = [
+      gridItem(SINGLE_TIERED, { required: true }),
+      gridItem(SINGLE_TIERED, { id: 'q-2', required: true }),
+      gridItem(SINGLE_TIERED, { id: 'q-3', required: true }),
+    ];
+    await service.update('f1', { items: sent } as any, 'u-owner', false);
+    const written = formRepo.save.mock.calls.at(-1)[0];
+    expect(written.items.map((item: any) => [item.id, item.required])).toEqual([
+      ['q-grid', true],
+      ['q-2', false],
+      ['q-3', false],
+    ]);
+  });
+
+  it('an edit from an editor that draws the switch turns a stored grid off', async () => {
+    const stored = baseForm({ items: [gridItem(SINGLE_TIERED, { required: true })] });
+    const { service, formRepo } = makeService({ form: stored });
+    await service.update(
+      'f1',
+      { gridRequiredSwitch: true, items: [gridItem(SINGLE_TIERED, { required: false })] } as any,
+      'u-owner',
+      false
+    );
+    expect(formRepo.save.mock.calls.at(-1)[0].items[0].required).toBe(false);
   });
 
   it('an edit that only switches payment off is judged against the stored grid', async () => {
@@ -476,10 +529,6 @@ describe('FormsService - product grid: what a submit charges', () => {
       [{ 'vert:m': 1.5 }, 'PRODUCT_GRID_QUANTITY_INVALID'],
       [{ 'vert:m': -2, 'noir:m': 3 }, 'PRODUCT_GRID_QUANTITY_INVALID'],
       [{ 'noir:xs': 1 }, 'PRODUCT_GRID_CELL_CLOSED'],
-      // The form's only grid left untouched: the ORDER is empty.
-      [undefined, 'PRODUCT_GRID_EMPTY'],
-      [{}, 'PRODUCT_GRID_EMPTY'],
-      [{ 'vert:m': 0 }, 'PRODUCT_GRID_EMPTY'],
     ];
     for (const [answer, code] of cases) {
       expect(await refusalCode(submit(service, { 'q-grid': answer }))).toBe(code);
@@ -534,22 +583,22 @@ describe('FormsService - product grid: what a submit charges', () => {
   });
 });
 
-describe('FormsService - product grid: the order is the form, across its grids', () => {
-  /** A second article: a jacket, one colour x two sizes, 50 EUR flat. */
+describe('FormsService - product grid: each grid has its own "Obligatoire" switch (owner, 2026-11-13)', () => {
+  /** A second article: a jacket, two colours x two sizes, 50 EUR flat. */
   const JACKET = hoodie({ mode: 'single', tiers: null, prices: { _all: { '*': 5000 } } });
   const jacketItem = (over: Record<string, unknown> = {}) =>
     gridItem(JACKET, { id: 'q-veste', label: 'Veste', ...over });
-  const twoGrids = (over: Record<string, unknown> = {}) =>
-    baseForm({ items: [gridItem(), jacketItem()], ...over });
+  const twoGrids = (over: Record<string, unknown> = {}, jacket: Record<string, unknown> = {}) =>
+    baseForm({ items: [gridItem(), jacketItem(jacket)], ...over });
   const submit = (service: FormsService, answers: Record<string, unknown>) =>
     service.submit('f1', { userId: 'u1', answers } as any);
 
   /** The refusal's whole body, read where a client reads it. */
-  async function refusalBody(promise: Promise<unknown>): Promise<ProductGridRefusalBody> {
+  async function refusalBody(promise: Promise<unknown>): Promise<Record<string, unknown>> {
     try {
       await promise;
     } catch (error) {
-      if (error instanceof HttpException) return error.getResponse() as ProductGridRefusalBody;
+      if (error instanceof HttpException) return error.getResponse() as Record<string, unknown>;
       throw error;
     }
     throw new Error('expected a refusal');
@@ -579,14 +628,43 @@ describe('FormsService - product grid: the order is the form, across its grids',
     expect(saved[0].answers).toEqual({ 'q-veste': { 'noir:m': 2 } });
   });
 
-  it('every grid empty: refused PRODUCT_GRID_EMPTY, naming no grid, before any row is written', async () => {
-    const { service, saved } = makeService({ form: twoGrids() });
-    const body = await refusalBody(submit(service, { 'q-grid': {}, 'q-veste': { 'vert:m': 0 } }));
-    expect(body.code).toBe('PRODUCT_GRID_EMPTY');
-    expect(body.itemId).toBeNull();
-    expect(await refusalCode(submit(service, {}))).toBe('PRODUCT_GRID_EMPTY');
+  it('every grid optional and empty: accepted with no article - no rule over the whole order', async () => {
+    const name = { id: 'q1', label: 'Nom', type: 'short_text', required: true };
+    const { service, saved } = makeService({
+      form: baseForm({ items: [name, gridItem(), jacketItem()] }),
+    });
+    await submit(service, { q1: 'Ada', 'q-grid': {}, 'q-veste': { 'vert:m': 0 } });
+    expect(saved[0].answers).toEqual({ q1: 'Ada' });
+    expect(saved[0].lines).toBeNull();
+    expect(saved[0].paymentStatus).toBe('free');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('every grid optional and empty on a form with a base price: the base price alone is charged', async () => {
+    const { service } = makeService({ form: twoGrids({ basePrice: 500 }) });
+    await submit(service, {});
+    expect(chargedCents()).toBe(500);
+  });
+
+  it('a REQUIRED grid left empty is refused on ITS card (FORM_ANSWER_MISSING, its id), before any row', async () => {
+    const { service, saved } = makeService({ form: twoGrids({}, { required: true }) });
+    for (const jacket of [undefined, {}, { 'vert:m': 0 }]) {
+      // An order in ANOTHER grid does not rescue it: the rule is the grid's own.
+      const answers: Record<string, unknown> = { 'q-grid': { 'vert:m': 1 } };
+      if (jacket !== undefined) answers['q-veste'] = jacket;
+      const body = await refusalBody(submit(service, answers));
+      expect(body.code).toBe('FORM_ANSWER_MISSING');
+      expect(body.itemId).toBe('q-veste');
+    }
     expect(saved).toHaveLength(0);
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('a REQUIRED grid holding one unit is answered', async () => {
+    const { service, saved } = makeService({ form: twoGrids({}, { required: true }) });
+    await submit(service, { 'q-veste': { 'vert:m': 1 } });
+    expect(chargedCents()).toBe(5000);
+    expect(saved[0].answers).toEqual({ 'q-veste': { 'vert:m': 1 } });
   });
 
   it('a forged cell in an untouched-looking grid is still refused, coded', async () => {
@@ -596,50 +674,52 @@ describe('FormsService - product grid: the order is the form, across its grids',
     ).toBe('PRODUCT_GRID_CELL_CLOSED');
   });
 
-  it('a visible grid demands an order even when the form also has a base price', async () => {
-    const { service, saved } = makeService({ form: twoGrids({ basePrice: 500 }) });
-    expect(await refusalCode(submit(service, {}))).toBe('PRODUCT_GRID_EMPTY');
-    expect(saved).toHaveLength(0);
-    expect(post).not.toHaveBeenCalled();
-  });
-
-  it('a hidden grid neither counts toward the order nor is demanded', async () => {
-    const hiddenJacket = jacketItem({ showIf: { promo: { values: [2020] } } });
-    const form = baseForm({ items: [gridItem(), hiddenJacket] });
-    // Its units do not rescue an empty visible order...
-    const a = makeService({ form, facts: COTISANT });
-    expect(await refusalCode(submit(a.service, { 'q-veste': { 'vert:m': 1 } }))).toBe(
-      'PRODUCT_GRID_EMPTY'
-    );
-    expect(a.saved).toHaveLength(0);
-    // ...and its absence blocks nothing when the visible grid holds the order.
-    const b = makeService({ form, facts: COTISANT });
-    await submit(b.service, { 'q-grid': { 'vert:m': 1 } });
-    expect(b.saved[0].answers).toEqual({ 'q-grid': { 'vert:m': 1 } });
-  });
-
-  it('a form whose every grid is hidden from this person asks no order of them', async () => {
-    const name = { id: 'q1', label: 'Nom', type: 'short_text', required: true };
-    const hidden = { showIf: { promo: { values: [2020] } } };
+  it('a REQUIRED grid hidden by an audience condition is never demanded', async () => {
+    const hiddenJacket = jacketItem({ required: true, showIf: { promo: { values: [2020] } } });
     const { service, saved } = makeService({
-      form: baseForm({ items: [name, gridItem(SINGLE_TIERED, hidden), jacketItem(hidden)] }),
+      form: baseForm({ items: [gridItem(), hiddenJacket] }),
       facts: COTISANT,
     });
-    await submit(service, { q1: 'Ada' });
-    expect(saved[0].answers).toEqual({ q1: 'Ada' });
+    await submit(service, {});
+    expect(saved[0].answers).toEqual({});
     expect(saved[0].lines).toBeNull();
   });
 
-  it('a guest orders from one grid of two, and an empty guest order is refused', async () => {
-    const { service, saved } = makeService({ form: twoGrids({ isPublic: true }) });
-    const guestSubmit = (answers: Record<string, unknown>) =>
+  it('a REQUIRED grid hidden by an answer condition is never demanded, and demanded once shown', async () => {
+    const wantsJacket = {
+      id: 'q-want',
+      label: 'Une veste ?',
+      type: 'single_choice',
+      required: false,
+      options: [{ id: 'o-oui', label: 'Oui', priceModifier: 0 }],
+    };
+    const jacket = jacketItem({
+      required: true,
+      showIf: { answer: { questionId: 'q-want', optionIds: ['o-oui'] } },
+    });
+    const a = makeService({ form: baseForm({ items: [wantsJacket, jacket] }) });
+    await submit(a.service, {});
+    expect(a.saved).toHaveLength(1);
+    const b = makeService({ form: baseForm({ items: [wantsJacket, jacket] }) });
+    const body = await refusalBody(submit(b.service, { 'q-want': 'o-oui' }));
+    expect(body.code).toBe('FORM_ANSWER_MISSING');
+    expect(body.itemId).toBe('q-veste');
+  });
+
+  it('a guest: a required grid left empty is refused on its card, optional grids may stay empty', async () => {
+    const guestSubmit = (service: FormsService, answers: Record<string, unknown>) =>
       service.submit('f1', { answers } as any, 'guest', '198.51.100.7');
-    expect(await refusalCode(guestSubmit({ 'q-grid': {} }))).toBe('PRODUCT_GRID_EMPTY');
-    expect(saved).toHaveLength(0);
-    await guestSubmit({ 'q-veste': { 'vert:xs': 1 } });
+    const required = makeService({ form: twoGrids({ isPublic: true }, { required: true }) });
+    const body = await refusalBody(guestSubmit(required.service, { 'q-grid': { 'vert:m': 1 } }));
+    expect(body.code).toBe('FORM_ANSWER_MISSING');
+    expect(body.itemId).toBe('q-veste');
+    expect(required.saved).toHaveLength(0);
+
+    const optional = makeService({ form: twoGrids({ isPublic: true }) });
+    await guestSubmit(optional.service, { 'q-veste': { 'vert:xs': 1 } });
     expect(chargedCents()).toBe(5000);
-    expect(saved[0].userId).toBeNull();
-    expect(saved[0].answers).toEqual({ 'q-veste': { 'vert:xs': 1 } });
+    expect(optional.saved[0].userId).toBeNull();
+    expect(optional.saved[0].answers).toEqual({ 'q-veste': { 'vert:xs': 1 } });
   });
 });
 

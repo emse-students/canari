@@ -182,3 +182,29 @@ describe('a page the showcase does not show is not described to a visitor', () =
     expect(JSON.stringify(meta)).not.toContain('Gala');
   });
 });
+
+describe('a shared form card is read from the public route', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  it('asks /api/public/forms, never the member route that answers 401 to the renderer', async () => {
+    fetchJson.mockResolvedValue({
+      title: 'Soiree BDE',
+      description: 'Inscription',
+      imageUrl: null,
+    });
+    const { meta } = await resolveServerSeo('/forms/3f2b9c14-7c5e-4a90-9d1f-0b5f6a2e8c31');
+    expect(String(fetchJson.mock.calls[0][0])).toBe(
+      'http://social/api/public/forms/3f2b9c14-7c5e-4a90-9d1f-0b5f6a2e8c31'
+    );
+    expect(meta.title).toBe('Soiree BDE');
+  });
+
+  it('a form that is not public (404, null) keeps the generic card', async () => {
+    fetchJson.mockResolvedValue(null);
+    const { meta, degraded } = await resolveServerSeo(
+      '/forms/3f2b9c14-7c5e-4a90-9d1f-0b5f6a2e8c32'
+    );
+    expect(degraded).toBe(false);
+    expect(meta.title).not.toBe('Soiree BDE');
+  });
+});

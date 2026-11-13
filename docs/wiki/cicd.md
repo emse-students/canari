@@ -1949,6 +1949,17 @@ the same defect wearing a different hat - two toolchains put two cryptos back in
 
 ## Dependency updates, and the auto-merge that ships them
 
+**A third-party action is named by a commit, with its version beside it** (`uses: owner/action@<40 hex> # v2.2.0`).
+A tag is a name its publisher may move, and a step runs with the job's token and secrets; a commit
+id names one tree. Actions of GitHub's own organisations (`actions/`, `github/`) keep their tag, and
+a local reference needs no pin. Dependabot's `github-actions` ecosystem moves the commit and the
+comment together, so the pins are updated by the same pull requests as before - for every directory
+its entry names: `/` is the workflows, and `/.github/actions/*` the composite actions, whose pins
+would otherwise stay frozen.
+`.github/scripts/tests/action-pins.test.mjs` fails `make test-ci-scripts` on a third-party
+reference that is a tag, a branch, a short commit, or a commit with no version comment, and on a
+file holding a pin that no directory of that Dependabot entry reads.
+
 Dependabot opens the pull requests (`.github/dependabot.yml`); **from there they are the same as
 anybody's**. `arm-auto-merge.yml` arms GitHub's own auto-merge on every pull request in the
 repository, and GitHub squash-merges each one the moment `CI passed` goes green. The one thing a

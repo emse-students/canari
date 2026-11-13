@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)), SentFrameReceipt (one row per application frame a sender named by its `messageId`, [below](#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -30,7 +30,7 @@ The chat-delivery-service is the MLS API layer. It:
 | Interval | Task |
 |---|---|
 | 1h | Detect stale devices -> reset to pending |
-| 1h | Clean expired queued messages |
+| 1h | Clean expired queued messages, and the sent-frame receipts of the same age |
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
 | 1h | Report stranded pending device memberships (observation only, deletes nothing) |
@@ -39,6 +39,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge stale push tokens (> 90 days) |
 | 24h | Purge stale pending invitations (> 30 days) |
 | 24h | Report orphan devices (observation only, deletes nothing) |
+| 24h | Count what the hourly health reports already accused, one LOG line per report ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)) |
 
 ### One way a frame is delivered
 
@@ -437,6 +438,103 @@ than inferring it. Two things the gate must not do, both asserted in `messaging.
 The discriminator was in the row the server already reads to address the recipients: this is the
 rule about never learning by failing what a fact could have told you, applied to a seam that held
 the fact and forwarded the frame anyway.
+
+### A message sent twice under one id is stored once (migration 048, 2026-11-13)
+
+**The defect.** A native background send - the notification quick reply, an outbox drain while the
+app is shut (`sendQueuedMessagePush` in `CanariFirebaseMessagingService.kt`, its twin in
+`canari_push.mm`) - POSTs `mls/push/send` with a 10 s `readTimeout`. An answer that arrives later
+is read as a failure, the entry stays in `outbox_pending.ndjson`, and the next drain sends the SAME
+`messageId` again. Each send re-encrypts, so the second copy is a fresh MLS ciphertext: until this
+change the server queued it like a new message, every receiver decrypted it, deduplicated it on the
+id inside, and kept one of two server times - which one decided where the message was drawn
+([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+
+**What the server knew and did not use.** The 2026-11-12 triage wrote that the server never sees a
+`messageId`. True of the foreground route (`POST mls/send` carries none), false of the native one:
+both native senders have always put `messageId` in the clear JSON beside the ciphertext, and the
+route logged it and dropped it.
+
+**The mechanism.** `sendMessage` takes an optional `messageId` (validated by `readSentMessageId`:
+1-128 of `[A-Za-z0-9_-]`, anything else is a typed `400 message_id_invalid`, never read as absent).
+For an application frame naming one, `enqueueForLiveGroup` inserts
+`(groupId, senderId, senderDeviceId, messageId, receivedAt, protoSha256)` into `dm_sent_frame_receipt` in the
+SAME transaction that queues the copies, after the group's liveness check and before any row
+(`claimSentFrameReceipt`, `utils/sent-frame-receipt.ts`). `ON CONFLICT DO NOTHING` on the primary
+key is the whole mechanism:
+
+- a repeat finds the row: the transaction throws `FrameAlreadyReceived` (a type, caught by type),
+  writes nothing, and `sendMessage` answers `queued: 0` with the FIRST copy's `receivedAt`. The
+  native sender marks the entry sent with the receive time every receiver already holds. What else
+  it does depends on whether the first send FINISHED (below);
+- two concurrent sends of one id serialise on the key: the second waits for the first transaction,
+  then finds its committed row, or inserts its own if the first rolled back;
+- a first send REFUSED inside the transaction (a deleted group, an evicted seat) leaves no receipt,
+  so its retry is queued.
+
+Keyed on the device as well as the author: the same id from another device of the same person is
+not a repeat. The authenticated caller is the `senderId` when there is one. Logged at warn as
+`REPEATED_MESSAGE_ID`, with the first receive time and the gap: a repeat is the visible end of an
+answer the sender lost upstream, and that line is the count the triage asked for.
+
+**A first send that died between its commit and its delivery is finished by its repeat.** The
+receipt and the queued copies commit together, but the history append, the live delivery and the push
+come after that commit; a process killed in between leaves the copies queued and nothing else done.
+So the receipt carries `settled`, set once those steps ran (`markSentFrameSettled`), and
+`protoSha256`, the SHA-256 of the first copy's ciphertext. A repeat of a SETTLED receipt is answered
+alone - no row, no append, no push.
+
+**`settled = false` means "not finished yet", never "the first send died"** - a repeat arriving
+while a slow first send is still in its delivery steps sees the same row. The proof that the first send
+is GONE is a PostgreSQL session advisory lock (`takeSentFrameLock`), keyed on the first 8 bytes of a
+SHA-256 over `group|sender|device|messageId` and held by every named send from before its claim until
+after its settlement, on ONE dedicated connection (a query runner held for the phase: a session lock
+taken through the pool could be released on another connection). A repeat tries the same lock:
+
+- it CANNOT take it - the first send is alive. It finishes nothing: a committed receipt is answered as
+  a plain repeat (`REPEATED_MESSAGE_ID`); none committed yet is `503 send_in_flight`
+  (`SEND_IN_FLIGHT` at warn), and the sender keeps the message and retries;
+- it TAKES it and the receipt is unsettled - the session that wrote it ended, and PostgreSQL ended its
+  lock with it. No clock: the process death IS the release. That repeat finishes the first copy
+  (`finishFirstCopy`).
+
+The lock is released in a `finally`; an unlock that fails destroys the connection instead of handing
+it back to the pool (`SENT_FRAME_UNLOCK_FAILED` at error), which ends the session and its lock. The
+finish:
+
+- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count). A crash
+  after that take and before the steps loses the push and the history entry; the queued copies
+  survive it and go out on each device's next pull;
+- delivers and pushes the copies STILL QUEUED: the group's rows from that device dated at the first
+  copy's instant whose ciphertext hashes to `protoSha256` (another frame received at the same instant
+  is not touched); a copy already pulled and acknowledged is gone, and nothing is done for it;
+- appends to `history:{groupId}` only when no entry from that device carries the first copy's
+  `timestamp` and a `content` hashing to `protoSha256` (`historyHoldsFirstCopy`, an `XRANGE` from the
+  first copy's instant - an append comes after its receive time), with the first copy's own
+  ciphertext when a queued row still holds it.
+
+It logs `REPEAT_FINISHED_FIRST_COPY` at warn with what it found. A crash in the MIDDLE of a fan-out
+(some devices pushed, the rest not) is finished the same way, so the devices pushed before the crash
+are pushed once more - the queued row, the only copy a device decrypts, stays one.
+
+**Two consequences, written down.** A frame sealed beyond the past-epoch window is REPORTED
+(`STALE_EPOCH_FRAME`), not refused, so it still claims its receipt: a repeat that re-sealed the same
+message at the group's current epoch is then answered as a repeat, and the members at that epoch keep
+only the stale copy they cannot open. That is the stale-epoch report's measurement to settle, not
+this one's. And `RECEIPT_VANISHED` (below) can let ONE duplicate through: its 503 makes the sender
+insert afresh, behind a receipt deleted by the retention sweep or an erasure.
+
+**Bounded.** Rows older than the retention window go with the hourly queue sweep
+(`cleanupExpiredQueuedMessages`) - past it there is no queued copy left to duplicate. The table is in
+`GROUP_OWNED_TABLES` (it goes with the group) and the account erasure deletes the sender's rows. A
+`RECEIPT_VANISHED` error (a conflict whose row a sweep deleted before it was read back) answers 503,
+so the sender keeps the frame and inserts afresh.
+
+**What is not covered yet.** The foreground route accepts `messageId` (`CLIENT_SEND_FIELDS`), but no
+foreground client sends it: a store build reaches phones before production's server deploys, and an
+older server refuses an unknown field (`send_field_refused`). So an orphan the app ADOPTS from the
+native mirror (`adoptOrphanedMirrorEntries`) and resends through the foreground flusher can still be
+queued a second time - [backlog](../backlog.d/p3-the-foreground-send-does-not-name-its-message-id.md).
 
 ### Who a frame is queued for, and who owns the gateway's routing set
 
@@ -1061,7 +1159,9 @@ Welcome actually queued for this device AND this group**.
     been outstanding.
 
   Both halves name the oldest `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because
-  a count cannot be chased and a device id can.
+  a count cannot be chased and a device id can. Since 2026-11-13 they name only the devices no
+  earlier run accused with the same set of seats ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13));
+  the partition LOG line above is still printed every run, because it is a measurement.
 
 **THE SKIP NOW NAMES ITS OWN CAUSE, IN THE INVITER'S LOG (2026-10-04).** `add_members_bulk` returns
 `skipped: { index, reason }[]` and `reason` is `SkippedKeyPackageReason` (`mls-core/src/lib.rs`),
@@ -1124,8 +1224,9 @@ and that it is one grouped query - a mocked repository cannot execute the SQL it
   and the constant's doc says what to compare it against. The 12-commits-in-2h14 phone of the same
   incident stays under it on purpose.
 - **Hole.** ONE query (window `LEAD` over the log, `GROUP BY` group, `HAVING BOOL_OR(gap)`) for any
-  epoch in `[min(baseEpoch), activeEpoch - 1]` with no row, ERROR, one line, newest hole first so a
-  new one is not buried behind the known permanent ones. The floor is the oldest RETAINED commit,
+  epoch in `[min(baseEpoch), activeEpoch - 1]` with no row, ERROR, one line, newest hole first, and
+  only for the holes no earlier run accused in the same state ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)) -
+  before 2026-11-13 the eleven permanent holes of 2026-08-29..31 were re-printed at ERROR every hour. The floor is the oldest RETAINED commit,
   because `pruneExpiredCommitLog` trims from the bottom and a trimmed floor is not a hole (the same
   distinction `getCommitsSince` makes with `belowFloor`/`gapAt`). Unlike `getCommitsSince`, which only
   names a hole when a lagging device asks across it, this names it the hour it exists.
@@ -1139,6 +1240,63 @@ and that it is one grouped query - a mocked repository cannot execute the SQL it
   incident class, frames emitted between a device's own commit and its acceptance, is the client's
   `epochSendBarrier` and the server has no fact distinguishing those frames. So the evidence for
   both is the ERROR line plus this report's rate line (the churn that makes them fire).
+
+### Each item is accused once (`report_accusations`, migration 049, 2026-11-13)
+
+**Why.** The hourly reports name PERMANENT states. The production sweep of 2026-11-13 found
+`reportCommitLogHealth` printing `11 group(s) have a HOLE` at ERROR every hour (every hole dated
+2026-08-29..31), `reportSingleHolderGroups` `2 conversation(s) have NO holder` at ERROR (both closed
+since 2026-10-14, at epoch 1) and 12-13 single-holder conversations at WARN, and
+`reportStrandedDeviceMemberships` 11 devices at WARN - 24 identical lines a day each. An ERROR
+repeated hourly about a state that cannot change is the line a reader learns to skip, so the NEXT
+real hole would have been the twelfth name in it.
+
+**What a report prints now.** Each of the four reports below hands every item it found to
+`settleAccusations` (`utils/report-accusations.ts`) with a FINGERPRINT of the state that makes it
+accusable, and prints at its level (ERROR or WARN, unchanged) only the items no earlier run accused in
+that exact state, with the evidence the line always carried plus `(not accused before in this state;
+N ... accused earlier, unchanged)`. An item that changes state is accused again; an item the report
+stops naming leaves the ledger and is logged ONCE at LOG (`... no longer reported (healed, or gone with
+their group) and leave the ledger: <id>(<state>, accused <ISO>)`). Every LOG line that is a measurement
+(the stranded partition, the commit-rate distribution, the all-clear lines) is unchanged.
+
+| Report (`report` column) | Item | State accused - and what is deliberately NOT in it |
+|---|---|---|
+| `reportCommitLogHealth` holes (`commit_log_hole`) | group | `first hole <epoch>, <n> missing` - not the head or the floor, which move with every commit and prune while the hole stands still; a hole that grows is accused again |
+| `reportSingleHolderGroups` (`holders`) | group | `holders 0` or `holders 1` - not the epoch; a conversation that loses its last holder goes 1 -> 0 and is accused again, at ERROR |
+| `reportStrandedDeviceMemberships` (`stranded_device`) | device | its stranded seats, sorted, each `groupId:never` or `groupId:kicked` - a device whose seats change (one more, one fewer, never-added turned kicked) is accused again with every seat |
+| `reportStaleExternalJoinBases` (`stale_base`) | group | `base <base>/<head>, head commit recorded` (or `absent`) - not the age, which grows by itself |
+
+**The daily line.** `reportKnownAccusations` (24 h, and once in `runInitialSweep` after the reports)
+prints ONE LOG line per report, zero included: `<report>: daily summary - N <items> already accused,
+unchanged since <newest accusation> (first accused <oldest>)`. It reads the table, so it is correct
+whenever it runs; a missing line means the summary did not run, never that nothing is known.
+
+**The ledger answers ONE question.** A `report_accusations` row (`report`, `itemId`, `state`,
+`accusedAt`; primary key `(report, itemId)`) says "this item was accused in this state" and nothing
+else - never "this item is broken": the report's own query answers that every hour, from the tables
+that hold the fact. Reading the ledger to decide what is broken would silence the trigger it
+de-duplicates (CLAUDE.md, "durable state answers only THE QUESTION IT WAS WRITTEN FOR"). No clock
+decides anything: a state is re-accused when its fingerprint changes, never because time passed, and
+`accusedAt` is printed, never compared.
+
+**Two replicas, one accusation.** The claim is ONE statement - `INSERT ... ON CONFLICT (report,
+"itemId") DO UPDATE SET state = EXCLUDED.state ... WHERE report_accusations.state IS DISTINCT FROM
+EXCLUDED.state RETURNING "itemId"` - so of two replicas running the same report, only the statement
+that wrote the row gets it back and accuses; the release is one `DELETE ... RETURNING`, so an item
+that left is logged by the one replica whose delete took it.
+
+**The first run after the deploy** finds the table empty and accuses every current item once - the
+last time the known ones appear at ERROR or WARN. Rows are bounded by what the reports name: a group
+purged or a device erased with its account leaves the report, and so the table, the next hour.
+Migration 049 is additive (a new table, not held); a rollback is safe because no earlier release reads
+it, and `DROP TABLE report_accusations` undoes it (the reports then accuse every item once more).
+
+Pinned by the four report specs (`app.controller.{commit-log-report,holder-report,stranded-memberships,stale-bases}.spec.ts`:
+first sighting accused, same state not re-accused, changed state accused again, an item that left
+logged once) on `testing/memoryAccusationLedger.ts`, and by `utils/report-accusations.integration.spec.ts`
+against PostgreSQL (the migration and its replay, the claim and release semantics, two replicas
+claiming at once, the daily summary, and `reportCommitLogHealth` end to end over a real hole).
 
 ### A silent reader learns its seat from the groups list (additive, 2026-10-04)
 

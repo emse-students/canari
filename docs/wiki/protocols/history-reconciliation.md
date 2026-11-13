@@ -1364,8 +1364,11 @@ ERROR. A frame from an older build simply has none.
 **Kept beside the message.** The device records `{body, proof, group}` in the sealed row payload
 (`StoredMessage.authorship`; `editProof`, `deleteProof`, and `MessageReaction.proof` for the
 mutations), for frames it received AND frames it sent (the outbox records its own). `group` is the
-conversation the proof was signed in: a row can move between conversations (a merged DM, a re-key),
-and a proof checked against the wrong group would read as a forgery. A deletion purges the original
+conversation the proof was signed in: a row can move between conversations (two LIVE DMs with one
+peer merged, a re-key), and a proof checked against the wrong group would read as a forgery. A DM the
+peer DELETED is never one of them: since 2026-11-10 its rows stay with it and the next DM with that
+peer starts empty, so its messages no longer surface "non verifie" in the new conversation
+([chat](../frontend/modules/chat.md#a-deleted-dm-is-not-carried-into-the-next-one)). A deletion purges the original
 bytes and keeps only the author's signed tombstone.
 
 **Relayed and checked, one rule for every way a bundle arrives.** `serializeForBundle` relays the

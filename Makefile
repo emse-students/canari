@@ -317,6 +317,7 @@ test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/workflow-expressions.test.sh
+	@bun .github/scripts/tests/action-pins.test.mjs
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
@@ -383,6 +384,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/api-error-cors.test.mjs
+	@bun .github/scripts/tests/nginx-body-buffer.test.mjs
 	@bun .github/scripts/tests/live-segments-route.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
