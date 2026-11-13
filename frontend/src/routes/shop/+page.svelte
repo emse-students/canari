@@ -39,6 +39,7 @@
   import {
     CHECKOUT_RETURN_PARAMS,
     checkoutReturnTarget,
+    checkoutReturnText,
     checkoutReturnView,
     type CheckoutReturnView,
   } from '$lib/shop/checkoutReturn';
@@ -104,25 +105,6 @@
     }
   }
 
-  /**
-   * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and
-   * no Cercle delivery state - so a top-up says the payment was received and the credit follows,
-   * never that it already landed.
-   */
-  function paidText(): string {
-    if (returnProductType === 'balance_topup') return m.shop_return_topup_paid();
-    if (returnProductType === 'membership') return m.shop_return_membership_paid();
-    return m.shop_return_paid();
-  }
-
-  const CHECKOUT_RETURN_TEXT: Record<CheckoutReturnView, () => string> = {
-    checking: () => m.shop_return_checking(),
-    paid: paidText,
-    waiting: () => m.shop_return_waiting(),
-    declined: () => m.shop_return_declined(),
-    notCompleted: () => m.shop_return_not_completed(),
-    unknown: () => m.shop_return_unknown(),
-  };
   // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
 
@@ -234,7 +216,7 @@
               ? 'text-accent-text'
               : 'text-text-muted'}"
         >
-          {CHECKOUT_RETURN_TEXT[checkoutReturn]()}
+          {checkoutReturnText(checkoutReturn, returnProductType)}
         </div>
       {/if}
       <SegmentedControl

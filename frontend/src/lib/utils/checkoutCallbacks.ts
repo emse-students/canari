@@ -35,6 +35,11 @@ export function formPaymentReturnDeepLink(submissionId: string): string {
   return checkoutDeepLink('success', `submission_id=${encodeURIComponent(submissionId)}`);
 }
 
+/** True where a checkout still returns on the custom scheme: the iOS app, until a reading says otherwise. */
+function returnsOnAppScheme(): boolean {
+  return isMobileTauri() && detectRuntimeDeviceOs('desktop') === 'ios';
+}
+
 function webUrl(path: string): string {
   return publicAppUrl(path.startsWith('/') ? path : `/${path}`);
 }
@@ -53,7 +58,7 @@ function webUrl(path: string): string {
  * the payer comes back by hand (`checkoutReturn.ts`), which no return URL replaces.
  */
 export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string } {
-  if (isMobileTauri() && detectRuntimeDeviceOs('desktop') === 'ios') {
+  if (returnsOnAppScheme()) {
     Log.d('checkout', 'form return on the app scheme (iOS)');
     return {
       successUrl: checkoutDeepLink('success', 'session_id={CHECKOUT_SESSION_ID}'),
@@ -67,13 +72,19 @@ export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string
   };
 }
 
-/** Checkout callbacks for association shop product purchases. */
+/**
+ * Checkout callbacks for association shop product purchases. Android returns on the https `/shop`
+ * link (an App Link, `android:path="/shop"`) like the paid forms (`formCheckoutCallbacks`): a
+ * custom scheme reached by a redirect was never measured to bring the payer back. iOS keeps the
+ * scheme. Either way the purchase button reads the attempt when the payer comes back by hand
+ * (`createShopCheckoutReader`), which no return URL replaces.
+ */
 export function shopCheckoutCallbacks(productId: string): {
   successUrl: string;
   cancelUrl: string;
 } {
   const pid = encodeURIComponent(productId);
-  if (isMobileTauri()) {
+  if (returnsOnAppScheme()) {
     return {
       successUrl: checkoutDeepLink('success', `purchase_success=1&productId=${pid}`),
       cancelUrl: checkoutDeepLink('cancel', 'purchase_cancel=1'),

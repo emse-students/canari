@@ -1,5 +1,12 @@
 import type { AppPath } from '$lib/utils/internalPath';
-import type { ProductCheckoutStatus } from '$lib/associations/api';
+import {
+  confirmProductCheckout,
+  type AssociationProduct,
+  type ProductCheckoutStatus,
+} from '$lib/associations/api';
+import { createOnceReader, readUnlessThrottled, type OnceReader } from '$lib/forms/checkoutReturn';
+import { refusalStatus } from '$lib/utils/apiRefusal';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * What the shop page says once a payer comes back from Lydia for one checkout attempt. `checking`
@@ -31,6 +38,62 @@ export function checkoutReturnView(status: ProductCheckoutStatus): CheckoutRetur
     case 'cancelled':
       return 'notCompleted';
   }
+}
+
+/**
+ * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and no
+ * Cercle delivery state - so a top-up says the payment was received and the credit follows, never
+ * that it already landed. The shop page's banner and the purchase button's own read both word it.
+ */
+export function checkoutReturnText(
+  view: CheckoutReturnView,
+  productType: AssociationProduct['type'] | null
+): string {
+  switch (view) {
+    case 'checking':
+      return m.shop_return_checking();
+    case 'paid':
+      if (productType === 'balance_topup') return m.shop_return_topup_paid();
+      if (productType === 'membership') return m.shop_return_membership_paid();
+      return m.shop_return_paid();
+    case 'waiting':
+      return m.shop_return_waiting();
+    case 'declined':
+      return m.shop_return_declined();
+    case 'notCompleted':
+      return m.shop_return_not_completed();
+    case 'unknown':
+      return m.shop_return_unknown();
+  }
+}
+
+/**
+ * The reads of ONE boutique checkout the payer was handed to Lydia for (the purchase button keeps
+ * one per attempt): each asks the server about the attempt's own request, once, and ends on the
+ * view the shop page words. A throttled read stays `waiting`; a 404 is `unknown`; any other failure
+ * is thrown - a failed read decides nothing, the next return asks again.
+ */
+export function createShopCheckoutReader(target: {
+  associationId: string;
+  productId: string;
+  checkoutId: string;
+}): OnceReader<CheckoutReturnView> {
+  return createOnceReader(() =>
+    readUnlessThrottled<CheckoutReturnView>(async () => {
+      try {
+        const answer = await confirmProductCheckout(
+          target.associationId,
+          target.productId,
+          target.checkoutId
+        );
+        return checkoutReturnView(answer.status);
+      } catch (err) {
+        // An attempt that is not the reader's, or unknown: an ANSWER, said as such.
+        if (refusalStatus(err) === 404) return 'unknown';
+        throw err;
+      }
+    }, 'waiting')
+  );
 }
 
 /**

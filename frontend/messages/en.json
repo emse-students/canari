@@ -4215,6 +4215,7 @@
   "shop_return_declined": "The payment was declined. No purchase was recorded, you can try again.",
   "shop_return_not_completed": "The payment did not go through (cancelled or expired). No purchase was recorded, you can try again.",
   "shop_return_unknown": "This payment could not be found.",
+  "shop_payment_in_progress_note": "Payment in progress on Lydia: confirm it on Lydia's page or in the Lydia app, then come back here - your purchase is checked when you return.",
   "payer_email_title": "Your e-mail address",
   "payer_email_hint": "The payment provider needs it to send you the payment request. Canari does not keep it.",
   "payer_email_label": "E-mail",
