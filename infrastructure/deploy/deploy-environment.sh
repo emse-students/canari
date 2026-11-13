@@ -521,7 +521,7 @@ retry_http "api/version answers, which needs the database" '^200$' \
 # <port>, asked from a running replica of <service>; 000 when nothing answered.
 mesh_route_status() {
   local cid
-  cid="$(containers_of "$1" running | head -n 1)"
+  cid="$(containers_of "$1" running | sed -n 1p)"
   [ -n "$cid" ] || {
     echo 000
     return 0
