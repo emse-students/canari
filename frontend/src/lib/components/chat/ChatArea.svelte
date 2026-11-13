@@ -2033,7 +2033,7 @@
 
       <div
         bind:this={chatContainer}
-        data-keyboard-ride="when-at-bottom"
+        data-keyboard-ride="last-row"
         onscroll={handleScroll}
         class="chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
           ? 'opacity-0'
@@ -2268,7 +2268,7 @@
       {/snippet}
       <div
         bind:this={composerBand}
-        data-keyboard-ride="anchor"
+        data-keyboard-ride="box"
         class="pointer-events-none absolute inset-x-0 bottom-0 z-20"
       >
         <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on

@@ -19,11 +19,24 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
     const report = body.indexOf('CanariReportSettledKeyboardGeometry(webView)');
     expect(clamp).toBeGreaterThan(-1);
     expect(report).toBeGreaterThan(clamp);
-    // Both ways a keyboard layout lands: an animated height change, and the snap of a rise or a fall.
-    const completion = native.slice(native.indexOf('completion:^(__unused BOOL finished)'));
-    expect(completion.slice(0, 200)).toContain('CanariKeyboardLayoutSettled(webView)');
-    const snap = native.slice(native.indexOf('static void CanariSnapKeyboardFrame('));
-    expect(snap.slice(0, snap.indexOf('\n}\n'))).toContain('CanariKeyboardLayoutSettled(webView)');
+    // The report reads the PAGE, so it runs once the page's reaction to the resize is on screen -
+    // after a screen-update proof - and only for the keyboard change still current: every call to the
+    // settle sits inside a proof's callback, behind a sequence check.
+    const calls = native.split('CanariKeyboardLayoutSettled(webView);').length - 1;
+    expect(calls).toBe(2);
+    for (const signature of [
+      'static void CanariSnapKeyboardFrame(',
+      'completion:^(__unused BOOL finished)',
+    ]) {
+      const from = native.slice(native.indexOf(signature));
+      const until = from.indexOf('CanariKeyboardLayoutSettled(webView);');
+      const before = from.slice(0, until);
+      expect(until).toBeGreaterThan(-1);
+      expect(before).toContain('CanariAfterScreenUpdates(webView,');
+      expect(before.lastIndexOf('g_keyboardChangeSeq')).toBeGreaterThan(
+        before.indexOf('CanariAfterScreenUpdates(webView,')
+      );
+    }
   });
 
   it('reads both halves: UIKit offset and range, and the page scroll, viewport and composer', () => {

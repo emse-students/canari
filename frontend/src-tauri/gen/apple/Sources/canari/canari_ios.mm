@@ -261,8 +261,9 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
 /// "original frame" to restore and nothing that can drift out of step. `UIKeyboardWillChangeFrame`
 /// alone covers appearing, disappearing, height changes (predictive bar, accessory views) and
 /// interactive dismissal - on the way out the end frame is off-screen, the intersection is empty and
-/// the overlap is zero. The one thing remembered is `g_keyboardChangeSeq`, so a rise's late answer
-/// can tell a newer keyboard change has superseded it.
+/// the overlap is zero. What is remembered is `g_keyboardChangeSeq`, so a late answer (a rise's proof,
+/// a settle, an animation's completion) can tell a newer keyboard change has superseded it, and the
+/// rise in flight, if any.
 ///
 /// A RISE FROM NO KEYBOARD IS HANDED TO THE PAGE FIRST (`CanariHandKeyboardRiseToPage`), A FALL IS
 /// RIDDEN BY THE PAGE (`CanariHandKeyboardFallToPage`); a height change while open still animates the
@@ -275,9 +276,18 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
 /// the keys on a fall.
 static NSUInteger g_keyboardChangeSeq = 0;
 
-/// Whether a rise is waiting for the page's answer: a fall that lands meanwhile finds the frame
-/// still full height, so this - not the frame - is what tells it there is a target to withdraw.
+/// The rise waiting for the page's proof, if any: its sequence, its target and when it was asked. A
+/// fall that lands meanwhile finds the frame still full height, so this - not the frame - is what tells
+/// it there is a target to withdraw.
 static BOOL g_keyboardRisePending = NO;
+static NSUInteger g_keyboardRiseSeq = 0;
+static CGRect g_keyboardRiseTarget;
+static CFTimeInterval g_keyboardRiseAsked = 0;
+
+/// The keyboard height under which the page never counts a keyboard as open - `keyboardOpenThresholdPx`
+/// on iOS in `keyboardViewport.svelte.ts`, the same number (a test holds them equal). A hardware
+/// keyboard's shortcut bar is under it, and its fall is not announced.
+static const CGFloat kCanariKeyboardOpenThresholdPt = 100.0;
 
 /// What follows every keyboard layout once it is in place: the scroll range, the safe area and the
 /// one settled report.
@@ -287,13 +297,56 @@ static void CanariKeyboardLayoutSettled(WKWebView *webView) {
   CanariReportSettledKeyboardGeometry(webView);
 }
 
-/// Sets the WebView's frame with no animation: the page has already drawn, or animates itself out of,
-/// the picture this frame produces, so there is nothing for UIKit to interpolate.
+/// Calls `then` once WebKit has put on screen every update pending NOW - the page's reaction to a
+/// call that has returned, or to a resize that was just set: `takeSnapshotWithConfiguration:` with
+/// `afterScreenUpdates`, which WebKit takes "after incorporating any pending screen updates", on a
+/// 1 pt rect whose image is dropped. The public form of Android's `postVisualStateCallback`;
+/// `_doAfterNextPresentationUpdate:` is the private one and is never used in a store build. `then`
+/// receives the proof's own duration and its error, if any.
+static void CanariAfterScreenUpdates(WKWebView *webView, void (^then)(double proofMs, NSError *error)) {
+  CFTimeInterval started = CACurrentMediaTime();
+  WKSnapshotConfiguration *proof = [WKSnapshotConfiguration new];
+  proof.rect = CGRectMake(0, 0, 1, 1);
+  proof.snapshotWidth = @1;
+  proof.afterScreenUpdates = YES;
+  [webView takeSnapshotWithConfiguration:proof
+                       completionHandler:^(__unused UIImage *image, NSError *error) {
+                         then((CACurrentMediaTime() - started) * 1000.0, error);
+                       }];
+}
+
+/// Sets the WebView's frame with no animation, then settles once the page's reaction to the new size
+/// is on screen. An animation still running on the frame (a height change) is removed first, so the
+/// frame is the target from this instant; its completion then finds its sequence superseded and does
+/// not settle a second time. The settle reads the page AFTER its resize handler ran: the report sees
+/// the page's own layout, and the safe area is published after the page's CSS variables, never before.
 static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
+  NSUInteger seq = g_keyboardChangeSeq;
+  [webView.layer removeAllAnimations];
   [UIView performWithoutAnimation:^{
     webView.frame = target;
   }];
-  CanariKeyboardLayoutSettled(webView);
+  CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
+    if (seq != g_keyboardChangeSeq) {
+      return;
+    }
+    if (error != nil) {
+      NSLog(@"[CanariIOS] ERROR keyboard settle: the screen-update proof failed (%@)", error);
+    }
+    CanariKeyboardLayoutSettled(webView);
+  });
+}
+
+/// Ends the rise in flight without its proof, saying why and how long it had waited - a rise that never
+/// got its proof is not a slow one, and the two lines must not be confused.
+static void CanariEndPendingRise(NSString *why) {
+  if (!g_keyboardRisePending) {
+    return;
+  }
+  g_keyboardRisePending = NO;
+  NSLog(@"[CanariIOS] keyboard rise #%lu ended WITHOUT its proof after %.0f ms: %@",
+        (unsigned long)g_keyboardRiseSeq, (CACurrentMediaTime() - g_keyboardRiseAsked) * 1000.0,
+        why);
 }
 
 /// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME - the iOS half of the hand-off Android
@@ -302,63 +355,57 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
 /// 1. The page is told the keyboard's height (`window.canariImeTarget`, `keyboardViewport.svelte.ts`
 ///    + `imeTarget.ts`; a WKWebView CSS px is a point) and lays itself out for it, synchronously,
 ///    inside the still full-size WebView - so its composer stands above the keyboard.
-/// 2. `takeSnapshotWithConfiguration:` with `afterScreenUpdates` (a 1 pt rect, the image is dropped)
-///    is the PROOF that this layout is on screen: WebKit takes it "after incorporating any pending
-///    screen updates", and the page's change is pending once the script has returned. It is the
-///    public form of Android's `postVisualStateCallback`; `_doAfterNextPresentationUpdate` is the
-///    private one, never used in a store build.
+/// 2. `CanariAfterScreenUpdates` is the PROOF that this layout is on screen.
 /// 3. Only then is the frame set, without animation: the page already IS that picture, so the resize
 ///    changes nothing on screen (the strip it uncovers is the window's ground, the page's own
 ///    `--cn-bg`, and the keyboard is sliding over it).
 ///
-/// The time from 1 to 3 is logged per rise: it says whether the proof costs frames in which the keys
-/// are seen arriving under a composer that has not moved yet. A newer keyboard change bumps
-/// `g_keyboardChangeSeq` and a superseded answer does nothing. A page that does not take the target
-/// (not hydrated yet, an older bundle) missed the contract: an ERROR line, and the frame is set at once.
+/// The script's and the proof's durations are logged apart per rise: they say whether the proof costs
+/// frames in which the keys are seen arriving under a composer that has not moved. A newer keyboard
+/// change or a navigation (`CanariKeyboardNavigationObserver`) ends the rise, and its late answer does
+/// nothing; a content process that dies fails both completions with an error, which is the ERROR line.
+/// A page that does not take the target (not hydrated yet, an older bundle) missed the contract: an
+/// ERROR line, and the frame is set at once.
 static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFloat overlap) {
   NSUInteger seq = ++g_keyboardChangeSeq;
   g_keyboardRisePending = YES;
-  CFTimeInterval asked = CACurrentMediaTime();
+  g_keyboardRiseSeq = seq;
+  g_keyboardRiseTarget = target;
+  g_keyboardRiseAsked = CACurrentMediaTime();
+  CFTimeInterval asked = g_keyboardRiseAsked;
   NSString *js = [NSString stringWithFormat:@"window.canariImeTarget?.(%.2f) === true", overlap];
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
-              if (seq != g_keyboardChangeSeq) {
-                // The change that superseded it already said so and set its own frame.
+              if (seq != g_keyboardChangeSeq || !g_keyboardRisePending) {
                 return;
               }
+              double scriptMs = (CACurrentMediaTime() - asked) * 1000.0;
               BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
               if (!taken) {
                 g_keyboardRisePending = NO;
-                NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target "
-                      @"(%@) - resizing now, its old frame may show cropped",
-                      (unsigned long)seq, error ?: result);
+                NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target after "
+                      @"%.0f ms (%@) - resizing now, its old frame may show cropped",
+                      (unsigned long)seq, scriptMs, error ?: result);
                 CanariSnapKeyboardFrame(webView, target);
                 return;
               }
-              WKSnapshotConfiguration *proof = [WKSnapshotConfiguration new];
-              proof.rect = CGRectMake(0, 0, 1, 1);
-              proof.snapshotWidth = @1;
-              proof.afterScreenUpdates = YES;
-              [webView
-                  takeSnapshotWithConfiguration:proof
-                              completionHandler:^(__unused UIImage *image, NSError *snapError) {
-                                if (seq != g_keyboardChangeSeq) {
-                                  return;
-                                }
-                                g_keyboardRisePending = NO;
-                                if (snapError != nil) {
-                                  NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the screen-update "
-                                        @"proof failed (%@) - resizing anyway",
-                                        (unsigned long)seq, snapError);
-                                } else {
-                                  NSLog(@"[CanariIOS] keyboard rise #%lu: the page's keyboard layout "
-                                        @"is on screen after %.0f ms - webview height %.0f",
-                                        (unsigned long)seq,
-                                        (CACurrentMediaTime() - asked) * 1000.0,
-                                        target.size.height);
-                                }
-                                CanariSnapKeyboardFrame(webView, target);
-                              }];
+              CanariAfterScreenUpdates(webView, ^(double proofMs, NSError *proofError) {
+                if (seq != g_keyboardChangeSeq || !g_keyboardRisePending) {
+                  return;
+                }
+                g_keyboardRisePending = NO;
+                if (proofError != nil) {
+                  NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the screen-update proof failed after "
+                        @"%.0f ms (%@) - resizing anyway",
+                        (unsigned long)seq, proofMs, proofError);
+                } else {
+                  NSLog(@"[CanariIOS] keyboard rise #%lu: the page's keyboard layout is on screen "
+                        @"after %.0f ms (script %.0f ms, proof %.0f ms) - webview height %.0f",
+                        (unsigned long)seq, scriptMs + proofMs, scriptMs, proofMs,
+                        target.size.height);
+                }
+                CanariSnapKeyboardFrame(webView, target);
+              });
             }];
 }
 
@@ -367,29 +414,65 @@ static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFl
 ///
 /// The page is told first (`window.canariKeyboardFall`, `keyboardRide.ts`): it records where its
 /// riding pieces stand, then the frame is set without animation. On the resize the page lays itself
-/// out full height as before, and starts each piece from where it stood, translated back, to its new
-/// place - over the KEYBOARD'S OWN duration and curve, read here from the notification. The script
-/// reaches the web process before the resize because both travel on the same connection in that
-/// order; the page checks it all the same (a capture that already sees the full height is refused
-/// and said). A page that does not take it (another screen, reduced motion) is simply resized.
-static void CanariHandKeyboardFallToPage(WKWebView *webView, CGRect target, NSNotification *note) {
+/// out full height as before, and starts each piece that moved from where it stood, by its own move,
+/// over the KEYBOARD'S OWN duration and curve, read here from the notification. The script reaches the
+/// web process before the resize because both travel on the same connection in that order; the page
+/// checks it all the same. Not announced at all - an ordinary fall, nothing logged as wrong - when
+/// there is nothing to ride: an instant fall (duration 0), a keyboard shorter than the page's open
+/// threshold (a hardware keyboard's shortcut bar), or a keyboard of another app (`IsLocal` false).
+static void CanariHandKeyboardFallToPage(WKWebView *webView, CGRect target, NSNotification *note,
+                                         CGFloat fromOverlap) {
   double durationMs = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue] * 1000.0;
   unsigned long curve = [note.userInfo[UIKeyboardAnimationCurveUserInfoKey] unsignedLongValue];
-  NSString *js =
-      [NSString stringWithFormat:@"window.canariKeyboardFall?.({durationMs:%.0f,curve:%lu}) === true",
-                                 durationMs, curve];
-  [webView evaluateJavaScript:js
-            completionHandler:^(id result, NSError *error) {
-              BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
-              if (taken) {
-                NSLog(@"[CanariIOS] keyboard fall (%.0f ms, curve %lu): the page rides it", durationMs,
-                      curve);
-              } else {
-                NSLog(@"[CanariIOS] keyboard fall (%.0f ms, curve %lu): no ride (%@)", durationMs,
-                      curve, error ?: result);
-              }
-            }];
+  NSNumber *isLocal = note.userInfo[UIKeyboardIsLocalUserInfoKey];
+  BOOL ridable = durationMs > 0 && fromOverlap >= kCanariKeyboardOpenThresholdPt &&
+                 (isLocal == nil || isLocal.boolValue);
+  if (ridable) {
+    NSString *js = [NSString
+        stringWithFormat:@"window.canariKeyboardFall?.({durationMs:%.0f,curve:%lu,fromPx:%.2f}) === true",
+                         durationMs, curve, fromOverlap];
+    [webView evaluateJavaScript:js
+              completionHandler:^(id result, NSError *error) {
+                BOOL taken = [result isKindOfClass:[NSNumber class]] && [result boolValue];
+                NSLog(@"[CanariIOS] keyboard fall (%.0f ms, curve %lu): %@", durationMs, curve,
+                      taken ? @"the page rides it"
+                            : [NSString stringWithFormat:@"no ride (%@)", error ?: result]);
+              }];
+  }
   CanariSnapKeyboardFrame(webView, target);
+}
+
+/// The navigation fact that ends a rise in flight: the WebView's `URL` changes when a navigation
+/// commits (and on a same-document one), and the page that was asked for the target is then not the
+/// page that would answer. wry owns the WebView's navigation delegate, so the commit is read by KVO,
+/// as `loading` already is for the safe area. The rise's frame is set at once; the new page lays itself
+/// out on its own resize.
+@interface CanariKeyboardNavigationObserver : NSObject
+@end
+@implementation CanariKeyboardNavigationObserver
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context {
+  if (!g_keyboardRisePending) {
+    return;
+  }
+  WKWebView *webView = (WKWebView *)object;
+  CGRect target = g_keyboardRiseTarget;
+  CanariEndPendingRise(@"the page navigated");
+  g_keyboardChangeSeq++;
+  CanariSnapKeyboardFrame(webView, target);
+}
+@end
+
+/// Installs the observer above on the WebView, once.
+static void CanariObserveKeyboardNavigation(WKWebView *webView) {
+  static CanariKeyboardNavigationObserver *observer = nil;
+  if (observer != nil) {
+    return;
+  }
+  observer = [CanariKeyboardNavigationObserver new];
+  [webView addObserver:observer forKeyPath:@"URL" options:0 context:NULL];
 }
 
 static void CanariApplyKeyboardLayout(NSNotification *note) {
@@ -399,6 +482,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
     // Before start_app() there is no WebView; the next keyboard event finds one.
     return;
   }
+  CanariObserveKeyboardNavigation(webView);
 
   CGRect keyboardEnd = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
   CGRect overlapRect =
@@ -407,8 +491,11 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
 
   CGRect target = parent.bounds;
   target.size.height -= overlap;
-  BOOL rise = overlap > 0 && CGRectGetHeight(webView.frame) >= CGRectGetHeight(parent.bounds);
+  CGFloat fromOverlap = MAX(0.0, CGRectGetHeight(parent.bounds) - CGRectGetHeight(webView.frame));
+  BOOL rise = overlap > 0 && fromOverlap == 0;
   if (rise) {
+    // A second rise while one waits (the predictive bar arriving) replaces it.
+    CanariEndPendingRise(@"a newer rise");
     NSLog(@"[CanariIOS] keyboard overlap=%.0f -> webview height %.0f, handed to the page first",
           overlap, target.size.height);
     CanariHandKeyboardRiseToPage(webView, target, overlap);
@@ -416,30 +503,29 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
   }
 
   // Anything else ends a rise still waiting for the page - BEFORE the no-change test, because a fall
-  // that lands while a rise is pending finds the frame still full height, already its target. A fall
-  // also ends the layout the page took ahead of the resize (`imeTarget.ts` drops its target on 0).
+  // that lands while a rise is pending finds the frame still full height, already its target. Only
+  // then is there a target on the page to withdraw (`imeTarget.ts` drops it on 0); a rise that landed
+  // spent its own target when the WebView shrank.
   BOOL riseWasPending = g_keyboardRisePending;
-  g_keyboardRisePending = NO;
+  CanariEndPendingRise(@"the keyboard changed again");
   g_keyboardChangeSeq++;
-  BOOL frameChanges = !CGRectEqualToRect(webView.frame, target);
-  if (overlap == 0 && (riseWasPending || frameChanges)) {
+  if (overlap == 0 && riseWasPending) {
     [webView evaluateJavaScript:@"window.canariImeTarget?.(0)" completionHandler:nil];
   }
-  if (!frameChanges) {
-    if (riseWasPending) {
-      NSLog(@"[CanariIOS] keyboard change before the page answered the rise - rise withdrawn");
-    }
+  if (CGRectEqualToRect(webView.frame, target)) {
     return;
   }
   NSLog(@"[CanariIOS] keyboard overlap=%.0f -> webview height %.0f", overlap, target.size.height);
   if (overlap == 0) {
-    CanariHandKeyboardFallToPage(webView, target, note);
+    CanariHandKeyboardFallToPage(webView, target, note, fromOverlap);
     return;
   }
+  NSUInteger seq = g_keyboardChangeSeq;
   NSNumber *duration = note.userInfo[UIKeyboardAnimationDurationUserInfoKey];
   NSNumber *curve = note.userInfo[UIKeyboardAnimationCurveUserInfoKey];
   // A height change while open (the emoji keyboard, the predictive bar): the frame rides the
-  // keyboard's own curve, as before - not yet measured against Messenger.
+  // keyboard's own curve, as before - not yet measured against Messenger. A completion overtaken by a
+  // newer change settles nothing: that change settles its own.
   [UIView animateWithDuration:duration.doubleValue
                         delay:0
                       options:(UIViewAnimationOptions)(curve.unsignedIntegerValue << 16)
@@ -447,7 +533,14 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                      webView.frame = target;
                    }
                    completion:^(__unused BOOL finished) {
-                     CanariKeyboardLayoutSettled(webView);
+                     if (seq != g_keyboardChangeSeq) {
+                       return;
+                     }
+                     CanariAfterScreenUpdates(webView, ^(__unused double proofMs, __unused NSError *e) {
+                       if (seq == g_keyboardChangeSeq) {
+                         CanariKeyboardLayoutSettled(webView);
+                       }
+                     });
                    }];
 }
 

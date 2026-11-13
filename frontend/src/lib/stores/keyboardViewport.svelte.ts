@@ -8,10 +8,13 @@ import { rememberKeyboardHeight } from './keyboardHeightMemory';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget } from './imeTarget';
 import {
+  afterLayoutReactions,
   captureKeyboardRide,
+  fallRefusal,
   parseKeyboardFall,
   startKeyboardRide,
   uikitCurveEasing,
+  type KeyboardRide,
   type KeyboardRideCapture,
 } from './keyboardRide';
 import { Log } from '$lib/utils/Log';
@@ -429,6 +432,12 @@ export function overlaySettledAroundFocus(
   );
 }
 
+/** What `initKeyboardViewport` may be handed instead of the browser's own, for its tests. */
+export type KeyboardViewportSeams = {
+  /** Runs a ride's start after the resize's layout reactions (`afterLayoutReactions`). */
+  afterLayout?: (targets: Element[], start: () => void) => () => void;
+};
+
 /**
  * How an update reveals the focused field, or null when it does not.
  *
@@ -474,14 +483,47 @@ function postGroundToNative(): void {
  * Registers listeners and updates CSS variables. Call once from the root layout.
  * Returns a teardown function.
  */
-export function initKeyboardViewport(): () => void {
+export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => void {
   if (typeof window === 'undefined') return () => {};
 
   baselineHeight = window.innerHeight;
 
   let keyboardWasOpen = false;
+  const afterLayout = seams.afterLayout ?? afterLayoutReactions;
   /** A fall the iOS shell announced, captured before its resize (`keyboardRide.ts`), or null. */
   let pendingRide: KeyboardRideCapture | null = null;
+  /** The ride waiting for the resize's layout reactions: cancels that wait. */
+  let cancelArmedRide: (() => void) | null = null;
+  /** The ride running now, cancelled by a rise or a press (`keyboardRide.ts` says why). */
+  let runningRide: KeyboardRide | null = null;
+
+  /** Ends every ride, pending, armed or running: each piece jumps to its own place. */
+  const endRides = (why: string) => {
+    const had = pendingRide !== null || cancelArmedRide !== null || runningRide !== null;
+    pendingRide = null;
+    cancelArmedRide?.();
+    cancelArmedRide = null;
+    for (const a of runningRide?.animations ?? []) a.cancel();
+    runningRide = null;
+    if (had) Log.d('keyboardViewport', `keyboard ride ended: ${why}`);
+  };
+
+  /** The resize of an announced fall landed: ride once its layout reactions have run. */
+  const armRide = (capture: KeyboardRideCapture) => {
+    cancelArmedRide = afterLayout(
+      capture.riders.map((r) => r.el),
+      () => {
+        cancelArmedRide = null;
+        runningRide = startKeyboardRide(capture);
+        Log.d(
+          'keyboardViewport',
+          runningRide === null
+            ? 'keyboard fall: no piece moved - nothing to ride'
+            : `keyboard fall ridden over ${capture.durationMs} ms: ${runningRide.distances.map(Math.round).join(', ')}px`
+        );
+      }
+    );
+  };
 
   const update = () => {
     const announced = imeTargetPx !== null;
@@ -494,15 +536,9 @@ export function initKeyboardViewport(): () => void {
     if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
 
     if (closedNow && pendingRide) {
-      const ride = pendingRide;
+      const capture = pendingRide;
       pendingRide = null;
-      const distance = startKeyboardRide(ride);
-      Log.d(
-        'keyboardViewport',
-        distance === null
-          ? 'keyboard fall: the composer did not move - nothing to ride'
-          : `keyboard fall ridden: ${Math.round(distance)}px over ${ride.durationMs} ms, ${ride.riders.length} piece(s)`
-      );
+      armRide(capture);
     }
 
     const reveal = keyboardRevealOnUpdate({
@@ -567,8 +603,9 @@ export function initKeyboardViewport(): () => void {
     Log.d('keyboardViewport', `keyboard target ${px} announced ahead of the resize`);
     if (px > 0) postGroundToNative();
     imeTargetPx = px;
-    // A rise ends any fall still waiting for its resize.
-    if (px > 0) pendingRide = null;
+    // A rise ends any fall still waiting for its resize, and any ride still running: the rise's
+    // layout, and the screen-update proof the shell takes of it, must carry no stale transform.
+    if (px > 0) endRides('a rise');
     update();
     return true;
   };
@@ -590,28 +627,36 @@ export function initKeyboardViewport(): () => void {
       Log.w('keyboardViewport', `keyboard fall refused: ${JSON.stringify(value)}`);
       return false;
     }
+    // A capture must read the pieces where they stand, not where a previous ride is carrying them.
+    endRides('a new fall');
     const easing = uikitCurveEasing(spec.curve);
-    if (easing === null) {
-      Log.w('keyboardViewport', `keyboard fall: UIKit curve ${spec.curve} has no easing - no ride`);
+    const refusal = fallRefusal(spec, {
+      easing,
+      reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+      isOpen: snapshot.isOpen,
+      openThresholdPx: keyboardOpenThresholdPx(),
+    });
+    if (refusal !== null || easing === null) {
+      const why = refusal?.why ?? 'no easing';
+      if (refusal?.level === 'warn') Log.w('keyboardViewport', `keyboard fall not ridden: ${why}`);
+      else Log.d('keyboardViewport', `keyboard fall not ridden: ${why}`);
       return false;
     }
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false;
-    if (!snapshot.isOpen) {
-      // The shell sends this before its resize; a page already full height means the order broke.
-      Log.w(
-        'keyboardViewport',
-        'keyboard fall announced after the page went full height - no ride'
-      );
-      return false;
-    }
-    pendingRide = captureKeyboardRide(document, spec, easing);
+    pendingRide = captureKeyboardRide(document, spec.durationMs, easing);
     return pendingRide !== null;
   };
   (window as unknown as { canariKeyboardFall?: (v: unknown) => boolean }).canariKeyboardFall =
     takeKeyboardFall;
 
+  // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
+  // containing block of its fixed descendants (`keyboardRide.ts`).
+  const handlePointerDown = () => {
+    if (runningRide !== null) endRides('a press');
+  };
+
   update();
   window.addEventListener('resize', update);
+  window.addEventListener('pointerdown', handlePointerDown, true);
   window.addEventListener('orientationchange', handleOrientationChange);
   window.addEventListener('focusin', handleFocusIn, true);
   window.addEventListener('transitionend', handleTransitionEnd, true);
@@ -620,6 +665,7 @@ export function initKeyboardViewport(): () => void {
 
   return () => {
     window.removeEventListener('resize', update);
+    window.removeEventListener('pointerdown', handlePointerDown, true);
     window.removeEventListener('orientationchange', handleOrientationChange);
     window.removeEventListener('focusin', handleFocusIn, true);
     window.removeEventListener('transitionend', handleTransitionEnd, true);
@@ -628,7 +674,7 @@ export function initKeyboardViewport(): () => void {
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     imeTargetPx = null;
-    pendingRide = null;
+    endRides('teardown');
     pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
