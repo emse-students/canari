@@ -810,11 +810,6 @@ describe('encryption.worker - one key per sender in a group call (WP-GC1, 2026-1
     expect(await receive('bob', [await sealedBy(CAROL, plain)])).toEqual([]);
   });
 
-  it('never opens a frame sealed with its own send key - no reflection in a mesh either', async () => {
-    await keyAsAlice();
-    expect(await receive('bob', [await sealedBy(ALICE, opus())])).toEqual([]);
-  });
-
   it('drops (and counts) the frames of a participant it holds no key for, until addReceiveKey names it', async () => {
     await keyAsAlice([['bob', BOB]]);
     const plain = opus();
@@ -871,5 +866,134 @@ describe('encryption.worker - one key per sender in a group call (WP-GC1, 2026-1
     expect(await receive(undefined, [caller])).toEqual([plain]);
     // A group participant name finds no key in a 1:1 worker.
     expect(await receive('bob', [caller])).toEqual([]);
+  });
+
+  /** Runs frames through one SENDER transform: what this worker seals under its own send key. */
+  async function sealOwn(frames: Uint8Array[]) {
+    const input = new ReadableStream({
+      start(c) {
+        for (const p of frames) c.enqueue(new RTCEncodedAudioFrame(p.slice().buffer));
+        c.close();
+      },
+    });
+    const out: Uint8Array[] = [];
+    let done!: () => void;
+    const finished = new Promise<void>((r) => (done = r));
+    scope.onrtctransform!({
+      transformer: {
+        readable: input,
+        writable: new WritableStream<RTCEncodedAudioFrame>({
+          write: (f) => void out.push(new Uint8Array(f.data)),
+          close: () => done(),
+        }),
+        options: { side: 'sender', kind: 'audio', epoch: 78, peer: 'alice' },
+      },
+    } as unknown as Event);
+    await finished;
+    return out;
+  }
+
+  it('refuses its OWN sealed frame reflected back on every receiver - no reflection in a mesh', async () => {
+    await keyAsAlice();
+    const plain = opus();
+    const [own] = await sealOwn([plain]);
+    // The frame really is sealed, and under alice's key: it opens with that key outside the worker,
+    // so a receiver that opened it would be a reflection defect, not a frame that was never sealed.
+    const aliceOpen = await crypto.subtle.importKey('raw', ALICE, { name: 'AES-GCM' }, false, [
+      'decrypt',
+    ]);
+    const opened = new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: own.slice(0, 12),
+          additionalData: new TextEncoder().encode('canari-call-v2|audio'),
+        },
+        aliceOpen,
+        own.slice(12)
+      )
+    );
+    expect(opened).toEqual(plain);
+    // Offered back on each participant's receiver, alice's own name included: nothing opens.
+    for (const peer of ['bob', 'carol', 'alice', undefined]) {
+      expect(await receive(peer, [own])).toEqual([]);
+    }
+  });
+
+  it('applies key commands in the ORDER POSTED, even when none is awaited (no interleaving)', async () => {
+    // Posted back to back: a set, an add, a drop of that add, a second add - no await between.
+    const DAVE = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff);
+    const ERIN = Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + 5) & 0xff);
+    const all = [
+      post({
+        type: 'setGroupKeys',
+        send: ALICE.slice().buffer,
+        receive: [{ peer: 'bob', key: BOB.slice().buffer }],
+      }),
+      post({ type: 'addReceiveKey', peer: 'dave', key: DAVE.slice().buffer }),
+      post({ type: 'addReceiveKey', peer: 'erin', key: ERIN.slice().buffer }),
+      post({ type: 'dropReceiveKey', peer: 'dave' }),
+    ];
+    await Promise.all(all);
+    const plain = opus();
+    // The final map is bob and erin: the set did not wipe the adds, the drop was not undone.
+    expect(await receive('bob', [await sealedBy(BOB, plain)])).toEqual([plain]);
+    expect(await receive('erin', [await sealedBy(ERIN, plain)])).toEqual([plain]);
+    expect(await receive('dave', [await sealedBy(DAVE, plain)])).toEqual([]);
+    const order = posted
+      .filter((m) => ['keyReady', 'peerKeyReady', 'peerKeyDropped'].includes(String(m.type)))
+      .map((m) => `${String(m.type)}:${String(m.peer ?? m.peers)}`);
+    expect(order).toEqual([
+      'keyReady:1',
+      'peerKeyReady:dave',
+      'peerKeyReady:erin',
+      'peerKeyDropped:dave',
+    ]);
+  });
+
+  it('keys every participant by its LOWERCASED id, as deriveGroupCallKeys does', async () => {
+    await keyAsAlice([['Bob', BOB]]);
+    const plain = opus();
+    expect(await receive('BOB', [await sealedBy(BOB, plain)])).toEqual([plain]);
+    expect(await receive('bob', [await sealedBy(BOB, plain)])).toEqual([plain]);
+    await post({ type: 'addReceiveKey', peer: 'CaRoL', key: CAROL.slice().buffer });
+    expect(posted).toContainEqual({ type: 'peerKeyReady', peer: 'carol' });
+    expect(await receive('carol', [await sealedBy(CAROL, plain)])).toEqual([plain]);
+    await post({ type: 'dropReceiveKey', peer: 'CAROL' });
+    expect(await receive('carol', [await sealedBy(CAROL, plain)])).toEqual([]);
+  });
+
+  it('refuses a drop that names no participant, as an add without one is refused', async () => {
+    await keyAsAlice();
+    await post({ type: 'dropReceiveKey' });
+    expect(posted).toContainEqual({
+      type: 'keyError',
+      peer: undefined,
+      detail: 'a receive key drop without a participant',
+    });
+    // Nothing was dropped.
+    const plain = opus();
+    expect(await receive('bob', [await sealedBy(BOB, plain)])).toEqual([plain]);
+  });
+
+  it('refuses two participants given ONE receive key, at once or added later', async () => {
+    await keyAsAlice([
+      ['bob', BOB],
+      ['carol', BOB],
+    ]);
+    expect(posted).toContainEqual({
+      type: 'keyError',
+      detail: 'two participants were given one receive key',
+    });
+    await keyAsAlice();
+    await post({ type: 'addReceiveKey', peer: 'dave', key: CAROL.slice().buffer });
+    expect(posted).toContainEqual({
+      type: 'keyError',
+      peer: 'dave',
+      detail: 'two participants were given one receive key',
+    });
+    // Re-keying the SAME participant with its own key is not a duplicate.
+    await post({ type: 'addReceiveKey', peer: 'carol', key: CAROL.slice().buffer });
+    expect(posted).toContainEqual({ type: 'peerKeyReady', peer: 'carol' });
   });
 });

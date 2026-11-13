@@ -1967,11 +1967,25 @@ holds one receive key per other participant.
   gives them different keys - the 1:1 call's known class, wider in a group because more members can
   commit. The worker's `undecryptable` report now names the participant whose frames never opened.
 
+- **Key commands apply in the order posted.** The worker's handler awaits (digests, imports), so
+  it runs every command on one promise chain: a `setGroupKeys` followed at once by an
+  `addReceiveKey` can no longer finish after it and wipe it, and a `dropReceiveKey` can no longer run
+  inside an add's import and be undone (review of #3489). Every participant id is lowercased in the
+  worker as in the derivation, a drop without a participant is a `keyError`, and two participants
+  posted one receive key are refused like a receive key equal to the send key.
+- **One device per user in a group call (decided 2026-11-13, reversible).** Keys are per USER, so
+  two devices of one person would seal under one key and one nonce space and could not be told
+  apart. A user holds ONE seat: the second device's join REPLACES the first - call-service already
+  evicts a sibling device in p2p mode, and the group client treats the replaced device as left.
+  ([open-questions](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible),
+  [backlog](../../backlog.d/group-calls-one-device-per-user.md).)
+
 Pinned by `utils/callKeys.test.ts` (four participants agree on every sender key, the contexts and
 label on the wire, the lowercasing, a late participant, the 1:1 keys never coincide with a group
 key, every exporter buffer zeroed) and `workers/encryption.worker.test.ts` (each sender opened with
-its key and refused on another's transform, no reflection, a participant keyed late, a dropped key,
-the equal-key refusals, all-or-nothing sets, the 1:1 slot).
+its key and refused on another's transform, its OWN sealed frame refused on every receiver, a
+participant keyed late, a dropped key, the equal-key and duplicate-key refusals, all-or-nothing sets,
+the 1:1 slot, lowercased ids, and commands posted back to back applied in order).
 
 ## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
 

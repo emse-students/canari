@@ -747,6 +747,13 @@ growing. Twelve controls carry it - the feed pills, the header's "Accueil", the 
 legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
 badge. Both rules are held by `touchTargets.test.ts`.
 
+**ONE EXCEPTION TO THE 44px FLOOR, THE OWNER'S: the chat composer's row on a phone** (2026-11-13,
+[keyboard-and-send-motion](keyboard-and-send-motion.md)). Its controls are 40px with no gap and its
+field 42px - Messenger's measured row - below 768px only; a touch tablet keeps 44px and its gaps, a
+pointer its 38px. `iconButtonScale.test.ts` holds the rule rather than the value: any icon-button box
+under 44px is under `pointer: fine`, is the hover strip's `--sm`, or is this row inside
+`(max-width: 767px)`.
+
 **A STACKED LIST NEVER TAKES `.tap-target` - its rows take `pointer-coarse:min-h-11`.** Where two
 hit boxes overlap, the later element in the DOM wins, so in a column pitched under 44px each box
 swallows the lower part of the row above it. On the Mi 9T the legal table of contents (a 21px

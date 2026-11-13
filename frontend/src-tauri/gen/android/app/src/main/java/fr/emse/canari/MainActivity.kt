@@ -23,6 +23,7 @@ import androidx.core.graphics.Insets
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.camera.CameraKeyAction
@@ -31,6 +32,10 @@ import fr.emse.canari.camera.cameraKeyAction
 import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
+import fr.emse.canari.keyboard.ImeHandoff
+import fr.emse.canari.keyboard.ImeStep
+import fr.emse.canari.keyboard.imeCssPx
+import fr.emse.canari.keyboard.imeStep
 import fr.emse.canari.orientation.OrientationMode
 import fr.emse.canari.orientation.requestedOrientationFor
 import java.io.File
@@ -43,6 +48,9 @@ class MainActivity : TauriActivity() {
          * when the app is open (the WebSocket has already delivered them).
          */
         @Volatile var isInForeground: Boolean = false
+
+        /** What `canariTheme.setGround` accepts, compiled once. */
+        private val GROUND_COLOUR = Regex("^#[0-9a-fA-F]{6}$")
     }
 
     /**
@@ -183,14 +191,32 @@ class MainActivity : TauriActivity() {
      * scrolled by, revealing the reserved footer while hiding part of the header. So the inset is
      * zeroed on the way down rather than left for CSS to guess at - "the keyboard is up" is known
      * here and nowhere else, and the status bar is deliberately untouched because it is still there.
+     *
+     * THE KEYBOARD MOVES LIKE MESSENGER'S BECAUSE AN ANIMATION CALLBACK IS REGISTERED (2026-11-13,
+     * keyboard-and-send-motion.md). With no `WindowInsetsAnimation` callback in the hierarchy,
+     * Android plays the UNSYNCED IME animation: 200 ms, the keyboard fading in from a short offset
+     * and fading out in place - measured on the Mi 9T as a ghost keyboard. Messenger, on the same
+     * phone, gets the synced one: 285 ms, opaque, sliding the full height on a decelerating curve.
+     * [ImeAnimationLog] does nothing but log; its presence alone selects the synced animation.
+     *
+     * A RISE IS HANDED TO THE PAGE BEFORE THE PADDING LANDS ([imeStep], [handOffIme]): the page lays
+     * itself out for the keyboard first, so the resize never shows a cropped stale frame.
      */
     private fun applyKeyboardInsets() {
         val content = findViewById<View>(android.R.id.content) ?: return
+        ViewCompat.setWindowInsetsAnimationCallback(content, ImeAnimationLog)
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            if (view.paddingBottom != ime) {
-                Log.d("MainActivity", "IME inset: $ime -> content padding")
-                view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, ime)
+            when (imeStep(view.paddingBottom, ime, imeHandoff.pending, liveWebView != null)) {
+                ImeStep.HAND_OFF -> handOffIme(view, ime)
+                ImeStep.APPLY_NOW -> {
+                    val superseded = imeHandoff.end()
+                    setImePadding(view, ime, if (superseded != null) "hand-off to $superseded superseded" else "applied at once")
+                    // A fall while the page holds a target whose padding never landed: the page lets
+                    // it go. A target whose padding did land is already spent on the page's side.
+                    if (ime == 0 && superseded != null) announceImeTarget(0, null)
+                }
+                ImeStep.NOTHING -> Unit
             }
             if (ime == 0) return@setOnApplyWindowInsetsListener insets
             val bars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
@@ -201,6 +227,97 @@ class MainActivity : TauriActivity() {
                 )
                 .build()
         }
+    }
+
+    /** The keyboard hand-off in flight ([ImeHandoff]). UI thread only. */
+    private val imeHandoff = ImeHandoff()
+
+    /** Ends any hand-off in flight because its page went away ([ImeHandoff], review of #3490, S1). */
+    private fun endImeHandoff(why: String) {
+        val was = imeHandoff.end() ?: return
+        Log.d("MainActivity", "IME hand-off to $was ended: $why - the inset is applied again")
+        findViewById<View>(android.R.id.content)?.let { ViewCompat.requestApplyInsets(it) }
+    }
+
+    /** The one line per padding change: the inset, and why it landed now. */
+    private fun setImePadding(view: View, ime: Int, why: String) {
+        if (view.paddingBottom == ime) return
+        Log.d("MainActivity", "IME inset: $ime -> content padding ($why)")
+        view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, ime)
+    }
+
+    /**
+     * Tells the page the keyboard's height (`keyboardViewport.svelte.ts`, `window.canariImeTarget`)
+     * and hands back whether it took it. [then] runs on the UI thread with that answer.
+     */
+    private fun announceImeTarget(ime: Int, then: ((Boolean) -> Unit)?) {
+        val webView = liveWebView ?: run {
+            then?.invoke(false)
+            return
+        }
+        val css = imeCssPx(ime, resources.displayMetrics.density)
+        webView.evaluateJavascript("window.canariImeTarget?.($css) === true") { answer ->
+            then?.invoke(answer == "true")
+        }
+    }
+
+    /**
+     * A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO STALE FRAME: the page lays itself out for the
+     * keyboard inside the still full-size WebView, the WebView reports that frame drawn
+     * (`postVisualStateCallback`, a proof, never a delay), and only then does the padding resize it.
+     * Whatever happens to the keyboard or to the page meanwhile ends the hand-off ([ImeHandoff]), and
+     * a superseded answer does nothing. A page that does not take the target is a page that missed
+     * the contract: it is said at WARN, and the padding lands at once as it always did.
+     */
+    private fun handOffIme(view: View, ime: Int) {
+        val webView = liveWebView ?: return setImePadding(view, ime, "no page to hand off to")
+        val seq = imeHandoff.begin(ime)
+        Log.d("MainActivity", "IME rise #$seq to $ime: handing the layout to the page first")
+        announceImeTarget(ime) { taken ->
+            if (!imeHandoff.isCurrent(seq)) return@announceImeTarget
+            if (!taken) {
+                Log.w("MainActivity", "IME rise #$seq: the page did not take the target - padding now, its frame will be cropped")
+                imeHandoff.end()
+                setImePadding(view, ime, "rise #$seq, target refused")
+                return@announceImeTarget
+            }
+            webView.postVisualStateCallback(seq, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    if (!imeHandoff.isCurrent(requestId)) return
+                    imeHandoff.end()
+                    setImePadding(view, ime, "rise #$requestId: the page drew its keyboard layout")
+                }
+            })
+        }
+    }
+
+    /**
+     * Its presence is the point: a `WindowInsetsAnimation` callback in the hierarchy makes Android
+     * play the SYNCED keyboard animation (see [applyKeyboardInsets]). One line per animation.
+     *
+     * `DISPATCH_MODE_STOP` stops the animation's dispatch at the content view: no descendant receives
+     * `onPrepare` / `onStart` / `onProgress` / `onEnd`. That is safe because none listens - the WebView
+     * (Chromium) registers no insets-animation callback and follows the keyboard through the resize
+     * the padding makes, and no other view in this window sets one. What it would silence is a FUTURE
+     * descendant's callback: one added below the content view must switch this to
+     * `DISPATCH_MODE_CONTINUE_ON_SUBTREE`, or it will never be called. It does not touch the plain
+     * insets dispatch the listener above runs on.
+     */
+    private object ImeAnimationLog : WindowInsetsAnimationCompat.Callback(WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP) {
+        override fun onStart(
+            animation: WindowInsetsAnimationCompat,
+            bounds: WindowInsetsAnimationCompat.BoundsCompat
+        ): WindowInsetsAnimationCompat.BoundsCompat {
+            if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
+                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, up to ${bounds.upperBound.bottom} px")
+            }
+            return bounds
+        }
+
+        override fun onProgress(
+            insets: WindowInsetsCompat,
+            runningAnimations: MutableList<WindowInsetsAnimationCompat>
+        ): WindowInsetsCompat = insets
     }
 
     // By default on Android >= API 21, third-party cookies are blocked in the WebView.
@@ -216,8 +333,11 @@ class MainActivity : TauriActivity() {
         // The web layer cannot see this activity's lifecycle any other way - see `pushForeground`.
         // Held from here because it is the only hook that is handed the WebView at all.
         liveWebView = webView
+        // A hand-off asked of a previous WebView will never be answered by this one.
+        endImeHandoff("a new WebView")
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
+        webView.addJavascriptInterface(ImeBridge(), "canariIme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
         webView.addJavascriptInterface(BackBridge(), "canariBack")
         webView.addJavascriptInterface(AudioBridge(), "canariAudio")
@@ -231,6 +351,22 @@ class MainActivity : TauriActivity() {
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
+    }
+
+    /**
+     * `window.canariIme`: the page's keyboard viewport tells the shell a NEW DOCUMENT is up
+     * (`initKeyboardViewport` registering `canariImeTarget`). A hand-off asked of the previous
+     * document may never be answered (a reload, a navigation), so it ends here and the current inset
+     * is dispatched again - handed to the new page if the keyboard is still up ([ImeHandoff]). Wry's
+     * generated client offers no page-start hook, and a gone renderer takes this process with it
+     * (wry's client does not override `onRenderProcessGone`), so this is where the page's lifecycle
+     * is seen.
+     */
+    private inner class ImeBridge {
+        @JavascriptInterface
+        fun pageReady() {
+            runOnUiThread { endImeHandoff("the page started a new document") }
+        }
     }
 
     /**
@@ -452,6 +588,28 @@ class MainActivity : TauriActivity() {
                 controller.isAppearanceLightStatusBars = light
                 controller.isAppearanceLightNavigationBars = light
                 Log.d("MainActivity", "theme=$theme -> light bar icons=$light")
+            }
+        }
+
+        /**
+         * THE PAGE'S GROUND, PAINTED UNDER THE WEBVIEW (2026-11-13, keyboard-and-send-motion.md).
+         * The WebView is transparent, so the band the keyboard padding opens below it - visible
+         * while the keyboard is still sliding over it - showed the launch background, a dark navy
+         * strip under a light page (owner's recording). The page sends, when it takes a keyboard
+         * target, the opaque colour painted where the keyboard will sit (`keyboardViewport`,
+         * `postGroundToNative`) - a conversation's grey, a full-bleed screen's black. Anything but
+         * `#rrggbb` is logged and ignored.
+         */
+        @JavascriptInterface
+        fun setGround(color: String) {
+            val parsed = if (GROUND_COLOUR.matches(color.trim())) Color.parseColor(color.trim()) else null
+            if (parsed == null) {
+                Log.w("MainActivity", "ground colour '$color' is not #rrggbb - ignored")
+                return
+            }
+            runOnUiThread {
+                findViewById<View>(android.R.id.content)?.setBackgroundColor(parsed)
+                Log.d("MainActivity", "ground=$color under the WebView")
             }
         }
     }
