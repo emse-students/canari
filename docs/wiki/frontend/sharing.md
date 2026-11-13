@@ -636,3 +636,24 @@ A tap on "Copier le lien" in the bookings space page, the message long-press she
 - The inline "Copie" states (forms list and page, calendar subscribe, backup code, group and community invite panels) were deleted: the toast is the single confirmation.
 - The async invite panels copy after a network round trip, outside the tap's gesture: Safari may refuse, and the failure toast then points at the link field the panel keeps visible.
 - **A text still being produced goes to `copyText` as a PROMISE, synchronously from the tap.** WebKit refuses a clipboard write after an awaited round trip, and both invite panels mint their link on the tap (a server call), so they cannot pre-hold it. A promise takes `navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobPromise })])`, which WebKit accepts inside the gesture while the promise resolves; a rejection of the promise is rethrown to the panel (its own error line), never reported as a copy failure. Superseded: the previous bullet's "Safari may refuse" caveat.
+
+## Which Canari links preview as what they name (2026-11-13)
+
+One resolver (`fetchCanariLinkPreview`, `canariLinkPreview.ts`) and one card (`LinkPreviewCard`, which
+both a post body and a chat message render) read a Canari link from Canari's OWN APIs with the viewer's
+session, never from the external unfurler. A form shared as `/f/<id>` (the guest address
+`formSharePath` hands out for a public form) previewed as the generic "Lien / Ouvrir dans Canari"
+card because only `/forms/<id>` was parsed; both now resolve (`guest-form` target).
+
+| Link | Card |
+| --- | --- |
+| `/forms/<id>`, `/f/<id>` | title, banner (else the association's logo), association name and state (closed / opens on / full / open). Member read first, then the guest read (`getPublicForm`) when the session is refused |
+| `/posts/<id>` | author, first line, first photo (decrypted by `PostMedia`, loaded on demand) |
+| `/associations/<slug>`, `/lists/<slug>` | name, logo, one-line description (institutions are associations of type `institution`) |
+| `/profile/<id>` | resolved display name and avatar (`avatarUrl`) |
+| `/c/join/`, `/g/join/` | the invitation's name |
+
+Left generic on purpose: events (no address of their own - `/events` redirects to the calendar) and
+lives (opening one takes a seat, a preview must not). A 4xx is the server's ANSWER and the generic
+card is cached; a transport failure shows the same card but is not remembered, so the next card asks
+again. Both log at debug under `LINK_PREVIEW`. Tests: `canariLinkPreview.kinds.test.ts`.
