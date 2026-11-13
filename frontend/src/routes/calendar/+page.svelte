@@ -82,6 +82,7 @@
     FileDown,
   } from '@lucide/svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { eventReachOffered } from '$lib/calendar/eventReach';
   import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -459,6 +460,9 @@
    * `PROPOSE_EVENT` on that association. That is knowable here, from the list already loaded, so
    * the control appears only where the request would succeed instead of being sent to find out.
    */
+  /** The association the event is filed in the name of (or belongs to, when editing). */
+  const reachOwner = $derived(associations.find((a) => a.id === depositValues.targetAssociationId));
+
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
     canSetKind: mayValidateFor(depositValues.targetAssociationId),
@@ -469,6 +473,8 @@
     // NEUTRAL ("Campus", owner 2026-11-08): the target is a BDE and the viewer manages its agenda -
     // files its events or validates them - which is what the server checks (`event-presentation.ts`).
     canSetPresentation: mayPresentNeutralOn(depositValues.targetAssociationId),
+    // AN INSTITUTION'S EVENT CHOOSES ITS REACH (owner, 2026-11-13): "Au nom de" is an institution.
+    canSetReach: eventReachOffered(reachOwner?.type),
   });
 
   /** Whether the viewer may file a neutral event on `associationId`: a BDE whose agenda they manage. */
@@ -894,5 +900,6 @@
   submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_submit()}
   savingLabel={editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_submitting()}
   onSubmit={submitEvent}
+  ownerName={reachOwner?.name ?? editingOwnerName}
   onClose={() => (depositModalOpen = false)}
 />

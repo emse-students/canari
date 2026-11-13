@@ -20,8 +20,9 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * THE REACH OF AN INSTITUTION'S POST, as the composer, the reel step and the edit form draw it
-   * (owner, 2026-11-10): ONE block - the spaces of the institution's own audience as chips grouped by
+   * THE REACH OF AN INSTITUTION'S POST OR EVENT, as the composer, the reel step, the post edit form
+   * and the event form draw it (owner, 2026-11-10; events 2026-11-13, "the same picker block"): ONE
+   * block - the spaces of the institution's own audience as chips grouped by
    * campus (a campus chip ticks or unticks the whole campus, a formation row does the same for a
    * formation present on several campuses), then the public, Tous / Étudiants / Personnel, then ONE
    * line saying who will see the post as chosen, or what is still missing. NOTHING IS PRE-SELECTED:
@@ -47,6 +48,16 @@
      * edit form sends a reach only after it (review of #3314).
      */
     ontouch?: () => void;
+    /**
+     * What the reach is for: the missing-choice line names the act it blocks ("publier" a post,
+     * "déposer" an event). Everything else is the same block.
+     */
+    subject?: 'post' | 'event';
+    /**
+     * Where the offered spaces come from - the posts' route by default; the event form passes the
+     * events' (`getEventReachOptions`), which asks the right to file the institution's events.
+     */
+    loadOptions?: (associationId: string) => Promise<{ spaces: ReachSpace[] }>;
   }
 
   let {
@@ -56,6 +67,8 @@
     busy = false,
     required = true,
     ontouch,
+    subject = 'post',
+    loadOptions = getInstitutionReachOptions,
   }: Props = $props();
 
   let options = $state<ReachSpace[]>([]);
@@ -70,7 +83,7 @@
     let cancelled = false;
     loading = true;
     failed = false;
-    getInstitutionReachOptions(id)
+    loadOptions(id)
       .then(({ spaces }) => {
         if (cancelled) return;
         options = spaces;
@@ -155,9 +168,14 @@
 
   const hint = $derived.by(() => {
     const noSpace = reach.spaces.length === 0;
-    if (noSpace && reach.public === null) return m.post_reach_missing_both();
-    if (noSpace) return m.post_reach_missing_spaces();
-    if (reach.public === null) return m.post_reach_missing_public();
+    const event = subject === 'event';
+    if (noSpace && reach.public === null) {
+      return event ? m.event_reach_missing_both() : m.post_reach_missing_both();
+    }
+    if (noSpace) return event ? m.event_reach_missing_spaces() : m.post_reach_missing_spaces();
+    if (reach.public === null) {
+      return event ? m.event_reach_missing_public() : m.post_reach_missing_public();
+    }
     const name = associationName;
     if (reach.public === 'students') return m.post_reach_hint_students({ name });
     if (reach.public === 'staff') return m.post_reach_hint_staff({ name });

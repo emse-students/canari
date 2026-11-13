@@ -195,6 +195,7 @@ import {
   associationRulesReachSpaceMatchingSql,
   eventReachesSpaceMatchingSql,
   associationVisibleToViewerSql,
+  eventCardShownToViewerSql,
   eventVisibleToViewerSql,
   READER_PROFILE_SQL,
   AGENDA_REACHED_SPACES_SQL,
@@ -203,6 +204,12 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
+import {
+  institutionReachOptionsOffered,
+  resolveInstitutionReachWrite,
+  servedInstitutionReach,
+  type InstitutionReachSpace,
+} from '../spaces/institution-reach';
 import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
 import { normaliseRules, smallestRules } from '../spaces/spaces.service';
 import { writeDependencyJournal } from '../spaces/dependency-journal';
@@ -2390,6 +2397,9 @@ export class AssociationsService {
       rejectedBy: e.rejectedBy ?? null,
       rejectionReason: e.rejectionReason ?? null,
       imageUrl: e.imageUrl ?? null,
+      // An institution's reach (owner, 2026-11-13), served to every reader as posts serve theirs, so
+      // the event says who it is for: `null` when the event carries none.
+      reach: servedInstitutionReach(e),
       coOwners: coOwners.map((co) => ({
         associationId: co.associationId,
         name: co.association?.name ?? '',
@@ -2472,19 +2482,13 @@ export class AssociationsService {
    * `AssociationCalendarFeedEvent` shape that modal already renders, association identity
    * included, not the narrower object other callers of `serializeCalendarEvent` are content with.
    */
-  async findCalendarEventByLinkedPost(postId: string) {
+  async findCalendarEventByLinkedPost(postId: string, viewerId: string | undefined) {
     const post = await this.postRepo.findOne({
       where: { id: postId },
       select: { id: true, linkedCalendarEventId: true },
     });
     if (!post?.linkedCalendarEventId) return null;
-    const ev = await this.calendarRepo.findOne({
-      where: {
-        id: post.linkedCalendarEventId,
-        status: AssociationCalendarEventStatus.Validated,
-        presentation: AssociationCalendarEventPresentation.Association,
-      },
-    });
+    const ev = await this.findShownLinkedEvent(post.linkedCalendarEventId, viewerId);
     if (!ev) return null;
     const [coOwners, ownerById] = await Promise.all([
       this.batchLoadCoOwners([ev.id]),
@@ -2500,15 +2504,38 @@ export class AssociationsService {
     };
   }
 
-  /** Minimal event payload for post cards (validated events only). */
-  async findValidatedCalendarEventSummary(eventId: string) {
-    const ev = await this.calendarRepo.findOne({
-      where: {
-        id: eventId,
-        status: AssociationCalendarEventStatus.Validated,
-        presentation: AssociationCalendarEventPresentation.Association,
-      },
-    });
+  /**
+   * THE EVENT A POST LINKS, AS ITS READER MAY BE SHOWN IT: validated, presented in its association's
+   * name, and - for an event an institution gave a reach (owner, 2026-11-13) - admitted by the
+   * event's own predicate for `viewerId` (`eventCardShownToViewerSql`): "an event announced by a
+   * post keeps its own visibility". An event with no reach is shown wherever its post is, as before.
+   */
+  private async findShownLinkedEvent(
+    eventId: string,
+    viewerId: string | undefined
+  ): Promise<AssociationCalendarEvent | null> {
+    const ev = await this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e.id = :eventId', { eventId })
+      .andWhere('e.status = :validated', { validated: AssociationCalendarEventStatus.Validated })
+      .andWhere('e.presentation = :presented', {
+        presented: AssociationCalendarEventPresentation.Association,
+      })
+      .andWhere(eventCardShownToViewerSql('e', ':cardViewerId'), {
+        cardViewerId: viewerId?.trim() || null,
+      })
+      .getOne();
+    if (!ev) {
+      this.logger.debug(
+        `[AGENDA] linked event ${sanitizeLog(eventId.slice(0, 8))} not shown to ${viewerId ? sanitizeLog(viewerId.slice(0, 8)) : 'an anonymous reader'}`
+      );
+    }
+    return ev;
+  }
+
+  /** Minimal event payload for post cards (validated events the reader may be shown only). */
+  async findValidatedCalendarEventSummary(eventId: string, viewerId: string | undefined) {
+    const ev = await this.findShownLinkedEvent(eventId, viewerId);
     if (!ev) return null;
     const asso = await this.assoRepo.findOne({
       where: { id: ev.associationId },
@@ -2767,6 +2794,25 @@ export class AssociationsService {
       }),
       { agendaCampus: campus, agendaFormation: formation }
     );
+  }
+
+  /**
+   * AN ANONYMOUS READ NEVER CARRIES A "STUDENTS" OR "STAFF" EVENT (owner, 2026-11-13; the lead's
+   * "same rules as posts", review of #3460): a post whose public is students or staff never reaches
+   * an anonymous reader (the link preview refuses it), and neither does an event. An association-only
+   * link and a campus/formation selection feed alike are signed over the SELECTION, not a reader, and
+   * are shareable, so neither names a public: both withhold such an event, whatever space it ticks.
+   * A signed-in reader is judged by their own predicate. The one-event link (`signedEvent`, signed
+   * for that event and handed out by a reader who saw it) is left whole, deliberately: it shares one
+   * event its holder could already read, as a forwarded invitation does.
+   */
+  private restrictAnonymousToPublicReach(
+    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+    opts: { viewer?: CalendarViewer; signedEvent?: boolean } | undefined
+  ): void {
+    if (opts?.viewer?.userId?.trim() || opts?.viewer?.isGlobalAdmin || opts?.signedEvent) return;
+    this.logger.debug('[AGENDA] anonymous read: events for students or staff withheld');
+    qb.andWhere(`(e."reachPublic" IS NULL OR e."reachPublic" = 'all')`);
   }
 
   /** Max span for aggregated calendar queries (abuse guard). */
@@ -3486,6 +3532,8 @@ export class AssociationsService {
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('e.presentation', 'presentation')
+      .addSelect('e.reachPublic', 'reachPublic')
+      .addSelect('e.reachSpaces', 'reachSpaces')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
@@ -3515,6 +3563,8 @@ export class AssociationsService {
         imageUrl: (r.imageUrl as string | null) ?? null,
         imageMediaId: (r.imageMediaId as string | null) ?? null,
         presentation: this.rawPresentation(r.presentation),
+        reachPublic: (r.reachPublic as AssociationCalendarEvent['reachPublic']) ?? null,
+        reachSpaces: (r.reachSpaces as AssociationCalendarEvent['reachSpaces']) ?? null,
       });
       return {
         ...base,
@@ -3600,7 +3650,13 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: { includePending?: boolean; viewer?: CalendarViewer; selection?: SpaceSelection }
+    opts?: {
+      includePending?: boolean;
+      viewer?: CalendarViewer;
+      selection?: SpaceSelection;
+      /** The one-event `.ics` link, signed for that event: no public is withheld from it. */
+      signedEvent?: boolean;
+    }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -3637,6 +3693,7 @@ export class AssociationsService {
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
     this.restrictToSelection(qb, opts?.selection);
+    this.restrictAnonymousToPublicReach(qb, opts);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {
@@ -3676,6 +3733,8 @@ export class AssociationsService {
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('e.presentation', 'presentation')
+      .addSelect('e.reachPublic', 'reachPublic')
+      .addSelect('e.reachSpaces', 'reachSpaces')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
@@ -3710,6 +3769,8 @@ export class AssociationsService {
           imageUrl: (r.imageUrl as string | null) ?? null,
           imageMediaId: (r.imageMediaId as string | null) ?? null,
           presentation: this.rawPresentation(r.presentation),
+          reachPublic: (r.reachPublic as AssociationCalendarEvent['reachPublic']) ?? null,
+          reachSpaces: (r.reachSpaces as AssociationCalendarEvent['reachSpaces']) ?? null,
         },
         coOwnerMap.get(r.id as string) ?? []
       );
@@ -4079,6 +4140,16 @@ ${rejectionReason}`
       linkedFormId,
       linkedByPost: false,
     });
+    // AN INSTITUTION'S REACH (owner, 2026-11-13): mandatory on an institution's event, refused on any
+    // other, never wider than its audience - the posts' own decision and codes, judged on the OWNER
+    // (the target of a deposit). Before the transaction, like the cap.
+    const reach = await resolveInstitutionReachWrite(this.calendarRepo.manager, {
+      mode: 'create',
+      associationId: targetId,
+      associationType: owner.type ?? null,
+      raw: dto.reach,
+      subject: 'event',
+    });
     // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
     // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
     // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
@@ -4098,6 +4169,8 @@ ${rejectionReason}`
         createdBy: userId,
         kind,
         presentation,
+        reachPublic: reach?.reachPublic ?? null,
+        reachSpaces: reach?.reachSpaces ?? null,
         linkedFormId,
         // The three validation columns are written in ONE place, and this is not it. Spelling
         // `null` here rather than leaving them to the entity default is deliberate: a default is
@@ -4314,6 +4387,8 @@ ${rejectionReason}`
     // The presentation is the organiser's, and a neutral event is checked as it WILL be (its partners
     // and its form link after this write) - read-only, so it sits with the refusals below.
     await this.assertEventPresentationAfterUpdate(manager, ev, dto, associationId, side);
+    // The reach is the organiser's too, and is judged before any write (owner, 2026-11-13).
+    await this.applyEventReachUpdate(manager, ev, dto.reach, side);
 
     // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
     // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
@@ -4363,6 +4438,79 @@ ${rejectionReason}`
       : () => Promise.resolve();
     const saved = await repo.save(ev);
     return { saved, demoted, afterCommit };
+  }
+
+  /**
+   * The reach half of `applyCalendarEventUpdate` (owner, 2026-11-13): absent leaves the stored reach
+   * alone (an older client never clears it, and an event filed before the reach keeps its whole
+   * audience until an edit chooses one); present replaces it, both ways, judged as at the filing -
+   * on the organiser side only (E2). Nothing else moves: the status stays (an edit of the reach does
+   * NOT send the event back to validation) and nobody is told - every reader path re-asks the
+   * predicate, so a narrowing withdraws the event from the excluded readers at once. Sets the two
+   * columns on `ev`; the caller saves.
+   */
+  private async applyEventReachUpdate(
+    manager: EntityManager,
+    ev: AssociationCalendarEvent,
+    raw: unknown,
+    side: EventWriteSide
+  ): Promise<void> {
+    if (raw === undefined) return;
+    if (side === 'partner') {
+      this.logger.debug(
+        `[PERM] partner refused a reach change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('reach');
+    }
+    const [owner] = (await manager.query(`SELECT type FROM associations WHERE id = $1`, [
+      ev.associationId,
+    ])) as { type: string }[];
+    const reach = await resolveInstitutionReachWrite(manager, {
+      mode: 'edit',
+      associationId: ev.associationId,
+      associationType: owner?.type ?? null,
+      raw,
+      subject: 'event',
+    });
+    if (!reach) return;
+    const before = servedInstitutionReach(ev);
+    this.logger.log(
+      `[INSTITUTION_REACH] event ${sanitizeLog(ev.id.slice(0, 8))}: reach ${before ? `${before.public}/${before.spaces.length}` : 'none'} -> ${reach.reachPublic}/${reach.reachSpaces.length} space(s), read at once by every path, nobody told`
+    );
+    ev.reachPublic = reach.reachPublic;
+    ev.reachSpaces = reach.reachSpaces;
+  }
+
+  /**
+   * The spaces an institution's event may target, for the event form (owner, 2026-11-13): the SAME
+   * statement the write checks a reach against (`institutionReachOptionsOffered`, shared with the
+   * composer's route). Asked of the OWNER `associationId` by whoever may file or write its events: a
+   * platform admin, `PROPOSE_EVENT` on it (the route's own right), or the BDE agenda right over it
+   * (a validator depositing through `targetAssocId`, or editing it) - 403 otherwise; 400
+   * `institution_reach_not_offered` for an owner that is not an institution.
+   */
+  async listEventReachOptions(
+    userId: string,
+    associationId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ spaces: InstitutionReachSpace[] }> {
+    const owner = await this.findById(associationId);
+    const mayFile =
+      isGlobalAdmin ||
+      (await this.mayAct(userId, associationId, AssociationPermissionFlag.PROPOSE_EVENT)) ||
+      (await this.mayValidateEventsOf(userId, associationId));
+    if (!mayFile) {
+      this.logger.debug(
+        `[INSTITUTION_REACH] event options of ${sanitizeLog(associationId.slice(0, 8))}: ${sanitizeLog(userId.slice(0, 8))} files none of its events`
+      );
+      throw new ForbiddenException('You may not file events for this association');
+    }
+    return institutionReachOptionsOffered(
+      this.calendarRepo.manager,
+      associationId,
+      owner.type ?? null,
+      'event'
+    );
   }
 
   /**

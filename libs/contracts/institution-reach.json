@@ -1,5 +1,5 @@
 {
-  "description": "The reach an institution chooses for each of its posts (owner, 2026-11-10; docs/wiki/backlog.d/institution-post-reach.md): the entity types whose posts carry a reach - an institution only, never an association, a list or a personal post - the three publics, and the typed 400 `code`s social-service refuses a reach with (apps/social-service/src/posts/institution-reach.ts). The composers offer the reach picker on exactly these types (frontend/src/lib/posts/institutionReach.ts). Each side's spec asserts its constants equal these, so the two cannot drift apart.",
+  "description": "The reach an institution chooses for each of its posts and calendar events (owner, 2026-11-10 for posts, 2026-11-13 for events; docs/wiki/profiles-and-access.md): the entity types whose posts carry a reach - an institution only, never an association, a list or a personal post - the three publics, and the typed 400 `code`s social-service refuses a reach with (apps/social-service/src/spaces/institution-reach.ts). The composers offer the reach picker on exactly these types (frontend/src/lib/posts/institutionReach.ts). Each side's spec asserts its constants equal these, so the two cannot drift apart.",
   "types": ["institution"],
   "publics": ["all", "students", "staff"],
   "codes": {

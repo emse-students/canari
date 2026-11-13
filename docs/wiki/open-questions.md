@@ -663,3 +663,7 @@ which would let the School address its staff in the app without naming each one?
 reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
 institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
 account with no membership, grant or follow.
+
+**The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
+has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
+so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.

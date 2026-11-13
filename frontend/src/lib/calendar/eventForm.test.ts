@@ -8,8 +8,11 @@ import {
   withCoOrganiserStates,
   loadCoOrganiserFields,
   withdrawalCoOwnerIds,
+  offersReach,
+  reachBlocksSave,
   type EventFormValues,
 } from './eventForm';
+import { emptyReachDraft } from '$lib/posts/institutionReach';
 import { toDatetimeLocalValue } from '$lib/utils/dates';
 
 /**
@@ -34,6 +37,9 @@ const BASE: EventFormValues = {
   coOwnerStates: [],
   targetAssociationId: 'asso-1',
   writeSide: 'organiser',
+  reach: emptyReachDraft(),
+  reachRequired: true,
+  reachTouched: false,
 };
 
 const SIDE_ORGANISER = () => Promise.resolve({ side: 'organiser' as const });
@@ -286,5 +292,86 @@ describe('eventFormValuesFrom', () => {
 
   it('names the owning association, which is what keeps it out of its own co-owner list', () => {
     expect(eventFormValuesFrom(EVENT).targetAssociationId).toBe('asso-1');
+  });
+});
+
+/**
+ * AN INSTITUTION'S EVENT CHOOSES ITS REACH (owner, 2026-11-13): no default, "Déposer" disabled until
+ * the spaces and the public are chosen, an edit sends a reach only once the author touched it, and a
+ * partner (or any non-institution) never sends one - the server refuses it there.
+ */
+describe('the reach of an institution event', () => {
+  const SPACE = { formation: 'ICM', campus: 'SE' };
+  const COMPLETE = { spaces: [SPACE], public: 'students' as const };
+  const CAPS = { canSetReach: true };
+
+  it('is offered only to an institution, from the organiser side', () => {
+    expect(offersReach(BASE, CAPS)).toBe(true);
+    expect(offersReach(BASE, {})).toBe(false);
+    expect(offersReach({ ...BASE, writeSide: 'partner' }, CAPS)).toBe(false);
+    expect(offersReach({ ...BASE, writeSide: 'unknown' }, CAPS)).toBe(false);
+  });
+
+  it('blocks the save until both the spaces and the public are chosen', () => {
+    expect(reachBlocksSave(BASE, CAPS)).toBe(true);
+    expect(reachBlocksSave({ ...BASE, reach: { spaces: [SPACE], public: null } }, CAPS)).toBe(true);
+    expect(reachBlocksSave({ ...BASE, reach: { spaces: [], public: 'all' } }, CAPS)).toBe(true);
+    expect(reachBlocksSave({ ...BASE, reach: COMPLETE }, CAPS)).toBe(false);
+    expect(validateEventForm(BASE, CAPS).ok).toBe(false);
+    expect(validateEventForm({ ...BASE, reach: COMPLETE }, CAPS).ok).toBe(true);
+  });
+
+  it('never blocks a legacy event filed before the reach existed, nor a non-institution', () => {
+    expect(reachBlocksSave({ ...BASE, reachRequired: false }, CAPS)).toBe(false);
+    expect(reachBlocksSave(BASE, {})).toBe(false);
+  });
+
+  it('a new event carries the reach, as plain data; nothing when not offered', () => {
+    expect(toCreatePayload({ ...BASE, reach: COMPLETE }, CAPS)).toMatchObject({ reach: COMPLETE });
+    expect(toCreatePayload({ ...BASE, reach: COMPLETE }, {})).not.toHaveProperty('reach');
+  });
+
+  it('an edit sends the reach only once touched, and never from the partner side', () => {
+    const edited = { ...BASE, reach: COMPLETE, reachRequired: true };
+
+    expect(toUpdatePayload(edited, CAPS)).not.toHaveProperty('reach');
+    expect(toUpdatePayload({ ...edited, reachTouched: true }, CAPS)).toMatchObject({
+      reach: COMPLETE,
+    });
+    expect(
+      toUpdatePayload({ ...edited, reachTouched: true, writeSide: 'partner' }, CAPS)
+    ).not.toHaveProperty('reach');
+  });
+
+  it('seeds a new event empty and required, an existing one from its served reach', () => {
+    const blank = blankEventFormValues();
+    expect(blank.reach).toEqual({ spaces: [], public: null });
+    expect(blank.reachRequired).toBe(true);
+
+    const legacy = eventFormValuesFrom({
+      associationId: 'asso-1',
+      title: 'Gala',
+      description: null,
+      startsAt: new Date(2026, 9, 6, 18, 30).toISOString(),
+      endsAt: null,
+      kind: 'event',
+      linkedFormId: null,
+      reach: null,
+    });
+    expect(legacy.reachRequired).toBe(false);
+
+    const reached = eventFormValuesFrom({
+      associationId: 'asso-1',
+      title: 'Gala',
+      description: null,
+      startsAt: new Date(2026, 9, 6, 18, 30).toISOString(),
+      endsAt: null,
+      kind: 'event',
+      linkedFormId: null,
+      reach: COMPLETE,
+    });
+    expect(reached.reach).toEqual(COMPLETE);
+    expect(reached.reachRequired).toBe(true);
+    expect(reached.reachTouched).toBe(false);
   });
 });
