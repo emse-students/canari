@@ -113,13 +113,13 @@ describe('LiveReportControl', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('opens the reason dialog on the critical layer, over the viewer', async () => {
+  it('opens the reason dialog on the overlay stack, over the viewer', async () => {
     await render();
     expect(dialog()).toBeNull();
     await click(flag());
     expect(dialog()).not.toBeNull();
     expect(dialog()!.getAttribute('aria-label')).toBe(m.live_report_dialog_title());
-    expect(dialog()!.parentElement!.className).toContain('z-(--z-critical)');
+    expect(Number(dialog()!.parentElement!.style.zIndex)).toBeGreaterThan(0);
     // No reason chosen yet: nothing can be sent.
     expect(submitButton()!.disabled).toBe(true);
   });

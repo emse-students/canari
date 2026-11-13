@@ -253,6 +253,25 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
+
+**Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`
+(`SERVICE_DOCKERFILE`, `ALL_SERVICES`), its line in `scheduled.yml`'s GHCR prune list, and production's
+`adminer` service (`image: ghcr.io/.../canari/adminer:${TAG}`, `build:`, `canari.deploy.replace: exclusive`).
+**What it humours:** upstream's newest image, `adminer:6.3.0` (`sha256:3a07decd...`, 2026-11-06), carries
+Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.24's `18.7-r0`; the
+image scan failed every pull request from 2026-11-13. The owner chose a patched image over an allowlist
+and over removing the console: that same digest, `apk upgrade --no-cache libpq`, back to `USER adminer`.
+The scan builds it and reads the result ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+**The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
+gap on a console only a global admin opens) where a pinned image moved only with its digest.
+**Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
+to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of that pull request, or with
+`trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
+adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
+Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
+this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
@@ -1329,8 +1348,10 @@ is read at `at: 0`, so any dated statement about the same message beats it.
 register is a last-write-wins entry per message with dated tombstones for the unpins.
 **On removal:** delete the three `Number(data.at) ||` fallbacks, the `typeof raw === 'string'` arm of
 `mergePinEntries`, and the `Array.isArray(parsed)` arm of `parseStored`.
-**This one has a SECOND store behind it, and the date does not cover it.** `canari_pins_*` is
-`localStorage` on each device, which nothing on the server can reach and no retention window bounds.
+**This one has a SECOND store behind it, and the date does not cover it.** The stored register
+(`canari_pins_*`, per account since 2026-11-12 as `canari_pins:v1:<account>:<conversation>` - see
+[the entry below](#2027-02-12---the-pin-register-stored-under-the-conversation-alone-canari_pins_conversation),
+which moves the old copies without rewriting their shape) is `localStorage` on each device, which nothing on the server can reach and no retention window bounds.
 The `Array.isArray` arm may only go once every device has rewritten its own entry - which happens on
 the first pin change in each conversation - so on the date, delete the two frame-shape fallbacks and
 re-read that arm as its own question.
@@ -1338,6 +1359,25 @@ re-read that arm as its own question.
 an old client and a device that unpinned on a new one converge on unpinned even if the pin came
 second. The user can always pin again; the reverse - a resurrected pin nobody can explain - is the
 outcome the dating exists to prevent.
+
+### 2027-02-12 - the pin register stored under the conversation alone (`canari_pins_<conversation>`)
+
+**Site:** `takeLegacyRegister` and `legacyKey` in `pinStore.svelte.ts`.
+**Shim:** builds before 2026-11-12 stored the register under the conversation id alone, so every
+account of an install shared it and neither a sign-out nor the account deletion's sweep removed it.
+When the signed-in account reads a conversation it holds no register for, the legacy copy is moved to
+it (`ACCOUNT_KEY.conversationPins`) and the legacy key removed, with one `[PINS] legacy register ...
+moved` line; a write that fails keeps the legacy key, read again and moved on the next try.
+**On a shared install the FIRST account to open the conversation takes the old register**, the
+other accounts there start from none: the old copy cannot say whose pins it held, since it was all
+of theirs. Nothing is lost for them - every history bundle restates a conversation's pins, so the
+others converge on the next bundle they receive.
+**Replacement:** the per-account key, forgotten at sign-out (`forgetConversationPins`, as the nickname
+registers are) and swept by the deletion with every other per-account key.
+**On removal:** replace the move by a one-shot removal of every `canari_pins_*` key left (a
+conversation nobody opened in three months), then delete both functions. Three months from the
+change, so that a device opened even rarely has moved what it holds.
+**Cost of keeping it:** one `getItem` on the first read of a conversation that has no register yet.
 
 ### 2026-11-15 - `read_receipt` naming message ids
 

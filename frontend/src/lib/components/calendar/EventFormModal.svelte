@@ -21,6 +21,7 @@
   } from '$lib/calendar/eventForm';
   import type { Association } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE EVENT FORM, ONCE, FOR EVERY SURFACE THAT OFFERS ONE.
@@ -90,6 +91,7 @@
     onWithdraw = null,
     onClose,
   }: Props = $props();
+  const layer = useOverlayLayer(() => open, 'EventFormModal');
 
   let saving = $state(false);
   let error = $state('');
@@ -186,7 +188,8 @@
     <div
       use:coversScreen
       data-keyboard-aware-overlay
-      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
+      style:z-index={layer.z}
+      class="flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && onClose()}
     >

@@ -1553,7 +1553,7 @@ async function rekeyStoredDirectRows(
   const from = oldId.slice(0, 8);
   const to = newId.slice(0, 8);
   try {
-    const { moved, left } = await moveDirectConversationRows(oldId, newId, storage, key);
+    const { moved, left, carried } = await moveDirectConversationRows(oldId, newId, storage, key);
     const movedIds = new Set(moved);
     const fresh: StoredMessage[] = onScreen
       .filter((m) => m.id && m.status !== 'sending' && !movedIds.has(m.id))
@@ -1574,10 +1574,11 @@ async function rekeyStoredDirectRows(
     // group's buffered frames replay before the move, so a deletion, edit or reaction of an old
     // message found no row under the joined group and was kept as a pending mutation there; the
     // user's own act during the move is kept the same way (`persistLocalMutation`). The rows just
-    // written under the joined group are what those entries waited for.
-    await settlePendingFor(deps, newId, [...moved, ...written]);
+    // written under the joined group are what those entries waited for; the entries the move
+    // carried over from the old group look for theirs too.
+    await settlePendingFor(deps, newId, [...new Set([...moved, ...written, ...carried])]);
     log(
-      `[WELCOME] ${from}… re-keyed onto ${to}…: ${moved.length} stored row(s) moved, ${written.size} row(s) only memory held written` +
+      `[WELCOME] ${from}… re-keyed onto ${to}…: ${moved.length} stored row(s) moved, ${written.size} row(s) only memory held written, ${carried.length} waiting mutation target(s) carried` +
         (left > 0 ? `, ${left} row(s) did not open and stay under ${from}…` : '')
     );
   } catch (e) {

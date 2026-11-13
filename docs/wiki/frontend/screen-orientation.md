@@ -160,8 +160,43 @@ pads its sides with `utils/sideSafeArea.ts`.
   the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
   A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
   offered - the sheet and the chat are out of it (`data-no-double-tap`).
-- **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
-  being rewritten by the video-player stack).
+- **The full-screen video viewer** (`MediaLightbox`, built 2026-11-12, issue #3407: a landscape video
+  of a post could not be watched turned): it requests `auto` ONLY while a video is on show - the
+  effect reads `videoChrome.present` through a `$derived`, so a swipe from one video to the next keeps
+  the SAME request (no portrait/auto pair posted back to back), a photo or the close releases it. The
+  rotate button sits in the header (`RotateButton glass={false}`: the header is already glass, so the
+  44px target takes the header's white hover instead of a second disc) and forces landscape past the
+  lock until the video leaves. The header and the dots footer take the side safe areas
+  (`FullScreenViewer`, immersive only). A photo stays portrait (owner's scope).
+- **The live viewer** (`LiveViewer`, built 2026-11-12): `useScreenOrientation('live-viewer')` for its
+  whole mount, the rotate button beside the sound and share buttons, the top bar and the bottom row
+  padded by the side safe areas, the chat panel `landscape:max-w-md` with the reaction bar a column
+  at its right. The `<video>` was already `object-contain`.
+- **The reel pager** (`ReelViewer`, built 2026-11-12, issue #3407) **stays portrait, EXCEPT while the
+  item on show is a LANDSCAPE VIDEO** (owner, 2026-11-12, replacing "the pager stays portrait" - a
+  video opened from a feed post lands here, not in the lightbox). Then it requests `auto` and draws
+  the rotate button (forces landscape under the lock, and back); a vertical or square video, a photo,
+  a replay and a media of unknown size change nothing.
+  - **Landscape is the media's own shape** (`isLandscapeVideo`, `reels/fullScreenPost.ts`: width >
+    height through `resolveMediaSize`): the DECLARED size first (it wins, and exists before the player
+    mounts), else what this device measured (`measuredMediaSize`: filled only by the chat and GIF embeds,
+    so it helps a video already seen in a chat, never a feed post), else the decoded video's own size
+    once its `loadedmetadata` is caught on the viewer (a `$state` map by media id). The last two serve
+    videos posted before 2026-09-29, which declare no size: an old FEED post opens portrait and turns
+    once its metadata loads (the `loadedmetadata` map is what works there). Still unknown: portrait.
+  - **One request per run of landscape items**: the effect reads a `$derived` boolean ("the item on
+    show - the page's media, or a carousel's visible one - is a landscape video"), so a swipe from one
+    landscape video to the next keeps the SAME request (the lightbox's `videoShown` pattern); a swipe
+    to a vertical item, a photo, and the close release it, which hands the turn back to portrait.
+  - **Turned, the frame fills the screen** (`ReelFrame` contain, the media's ratio against a landscape
+    stage). The slide's caption and rail pad their sides by the safe area, the caption drops to one
+    line and loses its tall gradient top, and the viewer's top scrim pads its sides - all keyed on
+    "landscape video AND the viewport is landscape AND the native app" (`turnedOverVideo`, gated by
+    `orientationCanBeForced`), never on the bare `landscape:` variant: a desktop window is always wider
+    than tall.
+  - **Vertical swipes keep working turned**: the track and its gestures are untouched, so a swipe up
+    or down still pages to the next or previous post (the 100 % track offset is the new viewport
+    height). Chosen as the simplest defined behaviour; a landscape-only paging model was not built.
 
 ## Known and accepted
 
@@ -193,7 +228,7 @@ shell reserved `md:pl-24` for the rail. A phone turned is 800+ px wide, so it cr
 two came back. **Fix, at the one place that decides it:** `routes/+layout.svelte` renders `AppSidebar`,
 `Navbar`, `MobileHeader`, the tab bars and the gutter only when `!isFullScreen` - chrome follows the
 PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays (reel viewer, video
-and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
+and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` on the overlay stack (`utils/overlayStack.ts`),
 above every shell layer, so they were never affected.
 
 **The phone question (decided, and left alone):** `PHONE_VIEWPORT_QUERY` is NOT changed. A first cut

@@ -17,6 +17,7 @@
   import { getRecentEmojis, persistRecentEmoji } from './emojiPickerShared';
   import EmojiGrid from './EmojiGrid.svelte';
   import EmojiText from '../shared/EmojiText.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /**
@@ -43,6 +44,9 @@
     existingReactionEmojis = [],
     onEmojiSelect,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => origin !== null, 'MessageEmojiPicker');
 
   const reactionsAtLimit = $derived(
     existingReactionEmojis.length >= MAX_DISTINCT_MESSAGE_REACTIONS
@@ -138,7 +142,8 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl"
+    style:z-index={layer.z}
+    class="glass-chrome border-cn-border fixed flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!--

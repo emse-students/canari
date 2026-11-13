@@ -4,7 +4,7 @@
  * conversation where the real one warns, so a test can assert that never happens; a row marked
  * `unreadable` stands in the store but does not open, as one sealed under another device key.
  * Mutations waiting for their message (`pending`) are kept the way the real store keeps them: one
- * entry per conversation, message, sender, kind and slot, the higher rank winning.
+ * entry per conversation, message, sender, kind and slot, the higher rank winning, the first on a tie.
  */
 import { vi } from 'vitest';
 import type { ConversationMeta, StoredMessage } from '$lib/db';
@@ -44,9 +44,9 @@ export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = 
     putPendingMutation: vi.fn(async (entry: PendingMutation) => {
       const key = pendingKey(entry);
       const held = pending.get(key);
-      if (held && held.rank >= entry.rank && held.kind !== 'delete') {
-        return { written: false, kept: true, evicted: 0 };
-      }
+      // The real stores' rule (`putPendingMutation`): the larger rank wins, the first on a tie, and
+      // a refused write keeps nothing of its own.
+      if (held && held.rank >= entry.rank) return { written: false, kept: false, evicted: 0 };
       pending.set(key, { ...entry });
       return { written: true, kept: true, evicted: 0 };
     }),
@@ -56,11 +56,23 @@ export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = 
       ),
       removedUnreadable: 0,
     })),
+    getPendingMutationsOf: vi.fn(async (conv: string) => ({
+      entries: [...pending.values()].filter((e) => e.conversationId === conv),
+      removedUnreadable: 0,
+    })),
     deletePendingMutations: vi.fn(async (entries: readonly PendingMutation[]) => {
       for (const e of entries) {
         const key = pendingKey(e);
         if (pending.get(key)?.rank === e.rank) pending.delete(key);
       }
+    }),
+    getMessageStanding: vi.fn(async (id: string) => {
+      const row = byId.get(id);
+      if (!row) return { kind: 'absent' as const };
+      return {
+        kind: row.unreadable ? ('unreadable' as const) : ('readable' as const),
+        conversationId: row.conversationId,
+      };
     }),
     getMessages: vi.fn(async (conv: string) =>
       [...byId.values()]

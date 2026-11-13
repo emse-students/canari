@@ -197,6 +197,12 @@ export const ACCOUNT_KEY = {
    */
   conversationNicknames: (userId: string, groupId: string) =>
     `canari_nicknames:v1:${userId}:${groupId}`,
+  /**
+   * `pinStore.svelte.ts`: one conversation's pin register - message ids and dates, never a
+   * message's text. Per account, so two accounts sharing a conversation on one install never share it.
+   */
+  conversationPins: (userId: string, conversationId: string) =>
+    `canari_pins:v1:${userId}:${conversationId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -289,6 +295,7 @@ function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
     ACCOUNT_KEY.conversationNicknames(userId, ''),
+    ACCOUNT_KEY.conversationPins(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),

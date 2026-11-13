@@ -214,6 +214,8 @@ for (const [label, dir] of REPOS) {
 const SHARED_EVERYWHERE = [
   '.github/scripts/audit-dependencies.sh',
   '.github/scripts/tests/audit-dependencies.test.sh',
+  // The scan that keeps an expression out of a workflow script: one rule, so one reading of it.
+  '.github/scripts/tests/workflow-expressions.test.sh',
 ];
 
 // TWO FILES ARE COMPARED ACROSS THE THREE SIBLINGS ONLY, and Canari is excluded BY NAME rather than

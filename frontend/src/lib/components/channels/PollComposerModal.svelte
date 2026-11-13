@@ -101,7 +101,6 @@
   {open}
   onClose={close}
   label={m.channel_poll_title()}
-  layer="sheet"
   panelClass="flex max-h-[85vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"
 >
   <div class="border-cn-border flex items-center gap-2 border-b p-4">

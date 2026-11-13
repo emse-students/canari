@@ -31,7 +31,9 @@ import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
-import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
+import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
+import { PENDING_MUTATION_LIMITS } from './pendingMutations';
+import { settlePendingFor } from './pendingMutationStore';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -128,9 +130,9 @@ export function toConversationMeta(
  * barrage a la reception de la nouvelle conversation avec ce pair"*. **A record that exists only to
  * be removed must not be able to refuse its own replacement.** The two sites failed differently and
  * the second is the worse of the two: discovery merely declined to create the new conversation
- * ({@link ensureConversationForServerGroup}), while {@link mergeDirectConversationDuplicates} picks
- * the most RECENT of the group as canonical and deletes the others - locally AND on the server - so
- * a tombstone newer than the fresh group takes the fresh group's messages and destroys the group
+ * ({@link ensureConversationForServerGroup}), while {@link mergeDirectConversationDuplicates} then picked
+ * the most RECENT of the group as canonical and deleted the others - locally AND on the server - so
+ * a tombstone newer than the fresh group took the fresh group's messages and destroyed the group
  * for BOTH parties.
  *
  * A tombstone therefore takes no part in either: it keeps its own row and its own messages, and it
@@ -672,35 +674,137 @@ export function resolveConversationListPresentation(
  * moved row is the STORED row just read - every field, proofs and reactions included - under its new
  * conversation. A row this device cannot open is not moved and is counted in `left`.
  *
- * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
- * `fromId`'s messages handled by its group is written over by the body read here; and what is keyed
- * by the conversation rather than by the message - its read watermarks, the mutations still waiting
- * for a row (`pendingMutations`) - stays with `fromId`. Both callers run it while `fromId` is out of
- * the reactive map, so no shown path writes to it.
+ * THE MUTATIONS WAITING UNDER `fromId` GO WITH ITS ROWS. A deletion, edit or reaction kept under
+ * `fromId` (`pendingMutations`, its message not there yet) waits for a message that will now arrive
+ * under `toId`; left behind, nothing would ever settle it. Each entry this device opens is kept again
+ * under `toId` (its tags are per conversation) and removed from `fromId`; the caller settles the
+ * carried ids against what `toId` holds (`settlePendingFor`), as for the moved rows.
  *
- * @returns the ids of the rows moved, and how many rows stayed under `fromId` because they did not open
+ * WHAT IT DOES NOT CARRY, STATED AS IT IS: from the read to the write, a deletion (or edit) of one of
+ * `fromId`'s messages handled by its group is written over by the body read here; and `fromId`'s read
+ * watermarks stay with it. Both callers run it while `fromId` is out of the reactive map, so no shown
+ * path writes to it.
+ *
+ * @returns the ids of the rows moved, how many rows stayed under `fromId` because they did not open,
+ *   and the message ids of the waiting mutations carried to `toId`
  */
 export async function moveDirectConversationRows(
   fromId: string,
   toId: string,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<{ moved: string[]; left: number }> {
+): Promise<{ moved: string[]; left: number; carried: string[] }> {
   const source = await storage.getMessages(fromId, deviceKeyB64);
   const moved = source.map((m) => ({ ...m, conversationId: toId }));
   if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
   const left = await storage.countMessages(fromId);
-  return { moved: moved.map((m) => m.id), left };
+  const carried = await carryPendingMutations(fromId, toId, storage, deviceKeyB64);
+  return { moved: moved.map((m) => m.id), left, carried };
 }
 
 /**
- * Detects duplicate direct conversations for the same peer (can happen when
- * two devices each start the conversation independently) and merges them into
- * a single canonical entry.
+ * Keeps every mutation waiting under `fromId` again under `toId`, then removes it from `fromId` - in
+ * that order, so a failure between the two leaves a copy, never nothing (settling twice changes
+ * nothing). Best-effort like the rest of the move: a failure is said and the entries stay where they
+ * were. Returns the message ids carried.
+ */
+async function carryPendingMutations(
+  fromId: string,
+  toId: string,
+  storage: IStorage,
+  deviceKeyB64: string
+): Promise<string[]> {
+  try {
+    const { entries } = await storage.getPendingMutationsOf(fromId, deviceKeyB64);
+    if (entries.length === 0) return [];
+    for (const entry of entries) {
+      await storage.putPendingMutation(
+        { ...entry, conversationId: toId },
+        PENDING_MUTATION_LIMITS,
+        deviceKeyB64
+      );
+    }
+    await storage.deletePendingMutations(entries, deviceKeyB64);
+    console.log(
+      `[DM_MOVE] ${entries.length} mutation(s) waiting under ${fromId.slice(0, 8)}... carried to ${toId.slice(0, 8)}...`
+    );
+    return [...new Set(entries.map((e) => e.messageId))];
+  } catch (e) {
+    console.error(
+      `[DM_MOVE] the mutations waiting under ${fromId.slice(0, 8)}... were NOT carried to ${toId.slice(0, 8)}... - they stay there:`,
+      e
+    );
+    return [];
+  }
+}
+
+/**
+ * Whether group `a` ranks before group `b` in a crossed 1:1 pair: the lower id.
  *
- * The most-recently-updated conversation is kept; the other is deleted locally and
- * on the server. After merging, all direct conversation names are normalised to the
- * `"userId::peer"` canonical format for consistent future detection.
+ * The one fact every device of both people holds identically about two groups (design note in
+ * [history-reconciliation](../../../../../docs/wiki/protocols/history-reconciliation.md#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
+ * It decides which group the boot merge may NEVER delete, not which one a device keeps.
+ */
+export function isPreferredDirectGroup(a: string, b: string): boolean {
+  return a.toLowerCase() < b.toLowerCase();
+}
+
+/**
+ * What the boot merge does with a crossed 1:1 pair (two or more DM groups for the same peer).
+ *
+ * `fold`: every other group moves into `survivor` and is deleted. `hold`: nothing is decided, every
+ * row and every group stays.
+ */
+export type CrossedPairDecision =
+  | { action: 'fold'; survivor: ConversationMeta }
+  | { action: 'hold'; recent: ConversationMeta; lowest: ConversationMeta };
+
+/**
+ * Decides a crossed 1:1 pair: fold ONLY when this device's recency keeps the LOWEST group id.
+ *
+ * The rule kept from before is recency - the newest `updatedAt` - which is what a Welcome re-key
+ * agrees with and what a 1.6.6-1.6.10 peer still runs. Recency is local, so two peers could each
+ * keep a different group and delete the other's choice on the server: both groups gone. Restricting
+ * the delete to groups that rank AFTER the one kept means the lowest id is never deleted by a client
+ * running this rule, so two such clients can no longer lose both. A tie counts as keeping the lowest
+ * id: a row re-keyed by a Welcome carries its old row's `updatedAt`, and the lower id is the one
+ * answer both sides of a tie compute alike.
+ *
+ * When recency keeps a HIGHER id, nothing is decided: both rows and both groups stay, so every
+ * frame of a held group still has a row to land on. The cost is a second row for the same person,
+ * until a message in the lower group makes it the more recent (owner, 2026-11-12: accepted).
+ */
+export function decideCrossedPair(metas: readonly ConversationMeta[]): CrossedPairDecision {
+  const lowest = metas.reduce((a, b) => (isPreferredDirectGroup(b.id, a.id) ? b : a));
+  const recent = metas.reduce((a, b) =>
+    b.updatedAt > a.updatedAt || (b.updatedAt === a.updatedAt && isPreferredDirectGroup(b.id, a.id))
+      ? b
+      : a
+  );
+  return recent.id === lowest.id
+    ? { action: 'fold', survivor: lowest }
+    : { action: 'hold', recent, lowest };
+}
+
+/**
+ * The held-back pairs already reported this session, so a restore - which runs several times per
+ * session - says each one once. Keyed by account and pair, so a switch of account reports again.
+ */
+const reportedHeldPairs = new Set<string>();
+
+/**
+ * Folds every crossed 1:1 pair this device may fold ({@link decideCrossedPair}) into one
+ * conversation, and normalises direct-conversation names to `"userId::peer"` for consistent future
+ * detection.
+ *
+ * A fold moves each other group's rows into the survivor ({@link moveDirectConversationRows}), then
+ * deletes that group ON THE SERVER, then its row locally. In that order so that a group whose
+ * server delete was refused or got no answer keeps its row: the server still routes its frames
+ * here, and a frame for a held group with no row is refused `absent-conversation` until something
+ * creates one - which discovery never does for a second DM of a loaded peer. The next boot retries
+ * the fold, which moves nothing more and deletes again. A delete the server answers `already-gone`
+ * (the 403 `NOT_A_MEMBER` every delete after the first receives, since the tombstone purges every
+ * seat) routes nothing any more, so the row goes locally too.
  *
  * Returns the deduplicated, normalised list of `ConversationMeta` objects.
  */
@@ -710,13 +814,13 @@ export async function mergeDirectConversationDuplicates(
   deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
-  mlsService?: IMlsService
+  mlsService: Pick<IMlsService, 'deleteGroupOnServer'>
 ): Promise<ConversationMeta[]> {
   const directByPeer = new Map<string, ConversationMeta[]>();
   for (const meta of convMetas) {
-    // A TOMBSTONE IS NOT A CANDIDATE - {@link canRepresentThePeer}. Left in, it competes for
-    // `canonical` on `updatedAt` alone, and the loser is DELETED locally and on the server: a
-    // conversation the user has just started, destroyed for both parties by the reconciler.
+    // A TOMBSTONE IS NOT A CANDIDATE - {@link canRepresentThePeer}. Left in, it competes for the
+    // survivor, and the other row is deleted locally AND on the server: a conversation the user
+    // has just started, destroyed for both parties by the reconciler.
     if (!canRepresentThePeer(meta)) continue;
     const identity = deriveConversationIdentity(meta.name, userId, meta.id);
     if (identity.conversationType !== 'direct' || !identity.directPeerId) continue;
@@ -726,101 +830,89 @@ export async function mergeDirectConversationDuplicates(
     directByPeer.set(peer, list);
   }
 
-  const canonicalByPeer = new Map<string, ConversationMeta>();
-  const duplicatesToMerge: Array<{
-    canonical: ConversationMeta;
-    duplicate: ConversationMeta;
-  }> = [];
-
-  for (const [peer, metas] of directByPeer) {
-    if (metas.length === 1) {
-      canonicalByPeer.set(peer, metas[0]);
-      continue;
-    }
-
-    // No successor chains anymore: each conversation is its own terminal.
-    const resolved = metas.map((m) => ({ meta: m, terminalId: m.id }));
-
-    const uniqueTerminals = new Set(resolved.map((r) => r.terminalId));
-    let terminalId: string;
-    let canonical: ConversationMeta;
-
-    if (uniqueTerminals.size === 1) {
-      terminalId = resolved[0].terminalId;
-      canonical =
-        metas.find((m) => m.id === terminalId) ??
-        metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-      if (canonical.id !== terminalId) {
-        canonical = { ...canonical, id: terminalId };
-      }
-    } else {
-      // True independent duplicates (not a chain of successors): keep the most recent one.
-      canonical = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-      terminalId = canonical.id;
-    }
-
-    canonicalByPeer.set(peer, canonical);
-
-    for (const meta of metas) {
-      if (meta.id === canonical.id) continue;
-      // Independent duplicates (same DM peer, concurrently created groups) are merged into the
-      // canonical (most recent).
-      duplicatesToMerge.push({ canonical, duplicate: meta });
-    }
-  }
-
-  if (duplicatesToMerge.length === 0) return convMetas;
-
-  for (const { canonical, duplicate } of duplicatesToMerge) {
-    if (canonical.id === duplicate.id) continue;
-    try {
-      // The move and its window: {@link moveDirectConversationRows}. Landing after the move, a
-      // mutation handled by the duplicate's group finds no row there, keeps it under the duplicate,
-      // and `deleteConversation` below removes that entry; this boot-time merge runs once per
-      // duplicate, before its conversation is shown.
-      const { moved, left } = await moveDirectConversationRows(
-        duplicate.id,
-        canonical.id,
-        storage,
-        deviceKeyB64
-      );
-      if (left > 0) {
+  const mergedAway = new Set<string>();
+  for (const metas of directByPeer.values()) {
+    if (metas.length === 1) continue;
+    const decision = decideCrossedPair(metas);
+    if (decision.action === 'hold') {
+      const pairKey = `${userId.toLowerCase()}|${metas
+        .map((m) => m.id)
+        .sort()
+        .join('|')}`;
+      if (!reportedHeldPairs.has(pairKey)) {
+        reportedHeldPairs.add(pairKey);
         log(
-          `[DM_MERGE] ${left} row(s) of ${duplicate.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
+          `[DM_MERGE] ${metas.length} DM groups for one peer kept as they are: the most recent here (${decision.recent.id.slice(0, 8)}...) is not the lowest id (${decision.lowest.id.slice(0, 8)}...), which is the only one this device may fold into`
         );
       }
-      await storage.deleteConversation(duplicate.id);
-      // Delete the orphan group server-side so it does not reappear at the next login
-      // via discoverMissingGroups.
-      if (mlsService) {
-        try {
-          await mlsService.deleteGroupOnServer(duplicate.id);
-        } catch (e) {
-          // Non-blocking: cleaned up at the next server GC
-          logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
+      continue;
+    }
+    const survivor = decision.survivor;
+    for (const loser of metas) {
+      if (loser.id === survivor.id) continue;
+      const pair = `${loser.id.slice(0, 8)}... -> ${survivor.id.slice(0, 8)}...`;
+      try {
+        // The move and its window: {@link moveDirectConversationRows} takes the loser's rows AND the
+        // mutations waiting under it to the survivor. One landing after that carry, handled by the
+        // loser's group, finds no row there, is kept under the loser, and `deleteConversation`
+        // below removes it; this boot-time merge runs once per loser, before its conversation is
+        // shown.
+        const { moved, left, carried } = await moveDirectConversationRows(
+          loser.id,
+          survivor.id,
+          storage,
+          deviceKeyB64
+        );
+        // Nothing is shown yet at boot: what waits for the moved rows - carried with them, or kept
+        // under the survivor already - settles against the store alone.
+        const lookFor = [...new Set([...moved, ...carried])];
+        if (lookFor.length > 0) {
+          await settlePendingFor(
+            {
+              storage,
+              deviceKey: () => deviceKeyB64,
+              conversations: new Map(),
+              messageReactions: new Map(),
+              log,
+            },
+            survivor.id,
+            lookFor
+          );
         }
+        if (left > 0) {
+          log(
+            `[DM_MERGE] ${left} row(s) of ${loser.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
+          );
+        }
+        let serverAnswer = 'deleted on the server';
+        try {
+          await mlsService.deleteGroupOnServer(loser.id);
+        } catch (e) {
+          // THE SERVER'S 403 `NOT_A_MEMBER` IS AN ANSWER, AND IT IS THE END STATE: the delete's
+          // tombstone purges every seat, so every delete after the first - the peer's, this user's
+          // other device, this device killed between the two deletes - is answered it. Keeping the
+          // row for it would keep a dead group's row for ever and retry on every boot. Only a
+          // refusal or no answer at all keeps the row ({@link classifyExitFailure}).
+          if (classifyExitFailure(e) !== 'already-gone') {
+            logBestEffortGroupDeleteFailure(loser.id, e, 'merged duplicate 1:1');
+            log(
+              `[DM_MERGE] ${pair} ${moved.length} row(s) moved, the row KEPT: the server delete failed and its frames still need a row - the next boot retries`
+            );
+            continue;
+          }
+          serverAnswer = 'the server had already deleted it';
+        }
+        await storage.deleteConversation(loser.id);
+        mergedAway.add(loser.id);
+        log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${serverAnswer}`);
+      } catch (error) {
+        log(`[DM_MERGE] ${pair} merge error - the next boot retries it: ${String(error)}`);
       }
-      log(
-        `Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id} (${moved.length} row(s) moved)`
-      );
-    } catch (error) {
-      log(`Direct-conversation merge error: ${String(error)}`);
     }
   }
 
-  const duplicateIds = new Set(duplicatesToMerge.map((item) => item.duplicate.id));
-  const merged = convMetas.filter((meta) => !duplicateIds.has(meta.id));
-
-  // Re-add the canonical re-keyed to the terminal id if it was not already in the list.
-  for (const canonical of canonicalByPeer.values()) {
-    if (merged.some((m) => m.id === canonical.id)) continue;
-    try {
-      await storage.saveConversation(canonical);
-    } catch (e) {
-      log(`[WARN] Canonical persist failed ${canonical.id}: ${String(e)}`);
-    }
-    merged.push(canonical);
-  }
+  if (mergedAway.size === 0) return convMetas;
+  const merged = convMetas.filter((meta) => !mergedAway.has(meta.id));
 
   // Normalize direct-conversation names for future consistent detection.
   const normalizedMetas: ConversationMeta[] = [];
