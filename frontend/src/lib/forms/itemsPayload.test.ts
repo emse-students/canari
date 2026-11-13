@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { fromFormItems, toFormItemsPayload } from './itemsPayload';
+import {
+  GRID_REQUIRED_SWITCH,
+  fromFormItems,
+  revisionItems,
+  toFormItemsPayload,
+} from './itemsPayload';
 
 describe('toFormItemsPayload', () => {
   it('turns a choice option supplement into cents', () => {
@@ -53,11 +58,42 @@ describe('a priced grid on the wire', () => {
     });
   });
 
-  it('sends a grid required, whatever its card holds', () => {
-    const [item] = toFormItemsPayload([
+  it('sends the "Obligatoire" switch of a grid as its card holds it', () => {
+    const [off, on] = toFormItemsPayload([
       { id: 'g', type: 'product_grid', label: 'Sweat', required: false, productGrid: grid() },
+      { id: 'h', type: 'product_grid', label: 'Veste', required: true, productGrid: grid() },
     ]);
-    expect(item.required).toBe(true);
+    expect(off.required).toBe(false);
+    expect(on.required).toBe(true);
+  });
+
+  it('every payload of this editor says it draws the switch', () => {
+    expect(GRID_REQUIRED_SWITCH).toEqual({ gridRequiredSwitch: true });
+  });
+
+  it('[LEGACY] opens a revision an older editor saved with the STORED flag of each grid', () => {
+    const stored = [
+      { id: 'on', type: 'product_grid', label: 'Sweat', required: true },
+      { id: 'off', type: 'product_grid', label: 'Veste', required: false },
+    ] as any[];
+    const document = {
+      items: [
+        { id: 'on', type: 'product_grid', label: 'Sweat', required: true },
+        { id: 'off', type: 'product_grid', label: 'Veste', required: true },
+        { id: 'new', type: 'product_grid', label: 'Mug', required: true },
+        { id: 'nom', type: 'short_text', label: 'Nom', required: true },
+      ],
+    };
+    expect(revisionItems(document, stored)?.map((item) => [item.id, item.required])).toEqual([
+      ['on', true],
+      ['off', false],
+      ['new', false],
+      ['nom', true],
+    ]);
+    // A revision this editor saved carries the switch: its flags are the manager's, as typed.
+    const marked = { ...document, gridRequiredSwitch: true };
+    expect(revisionItems(marked, stored)).toBe(document.items);
+    expect(revisionItems({ title: 'x' } as any, stored)).toBeUndefined();
   });
 
   it('drops the definition of a question that is no longer a grid', () => {

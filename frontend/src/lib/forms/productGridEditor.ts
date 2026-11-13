@@ -552,8 +552,6 @@ export function productGridDefinitionMessage(code: string | null): string | null
     case 'PRODUCT_GRID_CLOSED_CELL_INVALID':
     case 'PRODUCT_GRID_PRICE_MODE_INVALID':
       return m.form_pgrid_refusal_definition();
-    case 'PRODUCT_GRID_NOT_REQUIRED':
-      return m.form_pgrid_refusal_not_required();
     case 'PRODUCT_GRID_REQUIRES_PAYMENT':
       return m.form_pgrid_refusal_requires_payment();
     case 'PRODUCT_GRID_LABEL_INVALID':
@@ -587,9 +585,8 @@ export interface ProductGridFormContext {
 }
 
 /**
- * Why one editor question would be refused at save, as its code, or null. Judged as it is SENT:
- * a grid always goes out `required: true` (`toFormItemsPayload`), so the card's own flag is never
- * what the editor flags.
+ * Why one editor question would be refused at save, as its code, or null. Judged as it is SENT
+ * (`productGridPayload`); its "Obligatoire" switch is no fault either way.
  */
 export function productGridItemProblem(
   item: { type?: string; productGrid?: EditorProductGrid },
@@ -597,7 +594,7 @@ export function productGridItemProblem(
 ): ProductGridDefinitionCode | null {
   if (item.type !== PRODUCT_GRID_TYPE) return null;
   const payload = item.productGrid ? productGridPayload(item.productGrid) : undefined;
-  return productGridItemRefusal({ required: true, productGrid: payload }, form)?.code ?? null;
+  return productGridItemRefusal({ productGrid: payload }, form)?.code ?? null;
 }
 
 /** A grid question the save refuses, and the sentence the page shows and the card repeats. */

@@ -1855,28 +1855,39 @@ order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the pri
 category. No stock (a pre-order); no total cap per order (the cap per cell is enough); a second
 order is a second answer (`allowMultipleSubmissions`), never an edit.
 
-**The ORDER is required, never one grid (decided 2026-11-06, for `1.6.6`).** A merch form holds one
-grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell) and a buyer orders
-whichever they want, so any single grid may be left untouched; what is refused is an answer whose
-VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per submit, `itemId`
-null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
-buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
-neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
-A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
-selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+**Each grid has its own "Obligatoire" switch, OFF by default (owner, 2026-11-13, for `1.6.12`).**
+A merch form holds one grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell)
+and a buyer orders whichever they want, so a grid is optional unless its manager switches it on;
+switched on, a VISIBLE grid demands at least ONE unit of its own (no configurable number). A grid
+hidden by an audience or an answer condition is never demanded. **No rule spans the grids**: a form
+whose grids are all optional accepts an answer with no article at all, which the owner intends
+(*"Avoir des règles globales interdit des formulaires moins conventionnels, il faut éviter les
+règles globales"*). History in one line: a per-grid rule of WP-G1 (every article demanded) became on
+2026-11-06 a rule over the whole order (`PRODUCT_GRID_EMPTY`, one unit across the visible grids,
+`required` stored `true` and meaningless), which this switch replaced.
 
-**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
-view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
-end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
+**One predicate, both sides.** A grid is answered when it holds >= 1 unit: `productGridOrdered` in
+the shared contract, read by the fill page (`isItemAnswered`, `firstMissingAnswer`) and by the submit
+(`FormsService.submit`). A required grid left empty is refused like every other required question:
+`FORM_ANSWER_MISSING` with the grid's `itemId` on the server, `MissingAnswer { itemId, kind: 'grid' }`
+on the page, said on the grid's own card ("Commandez au moins un article de 'Sweat'"), which is
+scrolled into view. An order in another grid does not rescue it.
 
-**`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
-refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
-(`toFormItemsPayload`) and no longer draws the switch or the asterisk; the fill page draws no
-asterisk on a grid and `firstMissingAnswer` skips grids, then asks the order. Chosen over dropping
-the flag because (1) every form already saved stays valid with no migration, and (2) a build older
-than WP-G2, which cannot draw the type and knows only "a required question of a type I do not
-know", keeps holding the send with "mettez à jour l'application" instead of sending the form
-without its order.
+**The stored flags were turned off by migration 164** (held, a backfill): every grid saved before the
+switch held `required: true`, and honouring that as it stood would have demanded one of EVERY article -
+the defect of 2026-11-06. 164 sets `required: false` on every stored grid, keeps every other question
+and key, and moves the base of an open revision built on the form (so its publication is not refused
+`FORM_CHANGED_SINCE_REVISION`); `product-grid-required.integration.spec.ts` proves it, the idempotence
+and the ROLLBACK statement of its header.
+
+**An editor older than the switch** (native `1.6.6`..`1.6.11`) sends `required: true` on every grid,
+meaning nothing. This editor marks its payload `gridRequiredSwitch: true` (`GRID_REQUIRED_SWITCH`,
+never stored); a save WITHOUT it keeps each grid's STORED flag and stores a new grid optional
+(`productGridRequiredOnSave`, the contract) - an old editor neither makes a grid required by surprise
+nor drops a choice a newer one made. A revision such an editor saved opens here with the same rule
+(`revisionItems`). [LEGACY] in [legacy-compatibility](../../legacy-compatibility.md). An older FILL
+page still holds a send on "Commandez au moins un article" across the grids (stricter than the server)
+and does not mark a required grid's card - the server's `FORM_ANSWER_MISSING` then words it.
 
 ### One contract, copied byte for byte
 
@@ -1891,7 +1902,7 @@ The definition is nested under `item.productGrid` (not flat on the item as the a
 DTO's `rows?: string[]` already belongs to the survey grids and cannot also hold objects.
 
 ```ts
-item = { id, type: 'product_grid', label, required: true, showIf?, productGrid: {
+item = { id, type: 'product_grid', label, required, showIf?, productGrid: {   // required: the switch
   rows: [{ id, label }], columns: [{ id, label }],     // ids /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/
   maxPerCell: 1..99,                                    // 1 = a checkbox, more = a stepper
   closedCells: ['rowId:colId'],                         // "no Creme in XS": cannot be ordered
@@ -1907,7 +1918,7 @@ answer = { 'rowId:colId': quantity }                    // zero cells omitted wh
 ### The save (`FormsService.create`/`update` -> `normaliseProductGridItems`, `forms/product-grid.ts`)
 
 Each refusal is a 400 `{ code, message, itemId }`: `PRODUCT_GRID_DEFINITION_MISSING`,
-`_NOT_REQUIRED`, `_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
+`_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
 anonymous grid form impossible), `_AXIS_INVALID` (1..40 rows, 1..15 columns), `_ID_INVALID`,
 `_DUPLICATE_ID`, `_LABEL_INVALID` (empty or over 100), `_DUPLICATE_LABEL` (per axis, trimmed and
 case-folded - the survey grids' row rule should match it), `_MAX_PER_CELL_INVALID`,
@@ -1917,7 +1928,8 @@ sell, a promo that is no year - or two categories that can hold one person, or a
 personal form), `_GUEST_PRICE_MISSING` (a public form without the price a guest pays, named before
 the rest of completeness), `_PRICES_INCOMPLETE` (exactly one price per category x axis key),
 `_PRICE_INVALID` (integer cents, 0..1 000 000). The grid is STORED normalised: known fields only,
-labels trimmed, the tier criterion as the parser returned it. An edit that only opens the link or
+labels trimmed, the tier criterion as the parser returned it, `required` as
+`productGridRequiredOnSave` decides (above). An edit that only opens the link or
 switches payment off is judged against the stored grids. A `productGrid` sent on another type is
 dropped. The prices enter `priceFingerprint`, so a list moving a grid price meets
 `assertKindMayPrice` like any other price.
@@ -1937,9 +1949,9 @@ judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (a non-object - a string, 
 cannot draw the type, which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`,
 `_QUANTITY_INVALID` (not an integer in 0..maxPerCell), `_CELL_CLOSED` - then prices it at the
 viewer's category. An ABSENT answer, `{}` or all zeros is an untouched grid: 0 units, no line, and
-nothing stored under its id (a `{}` sent is dropped from the stored answers). After the loop, visible
-grids holding 0 units between them refuse the whole submit `PRODUCT_GRID_EMPTY` with `itemId: null`
-(`productGridOrderEmpty`), before any row is written - member and guest alike. The stored answer is
+nothing stored under its id (a `{}` sent is dropped from the stored answers). A grid switched
+"Obligatoire" holding 0 units refuses the submit `FORM_ANSWER_MISSING` with ITS `itemId`
+(`productGridOrdered`), before any row is written - member and guest alike. The stored answer is
 the judged one; the lines' sum joins `totalCents` with the base price
 (or the price grid's cell) and the choice supplements. A grid order whose total exceeds
 `PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
@@ -1982,8 +1994,8 @@ drawn with the app's tokens.
 - **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
   (`productGridFill.ts` `withCellQuantity`: clamped to 0..`maxPerCell`, a cell at 0 dropped, a new
   object per write so `bind:value` sees it), sent through the unchanged submit path.
-  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit
-  (`kind: 'order'`). The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
+  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit of a
+  REQUIRED grid (`kind: 'grid'`). The card draws the asterisk of a required grid. The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
   `product_grid` (`questionTypes.test.ts` asserts the fill page draws every canonical type).
 - **The total.** `fillPriceState` takes `productGridPrices` and returns `gridLines` (every visible
   grid's lines, `productGridOrderLines` -> the contract's `parseProductGridAnswer` +
@@ -2001,15 +2013,14 @@ drawn with the app's tokens.
   (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
   `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
   absent when no visible grid prices by category.
-- **Refusals.** A send with no article in ANY visible grid is held by ONE sentence for the form,
-  beside the send button ("Commandez au moins un article", `MissingAnswer` `{ itemId: null, kind:
-  'order' }`, checked after every required question); no grid card is marked, and an untouched
-  grid next to an ordered one is no fault. A required question of another type is still held on
-  its own card (`MissingAnswer` carries its `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
-  (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
-  offered"; `_EMPTY`), reached through the ONE entry point both pages call,
-  `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
-  any code that is not a form's own. An empty order is also left out of the answer sent
+- **Refusals.** A REQUIRED grid with no unit holds the send on its own card ("Commandez au moins un
+  article de ...", `MissingAnswer` `{ itemId, kind: 'grid' }`), scrolled into view like any required
+  question; an optional grid is never a fault, and nothing is said for the form as a whole. The
+  server's four answer codes are worded by `productGridRefusalMessage` (`PRODUCT_GRID_ANSWER_MISSING`
+  -> reload or update; the three cell codes -> "an item is no longer offered"), reached through the
+  ONE entry point both pages call, `formSubmitRefusalMessage` (`answerBounds.ts`), whose
+  `formCodeMessage` falls through to it for any code that is not a form's own; a required grid the
+  server finds empty is its `FORM_ANSWER_MISSING`. An untouched grid is left out of the answer sent
   (`visibleAnswers`).
 
 Tests: `productGridFill.test.ts` (clamping, lines and total across two grids, a hidden grid, missing
@@ -2112,10 +2123,11 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
   (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
   a blank price absent) - so the preview cannot draw a grid the fill page would not.
-- **No required switch**: adding a grid (or turning a question into one) sets the stored
-  `required` (see "The ORDER is required, never one grid" above), and the card draws neither the
-  switch nor the asterisk; `productGridItemProblem` judges the grid as sent, `required: true`, so
-  the editor never flags a grid for it. Adding a grid also calls the page's `onPricedGridAdded`, which switches
+- **The "Obligatoire" switch**, the card's asterisk button like every question's (owner,
+  2026-11-13): a new grid (or a question turned into one) starts OFF; the folded row of a required
+  grid wears the asterisk. `toFormItemsPayload` sends the flag as the card holds it, and every
+  payload carries `gridRequiredSwitch: true` (see "Each grid has its own Obligatoire switch" above).
+  `productGridItemProblem` never flags a grid for its flag. Adding a grid also calls the page's `onPricedGridAdded`, which switches
   `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
   turn it off. **It goes back off only if the editor turned it on**: the page keeps
   `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /

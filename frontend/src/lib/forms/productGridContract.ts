@@ -146,7 +146,6 @@ export const PRODUCT_GRID_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/;
 /** Why a grid DEFINITION is refused at save, one code per cause. */
 export const PRODUCT_GRID_DEFINITION_CODES = [
   'PRODUCT_GRID_DEFINITION_MISSING',
-  'PRODUCT_GRID_NOT_REQUIRED',
   'PRODUCT_GRID_REQUIRES_PAYMENT',
   'PRODUCT_GRID_AXIS_INVALID',
   'PRODUCT_GRID_ID_INVALID',
@@ -167,17 +166,15 @@ export type ProductGridDefinitionCode = (typeof PRODUCT_GRID_DEFINITION_CODES)[n
 /**
  * Why an ANSWER is refused at submit. `PRODUCT_GRID_ANSWER_MISSING` is the one an app that cannot
  * draw the grid meets (it sends a string, or a list): a client that knows this code says "update
- * the app". An ABSENT answer is an untouched grid, an empty order line - not this code.
- * `PRODUCT_GRID_EMPTY` is judged across the FORM, never per grid: a form may hold several grids (one
- * per article) and a buyer orders from whichever they want, but the order as a whole holds at least
- * one unit (decided 2026-11-06, `docs/wiki/frontend/modules/forms.md`, "The priced grid").
+ * the app". An ABSENT answer is an untouched grid, an empty order line - not this code. A REQUIRED
+ * grid left empty is no code of a grid's: it is refused like every other required question
+ * (`FORM_ANSWER_MISSING`, naming the grid), judged by {@link productGridOrdered}.
  */
 export const PRODUCT_GRID_ANSWER_CODES = [
   'PRODUCT_GRID_ANSWER_MISSING',
   'PRODUCT_GRID_UNKNOWN_CELL',
   'PRODUCT_GRID_QUANTITY_INVALID',
   'PRODUCT_GRID_CELL_CLOSED',
-  'PRODUCT_GRID_EMPTY',
 ] as const;
 export type ProductGridAnswerCode = (typeof PRODUCT_GRID_ANSWER_CODES)[number];
 
@@ -296,19 +293,15 @@ function tiersRefusal(raw: unknown): ProductGridRefusal<ProductGridDefinitionCod
  * (`PRODUCT_GRID_GUEST_PRICE_MISSING`, judged before completeness so the editor can name it).
  * `form.requiresPayment`: a grid charges, so the form takes payment.
  *
- * `required` is STORED true and checked here, but it no longer means "this grid must be ordered
- * from": the order rule is the form's (`PRODUCT_GRID_EMPTY`), and no page draws a grid's asterisk.
- * It stays true so a build that cannot draw the grid - which knows only "a required question of a
- * type I do not know" - still holds the send and says "update the app", and so every form already
- * saved stays valid.
+ * `required` is not judged here: it is the manager's "Obligatoire" switch, off by default (owner,
+ * 2026-11-13), and {@link productGridRequiredOnSave} decides what is stored.
  */
 export function productGridItemRefusal(
-  item: { required?: unknown; productGrid?: unknown },
+  item: { productGrid?: unknown },
   form: { isPublic: boolean; requiresPayment: boolean }
 ): ProductGridRefusal<ProductGridDefinitionCode> | null {
   const grid = item.productGrid;
   if (!isPlainObject(grid)) return { code: 'PRODUCT_GRID_DEFINITION_MISSING' };
-  if (item.required !== true) return { code: 'PRODUCT_GRID_NOT_REQUIRED' };
   if (!form.requiresPayment) return { code: 'PRODUCT_GRID_REQUIRES_PAYMENT' };
   const axis =
     axisRefusal(grid.rows, PRODUCT_GRID_MAX_ROWS) ??
@@ -388,6 +381,39 @@ export function productGridItemRefusal(
   return null;
 }
 
+/**
+ * Whether a grid's answer orders at least ONE unit - what a REQUIRED grid demands (owner,
+ * 2026-11-13: the minimum is one unit, no configurable number), and the one predicate the fill page
+ * (`isItemAnswered`) and the submit (`FormsService.submit`) both read. Lenient on purpose: a value
+ * that is not an order holds no unit, and whether it is a VALID order is
+ * {@link parseProductGridAnswer}'s question.
+ */
+export function productGridOrdered(answer: unknown): boolean {
+  if (!isPlainObject(answer)) return false;
+  return Object.values(answer).some((value) => typeof value === 'number' && value > 0);
+}
+
+/**
+ * The `required` a grid sent for saving is STORED with - its "Obligatoire" switch (owner,
+ * 2026-11-13), off by default.
+ *
+ * `chosen`: the save comes from an editor that draws the switch (the form payload's
+ * `gridRequiredSwitch`), so the flag sent IS the manager's choice. Without it the save comes from an
+ * editor older than the switch, which sends `required: true` on EVERY grid whatever it means
+ * ([LEGACY], docs/wiki/legacy-compatibility.md): that flag says nothing, so the grid keeps the flag
+ * stored under its id, and a grid not stored yet is optional - an old editor never makes a grid
+ * required by surprise, nor drops a choice a newer one made.
+ */
+export function productGridRequiredOnSave(
+  item: { id?: unknown; required?: unknown },
+  chosen: boolean,
+  stored: readonly { id?: unknown; type?: unknown; required?: unknown }[] | null | undefined
+): boolean {
+  if (chosen) return item.required === true;
+  const before = (stored ?? []).find((s) => s.id === item.id && s.type === PRODUCT_GRID_TYPE);
+  return before?.required === true;
+}
+
 /** An answer judged against its grid: the quantities ordered, or why it is refused. */
 export type ProductGridAnswerResult =
   | { ok: true; answer: ProductGridAnswer; units: number }
@@ -396,8 +422,8 @@ export type ProductGridAnswerResult =
 /**
  * Judges ONE grid's answer: every key a declared cell, every value an integer from 0 to
  * `maxPerCell`, no unit in a closed cell. An absent answer (`undefined`, `null`) and `{}` are an
- * untouched grid: accepted, 0 units. Whether the ORDER holds a unit is judged across the form's
- * visible grids by the caller, from the `units` of each (`PRODUCT_GRID_EMPTY`). The answer returned
+ * untouched grid: accepted, 0 units. Whether a REQUIRED grid holds a unit is the caller's question
+ * ({@link productGridOrdered}). The answer returned
  * keeps the ordered cells only, in the grid's row-then-column order - what is stored.
  */
 export function parseProductGridAnswer(

@@ -3393,7 +3393,6 @@
   "form_pgrid_refusal_guest_price": "Formulaire public : donnez un prix à « Autres », c'est ce que paie un invité.",
   "form_pgrid_refusal_label": "Chaque ligne et chaque colonne a besoin d'un nom ({max} caractères au plus).",
   "form_pgrid_refusal_max_per_cell": "Le maximum par case va de {min} à {max}.",
-  "form_pgrid_refusal_not_required": "Une grille avec prix doit être obligatoire.",
   "form_pgrid_refusal_price_invalid": "Un prix doit être un montant positif, 10 000 € au plus.",
   "form_pgrid_refusal_prices_incomplete": "Il manque un prix : remplissez chaque prix, dans chaque onglet.",
   "form_pgrid_refusal_requires_payment": "Une grille avec prix demande un paiement : activez le paiement du formulaire.",
@@ -4647,10 +4646,9 @@
   "form_viewer_tier_prefix": "Tarif appliqué :",
   "form_guest_login_prompt": "Vous avez un compte Canari ?",
   "form_guest_login_link": "Se connecter pour votre tarif",
-  "form_view_error_order_empty": "Commandez au moins un article.",
+  "form_view_error_grid_empty": "Commandez au moins un article de \"{label}\"",
   "form_refusal_grid_update_app": "Ce formulaire a changé depuis l'ouverture de la page. Rechargez-la, ou mettez à jour l'application.",
   "form_refusal_grid_changed": "Un article de votre commande n'est plus proposé. Rechargez la page et vérifiez votre commande.",
-  "form_refusal_grid_empty": "Votre commande est vide : ajoutez au moins un article.",
   "form_grid_order_count": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

@@ -8,6 +8,7 @@ import {
   productGridAxisKey,
   productGridCellKey,
   productGridLines,
+  productGridOrdered,
   type ProductGridAnswer,
   type ProductGridAnswerCode,
   type ProductGridLine,
@@ -69,13 +70,11 @@ export function isCellClosed(
   return (grid.closedCells ?? []).includes(productGridCellKey(rowId, colId));
 }
 
-/** Whether an answer orders at least one unit - what a grid, always required, needs to be sent. */
-export function hasOrderedUnits(answer: unknown): boolean {
-  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return false;
-  return Object.values(answer as Record<string, unknown>).some(
-    (value) => typeof value === 'number' && value > 0
-  );
-}
+/**
+ * Whether an answer orders at least one unit - what a REQUIRED grid needs to be sent. The
+ * contract's predicate (`productGridOrdered`), the one the submit reads too.
+ */
+export const hasOrderedUnits = productGridOrdered;
 
 /**
  * The price of one unit of a cell for this viewer, or null when their price list has none.
@@ -214,8 +213,6 @@ export function productGridRefusalMessage(code: string | null): string | null {
     case 'PRODUCT_GRID_QUANTITY_INVALID':
     case 'PRODUCT_GRID_CELL_CLOSED':
       return m.form_refusal_grid_changed();
-    case 'PRODUCT_GRID_EMPTY':
-      return m.form_refusal_grid_empty();
     default:
       return null;
   }

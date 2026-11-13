@@ -179,7 +179,9 @@ describe('productGridRefusalMessage', () => {
     ]) {
       expect(productGridRefusalMessage(code)).toBe(m.form_refusal_grid_changed());
     }
-    expect(productGridRefusalMessage('PRODUCT_GRID_EMPTY')).toBe(m.form_refusal_grid_empty());
+    // The empty ORDER is no refusal any more (owner, 2026-11-13): a required grid left empty is
+    // refused like any required question, `FORM_ANSWER_MISSING`.
+    expect(productGridRefusalMessage('PRODUCT_GRID_EMPTY')).toBeNull();
     expect(productGridRefusalMessage('FORM_FULL')).toBeNull();
     expect(productGridRefusalMessage(null)).toBeNull();
   });

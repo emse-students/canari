@@ -290,12 +290,13 @@
   {/if}
   <div class="flex flex-col gap-3 p-4 sm:px-6 sm:py-5">
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <!-- No asterisk: a grid is never required on its own, the ORDER is (`firstMissingAnswer`). -->
+      <!-- The asterisk of a grid switched "Obligatoire" (owner, 2026-11-13), as every question's. -->
       <h2
         id={headingId}
         class="text-text-main flex-1 text-sm font-bold whitespace-pre-line sm:text-base"
       >
         {item.label}
+        {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
       </h2>
       {#if headerPrice}
         <span class="text-text-main text-sm font-bold sm:text-base" data-grid-price

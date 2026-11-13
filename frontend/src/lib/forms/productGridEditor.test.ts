@@ -58,7 +58,7 @@ function sweat(): EditorProductGrid {
 
 const PAID = { isPublic: false, requiresPayment: true };
 const judge = (grid: EditorProductGrid, form = PAID) =>
-  productGridItemRefusal({ required: true, productGrid: productGridPayload(grid) }, form);
+  productGridItemRefusal({ productGrid: productGridPayload(grid) }, form);
 
 const cotisants: ProductGridTierDimension = {
   id: 'd1',

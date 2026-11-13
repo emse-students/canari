@@ -65,7 +65,7 @@
     firstItemsFaultQuestion,
     refusedProductGridFault,
   } from '$lib/forms/questionFault';
-  import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import { GRID_REQUIRED_SWITCH, toFormItemsPayload } from '$lib/forms/itemsPayload';
   import {
     firstProductGridProblem,
     multipleSubmissionsAfterGridAdded,
@@ -383,6 +383,8 @@
   /** The new form's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
+      // This editor draws each priced grid's "Obligatoire" switch: its flag is the manager's.
+      ...GRID_REQUIRED_SWITCH,
       title,
       description,
       basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,

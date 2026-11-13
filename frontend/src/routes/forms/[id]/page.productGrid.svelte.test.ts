@@ -60,8 +60,8 @@ import Page from './+page.svelte';
 
 /**
  * A FORM OF PRICED GRIDS ON THE MEMBER'S PAGE (WP-G2): the order is totalled across every grid in
- * the sticky bar, the category the server applied is said under the header, and a send with no
- * article in ANY grid is held by one sentence for the form - an untouched grid is no fault.
+ * the sticky bar, the category the server applied is said under the header, and each grid's own
+ * "Obligatoire" switch (owner, 2026-11-13) holds a send on ITS card - an optional grid is no fault.
  */
 const productGrid = (rows: string[], cols: string[]) => ({
   rows: rows.map((r) => ({ id: r, label: r })),
@@ -86,7 +86,7 @@ beforeEach(() => {
     {
       id: 'jacket',
       label: 'Veste',
-      required: true,
+      required: false,
       type: 'product_grid',
       productGrid: productGrid(['Taille'], ['S', 'XL']),
     },
@@ -159,32 +159,50 @@ describe('a form of priced grids', () => {
     expect(line.match(/Cotisant BDE/g)?.length).toBe(1);
   });
 
-  it('holds a send with no article in ANY grid, said once for the form and on no card', async () => {
+  it('holds a REQUIRED grid left empty on its own card, and lets it go once it holds a unit', async () => {
     Element.prototype.scrollIntoView = vi.fn();
     await render();
-    // No grid draws an asterisk: none is required on its own.
-    expect(document.getElementById('q-hoodie')!.querySelector('h2')!.textContent).not.toContain(
+    // The asterisk of the required grid only.
+    expect(document.getElementById('q-hoodie')!.querySelector('h2')!.textContent).toContain('*');
+    expect(document.getElementById('q-jacket')!.querySelector('h2')!.textContent).not.toContain(
       '*'
     );
     const send = () =>
       bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
+    // An order in the OTHER grid does not rescue it.
+    await add('Veste XL');
     send();
     await settle();
-    // Announced, brought into view past the sticky bar, and on no grid card.
-    const alert = document.getElementById('form-order-missing')!;
-    expect(alert.getAttribute('role')).toBe('alert');
-    expect(alert.textContent).toContain(m.form_view_error_order_empty());
+    const alert = document.getElementById('q-hoodie')!.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain(m.form_view_error_grid_empty({ label: 'Sweat' }));
+    expect(document.getElementById('q-jacket')!.querySelector('[role="alert"]')).toBeNull();
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
-    expect(document.getElementById('q-hoodie')!.querySelector('[role="alert"]')).toBeNull();
     expect(submitForm).not.toHaveBeenCalled();
 
-    // Gone the moment the order holds a unit, from EITHER grid.
-    await add('Veste XL');
-    expect(document.getElementById('form-order-missing')).toBeNull();
+    await add('Sweat Noir M');
+    expect(document.getElementById('q-hoodie')!.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it('sends an order from the second grid alone: the untouched first grid is no fault', async () => {
+  it('sends a form whose grids are all optional and untouched, with no article', async () => {
     Element.prototype.scrollIntoView = vi.fn();
+    form.items = (form.items as Record<string, unknown>[]).map((item) => ({
+      ...item,
+      required: false,
+    }));
+    await render();
+    bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
+    await settle();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
+    expect(submitForm.mock.calls[0][1].answers).toEqual({});
+  });
+
+  it('sends an order from the second grid alone when the first is optional', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    form.items = (form.items as Record<string, unknown>[]).map((item) => ({
+      ...item,
+      required: false,
+    }));
     // Free articles, so the send goes straight out (a paid one first asks the payer's address).
     submission.productGridPrices = {
       hoodie: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
@@ -194,7 +212,6 @@ describe('a form of priced grids', () => {
     await add('Veste XL');
     bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
     await settle();
-    expect(document.body.textContent).not.toContain(m.form_view_error_order_empty());
     expect(document.querySelector('[role="alert"]')).toBeNull();
     // The send imports its checkout callbacks first: wait for the call rather than count ticks.
     await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
