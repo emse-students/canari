@@ -202,8 +202,9 @@ export function publicAppLinkLabel(href: string, base?: string): string | null {
   if (pathname === '/calendar' || pathname.startsWith('/calendar/')) return m.link_label_calendar();
   if (pathname === '/shop' || pathname.startsWith('/shop/')) return m.link_label_shop();
   if (pathname.startsWith('/posts/')) return m.link_label_post();
-  if (pathname.startsWith('/forms/')) return m.link_label_form();
-  if (pathname.startsWith('/associations/')) return m.link_label_association();
+  if (pathname.startsWith('/forms/') || pathname.startsWith('/f/')) return m.link_label_form();
+  if (pathname.startsWith('/associations/') || pathname.startsWith('/lists/'))
+    return m.link_label_association();
   if (pathname.startsWith('/profile/')) return m.link_label_profile();
   return m.link_label_generic();
 }

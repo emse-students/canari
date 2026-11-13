@@ -190,6 +190,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** When a manager closed the form (`GET /forms/:id`); absent or null while it takes answers. */
+  closedAt?: string | null;
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
