@@ -145,10 +145,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-13 | D016 BUILT and its fragment deleted: clearing a cotisation mode is refused with `409 COTISATION_MODE_IN_USE` while an active members-only product or card exists, the clear and the members-only saves ordered on the association row (FOR UPDATE / FOR SHARE); readings: none owed beyond the dev pass ([cotisations](cotisations.md#product-member-gating--pricing)). |
 | 2026-11-13 | R01: the iPhone 12 took `1.6.11-alpha.3` (100601103) from TestFlight and read PASS - a landscape post video from the feed opens the pager upright with the rotate button, the button turns it to landscape full screen, closing returns to portrait; a portrait CanaReel in a DM plays upright; `@sa` suggests Sana in a group. The stable needs an `alpha.4` carrying the `1.6.11` store notes (read from the pre-release's tree), and with it the readings of #3430, #3431 and #3434. |
 | 2026-11-13 | D063 BUILT: while a returning person's refusal is shown the PIN gate drops the app mark and lead line, and keys are 52 px under 700 px of height; the iPhone 12 reading is owed. |
+| 2026-11-12 | D065 BUILT and deleted: a new-device alert is dropped when the server says its device is revoked, asked when `/notifications` opens ([mls-protocol](protocols/mls-protocol.md)); one Mi 9T reading owed, in the verification table. |
 
 ## Annex A - every row of the backlog
 
-333 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+334 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -467,6 +468,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B396 | a member's new device enters with no tap: one rig row and the weekly enrolment rate | P2 | mls-messaging | built-readings-owed | rig run | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B397 | `[QUEUE] arrived twice` re-read on a current build (one cause fixed 2026-11-04) | P2 | mls-messaging | built-readings-owed | phone reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B398 | a call that loses the audio focus holds its microphone, never hangs up (D056): one Mi 9T reading with a SIM call rung in | P3 | calls | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B399 | a new-device alert is dropped once its device is revoked (D065): one Mi 9T reading | P3 | mls-messaging | built-readings-owed | Android reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B400 | delete MiConnect's unused Docker service connection (one admin click) | P3 | infra-hosts | open | user one-off | `docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks` |
 | B401 | a reload of a replica list leaves its proxy with a peer (#2933): one production deploy's logs with no `no live upstreams` | P1 | infra-hosts | shipped-verify-owed | production reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B402 | "Entre etudiants": the dev reading of who reads a students-only post | P2 | other | shipped-verify-owed | dev reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
@@ -488,7 +490,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-257 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+256 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -529,7 +531,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D062 | `docs/wiki/backlog.d/p3-history-stream-filter-reads-more-than-it-serves.md` | History stream arrival filter reads more than it serves (review of #2800): the batch read once fixed, the cursor-scan fix refused (receivedAt is not in stream order) | P3 | mls-messaging | open | 2026-10-31; #2800 | none |
 | D063 | `docs/wiki/frontend/design-reference.md` | iPhone PIN gate: a refusal banner no longer pushes the keypad's 0 key below the fold on 390x844 (built, fragment deleted; section "The PIN gate's banner takes the header's room") | P3 | ios-native | built-readings-owed | 2026-10-22 | hardware reading (iPhone 12, 390x844, a refused PIN) |
 | D064 | `docs/wiki/backlog.d/p3-miconnect-s-unused-docker-service-connection-fails-its-monitor.md` | Identity provider's unused Docker service connection fails its monitor every few minutes | P3 | infra-hosts | blocked | 2026-10-31 | user decision (one click owed: delete the object) |
-| D065 | `docs/wiki/backlog.d/p3-new-device-alerts-queue-one-at-a-time-never-forget-a-device-that-ha.md` | A new-device alert outlives the device it announces: drop it on the device list's answer (plan written) | P3 | mls-messaging | open | 2026-10-28 | none |
 | D066 | `docs/wiki/frontend/design-reference.md` | Overlays stack by open order: one registered overlay stack instead of fixed rungs (built, fragment deleted; the stack is the section "The overlay stack") | P3 | other | built-readings-owed | 2026-11-13 | hardware reading (a nested dialog over a viewer, a picker in a sheet) |
 | D069 | `docs/wiki/backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md` | SvelteKit 3: what the audit of #2613 left open (version check on resume, payment-return goto, others) | P3 | other | open | 2026-10-28; #2613; #2656 | a named PR (upstream kit fix for item 8) |
 | D070 | `docs/wiki/backlog.d/p3-sweeper-settled-tier-that-re-ranks-has-no-integration-case.md` | No integration case for a sweeper-settled tier that re-ranks to paid_not_granted | P3 | tests-tooling | open | 2026-11-01 | none |

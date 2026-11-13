@@ -8,6 +8,7 @@ import { isNewToItsOwner, keyFingerprintOf, type KeyFirstSight } from '$lib/mls-
 import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 import {
   deliverDeviceEvents,
+  dropNoticesOfRevokedDevices,
   forgetDeviceNotices,
   loadDeviceNotices,
   noteRefusedOwnDevices,
@@ -55,6 +56,19 @@ export async function revokeNoticedDevice(deviceId: string): Promise<boolean> {
     console.error(`[DEVICE_NOTICE] revocation of ${short}... failed: ${String(e).slice(0, 160)}`);
     return false;
   }
+}
+
+/**
+ * Drops the alerts of devices revoked since they were raised ({@link dropNoticesOfRevokedDevices}),
+ * asked of the server for the signed-in account. Called when the notifications list opens, the one
+ * place the alerts are read; with no account registered there is nothing to ask about.
+ */
+export async function dropAlertsOfRevokedDevices(): Promise<void> {
+  const mls = registeredMls;
+  const session = registeredSession;
+  if (!mls || !session) return;
+  const userId = session.getUserId();
+  await dropNoticesOfRevokedDevices(userId, (deviceId) => mls.isDeviceRevoked(userId, deviceId));
 }
 
 /**
