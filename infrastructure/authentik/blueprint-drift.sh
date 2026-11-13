@@ -22,19 +22,21 @@ here="$(cd "$(dirname "$0")" && pwd)"
 applier="${1:?usage: blueprint-drift.sh <released apply-blueprints.sh> [worker container]}"
 container="${2:-miconnect-worker-1}"
 
+# THE JOB LOG IS PUBLIC: what is printed is the redacted output (ak_redact_blueprint_output) - which
+# object and which field changed, never the values, which can be callbacks, names or addresses.
 output="$(bash "$applier" dry-run "$container" 2>&1)" || {
-  printf '%s\n' "$output"
+  printf '%s\n' "$output" | ak_redact_blueprint_output
   echo "::error title=MiConnect blueprint drift::the dry run itself failed, so whether production was edited by hand is unknown"
   exit 1
 }
-printf '%s\n' "$output"
+printf '%s\n' "$output" | ak_redact_blueprint_output
 verdict="$(printf '%s\n' "$output" | ak_blueprint_drift_verdict)"
 case "$verdict" in
   clean)
     echo "MiConnect matches the released blueprints: no hand edit for the next stable to overwrite"
     ;;
   drift:*)
-    echo "::error title=MiConnect blueprint drift::${verdict#drift:} object field(s) differ from the released blueprints (listed above) - an edit by hand that the next stable release WILL overwrite. Write it into infrastructure/authentik/blueprints/ in a pull request, or undo it."
+    echo "::error title=MiConnect blueprint drift::${verdict#drift:} object field(s) differ from the released blueprints (named above, values withheld - read them with apply-blueprints.sh dry-run on the host) - an edit by hand that the next stable release WILL overwrite. Write it into infrastructure/authentik/blueprints/ in a pull request, or undo it."
     exit 1
     ;;
   *)

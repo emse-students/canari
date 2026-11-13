@@ -321,7 +321,9 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect
 
       # MICONNECT'S CONFIGURATION IS THE BLUEPRINTS IN THIS TREE, applied on every stable release.
       # The runner lives on the host MiConnect runs on, so it reaches the worker container directly;

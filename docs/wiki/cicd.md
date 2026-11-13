@@ -2187,18 +2187,22 @@ stack's own `.env` on the host, the image scan read this repository's `compose.y
 ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container
 RUNS differs from the pin (durable state, never a clock), dumps the database first, checks Docker's
 health verdict, `/-/health/ready/` and the OIDC discovery after, and on a failure puts the old tag
-back - restoring the dump only when the schema moved - and FAILS the job. No new secret and no new
-route: the runner already lives on the host, as for `Apply MiConnect's blueprints`; what it needs
-is read and write access to each stack's `.env`, and it refuses by name without it. The mechanism,
+back - restoring the dump only when the schema provably moved - and FAILS the job (exit 2, with the
+hand procedure, when the rollback itself fails or cannot decide). No new secret and no new route: the
+runner already lives on the host, as for `Apply MiConnect's blueprints`; what it needs is read and
+write access to each stack's `.env` (granted 2026-11-13), and it refuses by name without it. The mechanism,
 each decision and its test: [authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
 
-**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, two read-only reports.
+**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, three read-only reports.
 The third-party images every RELEASED compose file pins (production and MiConnect from
 `prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`) against what each
 container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
 any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
-did to a provider on 2026-11-13 with nothing to say so beforehand. No fifth visible workflow: it is
-one more job on the 07:30 slot
+did to a provider on 2026-11-13 with nothing to say so beforehand; and whether the runner can still
+write each MiConnect `.env`. A drift with a known cause is a WARNING until the date written beside it
+in `infrastructure/deploy/image-drift-known.txt`, and red after. No fifth visible workflow: it is
+one more job on the 07:30 slot, and it cannot overlap a deploy because the one runner runs one job at
+a time (it does NOT join `cd-deploy`, where a queued report could cancel a waiting deploy)
 ([authentik](infrastructure/authentik.md#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)).
 
 ### Native and identity-provider manifests (2026-10-23)

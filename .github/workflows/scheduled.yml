@@ -242,7 +242,7 @@ jobs:
   # 2026-11-13, twice in one day. Production MiConnect ran authentik 2026.8.0 for weeks while this
   # repository pinned 2026.8.5 - its tag lived in the stack's own `.env`, and the image scan read the
   # repository's. And the `1.6.11` stable overwrote a provider whose callbacks had been edited by
-  # hand in the admin UI, because nothing had said the edit existed. Two read-only reports:
+  # hand in the admin UI, because nothing had said the edit existed. Three read-only reports:
   #
   #   - IMAGES: every third-party image the RELEASED compose files pin (production and MiConnect from
   #     `prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`, whose
@@ -250,7 +250,9 @@ jobs:
   #     infrastructure/deploy/image-drift-report.sh.
   #   - BLUEPRINTS: the released blueprints' dry run against production (one transaction, rolled
   #     back - the call every pre-release makes), red on any change, which is a hand edit the next
-  #     stable would overwrite. infrastructure/authentik/blueprint-drift.sh.
+  #     stable would overwrite. infrastructure/authentik/blueprint-drift.sh. The log is PUBLIC, so
+  #     it names the object and field that changed, never the values.
+  #   - ACCESS: the runner can still write each MiConnect `.env`, the release's one precondition.
   #
   # A RED RUN IS THE REPORT, for the reasons `hosts` gives. ON THE SELF-HOSTED RUNNER because the
   # containers are the local daemon's. docs/wiki/cicd.md, "The host runs what was released".
@@ -263,9 +265,13 @@ jobs:
       contains(fromJSON('["all", "drift"]'), inputs.job))
     runs-on: self-hosted
     timeout-minutes: 15
-    # Its own group, at the job level, for the reason `hosts` gives. The blueprint dry run also
-    # takes a transaction on production's MiConnect, which a stable's apply must not meet - a stable
-    # holds `cd-deploy`, and this job only reads, so the worst overlap is one rolled-back read.
+    # Its own group, at the job level, for the reason `hosts` gives. NOT `cd-deploy`, deliberately:
+    # GitHub keeps one PENDING run per group and cancels the others, so a daily report queued in that
+    # group could cancel a waiting deploy. What keeps it from overlapping a deploy - a recreate seen
+    # half-way would read as DRIFT, and the blueprint dry run would meet a stable's apply - is the
+    # RUNNER: there is exactly one, and a runner executes one job at a time, so this job runs before
+    # or after a deploy job, never during it (docs/wiki/cicd.md, "There is one runner"). The day a
+    # second runner runs, this sentence is false and the job needs a lock it can wait on.
     concurrency:
       group: drift-report
       cancel-in-progress: false
@@ -285,10 +291,30 @@ jobs:
           path: released-dev
           sparse-checkout: infrastructure
 
+      # A known drift with a date (`image-drift-known.txt`, read from `main`: an exemption is a
+      # decision of today, not of the release) is a warning until that date, and red after it.
       - name: Compare the running images with the released pins
         run: |
           set -euo pipefail
-          bash infrastructure/deploy/image-drift-report.sh             canari-prod=released-prod/infrastructure/docker-compose.prod.yml             miconnect=released-prod/infrastructure/authentik/compose.yml             canari-dev=released-dev/infrastructure/docker-compose.dev.yml             miconnect-test=released-dev/infrastructure/authentik/compose.yml
+          bash infrastructure/deploy/image-drift-report.sh \
+            --known infrastructure/deploy/image-drift-known.txt \
+            canari-prod=released-prod/infrastructure/docker-compose.prod.yml \
+            miconnect=released-prod/infrastructure/authentik/compose.yml \
+            canari-dev=released-dev/infrastructure/docker-compose.dev.yml \
+            miconnect-test=released-dev/infrastructure/authentik/compose.yml
+
+      # THE RELEASE'S ONE PRECONDITION, PROBED EVERY MORNING rather than met by the next release: the
+      # runner account reads and writes each MiConnect stack's `.env` (`test -r && test -w`, read-only;
+      # the file is never opened). Granted on the host 2026-11-13 (infrastructure/MIGRATION.md).
+      - name: Check the runner may still write each MiConnect stack's .env
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          status=0
+          for project in miconnect miconnect-test; do
+            bash infrastructure/authentik/deploy-stack.sh access --project "$project" || status=1
+          done
+          exit "$status"
 
       # Runs even when the images drifted: the two questions are independent.
       - name: Dry-run the released blueprints against production MiConnect

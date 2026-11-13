@@ -39,6 +39,13 @@ ak_pin_image() {
     echo "server ($server) and worker ($worker) pin different images in $1" >&2
     return 1
   fi
+  # A DIGEST CAN NEVER BE DEPLOYED: the host's compose builds the reference from AUTHENTIK_TAG alone,
+  # so `config --images` would never name a pin carrying `@sha256:` and every release would stop.
+  case "$server" in *@*)
+    echo "the authentik pin of $1 carries a digest ($server); the host's compose builds the image from AUTHENTIK_TAG alone and can never run it - pin a tag" >&2
+    return 1
+    ;;
+  esac
   printf '%s\n' "$server"
 }
 
@@ -94,39 +101,64 @@ ak_decide() {
   echo upgrade
 }
 
+# The `.env` line the release owns: `AUTHENTIK_TAG=` or `export AUTHENTIK_TAG=` (compose's dotenv
+# reader accepts both), leading blanks allowed.
+ak_env_tag_line='^[[:space:]]*(export[[:space:]]+)?AUTHENTIK_TAG[[:space:]]*='
+
 # ak_env_tag  - the AUTHENTIK_TAG a `.env` on stdin sets (the last line wins, quotes stripped).
 ak_env_tag() {
-  awk -F= '/^[[:space:]]*AUTHENTIK_TAG[[:space:]]*=/ { v = substr($0, index($0, "=") + 1) } END { gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", v); print v }'
+  awk -v re="$ak_env_tag_line" '$0 ~ re { v = substr($0, index($0, "=") + 1) } END { gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", v); print v }'
 }
 
 # ak_env_set_tag <tag>  - the `.env` on stdin with exactly ONE `AUTHENTIK_TAG=<tag>` line: the first
-# one rewritten in place, any later one dropped, appended when there was none. Every other line is
-# copied untouched - the file carries the stack's secrets and only this line is the release's.
+# one rewritten in place (an `export ` prefix kept), any later one dropped, appended when there was
+# none. Every other line is copied untouched - the file carries the stack's secrets and only this line
+# is the release's.
 ak_env_set_tag() {
-  awk -v tag="$1" '
-    /^[[:space:]]*AUTHENTIK_TAG[[:space:]]*=/ { if (!done) { print "AUTHENTIK_TAG=" tag; done = 1 }; next }
+  awk -v tag="$1" -v re="$ak_env_tag_line" '
+    $0 ~ re {
+      if (!done) { prefix = ($0 ~ /^[[:space:]]*export[[:space:]]/) ? "export " : ""; print prefix "AUTHENTIK_TAG=" tag; done = 1 }
+      next
+    }
     { print }
     END { if (!done) print "AUTHENTIK_TAG=" tag }
   '
 }
 
-# ak_rollback_plan <migrations-before> <migrations-after>
+# ak_rollback_plan <migrations-before> <migrations-after>  - read with server and worker STOPPED, so
+# nothing can still be migrating while the count is read:
 #   retag    the failed version applied no migration: putting the old tag back is the whole rollback
-#   restore  it did, or the count cannot be read: the old version cannot run on a newer schema, so
-#            the dump taken before the change is restored. Destructive, hence gated on a FAILED check
-#            AND on the schema having moved (or being unknowable) - never on the failure alone.
+#   restore  it did: the old version cannot run on a newer schema, so the dump taken before the change
+#            is restored. Destructive, hence gated on a FAILED check AND a count that MOVED.
+#   unknown  either count is unreadable: nothing proves the schema moved, and a restore on a guess
+#            would drop a database that may be fine - the rollback stops and hands over to a human.
 ak_rollback_plan() {
-  if [ -n "$1" ] && [ "$1" = "$2" ]; then echo retag; else echo restore; fi
+  if ! [[ "$1" =~ ^[0-9]+$ ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+    echo unknown
+  elif [ "$1" = "$2" ]; then
+    echo retag
+  else
+    echo restore
+  fi
 }
 
-# ak_health_verdict <state> <health> <restart-count>
+# ak_migrations_rising <previous-count> <current-count>  - true when both are counts and the second is
+# larger: the new version is still applying migrations, so its healthcheck failing is not a verdict.
+ak_migrations_rising() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -gt "$1" ]
+}
+
+# ak_health_verdict <state> <health> <restart-count> [<migrating: yes|no>]
 # Docker's own verdict on a recreated container, which is the image author's healthcheck (`ak
 # healthcheck`, its start period and retries) - a proof, not a timer of ours:
 #   healthy | waiting | failed:<why>
 # A restart counts as failure: a crash-looping container resets its health to `starting` on every
-# start and would otherwise be "waiting" for ever.
+# start and would otherwise be "waiting" for ever. `unhealthy` is NOT final while the migration count
+# is still rising (and nothing restarted): a long migration outlasts the healthcheck's start period,
+# and calling it a failure would restore the dump over a good upgrade. The caller's deadline still
+# bounds the wait, and reaching it fails.
 ak_health_verdict() {
-  local state="$1" health="$2" restarts="${3:-0}"
+  local state="$1" health="$2" restarts="${3:-0}" migrating="${4:-no}"
   if [ "$restarts" != 0 ]; then
     echo "failed:restarted $restarts time(s)"
   elif [ "$state" != running ]; then
@@ -135,10 +167,45 @@ ak_health_verdict() {
     case "$health" in
       healthy) echo healthy ;;
       starting) echo waiting ;;
-      unhealthy) echo "failed:docker reports it unhealthy" ;;
+      unhealthy)
+        if [ "$migrating" = yes ]; then echo waiting; else echo "failed:docker reports it unhealthy"; fi
+        ;;
       *) echo "failed:no healthcheck verdict ('$health') - the authentik image declares one, so this is not that image" ;;
     esac
   fi
+}
+
+# ak_space_ok <database-bytes> <available-kilobytes>  - room for the dump: twice the database's size
+# on disk. A custom-format dump is compressed and smaller than the database, so this bounds it from
+# above and leaves the host the rest. False when either number is unreadable.
+ak_space_ok() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [ "$(($2 * 1024))" -ge "$(($1 * 2))" ]
+}
+
+# ak_dry_run_recreates  - reads `docker compose --dry-run up` output on stdin; true when compose
+# would create or recreate a container. Asked with the tag each container already RUNS, a clean stack
+# answers `Running`: anything else means the host's compose file or `.env` differ from what runs, and
+# a real `up` would apply that difference too, beside the tag.
+ak_dry_run_recreates() {
+  grep -qE '[[:space:]](Recreate|Create)[[:space:]]*$'
+}
+
+# ak_redact_blueprint_output  - the applier's output on stdin, as the PUBLIC job log may show it:
+# a CHANGED line keeps its object and field and loses its values (they can be callbacks, names or
+# addresses); an indented validation line and any line that is not the applier's own (a traceback can
+# quote a value) are withheld and counted. The full text is read on the host, by a person.
+ak_redact_blueprint_output() {
+  awk '
+    /^\[miconnect-blueprints\] CHANGED / {
+      if (match($0, /^\[miconnect-blueprints\] CHANGED +[^ ]+ [^ ]+ \.[A-Za-z0-9_]+/)) print substr($0, 1, RLENGTH)
+      else print "[miconnect-blueprints] CHANGED (a line of an unexpected shape, withheld whole)"
+      next
+    }
+    /^\[miconnect-blueprints\]   / { withheld++; next }
+    /^\[miconnect-blueprints\] / { print; next }
+    NF { withheld++ }
+    END { if (withheld) print "[miconnect-blueprints] " withheld " other line(s) withheld from this public log - run apply-blueprints.sh dry-run on the host to read them" }
+  '
 }
 
 # ak_blueprint_drift_verdict  - reads apply-blueprints.sh dry-run output on stdin:
