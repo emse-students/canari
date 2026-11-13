@@ -8,6 +8,7 @@ import {
   CHAT_REEL_OVER_BUDGET,
   isOverBudgetBody,
   MediaUploadError,
+  MEMBER_UPLOAD_OVER_BUDGET,
   uploadRefusalCause,
   uploadRefusalFrom,
 } from './mediaErrors';
@@ -43,6 +44,24 @@ describe('uploadRefusalFrom', () => {
     expect(isOverBudgetBody('Daily chat-reel upload budget reached.')).toBe(false);
   });
 
+  it("reads the member's daily upload bound from the CODE of its 429, apart from the chat-reel budget", async () => {
+    const bound = new Response(
+      JSON.stringify({ statusCode: 429, message: 'anything', code: MEMBER_UPLOAD_OVER_BUDGET }),
+      { status: 429, headers: { 'Content-Type': 'application/json' } }
+    );
+    const err = await uploadRefusalFrom(bound, 'media upload failed');
+    expect(err.overDailyLimit).toBe(true);
+    expect(err.overBudget).toBe(false);
+    expect(uploadRefusalCause(err)).toBe('over-daily-limit');
+    // A 429 with no code, or with a code that is not a string, stays transient.
+    expect((await uploadRefusalFrom(json(429), 'x')).overDailyLimit).toBe(false);
+    const odd = new Response(JSON.stringify({ code: [MEMBER_UPLOAD_OVER_BUDGET] }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(uploadRefusalCause(await uploadRefusalFrom(odd, 'x'))).toBeNull();
+  });
+
   it('keeps a short excerpt of the application own JSON answer', async () => {
     const err = await uploadRefusalFrom(json(422), 'media upload failed');
     expect(err.origin).toBe('gateway');
@@ -65,6 +84,7 @@ describe('uploadRefusalCause', () => {
     [new MediaUploadError(422, 'x'), 'refused'],
     [new MediaUploadError(429, 'x'), null],
     [new MediaUploadError(429, 'x', 'gateway', false, true), 'over-budget'],
+    [new MediaUploadError(429, 'x', 'gateway', false, false, true), 'over-daily-limit'],
     [new MediaUploadError(429, 'x', 'edge'), null],
     [new MediaUploadError(408, 'x'), null],
     [new MediaUploadError(401, 'x'), null],

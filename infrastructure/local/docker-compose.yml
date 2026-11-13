@@ -255,6 +255,8 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
