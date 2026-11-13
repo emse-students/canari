@@ -18,3 +18,8 @@ hand on the live provider is overwritten at the next stable. Wiki.js 3 calls bac
 to it on 2026-11-13 the live provider was edited but the blueprint still named the Wiki.js 2 callbacks,
 and the `1.6.11` deploy put them back: `mino.emse.fr`'s sign-in answered 400 until they were restored.
 **Changing a callback is a pull request on that file**, never only an edit in the admin interface.
+
+The same apply also detached `miconnect-claim-mino-groups` (claim `minoGroups`, created by hand in
+production for Wiki.js 3) from the provider, since the blueprint's `property_mappings` list did not
+name it: the wiki received no group and its admins lost their rights. The mapping now lives in
+`10-mappings.yaml` (copied from production) and the provider's list names it.
