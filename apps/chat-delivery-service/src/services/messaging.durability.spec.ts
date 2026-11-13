@@ -657,6 +657,49 @@ describe('MessagingService - visibility vs durability', () => {
       expect(queuedMessageRepo.save).not.toHaveBeenCalled();
     });
 
+    /**
+     * "NO MESSAGE QUEUED" IS TWO READINGS (2026-11-13): nobody to queue for is the ordinary path
+     * during an invite (a LOG), every recipient offline on a transport frame is a rendezvous that
+     * will expire unanswered (a WARN).
+     */
+    describe('"No message queued after validation"', () => {
+      const lines = (spy: jest.SpyInstance) =>
+        spy.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('No message queued'));
+
+      it('is a LOG, not a warning, when the group named nobody to queue for', async () => {
+        groupOfThree();
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await service.sendMessage(
+          send({ silent: true, durable: true, recipientDevices: ['u9:d9', 'u1:d1'] })
+        );
+
+        expect(lines(log)).toHaveLength(1);
+        expect(lines(log)[0]).toContain('recipients=0');
+        expect(lines(warn)).toHaveLength(0);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+
+      it('stays a WARN when a transport frame found every recipient offline', async () => {
+        groupOfThree();
+        redis.exists.mockResolvedValue(0);
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(lines(warn)).toHaveLength(1);
+        expect(lines(warn)[0]).toContain('every recipient device is offline');
+        expect(lines(log)).toHaveLength(0);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+    });
+
     it('is kept OUT of the shared history stream, which every member reads', async () => {
       groupOfThree();
 
