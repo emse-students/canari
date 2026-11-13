@@ -129,6 +129,33 @@ entries:
         return {"campus": profile.get("campus"), "cursus": profile.get("cursus") or [], "posts": profile.get("posts") or []}
       scope_name: "profile"
       description: "Gives the campus, the cursus and the posts"
+  # MinoWiki 3's groups (claim `minoGroups`, scope profile), created by hand in production on
+  # 2026-11-13 and copied here from it: the user's `mino-*` groups, then statut-eleve or
+  # statut-personnel, promo-YYYY and formation-xxx from the first cursus. The wiki keeps only the
+  # names it knows. The accented spellings are VALUES school_status takes, not prose.
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-mino-groups"
+    attrs:
+      expression: |-
+        # MinoWiki 3: the groups sent to the wiki (claim minoGroups). The wiki uses only the names it knows.
+        rel = getattr(request.user, "ak_groups", None) or request.user.groups
+        names = [g.name for g in rel.all()]
+        out = [n for n in names if n.startswith("mino-")]
+        st = (request.user.attributes.get("school_status") or "").strip().lower()
+        if st.startswith(("eleve", "elève", "élève", "éleve")):
+            out.append("statut-eleve")
+        elif st.startswith("personnel"):
+            out.append("statut-personnel")
+        cursus = (request.user.attributes.get("profile") or {}).get("cursus") or []
+        if cursus:
+            if cursus[0].get("promo"):
+                out.append("promo-%s" % cursus[0]["promo"])
+            if cursus[0].get("formation"):
+                out.append("formation-%s" % str(cursus[0]["formation"]).lower())
+        return {"minoGroups": out}
+      scope_name: "profile"
+      description: "MinoWiki 3 : groupes mino-*, statut, promo, formation"
   # The account's stable identifier, on Canari's providers only: Canari is the editor of the profile
   # (WP4), and the key it writes back through authentik's API is this uuid, never the `sub`.
   - model: authentik_providers_oauth2.scopemapping
