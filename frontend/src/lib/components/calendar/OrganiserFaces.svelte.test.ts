@@ -74,3 +74,30 @@ describe('OrganiserFaces', () => {
     expect(root.getAttribute('title')).toBe('Asso 0, Asso 1, Asso 2, Asso 3');
   });
 });
+
+describe('OrganiserFaces - a neutral "Campus" event', () => {
+  it('draws the generic mark and no initials', () => {
+    mounted.push(
+      mount(OrganiserFaces, {
+        target: document.body,
+        props: {
+          owners: [
+            {
+              associationId: 'campus',
+              name: 'Campus',
+              slug: '',
+              color: null,
+              logoUrl: null,
+              neutral: true,
+            },
+          ],
+        },
+      })
+    );
+    flushSync();
+    const root = document.querySelector('[role="img"]') as HTMLElement;
+    expect(root.querySelector('[data-neutral-mark]')).not.toBeNull();
+    expect(root.textContent?.trim()).toBe('');
+    expect(root.getAttribute('aria-label')).toBe('Campus');
+  });
+});

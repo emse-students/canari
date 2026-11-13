@@ -12,6 +12,8 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { loginOpenInAppOffer } from '$lib/mobile/openInApp';
+  import { paymentReturnSubmissionId } from '$lib/forms/checkoutReturn';
+  import { formPaymentReturnDeepLink } from '$lib/utils/checkoutCallbacks';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { PHONE_VIEWPORT_QUERY, isPhoneViewport, onViewportChange } from '$lib/utils/viewport';
   import { onAppForegroundChange } from '$lib/utils/appForeground';
@@ -33,6 +35,8 @@
   /** Store badges: a phone-sized WEB visitor, never the native app itself. */
   let showStoreBadges = $state(false);
   let openInAppHref = $state<string | null>(null);
+  /** The app's link to the payment this login stands in front of (`paymentReturnSubmissionId`). */
+  let paymentReturnHref = $state<string | null>(null);
 
   const platformInfo = $derived(getAppVersionCheck());
   const loginDisabled = $derived(isBelowMinClientVersion());
@@ -111,6 +115,12 @@
       requestedReturnTo = url.searchParams.get('returnTo') ?? '';
     } catch {
       requestedReturnTo = '';
+    }
+    const paidSubmissionId = isTauriRuntime() ? null : paymentReturnSubmissionId(requestedReturnTo);
+    if (paidSubmissionId) {
+      // The payer paid in the phone's browser and has no session here: say where the payment went.
+      console.info('[auth] login in front of a payment return, offering the app');
+      paymentReturnHref = formPaymentReturnDeepLink(paidSubmissionId);
     }
 
     // 2. Unified session + biometric check.
@@ -300,6 +310,7 @@
   {loginDisabled}
   {showStoreBadges}
   {openInAppHref}
+  {paymentReturnHref}
   onLogin={handleLogin}
   onPasswordLogin={handlePasswordLogin}
 />

@@ -24,7 +24,11 @@
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
-  import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import ConversationMediaViewer from '$lib/components/chat/ConversationMediaViewer.svelte';
+  import { useChatMediaSequence } from '$lib/utils/chat/chatMediaSequence';
+  import { buildViewerSequence, viewerItemKey } from '$lib/utils/chat/viewerSequence';
+  import type { SharedMediaItem } from '$lib/utils/chat/sharedContent';
+  import { Log } from '$lib/utils/Log';
   import { nearViewport } from '$lib/actions/nearViewport';
   import ChatReelTile from './ChatReelTile.svelte';
   import UploadAction from './UploadAction.svelte';
@@ -199,14 +203,65 @@
   let showLightbox = $state(false);
   let showPdfViewer = $state(false);
 
+  const loadSequence = useChatMediaSequence();
+  /**
+   * What the viewer can walk through. It opens at once on THIS media (already decrypted, no wait)
+   * and the conversation's other images and videos join it when the local read answers - the
+   * viewer stays on the same item and only gains neighbours.
+   */
+  let viewerItems = $state<SharedMediaItem[]>([]);
+  /** The key of the media the viewer opened on, kept while the list around it changes. */
+  let viewerStartKey = $state('');
+
+  /** This bubble's media as a viewer item; the key is the one the conversation's list carries. */
+  function ownViewerItem(): SharedMediaItem | null {
+    if (!mediaRef) return null;
+    return {
+      messageId: messageId || mediaRef.mediaId,
+      senderId: senderId ?? '',
+      timestamp: sentAt?.getTime() ?? Date.now(),
+      media: mediaRef,
+      caption: textContent,
+    };
+  }
+
+  function openViewer() {
+    const own = ownViewerItem();
+    if (!own || !blobUrl) return;
+    viewerItems = [own];
+    viewerStartKey = viewerItemKey(own);
+    showLightbox = true;
+    if (!loadSequence) return;
+    const ownKey = viewerItemKey(own);
+    void loadSequence()
+      .then((all) => {
+        const sequence = buildViewerSequence(all, Date.now());
+        if (!sequence.some((item) => viewerItemKey(item) === ownKey)) {
+          Log.d(
+            'MessageMediaRenderer',
+            `viewer sequence (${sequence.length}) lacks the opened media, single item kept`
+          );
+          return;
+        }
+        Log.d('MessageMediaRenderer', `viewer sequence loaded: ${sequence.length} items`);
+        if (showLightbox) viewerItems = sequence;
+      })
+      .catch((err) => {
+        Log.w(
+          'MessageMediaRenderer',
+          `viewer sequence could not be read, single item kept: ${err}`
+        );
+      });
+  }
+
   function openLightbox(e: MouseEvent) {
     e.stopPropagation();
-    if (!blobUrl) return;
-    showLightbox = true;
+    openViewer();
   }
 
   function closeLightbox() {
     showLightbox = false;
+    viewerItems = [];
   }
 
   /**
@@ -363,7 +418,7 @@
                 variant="chat"
                 src={blobUrl}
                 loudness={mediaRef?.loudness}
-                onOpen={() => (showLightbox = true)}
+                onOpen={openViewer}
                 {onActions}
                 onMetadata={frame.onLoad}
                 openLabel={m.msg_open_video_fullscreen_label()}
@@ -689,35 +744,12 @@
   />
 {/if}
 
-{#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video')}
-  <MediaLightbox
-    open={showLightbox}
+{#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video') && viewerItems.length > 0}
+  <ConversationMediaViewer
+    items={viewerItems}
+    startKey={viewerStartKey}
     onClose={closeLightbox}
-    title={mediaRef.fileName ?? m.msg_media_label()}
-    info={{
-      senderId,
-      sentAt,
-      fileName: mediaRef.fileName,
-      sizeBytes: mediaRef.size,
-      width: mediaRef.width,
-      height: mediaRef.height,
-    }}
-    onDownload={() => downloadBlob(blobUrl, mediaRef.fileName ?? 'media')}
-  >
-    {#if mediaRef.type === 'image'}
-      <img
-        src={blobUrl}
-        alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
-        class="max-h-full max-w-full object-contain select-none"
-      />
-    {:else}
-      <VideoPlayer
-        src={blobUrl}
-        variant="conversation"
-        soundScope="local"
-        loudness={mediaRef?.loudness}
-        class="h-full w-full"
-      />
-    {/if}
-  </MediaLightbox>
+    {authToken}
+    known={{ key: viewerStartKey, url: blobUrl }}
+  />
 {/if}

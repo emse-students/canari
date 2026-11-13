@@ -2,6 +2,7 @@
   import { ImageOff } from '@lucide/svelte';
   import { Log } from '$lib/utils/Log';
   import { gifImageGate } from '$lib/utils/chat/gifImageGate';
+  import { GIF_MAX_BYTES } from '$lib/utils/gifMediaProxy';
 
   /**
    * ONE PICKER THUMBNAIL, DOWNLOADED WHEN THE GATE SAYS SO.
@@ -12,6 +13,11 @@
    * (the relay answers 503 `busy` when it is saturated, and a second ask a moment later is the
    * answer to that, not a loop). A tile that is unmounted before its turn leaves the queue and never
    * touches the network. Past the retry the tile says so with an icon rather than staying blank.
+   *
+   * A 413 IS NEVER RETRIED (2026-11-13): the relay refuses a GIF over its ceiling for good, and a
+   * second ask a moment later only repeats the refusal. An `<img>` cannot read the status, so the
+   * fact travels from where it is known: a rendition whose declared `bytes` exceed the ceiling fails
+   * at once, without the pause and the second request.
    */
   interface Props {
     src: string;
@@ -19,9 +25,11 @@
     height: number;
     /** The frame's own load callback, so it can drop its placeholder tone. */
     onLoad: (event: Event) => void;
+    /** The rendition's declared size, when the provider sent one (see the 413 note above). */
+    bytes?: number;
   }
 
-  let { src, width, height, onLoad }: Props = $props();
+  let { src, width, height, onLoad, bytes }: Props = $props();
 
   /** Pause before the single retry. A pacing, not a correctness rule: a refusal is retried once. */
   const RETRY_DELAY_MS = 800;
@@ -52,6 +60,11 @@
   function settle(ok: boolean) {
     giveBack();
     if (ok || !alive) return;
+    if (bytes !== undefined && bytes > GIF_MAX_BYTES) {
+      Log.d('GifTile', `thumbnail over the relay ceiling (${bytes} bytes), not retried`);
+      failed = true;
+      return;
+    }
     attempts++;
     if (attempts > 1) {
       Log.d('GifTile', 'thumbnail failed twice, left as is');

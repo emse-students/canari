@@ -14,6 +14,657 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.11] - 2026-11-13
+
+### Security - production's adminer runs upstream's image with Alpine's `libpq` upgraded to 18.7
+
+Upstream's newest adminer carried `libpq 18.6-r0` and 38 HIGH PostgreSQL advisories, failing the image scan on every pull request; every release now builds `infrastructure/local/Dockerfile.adminer` (the same digest plus `apk upgrade libpq`) and the scan reads the built image, until upstream ships the fix ([legacy-compatibility](docs/wiki/legacy-compatibility.md#removal-once-upstream-adminer-ships-libpq--187-r0---the-adminer-image-this-repository-builds-owner-2026-11-13)).
+
+### Fixed - the image scan allowlists the 34 libpq5 advisories of 2026-11-13 in authentik 2026.8.5
+
+Debian fixed them in libpq5 17.12, which only a rebuilt authentik release can carry; each entry is scoped to that package by its purl and retires with the next upgrade ([cicd](docs/wiki/cicd.md)).
+
+### Changed - the twelve oldest backlog entries triaged, and a bell row opens a post at its comment
+
+A comment, reply or mention row in the bell now opens the post scrolled to that comment, as its push
+already did ([mobile](docs/wiki/frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08)).
+The backlog's twelve oldest entries were re-read against the code: what was left of them is now a
+row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a
+fragment of its own. Stale items deleted: the Android manifest now declares every page host a push
+writes; the iPhone's front-lens full-bleed camera and its feed and associations scroll were read on
+the iPhone 12 (2026-10-05, 2026-10-06, 2026-10-11); the push join for a shut phone was decided and
+built (#2266); the publish note was settled by the owner's one-year lifetime; the sticker tray
+was built and trim dropped; lives shipped without waiting for calls; the Carte editor already says
+when the live map is older than the save (#1149); the 103 s Slow 3G cold start predates the
+compression and WASM preload that shipped.
+
+### Fixed - a background send behind a captive portal is kept, and an unset internal secret is a 500
+
+The Android background sender no longer counts a 2xx whose body is not JSON as sent; chat-delivery's
+guard, core- and social-service's guards and media-service's bearer check answer their own missing
+secret with a 500, not a 401; a retried, already-accepted
+background Welcome is answered as accepted even when the target's seat now awaits admission
+([sessions](docs/wiki/sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+
+### Fixed - one unconfirmed tree no longer aborts a group's whole pending sweep
+
+The automatic Adds of a sweep shared the pass's tree even when it could not be confirmed; the next
+row now reads it afresh ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a failed group creation no longer leaves a row nobody can end, and six smaller defects of the 2026-10-26/27 readings
+
+The creator ends a group nobody holds a seat in; the "made private" line follows the save; a
+community's history is asked once at a time; presence watches are counted per holder and a tile
+follows its peer; the share-in picker leads with recent conversations; an account erasure ends a
+1:1 only when its roster is two people, and matches a requester whatever its case
+([chat-delivery](docs/wiki/services/chat-delivery.md#group-management), [account-erasure](docs/wiki/account-erasure.md)).
+
+### Changed - the backlog entries of 2026-10-31 triaged
+
+Three follow items closed with evidence, a MiConnect one-off click moved to the user's list, two
+native agent briefs written and one measurement corrected ([roadmap log](docs/wiki/roadmap.md)).
+
+### Changed - the backlog entries of 2026-11-01 triaged
+
+A call record whose start row carries no clocks is no longer read as an older build's: the `1.6.2`
+floor retired that shim, so the duration that falls back to two devices' clocks now accuses both of
+its reasons as faults ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). The other entries
+of that day were decided, briefed or re-measured, and the audio focus refused when a call opens has
+its own entry ([roadmap](docs/wiki/roadmap.md)).
+
+### Changed - the next twelve oldest backlog entries triaged, and an iPhone's call-ring banner rings Canari's tone
+
+An iPhone with no VoIP token now hears Canari's own ring on its incoming-call banner, as CallKit
+already played it, instead of the system tone ([sounds](docs/wiki/frontend/sounds.md#the-incoming-ring---c1-owners-choice-2026-11-01)).
+The backlog entries of 2026-10-09 to 2026-10-11 were re-read against the code: the readings they
+owed are rows of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+the media/call-service release gap is a fragment of its own, and the weak-network attachment path
+joined the slow-link chantier. Stale or duplicated items deleted: the decisions of 2026-10-11 (each
+already in `durable-rules.md`, `device-verification.md` or its module page), the queued decisions of
+2026-10-10 (already two `backlog.md` entries), the per-community triplet (the slow-link chantier's
+gap 4), a one-off missing unread dot on an iPhone never reproduced in a month of bench readings, and
+the CanaReels-in-chats fragment (section 21 of `reels-in-chat.md` carries the flip).
+
+### Changed - the backlog entries of 2026-11-02 triaged
+
+The replica-list fix of `v1.6.3` owes only a production reading, so it is now a row of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), and the owner's
+decisions of 2026-11-02 keep only what is not yet carried out ([roadmap](docs/wiki/roadmap.md)).
+
+### Changed - the backlog entries of 2026-11-03 triaged
+
+The owner's decisions of 2026-11-03 keep only what still stands, and the signed-avatar entry now says
+that phase 1 shipped in `1.6.3` before its cold-avatar reading was taken
+([roadmap](docs/wiki/roadmap.md)).
+
+### Changed - the backlog entries of 2026-11-04 and 2026-11-05 triaged
+
+The owner's decisions of 2026-11-04 are all carried out, and their one standing rule - a stable ships
+only once every reading of its pre-release passes - now lives in
+[durable-rules](docs/wiki/durable-rules.md); the "Entre étudiants" switch owes only readings, now rows
+of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Changed - the backlog entries of 2026-11-06 triaged
+
+Two iPhone follow-ups of #3075 owe only readings and are now rows of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else); the video sync
+entry records that its fix shipped in `1.6.6` before its phone readings
+([roadmap](docs/wiki/roadmap.md)).
+
+### Changed - the backlog entries of 2026-11-07 triaged
+
+The live titles and preview card and the seed-mirror residue owe only readings, now rows of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else); the owner's
+decisions of 2026-11-07 and the list of what was in flight at that day's pause keep only what is
+still open ([roadmap](docs/wiki/roadmap.md)).
+
+### Changed - backlog triage, batch 25
+
+The entries of 2026-11-07 still open and those of 2026-11-08 onward, re-read against the releases:
+what shipped and owes only a reading moves to the
+[verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Changed - the backlog entries of 2026-10-12 to 2026-10-15 triaged, and a price grid can no longer split a multiple-choice question
+
+A form's price grid may no longer split a multiple-choice question into several groups. Someone
+could tick options from two groups, and the price then depended on the order of the groups; a form
+already storing such a grid stays editable
+([forms](docs/wiki/frontend/modules/forms.md)). The next twelve oldest backlog entries were re-read
+against the code. What they still owe is now a row of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a fragment of
+its own. The background-join fix (PK2) moved to
+[mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md#a-group-joined-in-the-background-before-its-row-existed-pk2-2026-10-14).
+
+Deleted as shipped and proven:
+- the right-edge back-gesture exclusion (Mi 9T, 2026-10-15)
+- Dynamic Type on the iPhone (2026-10-15/16)
+- the avatar presence question (0 `404`)
+
+Deleted as stale or duplicated:
+- the 2026-10-12 queue P1, superseded by the orphan-device passes
+- the per-message checkpoint, now WP-CHECKPOINT-SKIP
+- the Lydia expiry and cancel questions, answered on the sandbox on 2026-10-15
+- the bookings redesign, built
+
+### Changed - the backlog entries of 2026-10-15 to 2026-10-17 triaged
+
+The next oldest backlog entries were re-read against the code (the two GDPR entries are the owner's
+and were left alone). What they still owe is now a row of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a fragment of
+its own. Deleted:
+- the stale Tauri callback id after a text-size reload, proven gone on `v1.2.9-alpha.7`;
+- the calls blocker entry, stale since production calls opened (the blocker list lives in
+  [calls](docs/wiki/frontend/modules/calls.md)).
+
+### Changed - the backlog entries of 2026-10-18 and 2026-10-19 triaged
+
+The next oldest backlog entries were re-read against the code. Shipped work came out of the two
+decision lists of 2026-10-18, and the readings still owed are now rows of
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else). The
+Android bridge hardening has its own entry. The iOS factory wipe entry now names every App Group copy
+it leaves behind.
+
+### Changed - the backlog entries of 2026-10-20 and 2026-10-21 triaged; the iOS tab-bar plugin's fork is watched for upstream releases
+
+The weekly vendored-fork watch now covers `tauri-plugin-system-components` too
+([cicd](docs/wiki/cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)). The next
+oldest backlog entries were re-read against the code. Two readings moved to
+[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Changed - the vendored-fork watch compares a fork of a pre-release with upstream's newest release
+
+A fork of a stable stays compared with stable releases only; a fork of a pre-release
+(`tauri-plugin-keystore`, now pinned exactly and watched) is compared with every release
+([cicd](docs/wiki/cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)).
+
+### Fixed - an invitation can grant a role literally named Membre
+
+The name is matched first; only where no role carries it does "Membre" mean the base role
+([social-service](docs/wiki/services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+
+### Changed - six service images run as a non-root user
+
+The four Bun services, the SSR server and the two Rust services no longer run as root; the nginx
+frontend and media-service stay root for named reasons, and a test keeps both lists
+([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - a retried background Welcome is answered as accepted when its target left meanwhile
+
+The membership guard of the background re-add asks the commit log for the same bytes before refusing
+`not_a_member`, so the phone no longer clears a stage the group holds
+([chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Fixed - the MiConnect blueprint upgrade test starts from the main its commit sits on
+
+A re-run fetched a newer `main` than the tree under test and failed every open pull request once main gained a blueprint with a new `!Env`; the applier now names an unset `!Env` before anything applies, instead of a bare serializer error ([authentik](docs/wiki/infrastructure/authentik.md)).
+
+### Changed - a load asks the salon listings of all communities in one request, and the follow chips wait for one round
+
+Nine communities cost 27 requests at every connection and now cost 19 (one new batched `boot-reads`
+route for the salon listings; the key-group reference and roster stay per community, the old routes
+stay), and eight cards mounting in turn sent eight `follow-statuses` calls and now send two. See the
+[audit, section 4](docs/wiki/frontend/weak-network-audit-2026-11-10.md).
+
+### Fixed - a phone call rung into an Android Canari call no longer leaves the microphone running
+
+When another app takes the audio focus (a cellular call ringing in), the Canari call holds its
+microphone and both ends are told; when the focus comes back the member's own mute state returns.
+The call is never hung up ([calls](docs/wiki/frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)).
+
+### Changed - a call signalling socket must come from an allowed origin
+
+call-service answers `403` to a WebSocket upgrade whose `Origin` is not in `ALLOW_ORIGIN`, now set
+on its container in every estate; `*` is never taken for a list
+([call-service](docs/wiki/services/call-service.md#websocket-protocol)).
+
+### Changed - the camera keeps its layout when the phone turns, and the volume keys take the picture
+
+Held sideways, the camera's controls stay where they are and each one turns in place, as the
+system camera apps do. A photo or a reel made that way still comes out landscape. A volume key now
+works like the white shutter: a short press takes a photo, a held key films. This works on Android
+and on iOS 17.2 and later
+([screen-orientation](docs/wiki/frontend/screen-orientation.md#the-camera-keeps-its-layout-and-the-volume-keys-are-its-shutter-2026-11-11)).
+
+### Fixed - turned to landscape, the camera covers the whole screen, and the rotate button matches flip and flash
+
+The desktop header and side rail no longer come back around the camera when the phone is turned (chrome now follows the full-screen place, not the width), and the rotate button is the same round glass control as its siblings ([screen-orientation](docs/wiki/frontend/screen-orientation.md#a-turned-phone-is-still-a-phone-and-a-full-screen-place-draws-no-chrome-2026-11-11)).
+
+### Fixed - a neutral "Campus" event shows a generic calendar icon, not orange initials
+
+The agenda's day panel, schedule list and detail modal drew an avatar "CA" for a Campus event; they now draw a muted calendar icon, and the PDF/PNG export draws no mark at all
+([calendar](docs/wiki/frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08)).
+
+### Removed - the CanaReels list has one switch, `multiMedia`
+
+`singlePhotos`, `singleMedia` and `withLinks` are no longer read or sent: the `1.6.6` floor admits no
+client that needed them, so the four list modes became one clause, links allowed
+([reels](docs/wiki/services/reels.md#reading)).
+A stale web tab of a pre-`1.6.6` bundle degrades rather than breaks: a `v1.6.5` bundle receives the link posts and drops them, and a tab older than `multiMedia` gets the reels only.
+
+### Changed - the Carte de la vie asso editor fills the window, with one top bar and a drag-and-drop panel
+
+The editor leaves the admin frame: the map takes the whole window, one bar holds the title, the save
+state and the publication ("Mettre à jour la publication" in one click when the live map is older),
+a Carte / Annuaire switch replaces the side-by-side directory, and associations and zones are one
+compact list where a row is dragged onto a zone
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-editor-fills-the-window-owner-2026-11-11)).
+
+### Fixed - the Carte page's name field is visible again next to the space picker
+
+With more than one space, the space picker took the whole row and squeezed the new poster's name
+field to an empty square; the picker now has its own width ([carte](docs/wiki/carte-vie-asso.md)).
+
+### Changed - a conversation keeps its place when you come back from a profile
+
+Opening a profile from a sender, the members list or a direct header and coming back now lands on the
+message you were reading, not the bottom ([chat](docs/wiki/frontend/modules/chat.md#the-position-of-a-reader-across-a-profile-2026-11-13)).
+The position lives in memory for the session only and is dropped at sign-out.
+
+### Fixed - the Linux CI dependency install survives an unreachable Ubuntu mirror, and one outbox test no longer reads a row mid-write
+
+The Rust jobs' `apt-get` steps now retry and fall back to `archive.ubuntu.com` through `.github/scripts/apt-install.sh`, and the RC-13 "reach names only its own take" case waits for the encoder before reading. See [cicd](docs/wiki/cicd.md#notable-ci-gotchas).
+
+### Fixed - the harness self-test reads the side panel whatever its attribute order
+
+#3434 put a `style:` directive before the class on the side panel's `<aside>`, and the self-test
+required the class first, so it failed on every pull request ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a GIF in a comment is no longer cropped
+
+A GIF is sent with its own size, and a picture sent without one keeps its own shape instead of a 4:3 crop ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Changed - a community's name and slug are validated at creation; ten creations an hour, twenty communities per account
+
+Creating a community takes a name of 1 to 80 characters and the slug the client derives from it, through the rule a salon name already follows. One account creates ten an hour at most and holds twenty (`COMMUNITY_OWNED_MAX`), both counted from the table; each refusal carries a code the app names in French and English ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - Ctrl+Z undoes a toolbar action, and Gras can come off the last word of a bold ending in an italic
+
+In the composer, Ctrl/Cmd+Z (and redo) now undo and redo a formatting button from the field's own
+history, leaving typing to the browser; and `Le **prix *reduit***` takes Gras off "reduit" instead of
+refusing ([markdown-coherence](docs/wiki/frontend/markdown-coherence.md)).
+
+### Changed - the connection is a green, amber or grey ring on the avatar, and a slow link is no longer "offline"
+
+The "Hors connexion" banner and the desktop "Connecte" pill are gone: a true circle around the header
+avatar says connected, slow or offline, and screen readers still hear each state. A request that merely
+expired while other answers arrived no longer counts towards unreachable, and conversation rows are named
+from the names this device already holds, sealed in its own database. See [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#the-connection-ring-owner-2026-11-11).
+
+### Fixed - the sliders of the calendar export, the deletion confirmation field and the republish search are named
+
+A screen reader now announces what each of these controls sets; a source guard reads every slider for a name ([calendar](docs/wiki/frontend/modules/calendar.md#pdf-export)).
+
+### Changed - the CORS allowlist is exact; no loopback origin in production
+
+The four Nest services accept an origin only when a list names it, and production's rendered list
+no longer carries the dev-server pair, which the dev and local estates keep
+([chat-gateway](docs/wiki/services/chat-gateway.md#every-entry-and-why-it-is-there)).
+
+### Fixed - an association can no longer clear its cotisation while members-only products or cards need it
+
+Clearing the cotisation mode is now refused (`409 COTISATION_MODE_IN_USE`) while a product or
+partnership card is reserved to cotisants, instead of leaving rows nobody can buy; the clear and the
+members-only saves are ordered on the association row
+([cotisations](docs/wiki/cotisations.md#product-member-gating--pricing)).
+
+### Fixed - a crossed 1:1 pair can no longer lose both groups at boot
+
+The boot merge of two DM groups for the same two people now folds only into the lowest group id,
+and decides nothing when this device's most recent group is another one, so two up-to-date clients
+never delete the same pair's last group
+([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-crossed-11-pair-the-lower-id-is-never-deleted-2026-11-12)).
+
+### Fixed - calendar dates, a form's opening date and prices in link cards follow the app language
+
+The calendar's day panel and event detail, the opening date of a form and the amounts of a payout hint and a form's link card were written in French whatever the language; they now go through one helper, and a link card's "post without text" and author fallbacks are translated ([architecture](docs/wiki/frontend/architecture.md#i18n-paraglide)).
+
+### Added - a volume slider above the speaker on desktop
+
+Hovering a video's speaker with a mouse raises a vertical volume slider, one level for every video, remembered on the device; phones are unchanged ([video-player](docs/wiki/frontend/modules/video-player.md#the-sound-state)).
+
+### Fixed - a direct-message notification names its sender once
+
+On Android 11+ the system titles a conversation notification with its shortcut, so a direct message in the group shape showed the name in the header and again above the line; it now takes the one-to-one shape there, and the reader's own inline reply stays named. On Android and iOS, an unreadable direct message now reads "Nouveau message" under the sender, and a group with no name is told apart from a DM by the server's `isGroup` and titled "Conversation de groupe" ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - a DM's "Lu" marker sits under the newest message the peer has read, not under your last message that has a reader
+
+The marker now follows the peer's read point like a group's heads do (and like Messenger): under the conversation's last message once everything is read, and gone once the peer has replied below it ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a re-keyed 1:1 carries the mutations waiting under its old group, and an own act is written first and never lost
+
+The move of a duplicate 1:1's rows now carries the deletions, edits and reactions still waiting under the old group; an own act is kept under the lowercased conversation id; a row this device cannot open keeps it as a peer's act is kept ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md)).
+
+### Fixed - a DM or group message never opened keeps its unread badge across cold starts
+
+The load counted only what its own replay added, so a message a push had stored in an earlier session lost its badge at the next start; the count is now derived from the saved read point at every load, and a one-time local seed keeps the upgrade from lighting up old conversations ([chat](docs/wiki/frontend/modules/chat.md#a-dms-unread-count-is-derived-from-its-read-point-at-every-load-2026-11-11)).
+
+### Fixed - a 1:1 joined by Welcome takes every stored message of the duplicate it replaces
+
+A duplicate 1:1 restored without its messages in memory kept its stored rows when the Welcome of the
+merged conversation arrived, so each history read warned about rows of another conversation until
+the next start. The Welcome now moves them through the boot merge's own move
+([history-reconciliation](docs/wiki/protocols/history-reconciliation.md)).
+
+### Changed - the carte editor's overlays and the link preview placeholder take their colours from the tokens
+
+Selection, handles, snap lines and the overlap warning use the accent and error tokens, and the
+placeholder's gradient stop is a named token ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the calendar's event form closes on Escape and keeps Tab inside
+
+The event form reads the keyboard the way every other dialog does: Escape closes it, Tab stays among its controls, and the focus goes back where it was ([calendar](docs/wiki/frontend/modules/calendar.md#the-event-form---one-component-and-capabilities-decide-the-rest)).
+
+### Fixed - log noise read in three 1.6.8 logs, each fixed at its cause
+
+A token refresh that got no answer under a media request is a `MediaUnreachableError`; a switched-off estate's lives list is an expected debug line, asked again on every load (its switch is a runtime one); the foreground triggers stand down while the socket is paused (the two refused reconnects per resume are gone); `[SYNC] WASM kept` and `[DISCOVERY] ... kept` are said once per change and a removed row of a registered key-distribution group is dropped; a presence poll with no answer is one line, not an error. What was left is filed in [backlog.d](docs/wiki/backlog.d/p3-a-suspension-is-logged-as-the-server-being-unreachable.md).
+
+### Fixed - a salon handover test waited one tick for WebCrypto
+
+`channelSeal.followerTab.test.ts` now awaits the gate mock's own call instead of a `setTimeout(0)`, which a slow decrypt outran on a loaded runner and leaked into the next test ([testing-methodology](docs/wiki/testing-methodology.md#16-wait-for-the-event-never-for-a-delay---and-a-wait-that-can-end-two-ways-must-assert-the-state-between-them)).
+
+### Fixed - a second tab no longer writes its copy of the encrypted state over the main tab's
+
+A follower tab checkpointed the copy it loaded, so the main tab's next save was refused and, until
+it landed, a reload could restore a state behind messages and group changes already applied. Only
+the main tab writes the state now, and a second tab no longer sends anything itself: its salon
+messages, forwards, notices and missing-seed requests are done by the main tab, in the order they were made
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-follower-tab-wrote-its-copy-of-the-mls-state-over-the-leaders---fixed-2026-11-11)).
+
+### Changed - the gateway admits a socket in one step, 32 per account and 1000 in all
+
+A socket's place is counted and registered under one lock, before the upgrade; past either limit the request is answered 503 and never upgraded ([chat-gateway](docs/wiki/services/chat-gateway.md#admission-one-step-two-limits-2026-11-12)).
+
+### Added - the gateway says what each connection sent, once, when it ends
+
+One `[WS FRAMES]` line per connection: its frames, its largest frame and its busiest minute. It
+counts and refuses nothing ([chat-gateway](docs/wiki/services/chat-gateway.md#what-one-connection-sent-said-once-when-it-ends-2026-11-13)).
+
+### Fixed - a missing salon seed is asked of a peer only after this device's own backlog is in
+
+A salon opened from its banner on resume asked other members for seeds that were already queued on
+the device, and could send the same request twice; the ask now waits for the key group to be drained
+and is marked before its send ([channel-encryption 4.5](docs/wiki/protocols/channel-encryption.md#45-a-missing-seed-is-requested-and-said-out-loud)).
+
+### Fixed - guided hints: the booking hint leaves an empty week out and rings the "+", no bubble covers the tab bar or the header
+
+`hint-booking-week` is marked only when the week draws an hour and points at the phone's "+" (or the wide grid) it names; every bubble is placed in the band between the header and the bottom bar, measured from their real boxes; the English manage hint calls the row "Calendar" ([guided-help](docs/wiki/frontend/guided-help.md)).
+
+### Security - a sign-in handoff is minted only for someone MiConnect would let into the site
+
+Before signing, core-service reads, with a new read-only MiConnect account, whether the person is
+the account's own MiConnect user and active, and whether the site's application and its login and
+authorization flows carry no access policy, and refuses otherwise; every site's
+handoff flag stays off
+([sessions](docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+
+### Added - the sign-in handoff's verifier and landing logic, the source every site vendors
+
+`libs/handoff/` holds the token verifier and the landing page's logic, tested against every vector (an unreachable key set is its own `keys_unavailable` class, never `invalid`), and `shape.mjs` checks that MiGallery's copies stay byte-identical ([design](docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)).
+
+### Removed - the shim for history asks with no request id
+
+A history ask without a `requestId` is now refused where it is parsed. Every build since `v1.5.0` sends one, and both estates' floor is `1.6.6` ([history-answer-addressing](docs/wiki/protocols/history-answer-addressing.md), D211).
+
+### Changed - `/history/batch` reads every group's arrival facts in one query each
+
+The arrival facts behind the reader's withheld span were read twice per group. They are now read once per request, so a 50-group batch makes two queries ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md), D062).
+
+### Fixed - a web window left open with nobody at it no longer marks messages read
+
+A window counts as read only after a gesture in the last two minutes; what lands while it is idle
+stays unread, notifies, and is marked at the first gesture. Native mobile is unchanged
+([read-receipt-privacy](docs/wiki/read-receipt-privacy.md#reopened-2026-11-11---an-idle-window-is-not-a-reader)).
+
+### Changed - the image scan allowlists a third advisory on libxslt 1.1.43-r3
+
+CVE-2026-125350 joins the two libxslt entries of 2026-11-10, scoped to the same package build, until the base images are rebuilt ([cicd](docs/wiki/cicd.md)).
+
+### Changed - a preview's image follows its redirects the way the page does
+
+The image proxy of a link preview now walks a redirect chain one hop at a time, each hop checked
+before it is fetched, through the same code as the page fetch (5 redirects for an image, 3 for a
+page) ([chat-delivery](docs/wiki/services/chat-delivery.md#preview-images-are-proxied-so-the-site-never-sees-the-reader)).
+
+### Fixed - a phone or desktop app keeps its messages 5 years, as the history protocol promises
+
+The local collector deleted at 90 days everywhere; it now collects at the device window, 5 years on
+native and 90 days in a browser (owner, 2026-11-11,
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#two-boundaries-not-one)).
+
+### Changed - snapdom 3.7.2 and mediabunny 1.65.2; marked held at 18.1.1
+
+marked 18.1.2 and later draw `x**b *c* d**` with stray asterisks where CommonMark draws a strong
+around an em, so the toolbar fuzz failed on #3254. Dependabot skips marked `>= 18.1.2` until the new
+CommonMark case in `composerFormatFuzz.test.ts` passes on a release (`.github/dependabot.yml`).
+
+### Added - a photo, video or file message can be edited, caption only
+
+"Modifier" is now offered on your own media message: the caption changes (or is removed), the media
+stays, and the bubble shows "modifié". A CanaReel's caption is editable too; a voice note is not. It travels in the existing edit frame, so older builds keep
+the media too ([chat](docs/wiki/frontend/modules/chat.md#a-media-messages-edit-is-a-caption-edit-2026-11-11)).
+
+### Changed - media-service accepts an access token only, with an expiry
+
+A bearer token must carry an expiry and be an access token, the checks chat-gateway makes on a socket ([media-service](docs/wiki/services/media-service.md#what-the-service-asks-of-a-bearer-token-2026-11-12)). Two questions parked ([open-questions](docs/wiki/open-questions.md)) and one triage filed ([silent catches](docs/wiki/backlog.d/p3-silent-promise-catches-in-the-frontend-triage.md)).
+
+### Fixed - the chat's crash line names the error; a mention ended before its search no longer reopens the picker
+
+Typing "@" in a DM or a salon looped the mention picker's effect on `1.6.6`-`1.6.8` (fixed by #3233 in `1.6.9`); a key-by-key test now pins it. The chat boundary logs the error's name, message and stack instead of `[object Object]`, and a pending name search is dropped when the mention ends ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Changed - "@Prenom NOM" finds someone, in either order and without accents, and the @ answers at once on a large population
+
+The mention query may hold spaces while somebody still matches it; names are folded once per picker instead of per keystroke (5,000 people: about 25 ms down to under 4 ms a key), and the name search runs one request at a time with no 250 ms wait, an earlier answer dropped ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Changed - the mobile builds stop requiring the server's JWT signing secret
+
+The Android and iOS release builds checked that `JWT_SECRET` was set, but neither app is built with
+it. The check is gone, so the secret is read only by the production deploy, which lets it move into
+that environment when the repository's secrets are tidied
+([backlog](docs/wiki/backlog.d/p2-the-repository-holds-github-s-maximum-of-100-secrets.md)).
+
+### Changed - minesweeper has one leaderboard, the Games page
+
+The Games page now carries the date of each record, a Stats tab and the admin moderation, and the game's own "Classement" sheet is gone, so there is one leaderboard ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#one-leaderboard-the-games-page-owner-2026-11-13)).
+
+### Changed - the play triangle is the same glass triangle everywhere
+
+The chat reel tile, the replay card and the shared-media grid thumbnail drew their own disc around a Lucide play icon; they now draw the glass triangle with no disc, like the video player, the poster and the shared post ([video-player](docs/wiki/frontend/modules/video-player.md#the-glass-play-glyph---a-triangle-with-no-disc-owner-2026-11-09)).
+
+### Changed - overlays stack by open order, not by fixed rung
+
+Every dialog, sheet, popover, drawer and viewer registers on one overlay stack when it opens and
+takes its z-index from the open order (the last opened is on top), so a dialog opened from a viewer
+or a picker opened from a sheet is always in front and no nesting needs a new rung
+([design-reference](docs/wiki/frontend/design-reference.md#the-overlay-stack---what-is-on-top-is-what-opened-last-2026-11-13)).
+`utils/viewerLayer.ts` and the overlay rungs of the layer ladder are removed.
+
+### Fixed - a refused PIN no longer pushes the keypad's 0 key below the fold
+
+While the refusal banner is shown, the PIN gate drops its app mark and lead line, and keys are smaller on a short screen ([design-reference](docs/wiki/frontend/design-reference.md#the-pin-gates-banner-takes-the-headers-room-2026-11-13-roadmap-d063)).
+
+### Fixed - the pin register belongs to one account
+
+A conversation's pins were stored under the conversation alone, so two accounts on one install
+shared them, and neither a sign-out nor an account deletion removed them. They are now stored per
+account, forgotten at sign-out and swept with the account; the old copy moves to the first account
+that reads the conversation ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Changed - the "Evenement" chip on a post opens the global agenda on that event
+
+The chip leads to `/calendar?fromPost=<id>`, which shows the event's month and opens its detail; links to an association's calendar keep working ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Changed - a post previews every link it names, not only the first
+
+Each distinct link gets its own card, in the order of the text (owner, 2026-11-13; `extractPreviewUrls` in `frontend/src/lib/utils/chat/messageDisplay.ts`).
+
+### Fixed - the pre-commit hook re-stages only the files a fixer changed
+
+It ran one `git add` per staged path, so a merge from `main` took the index lock hundreds of times and lost the race to an editor's git refresh ("Unable to create index.lock"). The comment in `.husky/pre-commit` and `.github/scripts/tests/pre-commit-restage.test.sh` carry the detail.
+
+### Fixed - a product photo in an article grid shows in the mobile app
+
+The grid drew its stored server path as is, which only the web could load; it now resolves it like every other form image ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - a profile's "Message" button opens the conversation with that person
+
+It handed the chat page the person's id as if it were a conversation, so nothing opened; it now opens
+the existing conversation, or starts a new one, once the conversations are loaded
+([chat](docs/wiki/frontend/modules/chat.md#opening-from-another-page-a-conversation-or-the-dm-with-a-person-fixed-2026-11-11)).
+
+### Fixed - "Voir plus" under a CanaReel no longer grabs the seek line
+
+The caption and the side buttons now sit above the progress line's whole touch zone, so a tap on
+"Voir plus" opens the text instead of scrubbing the video
+([video player](docs/wiki/frontend/modules/video-player.md)).
+
+### Changed - a landscape video in the CanaReels pager turns with the phone
+
+Opened from a feed post, a video wider than tall now follows the phone and offers the rotate button;
+vertical videos and photos stay portrait ([screen-orientation](docs/wiki/frontend/screen-orientation.md)).
+
+### Fixed - CanaReels and full-screen videos show their seek line again
+
+A video uploaded before its length was written into the file now learns it from its last segment
+while it streams, so the progress line appears and can be dragged; until then the line follows what
+is already loaded instead of vanishing ([video player](docs/wiki/frontend/modules/video-player.md#a-stream-learns-its-length-from-its-tail-2026-11-11)).
+
+### Fixed - the carousel dots of a CanaReel sit above the author line, not under the top bar
+
+The new "Pour toi / Recents" switch covered them; they are now the first row of the caption block, centred on the media's bottom edge, and rise with "Voir plus" ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Changed - a feed video opened full screen continues in the reader's CanaReels order, with the switch
+
+The CanaReels that follow a feed video now come in the order last chosen ("Pour toi" or "Récents") instead of always "Pour toi", and the switch is drawn there too, the opened video staying first after a change; with "CanaReels sans fin" off there is still nothing after the video and no switch ([reels](docs/wiki/frontend/modules/reels.md#the-order-of-the-stream-and-a-change-of-order-is-a-new-list-owner-2026-11-10-crash-fixed-2026-11-11)).
+
+### Changed - CanaReels fetch the next 1-3 pages ahead, and a photo draws its ThumbHash before its file
+
+The viewer fetches the first segment of the next videos (decoded into their first frame) and the next
+pictures at once, three pages on a fast link and one on a slow one, without slowing the page on
+screen. The player reuses those bytes instead of fetching them again. Photos are now published with a
+ThumbHash, as videos are. A media download that nobody is waiting for any more - a reel scrolled past - is
+now stopped instead of finishing in the background ([reels](docs/wiki/frontend/modules/reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31)).
+
+### Fixed - switching the CanaReels order from deep in the stream crashed the feed page
+
+A change between "Pour toi" and "Récents" now replaces the viewer's whole list at once and every slide keeps its own post, so the slide torn down no longer reads the new list at its old place; and a failure inside the viewer now closes the viewer with a message instead of the feed ([reels](docs/wiki/frontend/modules/reels.md#the-order-of-the-stream-and-a-change-of-order-is-a-new-list-owner-2026-11-10-crash-fixed-2026-11-11)).
+
+### Fixed - the CanaReels order switch reads as bare tabs, and three settings rows follow the row layout
+
+"Pour toi / Récents" is now plain white text on the video (selected tab brighter, underlined, with a text shadow) instead of a light pill, and "Partager mon activité", "CanaReels sans fin" and the push switch of Suggestions put their switch on the right, the first two with an icon tile, like their neighbours ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the reel viewer's lint warning
+
+The once-per-item accusing log of the reel viewer kept a plain `Set` in the component, which the
+reactivity lint flagged; a `createFirstSighting` helper now holds that non-reactive memory
+([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Changed - the roadmap reads the releases again
+
+R01 names `1.6.11`, the engagement rows are one row now that every package has shipped, and every
+backlog.d entry created since 2026-11-09 has its row ([roadmap](docs/wiki/roadmap.md)).
+
+### Added - a room's page names who is responsible for it, with a button to write to them
+
+A space's page now shows its personal owner, or the first member holding the booking right, and "Contacter" opens (or creates) the direct conversation with them; no such person, nothing is shown ([bookings-chantier](docs/wiki/bookings-chantier.md#the-person-responsible-for-a-space-owner-2026-11-13)).
+
+### Changed - a video in a post and a live can be watched turned
+
+The full-screen video viewer and the live viewer now turn with the phone, and a rotate button forces landscape under the rotation lock; photos and CanaReels stay upright. Built for issue #3407, phone readings still owed ([screen-orientation](docs/wiki/frontend/screen-orientation.md)).
+
+### Changed - a scheduled post stays visible to those who can edit it, dashed, at the top of every feed tab until it publishes
+
+Association officers and authors see their scheduled posts as real cards (edit, delete) above the feed instead of a preview strip, and nobody else sees them before their time ([posts](docs/wiki/frontend/modules/posts.md#scheduled-posts-where-they-show-and-the-event-picker-order-2026-10-06)).
+
+### Changed - the in-conversation search lands on the first match as you type, and the magnifier focuses the field
+
+The view now moves to match 1 once the list for the typed term is known, Enter and Shift+Enter step, the tap puts the keyboard in the field in the same gesture (iOS included), and Escape returns the focus to the magnifier ([chat](docs/wiki/frontend/modules/chat.md#the-search-bar-opens-on-the-field-and-lands-on-the-first-match-2026-11-11)).
+
+### Changed - a cold start on a slow link no longer waits for the session refresh to draw
+
+The announcement, the help-seen set, the "birthday entered" fact and, on a hardware-held phone, the
+feed's stored page are drawn from the device before the token arrives, then revalidated
+([local-first-ui](docs/wiki/frontend/local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
+
+### Fixed - the notification bell and a profile already opened draw from the device on a weak link
+
+The notification list and the last 12 profiles opened are now kept sealed on the device (per account,
+never in clear) and drawn at once, then revalidated; a failed revalidation keeps the copy. Pour toi
+already had its stored first page
+([local-first-ui](docs/wiki/frontend/local-first-ui.md#4ter-the-bell-and-profiles-already-opened-have-a-local-copy-2026-11-11)).
+
+### Fixed - the social unit run no longer leaves sockets open at the end
+
+The real-HTTP specs left undrained response bodies and idle connections to the worker, which ended
+the run with "A worker process has failed to exit gracefully"; they now read each body and close
+their connections at teardown ([roadmap](docs/wiki/roadmap.md), row D068).
+
+### Changed - a socket upgrade must come from an allowed origin
+
+The chat gateway answers `403` to a WebSocket upgrade whose `Origin` is not in `ALLOW_ORIGIN`; a
+request with no `Origin` (a native client) is accepted, and `*` is never taken for a list
+([chat-gateway](docs/wiki/services/chat-gateway.md#a-socket-upgrade-must-come-from-an-allowed-origin-2026-11-12)).
+
+### Changed - the store notes for 1.6.11
+
+`store/whats-new.txt` carries the 1.6.11 notes ([roadmap](docs/wiki/roadmap.md), row R01).
+
+### Fixed - the "Suggestions pour vous" row no longer changes under the finger
+
+The row is free scroll on one axis, and a card that leaves or one that slides in waits until the touch
+and its momentum are over ([engagement](docs/wiki/engagement.md#wp-6---the-surfaces-built)).
+
+### Changed - the test environment is a blue badge on the logo, no longer a banner
+
+The "Environnement de test" banner is replaced by a small blue flask badge on the Canari logo (phone header and desktop bar), always visible and costing no screen row; it also stops overlapping the iOS status bar on the camera screen. See [dev-environment](docs/wiki/infrastructure/dev-environment.md).
+
+### Added - "Nos principes", the charter, in the repository and in the app
+
+The charter the owner validated on 2026-11-10 is `docs/principes.md`, and the same text is read in the app under Settings > À propos > Nos principes (French only, rendered from that one file). The README opens with it and was re-checked claim by claim (community messages are end-to-end encrypted, Lydia and not Stripe, NestJS 12) ([principes](docs/principes.md), [engagement](docs/wiki/engagement.md#the-product-principle-owner-2026-11-10)).
+
+### Changed - `/api/auth/verify` reads the platform config with one query, shared by concurrent requests
+
+The maintenance check ran two queries per request; it now runs one, and concurrent requests share
+it - never a timed cache, and a config write drops the shared read
+([sessions](docs/wiki/sessions.md)).
+
+### Fixed - a video on a link slower than itself waits once instead of stopping every few seconds
+
+A starved stream now keeps its segments back until the rest can play through, then plays to the
+end. The user sees nothing new, only the player's ordinary wait. In the model of the owner's link,
+29 stalls become 1
+([video-player](docs/wiki/frontend/modules/video-player.md#a-link-slower-than-the-video-one-honest-load-2026-11-11)).
+
+### Added - every video plays near one loudness
+
+The author's device measures a video's loudness (EBU R128) while preparing it, and every player
+brings it toward -14 LUFS through Web Audio, raising a quiet one by at most +6 dB without clipping;
+older videos play as before ([video-player](docs/wiki/frontend/modules/video-player.md#loudness)).
+
+### Added - voice notes play near one loudness
+
+A voice note's loudness is measured while it is recorded, with the video meter, and every reader's
+player brings it toward the same target through the same Web Audio route, on iPhone too; older notes
+play as before. A routed video or note no longer goes silent behind another browser tab
+([video-player](docs/wiki/frontend/modules/video-player.md#voice-notes-take-the-same-loudness-owner-2026-11-12)).
+
+### Changed - bookings, Pour toi, an association page and the boot restore ask what they can together
+
+The reservations page asks the reader's personal spaces beside its other two reads, Pour toi asks the
+blocks list with the feed, an association's bell level leaves with its sub-reads (one round trip
+each), and a boot restore stops asking a link it has seen drop instead of sending one dead request per
+conversation. The request gate was checked: API reads never queue behind media. See the
+[audit, section 3.8](docs/wiki/frontend/weak-network-audit-2026-11-10.md).
+
+### Changed - every value a workflow script uses reaches it through `env:`
+
+Workflow and composite-action scripts read inputs, event fields, outputs and secrets as shell
+variables bound in `env:`, and a test fails on an expression written inside a script
+([cicd](docs/wiki/cicd.md#a-value-reaches-a-workflow-script-through-env-never-written-into-its-text-2026-11-12)).
+
+### Fixed - a form whose title holds a `/` (a date like "19/11") can be exported again
+
+The sheet name is made acceptable to Excel before the workbook is written, for forms and bookings alike ([forms](docs/wiki/frontend/modules/forms.md#the-sheet-is-named-after-the-title-made-acceptable-to-excel-2026-11-13)).
+
 ## [1.6.10] - 2026-11-11
 
 ### Fixed - a reply kept when a photo or a file is attached

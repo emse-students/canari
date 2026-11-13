@@ -27,6 +27,7 @@ import {
   ADDRESSED_HISTORY_CAPABILITY,
   declaresAddressedHistory,
   devicePresenceKey,
+  addressabilityOf,
   publishIfAddressable,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
@@ -1714,9 +1715,13 @@ export class MessagingService {
     traceId: string
   ): Promise<void> {
     const incapable: string[] = [];
+    // Per device, WHY it was refused: the script that decides says so ('offline' = no presence key).
+    const why: string[] = [];
     for (const t of targets) {
-      if (!(await publishIfAddressable(this.redis, t.userId, t.deviceId))) {
+      const verdict = await addressabilityOf(this.redis, t.userId, t.deviceId);
+      if (verdict !== 'addressable') {
         incapable.push(`${t.userId}:${t.deviceId}`);
+        why.push(`${t.deviceId}=${verdict === 'offline' ? 'offline' : 'did-not-declare'}`);
       }
     }
     if (incapable.length === 0) {
@@ -1727,11 +1732,16 @@ export class MessagingService {
       );
       return;
     }
-    // EXPECTED while older builds are online, so not an error here: the answerer is told and answers
-    // nobody, and the older device is served by an older peer as before.
+    // EXPECTED, so not an error here, and for TWO causes the line names per device: the addressee
+    // was OFFLINE (the usual one - a newcomer's phone in a pocket when its Welcome is delivered; an
+    // addressed frame is transport-only, never queued, so nobody can be answered, tracked in
+    // docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), or it was online and a
+    // live session did not declare ${ADDRESSED_HISTORY_CAPABILITY} (an older build). The answerer is
+    // told and answers nobody; an older device is served by an older peer as before.
     this.logger.log(
       `[SEND][${traceId}] REJECT addressed_unsupported group=${groupId} devices=${incapable.join(',')}` +
-        ` - not every live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
+        ` - per device: ${why.join(',')} (offline, or online with a session that did not declare ` +
+        `${ADDRESSED_HISTORY_CAPABILITY})`
     );
     throw new BadRequestException({
       error: 'addressed_unsupported',
@@ -2420,16 +2430,20 @@ export class MessagingService {
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
-      // to queue for and nothing is wrong, while a TRANSPORT frame whose every recipient went offline
-      // is a rendezvous that will now expire unanswered. A warning that cannot say which is a warning
-      // its reader learns to skip - and this one fires on the ordinary path, during an invite into a
-      // group whose other members have not joined yet.
-      this.logger.warn(
-        `[SEND][${traceId}] No message queued after validation - recipients=${ops.length} durable=${durable}` +
-          (ops.length === 0
-            ? ' - the group named no other device, so there was nobody to queue for'
-            : ' - every recipient device is offline and this frame is transport-only')
-      );
+      // to queue for and nothing is wrong (a LOG - it is the ordinary path during an invite into a
+      // group whose other members have not joined yet), while a TRANSPORT frame whose every
+      // recipient went offline is a rendezvous that will now expire unanswered (a WARN).
+      if (ops.length === 0) {
+        this.logger.log(
+          `[SEND][${traceId}] No message queued after validation - recipients=0 durable=${durable}` +
+            ' - the group named no other device, so there was nobody to queue for'
+        );
+      } else {
+        this.logger.warn(
+          `[SEND][${traceId}] No message queued after validation - recipients=${ops.length} durable=${durable}` +
+            ' - every recipient device is offline and this frame is transport-only'
+        );
+      }
     }
 
     // 1b. Append to the group's shared history stream, so a device that was absent can obtain the

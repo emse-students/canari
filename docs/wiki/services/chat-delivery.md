@@ -39,6 +39,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge stale push tokens (> 90 days) |
 | 24h | Purge stale pending invitations (> 30 days) |
 | 24h | Report orphan devices (observation only, deletes nothing) |
+| 24h | Count what the hourly health reports already accused, one LOG line per report ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)) |
 
 ### One way a frame is delivered
 
@@ -1158,7 +1159,9 @@ Welcome actually queued for this device AND this group**.
     been outstanding.
 
   Both halves name the oldest `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because
-  a count cannot be chased and a device id can.
+  a count cannot be chased and a device id can. Since 2026-11-13 they name only the devices no
+  earlier run accused with the same set of seats ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13));
+  the partition LOG line above is still printed every run, because it is a measurement.
 
 **THE SKIP NOW NAMES ITS OWN CAUSE, IN THE INVITER'S LOG (2026-10-04).** `add_members_bulk` returns
 `skipped: { index, reason }[]` and `reason` is `SkippedKeyPackageReason` (`mls-core/src/lib.rs`),
@@ -1221,8 +1224,9 @@ and that it is one grouped query - a mocked repository cannot execute the SQL it
   and the constant's doc says what to compare it against. The 12-commits-in-2h14 phone of the same
   incident stays under it on purpose.
 - **Hole.** ONE query (window `LEAD` over the log, `GROUP BY` group, `HAVING BOOL_OR(gap)`) for any
-  epoch in `[min(baseEpoch), activeEpoch - 1]` with no row, ERROR, one line, newest hole first so a
-  new one is not buried behind the known permanent ones. The floor is the oldest RETAINED commit,
+  epoch in `[min(baseEpoch), activeEpoch - 1]` with no row, ERROR, one line, newest hole first, and
+  only for the holes no earlier run accused in the same state ([each item is accused once](#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)) -
+  before 2026-11-13 the eleven permanent holes of 2026-08-29..31 were re-printed at ERROR every hour. The floor is the oldest RETAINED commit,
   because `pruneExpiredCommitLog` trims from the bottom and a trimmed floor is not a hole (the same
   distinction `getCommitsSince` makes with `belowFloor`/`gapAt`). Unlike `getCommitsSince`, which only
   names a hole when a lagging device asks across it, this names it the hour it exists.
@@ -1236,6 +1240,63 @@ and that it is one grouped query - a mocked repository cannot execute the SQL it
   incident class, frames emitted between a device's own commit and its acceptance, is the client's
   `epochSendBarrier` and the server has no fact distinguishing those frames. So the evidence for
   both is the ERROR line plus this report's rate line (the churn that makes them fire).
+
+### Each item is accused once (`report_accusations`, migration 049, 2026-11-13)
+
+**Why.** The hourly reports name PERMANENT states. The production sweep of 2026-11-13 found
+`reportCommitLogHealth` printing `11 group(s) have a HOLE` at ERROR every hour (every hole dated
+2026-08-29..31), `reportSingleHolderGroups` `2 conversation(s) have NO holder` at ERROR (both closed
+since 2026-10-14, at epoch 1) and 12-13 single-holder conversations at WARN, and
+`reportStrandedDeviceMemberships` 11 devices at WARN - 24 identical lines a day each. An ERROR
+repeated hourly about a state that cannot change is the line a reader learns to skip, so the NEXT
+real hole would have been the twelfth name in it.
+
+**What a report prints now.** Each of the four reports below hands every item it found to
+`settleAccusations` (`utils/report-accusations.ts`) with a FINGERPRINT of the state that makes it
+accusable, and prints at its level (ERROR or WARN, unchanged) only the items no earlier run accused in
+that exact state, with the evidence the line always carried plus `(not accused before in this state;
+N ... accused earlier, unchanged)`. An item that changes state is accused again; an item the report
+stops naming leaves the ledger and is logged ONCE at LOG (`... no longer reported (healed, or gone with
+their group) and leave the ledger: <id>(<state>, accused <ISO>)`). Every LOG line that is a measurement
+(the stranded partition, the commit-rate distribution, the all-clear lines) is unchanged.
+
+| Report (`report` column) | Item | State accused - and what is deliberately NOT in it |
+|---|---|---|
+| `reportCommitLogHealth` holes (`commit_log_hole`) | group | `first hole <epoch>, <n> missing` - not the head or the floor, which move with every commit and prune while the hole stands still; a hole that grows is accused again |
+| `reportSingleHolderGroups` (`holders`) | group | `holders 0` or `holders 1` - not the epoch; a conversation that loses its last holder goes 1 -> 0 and is accused again, at ERROR |
+| `reportStrandedDeviceMemberships` (`stranded_device`) | device | its stranded seats, sorted, each `groupId:never` or `groupId:kicked` - a device whose seats change (one more, one fewer, never-added turned kicked) is accused again with every seat |
+| `reportStaleExternalJoinBases` (`stale_base`) | group | `base <base>/<head>, head commit recorded` (or `absent`) - not the age, which grows by itself |
+
+**The daily line.** `reportKnownAccusations` (24 h, and once in `runInitialSweep` after the reports)
+prints ONE LOG line per report, zero included: `<report>: daily summary - N <items> already accused,
+unchanged since <newest accusation> (first accused <oldest>)`. It reads the table, so it is correct
+whenever it runs; a missing line means the summary did not run, never that nothing is known.
+
+**The ledger answers ONE question.** A `report_accusations` row (`report`, `itemId`, `state`,
+`accusedAt`; primary key `(report, itemId)`) says "this item was accused in this state" and nothing
+else - never "this item is broken": the report's own query answers that every hour, from the tables
+that hold the fact. Reading the ledger to decide what is broken would silence the trigger it
+de-duplicates (CLAUDE.md, "durable state answers only THE QUESTION IT WAS WRITTEN FOR"). No clock
+decides anything: a state is re-accused when its fingerprint changes, never because time passed, and
+`accusedAt` is printed, never compared.
+
+**Two replicas, one accusation.** The claim is ONE statement - `INSERT ... ON CONFLICT (report,
+"itemId") DO UPDATE SET state = EXCLUDED.state ... WHERE report_accusations.state IS DISTINCT FROM
+EXCLUDED.state RETURNING "itemId"` - so of two replicas running the same report, only the statement
+that wrote the row gets it back and accuses; the release is one `DELETE ... RETURNING`, so an item
+that left is logged by the one replica whose delete took it.
+
+**The first run after the deploy** finds the table empty and accuses every current item once - the
+last time the known ones appear at ERROR or WARN. Rows are bounded by what the reports name: a group
+purged or a device erased with its account leaves the report, and so the table, the next hour.
+Migration 049 is additive (a new table, not held); a rollback is safe because no earlier release reads
+it, and `DROP TABLE report_accusations` undoes it (the reports then accuse every item once more).
+
+Pinned by the four report specs (`app.controller.{commit-log-report,holder-report,stranded-memberships,stale-bases}.spec.ts`:
+first sighting accused, same state not re-accused, changed state accused again, an item that left
+logged once) on `testing/memoryAccusationLedger.ts`, and by `utils/report-accusations.integration.spec.ts`
+against PostgreSQL (the migration and its replay, the claim and release semantics, two replicas
+claiming at once, the daily summary, and `reportCommitLogHealth` end to end over a real hole).
 
 ### A silent reader learns its seat from the groups list (additive, 2026-10-04)
 

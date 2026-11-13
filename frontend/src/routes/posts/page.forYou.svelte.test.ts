@@ -32,7 +32,7 @@ vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') })
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
   listPosts,
-  getMyScheduledPosts: () => Promise.resolve([]),
+  getScheduledPostsToEdit: () => Promise.resolve([]),
   searchPosts: () => Promise.resolve([]),
 }));
 vi.mock(

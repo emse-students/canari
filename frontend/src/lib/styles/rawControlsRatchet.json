@@ -75,7 +75,7 @@
     "input": 0
   },
   "src/lib/components/associations/edit/EditFormsTab.svelte": {
-    "button": 4,
+    "button": 1,
     "select": 0,
     "input": 0
   },
@@ -408,11 +408,6 @@
     "button": 12,
     "select": 0,
     "input": 1
-  },
-  "src/lib/components/forms/FormExportMenu.svelte": {
-    "button": 2,
-    "select": 0,
-    "input": 0
   },
   "src/lib/components/forms/FormPaymentSection.svelte": {
     "button": 2,
@@ -803,11 +798,6 @@
     "button": 3,
     "select": 0,
     "input": 1
-  },
-  "src/lib/components/posts/ScheduledPostsPanel.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
   },
   "src/lib/components/pricing/CriterionEditor.svelte": {
     "button": 6,
@@ -1233,11 +1223,6 @@
     "button": 0,
     "select": 0,
     "input": 1
-  },
-  "src/routes/forms/+page.svelte": {
-    "button": 4,
-    "select": 0,
-    "input": 0
   },
   "src/routes/forms/[id]/+page.svelte": {
     "button": 5,

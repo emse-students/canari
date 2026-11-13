@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use redis::AsyncCommands;
 use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -29,7 +28,8 @@ const DEAD_SOCKET_DETECTION_SECS: u64 = PING_INTERVAL_SECS * (MAX_MISSED_PONGS a
 pub const PRESENCE_TTL_SECS: u64 = 90;
 const _: () = assert!(PRESENCE_TTL_SECS > DEAD_SOCKET_DETECTION_SECS);
 use crate::ws_dispatch::{
-    WsConn, WsFrame, handle_disconnect, handle_retired_frame, handle_typing, is_retired_frame,
+    WsConn, WsFrame, handle_disconnect, handle_retired_frame, handle_typing, is_ephemeral_frame,
+    is_retired_frame,
 };
 
 // ── How a socket ENDED ───────────────────────────────────────────────
@@ -570,7 +570,10 @@ async fn handle_socket(
                     // consecutive unacknowledged pings counting the one about to be sent.
                     let outstanding = pong_flag_send.fetch_add(1, Ordering::Relaxed) + 1;
                     if outstanding > MAX_MISSED_PONGS {
-                        tracing::warn!(
+                        // INFO, like `Client went away without a closing handshake`: a phone that lost
+                        // its network or a laptop that slept never answers, which is the ordinary
+                        // end of most sessions and not a fault of the gateway.
+                        tracing::info!(
                             "[heartbeat] No pong from {} after {} pings - closing dead connection",
                             conn_key_ping,
                             MAX_MISSED_PONGS
@@ -658,11 +661,25 @@ async fn handle_socket(
                         }
 
                         let raw_len = text.len();
-                        tracing::info!(
-                            "Received WS JSON frame from {} ({} bytes)",
-                            user_id,
-                            raw_len
-                        );
+                        // A typing frame is ephemeral: its receive and routing lines are DEBUG,
+                        // every other frame keeps INFO (see `EPHEMERAL_FRAMES`).
+                        let ephemeral = json
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(is_ephemeral_frame);
+                        if ephemeral {
+                            tracing::debug!(
+                                "Received WS JSON frame from {} ({} bytes)",
+                                user_id,
+                                raw_len
+                            );
+                        } else {
+                            tracing::info!(
+                                "Received WS JSON frame from {} ({} bytes)",
+                                user_id,
+                                raw_len
+                            );
+                        }
 
                         let frame = match WsFrame::parse(&json) {
                             Some(f) => f,
@@ -672,18 +689,30 @@ async fn handle_socket(
                             }
                         };
 
-                        tracing::info!(
-                            "[WS RX] from={}:{} type={} group={} rawBytes={}",
-                            user_id,
-                            device_id,
-                            frame.msg_type,
-                            if frame.group_id.is_empty() {
-                                "<none>"
-                            } else {
-                                &frame.group_id
-                            },
-                            raw_len
-                        );
+                        let rx_group = if frame.group_id.is_empty() {
+                            "<none>"
+                        } else {
+                            &frame.group_id
+                        };
+                        if ephemeral {
+                            tracing::debug!(
+                                "[WS RX] from={}:{} type={} group={} rawBytes={}",
+                                user_id,
+                                device_id,
+                                frame.msg_type,
+                                rx_group,
+                                raw_len
+                            );
+                        } else {
+                            tracing::info!(
+                                "[WS RX] from={}:{} type={} group={} rawBytes={}",
+                                user_id,
+                                device_id,
+                                frame.msg_type,
+                                rx_group,
+                                raw_len
+                            );
+                        }
 
                         match frame.msg_type.as_str() {
                             "disconnect" => {
@@ -709,7 +738,7 @@ async fn handle_socket(
                             _ => {}
                         }
 
-                        log_routing_diagnostics(&state, &user_id, &device_id, &frame).await;
+                        log_routing(&user_id, &device_id, &frame);
                     }
                     Ok(Message::Close(c)) => {
                         tracing::info!("Client closed connection: {:?}", c);
@@ -847,63 +876,34 @@ async fn refresh_presence(
 
 // ── Routing diagnostics ───────────────────────────────────────────────────
 
-/// Log the online/offline status of every group member for a received frame.
-///
-/// Queries Redis for the `group:members:{groupId}` set and cross-references
-/// with the in-memory `connected_users` map.  Emits a single structured log
-/// line useful for debugging routing issues.  No-ops when `frame.group_id` is empty.
-async fn log_routing_diagnostics(
-    state: &Arc<AppState>,
-    user_id: &str,
-    device_id: &str,
-    frame: &WsFrame,
-) {
-    if frame.group_id.is_empty() {
-        tracing::info!(
-            "[ROUTE] type={} from={}:{} (no groupId)",
+/// One line per received frame saying where it is routed: type, group, sender. The group's member
+/// list is NOT in it - it was the whole line's weight on a busy group and Redis answered it on
+/// every frame; who is online is what `connected_users` and presence already say. A typing frame
+/// is ephemeral (`EPHEMERAL_FRAMES`) and is logged at DEBUG.
+fn log_routing(user_id: &str, device_id: &str, frame: &WsFrame) {
+    let ephemeral = is_ephemeral_frame(&frame.msg_type);
+    let group = if frame.group_id.is_empty() {
+        "<none>"
+    } else {
+        frame.group_id.as_str()
+    };
+    if ephemeral {
+        tracing::debug!(
+            "[ROUTE] type={} group={} from={}:{}",
             frame.msg_type,
+            group,
             user_id,
             device_id
         );
-        return;
+    } else {
+        tracing::info!(
+            "[ROUTE] type={} group={} from={}:{}",
+            frame.msg_type,
+            group,
+            user_id,
+            device_id
+        );
     }
-
-    let online_all: Vec<String> = {
-        let map = state.connected_users.lock().unwrap();
-        map.keys().cloned().collect::<Vec<_>>()
-    };
-
-    let member_status: Vec<String> =
-        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-            let key = format!("group:members:{}", frame.group_id);
-            let members: Vec<String> = con.smembers(&key).await.unwrap_or_default();
-            members
-                .iter()
-                .map(|m| {
-                    let status = if online_all.contains(m) {
-                        "ONLINE"
-                    } else {
-                        "OFFLINE"
-                    };
-                    format!("{} [{}]", m, status)
-                })
-                .collect()
-        } else {
-            vec!["<redis-unavailable>".to_string()]
-        };
-
-    tracing::info!(
-        "[ROUTE] type={} group={} from={}:{} | members: {}",
-        frame.msg_type,
-        frame.group_id,
-        user_id,
-        device_id,
-        if member_status.is_empty() {
-            "<none registered>".to_string()
-        } else {
-            member_status.join(", ")
-        }
-    );
 }
 
 #[cfg(test)]

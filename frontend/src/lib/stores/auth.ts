@@ -64,6 +64,7 @@ import { setAvatarToken } from '$lib/utils/avatarUrl';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
+  onlyCarriedCredentialCanExist,
   readNativeRefreshToken,
   usesBodyRefreshTransport,
   writeNativeRefreshToken,
@@ -1540,6 +1541,21 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
 }
 
 /**
+ * Whether this runtime can hold its session ONLY in the credential it carries
+ * (`onlyCarriedCredentialCanExist`) and holds none: a refresh would then be refused with certainty.
+ * A store that cannot be read proves nothing, so it answers false and the request decides, as before.
+ */
+async function carriesNoCredentialWhereOnlyOneCanExist(): Promise<boolean> {
+  if (!onlyCarriedCredentialCanExist()) return false;
+  try {
+    return (await readNativeRefreshToken()) === null;
+  } catch (e) {
+    awarn(`session: the carried credential could not be read (${String(e)}) - the refresh decides`);
+    return false;
+  }
+}
+
+/**
  * Check if we have a session: try a silent refresh.
  * Returns true if the refresh cookie exists and is valid,
  * AND we have a saved user in localStorage (prevents loops after logout).
@@ -1558,6 +1574,10 @@ export async function hasStoredSession(): Promise<boolean> {
     // known (`refresh✗401` ~100 ms after every `logout✓200`, both phones, 2026-11-08).
     if (isTauri() && _signOutGeneration > 0) {
       alog('session: signed out in this process - no recovery refresh');
+    } else if (isTauri() && (await carriesNoCredentialWhereOnlyOneCanExist())) {
+      // THE ANSWER IS KNOWN HERE TOO: where no cookie can survive (iOS), the credential this app
+      // carries is the only one there is, and there is none - the server could only refuse.
+      alog('session: no carried credential and no cookie on this platform - no recovery refresh');
     } else if (isTauri()) {
       try {
         await refresh();

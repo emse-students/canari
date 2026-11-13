@@ -15,6 +15,10 @@ import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
+import {
+  memoryAccusationLedger,
+  type MemoryAccusationLedger,
+} from './testing/memoryAccusationLedger';
 
 /**
  * `reportStaleExternalJoinBases` is the platform's only witness that a conversation has become
@@ -45,6 +49,8 @@ import { MessagingService } from './services/messaging.service';
  */
 describe('AppController - reportStaleExternalJoinBases', () => {
   let controller: AppController;
+  /** The report's ledger; fresh per test, shared by every run within one. */
+  let ledger: MemoryAccusationLedger;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
   let log: jest.SpyInstance;
@@ -96,6 +102,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
     ).reportStaleExternalJoinBases();
 
   beforeEach(async () => {
+    ledger = memoryAccusationLedger();
     jest.clearAllMocks();
     deviceGroupRepo.find.mockResolvedValue([]);
     headBuilder.getRawMany.mockResolvedValue([]);
@@ -105,7 +112,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: { ...emptyRepo(), manager: ledger } },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
@@ -216,6 +223,49 @@ describe('AppController - reportStaleExternalJoinBases', () => {
 
     expect(headBuilder.where).toHaveBeenCalledWith(expect.stringContaining('IN (:...groupIds)'), {
       groupIds: ['g-1', 'g-2'],
+    });
+  });
+
+  describe('each stale base is accused ONCE per state (report_accusations)', () => {
+    it('does not re-accuse a shut base the next hour, though its age grew', async () => {
+      deviceGroupRepo.find.mockResolvedValue([]);
+      headBuilder.getRawMany.mockResolvedValue([]);
+      staleBuilder.getRawMany.mockResolvedValue([behind('g-shut', 40)]);
+      await run();
+      staleBuilder.getRawMany.mockResolvedValue([behind('g-shut', 41)]);
+      await run();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledTimes(1);
+    });
+
+    it('accuses again when the group moved on and its base stayed behind', async () => {
+      deviceGroupRepo.find.mockResolvedValue([]);
+      headBuilder.getRawMany.mockResolvedValue([{ groupId: 'g-move' }]);
+      staleBuilder.getRawMany.mockResolvedValue([behind('g-move', 1, 10)]);
+      await run();
+      staleBuilder.getRawMany.mockResolvedValue([{ ...behind('g-move', 1, 10), activeEpoch: 12 }]);
+      await run();
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(String(warn.mock.calls[1][0])).toContain('g-move(10/12');
+      expect(String(warn.mock.calls[1][0])).toContain('0 group(s) accused earlier, unchanged');
+    });
+
+    it('logs a base that became current once at LOG', async () => {
+      deviceGroupRepo.find.mockResolvedValue([]);
+      headBuilder.getRawMany.mockResolvedValue([{ groupId: 'g-fix' }]);
+      staleBuilder.getRawMany.mockResolvedValue([behind('g-fix', 1)]);
+      await run();
+      staleBuilder.getRawMany.mockResolvedValue([]);
+      await run();
+      await run();
+
+      const left = log.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('no longer reported'));
+      expect(left).toHaveLength(1);
+      expect(left[0]).toContain('g-fix(base 283/284, head commit recorded, accused ');
     });
   });
 });

@@ -75,6 +75,11 @@ describe.each([
     '048_sent_frame_receipt.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?dm_sent_frame_receipt"?/im,
   ],
+  // A new table again: the hourly reports' ledger of what they already accused.
+  [
+    '049_report_accusations.sql',
+    /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
+  ],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

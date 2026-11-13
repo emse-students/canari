@@ -44,6 +44,7 @@ import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
+import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
@@ -272,6 +273,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         UserDismissedGroup,
         // The key groups a revoked device held (migration 041), which an erasure deletes too.
         RevokedDeviceGroup,
+        // One row per named application frame (migration 048): the send route records it, and an erasure deletes it.
+        SentFrameReceipt,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',

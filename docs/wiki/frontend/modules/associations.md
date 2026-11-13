@@ -28,7 +28,7 @@
 | `AssociationDocumentManager.svelte` | Upload/download/delete documents |
 | `edit/EditProfileTab.svelte` | Edit name, description, logo, color |
 | `edit/EditMembersTab.svelte` | Manage members and roles |
-| `edit/EditFormsTab.svelte` | Manage forms, view pending cash submissions |
+| `edit/EditFormsTab.svelte` | The shared forms list (`FormsManagerList`) scoped to the association: edit, share, QR, export, responses, cash validation, delete ([forms](forms.md)) |
 | `edit/EditPaymentsTab.svelte` | Stripe Connect setup and status |
 | `edit/EditBoutiqueTab.svelte` | Boutique products (`type: 'other'`), members-only + member pricing - see [Cotisations](../../cotisations.md) |
 | `edit/EditCotisationsTab.svelte` | Enable cotisation, membership price, cotisant roster (search, export, manual grant/revoke) - see [Cotisations](../../cotisations.md) |
