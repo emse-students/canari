@@ -761,6 +761,53 @@ img[src^='/emoji/'] {
   --motion-base: 200ms;
   --motion-slow: 250ms;
   --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* THE THREAD MAKING ROOM FOR A NEW MESSAGE, measured on Messenger (Mi 9T recordings, 2026-11-13,
+     keyboard-and-send-motion.md): the list glides up by the new row's height in ~220 ms on a
+     symmetric curve (16 % / 46 % / 83 % of the way at a quarter, half and three quarters), THEN the
+     bubble fades in where it lands. `threadGrowthObserver` plays the glide, `.motion-bubble-in` the
+     fade. */
+  --motion-thread-glide: 220ms;
+  --motion-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
+}
+
+/* A NEW BUBBLE APPEARS WHERE IT LANDS - opacity only, no slide, as Messenger does. Two cases,
+   decided by what the thread DID, not guessed by the bubble (review of #3490, S6):
+   - `.motion-bubble-in` alone: a plain `--motion-fast` fade. A bubble that arrived without a glide
+     (a batch, a reader scrolled up, a jump) is never held blank.
+   - `[data-glide-entrance]`, set by `threadGrowthObserver` on the bubbles of the rows its glide
+     makes room for, in the same task as the mount (no frame shows the plain fade): transparent
+     through the glide (0 % -> 65 %, 65 = 220 / (220 + 120), restate it if either token moves),
+     then the fade. An attribute, not a class, so Svelte rewriting the bubble's class cannot drop it.
+   Both fill nothing and end opaque, so an animation cut short leaves the row as its own style
+   (`riseInEntrance.test.ts`). */
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bubbleInAfterGlide {
+  from {
+    opacity: 0;
+  }
+  65% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.motion-bubble-in {
+  animation: bubbleIn var(--motion-fast) var(--motion-ease-in-out);
+}
+
+.motion-bubble-in[data-glide-entrance] {
+  animation: bubbleInAfterGlide calc(var(--motion-thread-glide) + var(--motion-fast))
+    var(--motion-ease-in-out);
 }
 
 @keyframes motionSheetIn {
@@ -2339,7 +2386,8 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
      Kept for the min-height floor `COMPOSER_MIN_HEIGHT` reads (`ChatComposer.svelte`): the padding
      below produces this height, so the floor can never disagree with it. Measured 2026-09-09: 20px
-     line box + 12 + 12. It no longer drives the row's cross-axis alignment - see `align-items`. */
+     line box + 12 + 12 (a phone's is 42, the block after this rule). It no longer drives the row's
+     cross-axis alignment - see `align-items`. */
   --composer-field-height: calc(var(--text-sm--line-height) + 1.5rem);
   position: relative;
   display: flex;
@@ -2376,6 +2424,26 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 .chat-composer-panel.is-dragover {
   background: color-mix(in srgb, var(--cn-yellow) 12%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cn-yellow) 60%, transparent);
+}
+
+/* THE COMPOSER ON A PHONE IS MESSENGER'S ROW (owner, 2026-11-13: the bar's layout and dimensions
+   as Messenger's, our own look; keyboard-and-send-motion.md). Measured on the Mi 9T: four glyphs
+   centred every 40 dp from the edge with nothing between them, a 42 dp field, the send 40 dp from the
+   right edge. So below 768px: 40px controls, no gap, a 42px field (its padding: the block after the
+   textarea rule). THE OWNER'S PHONE EXCEPTION to the 44px touch floor, and the only one
+   (design-reference.md, `iconButtonScale.test.ts`): a touch tablet keeps 44px and its gaps, a pointer
+   its 38px. The glass "+" and the yellow send keep their own drawing inside the box. Before the
+   chevron rule below, which narrows one of these on purpose. */
+@media (max-width: 767px) {
+  .chat-composer-panel {
+    --composer-field-height: calc(var(--text-sm--line-height) + 1.375rem);
+    gap: 0;
+  }
+
+  .chat-composer-panel .ui-icon-button {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
 }
 
 /* THE BOX COMES FROM `.ui-icon-button`, WHICH THIS ROW IS WHERE IT WAS LEARNED. 44px on a phone
@@ -2642,8 +2710,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   min-width: 0;
   max-width: 100%;
   max-height: 10rem;
-  /* 12px, so one line measures 44px - the height of the touch targets beside it. The desktop
-     override below takes it back to the measured reference's 8px, where the controls are 36px. */
+  /* 12px, so one line measures 44px - the height of the touch targets beside it (a phone's 11px:
+     the block after this rule). The desktop override below takes it back to the measured
+     reference's 8px, where the controls are 36px. */
   padding: 0.75rem;
   border: none;
   outline: none;
@@ -2658,6 +2727,16 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   overflow-wrap: anywhere;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* A PHONE'S FIELD IS MESSENGER'S 42px: 11px above and below (104 px at 2.475 px per dp on the Mi 9T,
+   2026-11-13), two px taller than the 40px controls beside it - see the phone block after
+   `.chat-composer-panel`. */
+@media (max-width: 767px) {
+  .chat-composer-textarea,
+  .mention-composer-editor.chat-composer-textarea {
+    padding: 0.6875rem 0.75rem;
+  }
 }
 
 .chat-composer-textarea::placeholder {

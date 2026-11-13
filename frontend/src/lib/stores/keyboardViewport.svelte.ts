@@ -5,6 +5,8 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { rememberKeyboardHeight } from './keyboardHeightMemory';
+import { cssColorToHex, groundOf } from './imeGround';
+import { parseImeTarget, resolveImeTarget } from './imeTarget';
 import { Log } from '$lib/utils/Log';
 
 export type KeyboardViewportSnapshot = {
@@ -238,7 +240,9 @@ export function hasVirtualKeyboard(os: string): boolean {
 
 /**
  * Reads the viewport now. A desktop OS has no on-screen keyboard, so its visual viewport is read as
- * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`).
+ * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`). While the Android
+ * shell has announced a keyboard the WebView has not been resized for yet, the measurement is the
+ * one that resize will produce (`resolveImeTarget`).
  */
 function measureViewport(): ViewportMeasurement {
   const vv = window.visualViewport;
@@ -246,13 +250,25 @@ function measureViewport(): ViewportMeasurement {
   if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
     return { winH, vvHeight: winH, offsetTop: 0, scale: 1 };
   }
-  return {
+  const raw = {
     winH,
     vvHeight: vv?.height ?? winH,
     offsetTop: vv?.offsetTop ?? 0,
     scale: vv?.scale ?? 1,
   };
+  const { measurement, drop } = resolveImeTarget(raw, baselineHeight, imeTargetPx);
+  if (drop) {
+    Log.d(
+      'keyboardViewport',
+      `keyboard target ${imeTargetPx} spent (layout ${winH}, visual ${raw.vvHeight})`
+    );
+    imeTargetPx = null;
+  }
+  return measurement;
 }
+
+/** The keyboard height the Android shell announced ahead of its resize (`imeTarget.ts`), or null. */
+let imeTargetPx: number | null = null;
 
 /** Tallest the layout viewport has been with no keyboard - owned by `initKeyboardViewport`. */
 let baselineHeight = 0;
@@ -407,6 +423,47 @@ export function overlaySettledAroundFocus(
 }
 
 /**
+ * How an update reveals the focused field, or null when it does not.
+ *
+ * A keyboard OPENING reveals at once (`auto`): the field must be above the keyboard on the frame it
+ * arrives, and a smooth scroll in a modal, the PIN dialog or a payment overlay runs under it. With
+ * the Android hand-off (`canariImeTarget`) the opening is TWO updates - the announced layout, then
+ * the WebView's real resize that spends the target - and both belong to the opening, so the second
+ * is `auto` too (review of #3490, S3). Any later update with the keyboard up is `smooth`.
+ */
+export function keyboardRevealOnUpdate(u: {
+  isOpen: boolean;
+  openedNow: boolean;
+  targetSpent: boolean;
+  hasFocus: boolean;
+}): ScrollBehavior | null {
+  if (!u.isOpen) return null;
+  if (u.openedNow || u.targetSpent) return 'auto';
+  return u.hasFocus ? 'smooth' : null;
+}
+
+/**
+ * The colour under the keyboard's band to the Android shell (`canariTheme.setGround`), which paints
+ * it under the transparent WebView: the strip a keyboard's resize opens below the page is then the
+ * page's own ground - read where the keyboard will sit, so a full-bleed black screen (CanaReels,
+ * live, camera) gets black and a conversation its grey (keyboard-and-send-motion.md). Read once per
+ * rise, when the layout is about to change anyway - never on a theme apply at boot. Absent in the
+ * browser and on iOS, where this is a no-op by design, not a fallback.
+ */
+function postGroundToNative(): void {
+  const bridge = (window as unknown as { canariTheme?: { setGround?: (c: string) => void } })
+    .canariTheme;
+  if (!bridge?.setGround) return;
+  const start = document.elementFromPoint(window.innerWidth / 2, window.innerHeight - 1);
+  const ground = groundOf(start, (el) => getComputedStyle(el).backgroundColor, cssColorToHex);
+  if (!ground) {
+    Log.w('keyboardViewport', 'no opaque ground under the keyboard band - the native one is kept');
+    return;
+  }
+  bridge.setGround(ground);
+}
+
+/**
  * Registers listeners and updates CSS variables. Call once from the root layout.
  * Returns a teardown function.
  */
@@ -418,6 +475,7 @@ export function initKeyboardViewport(): () => void {
   let keyboardWasOpen = false;
 
   const update = () => {
+    const announced = imeTargetPx !== null;
     const m = measureViewport();
     const next = readSnapshot(m);
     const openedNow = next.isOpen && !keyboardWasOpen;
@@ -425,9 +483,13 @@ export function initKeyboardViewport(): () => void {
     applyCssVars(next, m, baselineHeight);
     if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
 
-    if (next.isOpen && (openedNow || document.activeElement instanceof HTMLElement)) {
-      scrollFocusedFieldIntoView(openedNow ? 'auto' : 'smooth');
-    }
+    const reveal = keyboardRevealOnUpdate({
+      isOpen: next.isOpen,
+      openedNow,
+      targetSpent: announced && imeTargetPx === null,
+      hasFocus: document.activeElement instanceof HTMLElement,
+    });
+    if (reveal) scrollFocusedFieldIntoView(reveal);
 
     keyboardWasOpen = next.isOpen;
 
@@ -468,6 +530,29 @@ export function initKeyboardViewport(): () => void {
     }, 400);
   };
 
+  /**
+   * `window.canariImeTarget`: the Android shell's announcement of a keyboard (`MainActivity`,
+   * `handOffIme`). The layout is applied HERE, synchronously, so the frame the shell waits for
+   * before resizing the WebView already holds it; `true` tells the shell it was taken.
+   */
+  const takeImeTarget = (value: unknown): boolean => {
+    const px = parseImeTarget(value);
+    if (px === null) {
+      Log.w('keyboardViewport', `keyboard target refused: ${String(value)}`);
+      return false;
+    }
+    Log.d('keyboardViewport', `keyboard target ${px} announced ahead of the resize`);
+    if (px > 0) postGroundToNative();
+    imeTargetPx = px;
+    update();
+    return true;
+  };
+  (window as unknown as { canariImeTarget?: (v: unknown) => boolean }).canariImeTarget =
+    takeImeTarget;
+  // A new document is up: a hand-off the shell asked of the previous one ends, and the keyboard's
+  // current inset is handed to this one (`MainActivity.ImeBridge`). Absent outside Android.
+  (window as unknown as { canariIme?: { pageReady?: () => void } }).canariIme?.pageReady?.();
+
   update();
   window.addEventListener('resize', update);
   window.addEventListener('orientationchange', handleOrientationChange);
@@ -483,6 +568,8 @@ export function initKeyboardViewport(): () => void {
     window.removeEventListener('transitionend', handleTransitionEnd, true);
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
+    delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
+    imeTargetPx = null;
     pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
