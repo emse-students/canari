@@ -1390,8 +1390,10 @@ whose ratchet is behind is encrypted at a generation the peer has consumed and i
 as a duplicate - 4 losses in 9 sends when measured, 9/9 after the fix (WP-MULTITAB-1). The guards are
 `outbox.test.ts` and `tabLeadership.test.ts`; nine green sends do not prove a follower stopped
 encrypting, so the mechanism is asserted from BOTH tabs' logs - the follower's
-`Flush skipped - follower tab` and the leader's `Flush requested by a follower tab` carrying the
-**same entry id**, which is also what proves the shared IndexedDB queue is the transfer.
+`Queued <id>` (with, once per page, `Follower tab - every flush is asked of the leader tab`; until
+2026-11-10 a `Flush skipped - follower tab` line on every trigger) and the leader's `Flush requested
+by a follower tab` followed by its `<id>… sent`, which is also what proves the shared IndexedDB
+queue is the transfer.
 The same reasoning is why a follower promoted to leader **reloads** rather than picking up where it
 left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
 disk.
@@ -1460,6 +1462,128 @@ now share one promise, `theElection`, created by whichever flush arrives first: 
 deferral line, one decision line. It is never reset because the election does not reopen - once
 decided, the `undecided` guard returns before the promise is read at all. Nothing about correctness
 changed here; every waiter always resumed. What twenty lines cost is the reader.
+
+### The lead goes to a tab that can serve: a hidden leader hands it over (2026-11-10)
+
+**The report (owner, Firefox 159 on Windows, web 1.6.9, 2026-11-10):** a photo sent from one tab
+stayed a blurred ThumbHash with the image icon and one check mark, in every tab and across reloads.
+It went out the instant the owner brought the main (leader) tab, hidden for hours, back to the front.
+**The owner's log export:**
+- The visible tab was a follower after each of four reloads (`[TAB] Another tab is active - read-only
+  mode (Web Locks)`).
+- The photo was `Queued 7b577fbb… (media)`, and the follower asked the leader about twenty times.
+- The export holds no `Flush requested by a follower tab` after 18:04.
+- The leader's last exported line is `[QUEUE] Processing message` at 19:43:58, in a hidden tab that
+  was still receiving socket frames and raising notifications.
+
+**That silence is NOT proof that the leader ignored the asks.** The in-app log is written to
+IndexedDB in batches (`appLog.ts`): every 200 lines or 32 KB, when the page leaves the screen, and
+before an export. Only the EXPORTING tab flushes before the export. Another tab's last batch, up to
+199 lines, is still in that tab's memory and is not in the file. What is certain: the leader, hidden,
+did not finish the send, and finished it at once when shown. Its own `onVisible` runs a flush. The
+exact await it was held on while hidden is not in the export. Owed: the leader tab's own export,
+taken from that tab.
+
+**Three defects, each needed for that picture:**
+
+1. **The lead stayed with a tab that could not serve.** A hidden tab is a weaker runner in every
+   engine. Chromium FREEZES some background tabs: they run no task until thawed, BroadcastChannel
+   messages included, while the Web Lock stays held. The Chrome docs say "release any held Web
+   Locks" at `freeze`
+   ([Page Lifecycle API](https://developer.chrome.com/docs/web-platform/page-lifecycle-api),
+   [freezing on Energy Saver](https://developer.chrome.com/blog/freezing-on-energy-saver)). **Firefox
+   and Safari implement no Page Lifecycle events** (`freeze`, `resume`), so on the owner's Firefox
+   nothing told the leader to let go. A Firefox tab that unloads under memory pressure is gone,
+   and so is its lock. A throttled one still runs events, as the owner's leader showed by processing
+   socket frames while hidden. **Now, two paths, both from facts and never from a clock**
+   (`tabLeader.ts`):
+   - **The hand-over (every engine).** A VISIBLE follower whose shared queue holds an entry that is
+     due posts `leader_handover_request` on `canari-mls-tab` with every flush it hands over
+     (`requestLeaderHandover`, from `runFlush`'s follower branch). It says so once per visible
+     stretch.
+   - A leader that is itself HIDDEN answers. It first decides `follower`, then posts
+     `leader_handover_granted` naming the asker, then hands over: its socket is paused (handlers
+     detached, so the old copy reads and acknowledges nothing) and its reload is scheduled.
+   - A VISIBLE leader ignores the ask: it is serving.
+   - The asker, and only it, then STEALS the lock (`steal: true`). Releasing the lock into the queue
+     would grant it to whichever tab queued first, possibly another background one. The asker's
+     promotion reloads it onto the state the old leader left, and that reload reclaims the lock.
+   - **The freeze (Chromium).** At `freeze`, or at `pagehide` into the back/forward cache, a leader
+     decides `follower` and releases the lock to the queue. A frozen leader cannot answer an ask,
+     and this hook needs none.
+   - A frozen follower withdraws its queued request and queues again at `resume`, because a lock
+     granted to a frozen page would be held by a document that cannot run the promotion.
+2. **A stored page erased the queued row's `pending`.** `mergeMessagePage`'s `reconcile` took the
+   stored row verbatim, and no stored row has a `status`, because status is derived in memory. So
+   the login's `pending` on the queued photo was lost when the conversation's stored page was drawn
+   (`[HISTORY] ... stored page drawn`, 20:04:20). With no `mediaId`, no status and its entry in the
+   queue, the bubble fell through to the bare image placeholder: a picture "loading" over a file
+   nobody had sent. **Now:**
+   - `reconcile` keeps the status that memory holds.
+   - `MessageBubble` decides an own attachment with an empty `mediaId` from the DURABLE queue too.
+     If the entry is present, the bubble shows the queued upload view with its label and its cancel.
+     If it is absent, the bubble shows the orphan or its stored reason, as before.
+3. **The follower's line repeated on every trigger.** `Flush skipped - follower tab` appeared twenty
+   times in three minutes, hiding the one fact that mattered (nothing was sent). The role changes
+   only through a reload, so the follower now says `Follower tab - every flush is asked of the leader
+   tab` once per controller. Each entry keeps its own `Queued` line.
+
+**The single writer holds across a hand-over.** Every path decides `follower` synchronously, before
+the lock moves. A send that began while the document led and resumes after it stopped leading is
+refused at its last synchronous step before the ratchet moves:
+- `BaseMlsService.sealPastOwedBurns` reads `refusesCommitsHere()` right before `encryptForSend`
+  (`FollowerTabSendError` with refusal `lead-lost`, an expected refusal logged at warn, nothing
+  sealed);
+- the outbox checks `refusesCommitsHere()` at its last look before the send and leaves the entry
+  queued for the leader (`skip`, no attempt counted).
+
+Commits were already refused there (`FollowerTabCommitError`). The new leader reloads before it
+serves, so it reads the state the old leader left - and **a checkpoint the old leader was sealing
+when the lead left stores nothing**: the write latch reads `refusesCommitsHere()` again at the put,
+inside the IndexedDB transaction (`MlsStateWriteLatch.holdsNoLead`, outcome `follower-tab`). Without
+it, a put landing after the new leader's load would leave the disk ahead of the leader's memory -
+the fork the single writer exists to prevent. What that write held is what any kill loses, recovered
+by the send ledger's burn and the inbound replay.
+
+**The cost, accepted:** the asking tab reloads once it is promoted, as every promotion does. A tab
+switch reloads nothing unless the queue holds a due entry and the leader is hidden.
+
+**What the log shows now:**
+- in the hidden leader: `[TAB] Hidden leader asked for the lead by a visible tab (<id>) - handing it
+  over.`, then `Leadership released - reloading as follower`;
+- in the asker: `[TAB] Visible follower with a message waiting on the leader - ...`, then `[TAB] Lead
+  handed over by the hidden leader tab - promoted (Web Locks).`, its reload, and the entry's `sent`;
+- on Chromium after a freeze: `[TAB] Page suspended by the browser (freeze) while leading ...`.
+
+**Still not covered:**
+- a leader whose main thread is wedged, which runs no handler and answers nothing;
+- a leader in an engine that suspends it without dispatching `freeze`, which also cannot answer.
+
+No clock is added for either: a timeout would be a guess about a live document.
+
+**Seen in the same log, fixed separately:** a follower tab wrote MLS checkpoints, and the version
+guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #3371, see
+[mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-wrote-its-copy-of-the-mls-state-over-the-leaders---fixed-2026-11-11).
+
+**Pinned by:**
+- `tabLeader.freeze.test.ts`. Two documents (two instances of the module) share one lock manager
+  with its queue, its abort, its steal and its release, and talk over the real channel. The cases:
+  - the hidden leader hands the lead to the ASKER, not to the tab first in the queue, and is a
+    follower first;
+  - a visible leader keeps the lead;
+  - a hidden follower does not ask;
+  - the ask is said once and answered once the leader is hidden;
+  - a frozen leader releases the lock and the waiting tab is promoted;
+  - the resumed former leader does not take the lead back;
+  - a frozen follower withdraws its request and queues again at `resume`;
+  - `pagehide` into the back/forward cache releases the lock, a plain one does not.
+- the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
+- `outbox.test.ts`: the line is said once, and a lead lost during the gates leaves the entry queued.
+- `messageMerge.mergePage.test.ts`: the status is kept.
+- `MessageBubble.orphan.svelte.test.ts`: a queued photo with no status says it is queued.
+
+**Owed:** two-tab readings on dev in Firefox (hide the leader, send a photo from the other tab, and
+see it promoted and the photo sent) and in Chrome (freeze the leader from `chrome://discards`).
 
 ### A follower tab's commits are run by the leader (2026-11-08)
 
@@ -1562,11 +1686,11 @@ and builds no MLS client for a session that is ending.
 A kind no executor in the leader runs is answered `not-delegable`. A `pending` record whose REQUESTER
 LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
 line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
-previous session's request. **What this does not cover, honestly:** a leader tab that the browser has
-FROZEN in the background (Chrome's tab freezing, a discarded tab) runs no JavaScript, so it neither
-answers nor releases its locks while frozen; the follower's request waits until the browser thaws
-that tab or the member brings it forward, and no clock is added to cut the wait short - a timeout
-there would be a guess about a live document. **And right after a deploy**, a leader tab still
+previous session's request. **A leader tab that cannot serve gives the lead up** - a hidden one hands
+it to the visible tab that asks, a frozen one releases it at `freeze` ([below](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)), so a waiting request is run by the
+tab promoted in its place; a discarded tab is gone, and its locks with it. What is still not covered:
+a leader whose main thread is wedged, which runs no handler, and no clock is added to cut that wait
+short - a timeout there would be a guess about a live document. **And right after a deploy**, a leader tab still
 running the build before #3160 does not listen for `tab_commit_requested` at all: a new follower's
 request waits until that tab reloads (and is then run, or deleted unrun if its follower has gone).
 

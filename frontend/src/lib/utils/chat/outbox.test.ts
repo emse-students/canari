@@ -1651,6 +1651,48 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(1);
   });
 
+  it('a follower says ONCE that it hands its flushes over, however often it asks', async () => {
+    // Owner's log, 2026-11-10: twenty identical "Flush skipped - follower tab" lines in three
+    // minutes, one per trigger. The fact is the role, which only a reload changes.
+    isTabLeaderMock.mockReturnValue(false);
+    const log = vi.fn();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+
+    await outbox.flush();
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(3);
+    const said = log.mock.calls.filter(([l]) =>
+      String(l).includes('every flush is asked of the leader tab')
+    );
+    expect(said).toHaveLength(1);
+  });
+
+  it('a send whose tab stopped leading during its gates is not sealed here, and stays queued', async () => {
+    // The browser froze the leader, the freeze released the lock (`tabLeader.ts`), and this page
+    // resumed mid-flush: sealing now would use a ratchet behind the new leader's (WP-MULTITAB-1).
+    const log = vi.fn();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      active: async () => {
+        isTabLeaderMock.mockReturnValue(false);
+        return true;
+      },
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(true);
+    expect(storage._map.get('m1')!.attempts).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('this tab stopped leading during the send')
+    );
+  });
+
   it('queues from a follower and still nudges the leader (the queue is shared storage)', async () => {
     isTabLeaderMock.mockReturnValue(false);
     const storage = makeStorage();

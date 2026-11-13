@@ -5098,6 +5098,7 @@ export abstract class BaseMlsService implements IMlsService {
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64, {
       isEnded: () => this.stateWritesEnded === true,
+      holdsNoLead: refusesCommitsHere,
       endOnRefusal: options?.endsDocumentOnRefusal
         ? () => {
             this.stateWritesEnded = true;
@@ -5401,6 +5402,14 @@ export abstract class BaseMlsService implements IMlsService {
     for (;;) {
       if (this.owedSendBurns.has(groupId) || this.owedBurnInFlight.has(groupId)) {
         await this.settleOwedBurns(groupId);
+      }
+      // THE LAST SYNCHRONOUS STEP BEFORE THE RATCHET MOVES: a send begun while this document led may
+      // resume after a freeze handed the lock on (`tabLeader.ts`), on a copy now behind the leader's.
+      if (refusesCommitsHere()) {
+        console.warn(
+          `[MLS] ${groupId.slice(0, 8)}... a send reached the encrypt in a tab that no longer holds the leader copy - refused, nothing sealed`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
       }
       const frame = await this.encryptForSend(groupId, messageBytes);
       const epoch = sealedFrameEpoch(frame.sealed);

@@ -841,19 +841,20 @@
     if (connectivity.isOffline) return 'network';
     return textWaitOf(messageId) ?? null;
   });
-  const upload = $derived.by((): UploadView | null => {
+  /** The view of an upload this tab has not started (its turn, or another tab drains the queue). */
+  const notStartedView = $derived<UploadView>({
+    // Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
+    phase: connectivity.isOffline ? 'waiting' : 'queued',
+    loaded: 0,
+    total: 0,
+    attempt: 0,
+  });
+  /** The upload as this tab's memory knows it: the outbox's own view, from the derived status. */
+  const liveUpload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
-    // No view yet = the outbox has not started this entry (its turn, or the file is about to be
-    // read). Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
-    return (
-      uploadViewOf(messageId) ?? {
-        phase: connectivity.isOffline ? 'waiting' : 'queued',
-        loaded: 0,
-        total: 0,
-        attempt: 0,
-      }
-    );
+    // No view yet = the outbox has not started this entry (its turn, or the file is about to be read).
+    return uploadViewOf(messageId) ?? notStartedView;
   });
 
   /**
@@ -867,7 +868,7 @@
   /** The reason the STORED row gives for a retired attachment - the answer after a reload. */
   let storedUnsentReason = $state<UnsentReason | null>(null);
   const orphanCandidate = $derived(
-    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed }) &&
+    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!liveUpload, uploadFailed }) &&
       // The sender's own enqueue is still writing the row: "absent" is not yet an answer.
       !isOutboxEnqueueInflight(messageId)
   );
@@ -907,6 +908,15 @@
   );
   const orphanMedia = $derived(
     orphanCandidate && outboxHasEntry === false && storedUnsentReason === null
+  );
+  /**
+   * THE QUEUE, NOT THE MEMORY, SAYS WHETHER THE FILE IS STILL TO GO. A row whose derived status was
+   * lost (a stored page merged over it, a tab that never ran the send) but whose entry the durable
+   * queue still holds is a QUEUED upload, and says so - never the bare image placeholder, which reads
+   * as a picture loading and promises nothing (owner, web 1.6.9, 2026-11-10).
+   */
+  const upload = $derived(
+    liveUpload ?? (orphanCandidate && outboxHasEntry === true ? notStartedView : null)
   );
 
   /**

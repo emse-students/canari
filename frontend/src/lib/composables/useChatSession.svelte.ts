@@ -351,6 +351,10 @@ export function useChatSession() {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
+    // THE SOCKET GOES NOW, not with the reload: a lock released by a FREEZE (`tabLeader.ts`) reloads
+    // only once the page is resumed, and the frames queued meanwhile must reach the new leader, never
+    // this copy. The pause detaches the handlers, so nothing more is read or acknowledged here.
+    if (isLoggedIn) pauseConnectionImpl(ctx);
     if (typeof window === 'undefined') return;
     setTimeout(() => window.location.reload(), 50);
     // Said, so this document neither queues nor accepts the lead on its way out.
