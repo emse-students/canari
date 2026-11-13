@@ -8,7 +8,8 @@
  *  - a refusal that still expired the challenge the refused client was holding;
  *  - a client asking for a newer generator than this server knows being issued one anyway;
  *  - the replay ignoring the challenge's version, judging a v2 board on v1's mines (or the reverse);
- *  - a challenge stored with a version nobody can replay being judged on another's board.
+ *  - a challenge stored with a version nobody can replay being judged on another's board, or being
+ *    stored as rejected so that a roll-forward could not retry an honest solve.
  */
 import { BadRequestException, HttpException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
@@ -116,7 +117,7 @@ describe('the replay honours the challenge version', () => {
     expect(saved[saved.length - 1]?.status).toBe('rejected');
   }, 60_000);
 
-  it('refuses a challenge stored with a generator nobody can replay, and says so', async () => {
+  it('refuses a challenge stored with a generator nobody can replay, WITHOUT storing a verdict', async () => {
     const { service, challenges, saved } = build();
     challenges.findOne.mockResolvedValue(challengeRow(7));
     await expect(
@@ -125,6 +126,7 @@ describe('the replay honours the challenge version', () => {
         claimedDurationMs: 60_000,
       })
     ).rejects.toThrow(BadRequestException);
-    expect(saved[saved.length - 1]?.status).toBe('rejected');
+    // A rollback past a generator must not turn an honest in-flight solve into a permanent rejection.
+    expect(saved).toHaveLength(0);
   }, 60_000);
 });

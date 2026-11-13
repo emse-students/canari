@@ -18,8 +18,8 @@ Built and tested; what is owed is what a test cannot give.
   (a score names its challenge, and a challenge its `"generatorVersion"`, so the leaderboard SQL CAN filter
   or group on it). The owner's choice: keep one ranking, rank generator 2 only, or archive the old times.
   Not built: it changes what a rank means.
-- **The fall-back is never silent.** `generationReport.fellBack` is logged as a warning by the screen when
-  no layout the v2 solver clears was found in three starts; it read 0 in 800 boards. Count it on dev before
-  trusting the number.
+- **The fall-back is never silent.** `generationReport.fellBack` is logged as a warning by the screen AND by the
+  server's replay (`minesweeper generation fell back`) when no layout the v2 solver clears was found in three
+  starts; it read 0 in 800 boards. Count it on dev before trusting the number.
 
 [minesweeper](../frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13).

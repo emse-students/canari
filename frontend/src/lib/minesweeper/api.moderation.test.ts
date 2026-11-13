@@ -129,6 +129,13 @@ describe('starting a ranked game', () => {
     );
   });
 
+  it('refuses a generator newer than this build can make, however the server phrased it', async () => {
+    apiFetch.mockResolvedValue(ok({ challengeId: 'c1', seed: 's', generatorVersion: 99 }));
+    await expect(startMinesweeperChallenge()).rejects.toBeInstanceOf(
+      MinesweeperUpdateRequiredError
+    );
+  });
+
   it('keeps a ban and an update-required apart', async () => {
     apiFetch.mockResolvedValue(refused(403));
     await expect(startMinesweeperChallenge()).rejects.toBeInstanceOf(MinesweeperBannedError);

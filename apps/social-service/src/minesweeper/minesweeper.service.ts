@@ -233,10 +233,10 @@ export class MinesweeperService {
       challenge.generatorVersion < 1 ||
       challenge.generatorVersion > LATEST_GENERATOR_VERSION
     ) {
-      challenge.status = 'rejected';
-      await this.challenges.save(challenge);
+      // NOT stored as rejected: a server rolled back past a generator would otherwise turn every honest
+      // in-flight solve into a permanent loss, and the roll-forward could not retry it.
       this.logger.error(
-        `minesweeper reject unknown_generator user=${userId} id=${challengeId} generator=${challenge.generatorVersion}`
+        `minesweeper refuse unknown_generator user=${userId} id=${challengeId} generator=${challenge.generatorVersion}`
       );
       throw new BadRequestException('Challenge was issued with an unknown generator');
     }
@@ -251,6 +251,14 @@ export class MinesweeperService {
       },
       challenge.generatorVersion as GeneratorVersion
     );
+
+    if (result.generation?.fellBack) {
+      // Generator 2 found no layout its solver can clear, so this board may have needed a guess: it is
+      // accepted, and this line is the only way to learn how often (the client logs it too).
+      this.logger.warn(
+        `minesweeper generation fell back user=${userId} id=${challengeId} generator=${challenge.generatorVersion} score=${result.generation.score}`
+      );
+    }
 
     if (!result.ok) {
       challenge.status = 'rejected';

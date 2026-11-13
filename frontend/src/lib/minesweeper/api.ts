@@ -142,7 +142,15 @@ export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeR
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to start challenge');
   }
-  return res.json();
+  const challenge: MinesweeperChallengeResponse = await res.json();
+  // A generator this build cannot make: playing it as another would be replayed on a different board.
+  if (
+    challenge.generatorVersion !== undefined &&
+    challenge.generatorVersion > LATEST_GENERATOR_VERSION
+  ) {
+    throw new MinesweeperUpdateRequiredError();
+  }
+  return challenge;
 }
 
 /** Submits a move log for server-side replay verification. */

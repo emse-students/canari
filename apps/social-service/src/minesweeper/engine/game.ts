@@ -79,6 +79,8 @@ export interface GenerationReport {
   targetScore: number;
   /** Solvable mine swaps tried. */
   evals: number;
+  /** Search nodes the enumerations spent, against the generation's budget (for logging and tuning). */
+  searchNodes: number;
   reachedTarget: boolean;
   /**
    * True when no layout the v2 solver can clear was found, so the board is v1's and may need a
@@ -1109,6 +1111,16 @@ const V2_LOCAL_CAP = 16;
  * gives up at the same place and the server regenerates exactly what the client did.
  */
 const V2_ENUM_NODE_BUDGET = 200_000;
+/**
+ * v2: search nodes a whole generation may spend, over every enumeration it asks for. COUNTED like the
+ * one above, and for the same reason; it bounds the worst case, which no per-component cap does (300
+ * swaps x several components each). When it is spent, enumerations are refused and the climb stops
+ * with the best board it has. Measured on 600 boards: 72 000 at the median, 697 000 at the 99.9th
+ * percentile, 1.79 million at most, so this spares every ordinary board.
+ */
+const V2_GENERATION_NODE_BUDGET = 3_000_000;
+/** v2: cached enumerations kept at once; the cache is dropped whole past it (it only ever saves work). */
+const V2_CACHE_ENTRIES = 1000;
 /** v2: the reasoning score the climb aims for. */
 const V2_TARGET_SCORE = 60;
 /** v2: swaps tried before the climb settles for the best board it has. */
@@ -1141,8 +1153,20 @@ interface ComponentInfo {
   forcedSafe: number[];
 }
 
-/** Enumerations are keyed by the component's own constraints, so a cache is valid across boards. */
-type ComponentCache = Map<string, ComponentInfo>;
+/**
+ * What one generation shares between its solves: the enumerations already done, keyed by the
+ * component's own constraints (so they are valid across the swaps and the boards), and the search
+ * nodes it may still spend. Never reused across generations: the budget is per generation.
+ */
+export interface SolverContext {
+  components: Map<string, ComponentInfo>;
+  nodesLeft: number;
+}
+
+/** A fresh context for one generation (or one standalone solve). */
+export function createSolverContext(): SolverContext {
+  return { components: new Map(), nodesLeft: V2_GENERATION_NODE_BUDGET };
+}
 
 /** The solver's changed cells are recorded so the chord tier only re-reads numbers they touch. */
 interface TrackedSolveState extends SolveState {
@@ -1168,7 +1192,13 @@ function relaxedComponent(vars: number[]): ComponentInfo {
  * per mine count which cells can be mines and which can be safe. A branch dies as soon as one
  * equation cannot be met. Past the node budget the component is returned relaxed.
  */
-function enumerateComponent(vars: number[], constraints: readonly Constraint[]): ComponentInfo {
+function enumerateComponent(
+  vars: number[],
+  constraints: readonly Constraint[],
+  ctx: SolverContext
+): ComponentInfo {
+  const allowance = Math.min(V2_ENUM_NODE_BUDGET, ctx.nodesLeft);
+  if (allowance <= 0) return relaxedComponent(vars);
   const n = vars.length;
   const indexOf = new Map(vars.map((v, i) => [v, i]));
   const equations = constraints.map((c) => ({ count: c.count, placed: 0, open: c.vars.length }));
@@ -1186,7 +1216,7 @@ function enumerateComponent(vars: number[], constraints: readonly Constraint[]):
 
   const search = (i: number, mines: number): void => {
     if (exhausted) return;
-    if (++nodes > V2_ENUM_NODE_BUDGET) {
+    if (++nodes > allowance) {
       exhausted = true;
       return;
     }
@@ -1215,6 +1245,7 @@ function enumerateComponent(vars: number[], constraints: readonly Constraint[]):
     }
   };
   search(0, 0);
+  ctx.nodesLeft -= Math.min(nodes, allowance);
   if (exhausted) return relaxedComponent(vars);
 
   const forcedMines: number[] = [];
@@ -1250,13 +1281,14 @@ function constraintsByComponent(
 function enumerateCached(
   comp: number[],
   bucket: readonly Constraint[],
-  cache: ComponentCache
+  ctx: SolverContext
 ): ComponentInfo {
   const key = `${comp.join(',')}#${bucket.map((c) => `${c.vars.join(',')}:${c.count}`).join('|')}`;
-  let info = cache.get(key);
+  let info = ctx.components.get(key);
   if (!info) {
-    info = enumerateComponent(comp, bucket);
-    cache.set(key, info);
+    info = enumerateComponent(comp, bucket, ctx);
+    if (ctx.components.size >= V2_CACHE_ENTRIES) ctx.components.clear();
+    ctx.components.set(key, info);
   }
   return info;
 }
@@ -1405,14 +1437,14 @@ function subsetTier(sim: TrackedSolveState): boolean {
 }
 
 /** Tier 3: whatever every assignment of ONE frontier component agrees on, ignoring the mine total. */
-function localTier(sim: TrackedSolveState, cache: ComponentCache): boolean {
+function localTier(sim: TrackedSolveState, ctx: SolverContext): boolean {
   const { constraints, frontier } = collectConstraints(sim);
   if (frontier.length === 0) return false;
   const components = frontierComponents(constraints, frontier);
   const buckets = constraintsByComponent(components, constraints);
   for (let ci = 0; ci < components.length; ci++) {
     if (components[ci].length > V2_LOCAL_CAP) continue;
-    const info = enumerateCached(components[ci], buckets[ci], cache);
+    const info = enumerateCached(components[ci], buckets[ci], ctx);
     if (applyDeductions(sim, info.forcedMines, info.forcedSafe)) return true;
   }
   return false;
@@ -1423,14 +1455,14 @@ function localTier(sim: TrackedSolveState, cache: ComponentCache): boolean {
  * cells' ("the sea"); a count no combination can reach is impossible, and what only it allowed is forced.
  * Order independent: it looks at all components at once, unlike counting only a single-component frontier.
  */
-function globalTier(sim: TrackedSolveState, cache: ComponentCache): boolean {
+function globalTier(sim: TrackedSolveState, ctx: SolverContext): boolean {
   const { constraints, frontier, sea } = collectConstraints(sim);
   const remaining = sim.mineCount - sim.flagCount;
   if (remaining < 0) return false;
   const components = frontierComponents(constraints, frontier);
   const buckets = constraintsByComponent(components, constraints);
   const infos = components.map((comp, ci) =>
-    comp.length <= V2_ENUM_CAP ? enumerateCached(comp, buckets[ci], cache) : relaxedComponent(comp)
+    comp.length <= V2_ENUM_CAP ? enumerateCached(comp, buckets[ci], ctx) : relaxedComponent(comp)
   );
 
   /** Sums of mine counts reachable by `reach` plus one more component's `achievable`, capped at `remaining`. */
@@ -1459,13 +1491,13 @@ function globalTier(sim: TrackedSolveState, cache: ComponentCache): boolean {
   const mines: number[] = [];
   const safes: number[] = [];
   infos.forEach((info, i) => {
+    // What the OTHER components can add up to; a count of this one is possible when some such total,
+    // with the count, leaves the sea a number of mines it can hold.
+    const others = addComponent(before[i], after[i + 1]);
     const feasible = info.achievable.map((achievable, c) => {
       if (!achievable) return false;
-      for (let a = 0; a <= remaining; a++) {
-        if (!before[i][a]) continue;
-        for (let b = 0; a + b + c <= remaining; b++) {
-          if (after[i + 1][b] && seaFits(a + b + c)) return true;
-        }
+      for (let t = Math.max(0, remaining - sea.length - c); t <= remaining - c; t++) {
+        if (others[t]) return true;
       }
       return false;
     });
@@ -1504,7 +1536,7 @@ function globalTier(sim: TrackedSolveState, cache: ComponentCache): boolean {
 export function solveTiered(
   board: MinesweeperBoard,
   startIndex: number,
-  cache: ComponentCache
+  ctx: SolverContext
 ): TieredSolve {
   const sim = { ...cloneSolveState(board), changed: [] as number[] };
   revealFlood(sim, startIndex % board.width, Math.floor(startIndex / board.width));
@@ -1516,8 +1548,8 @@ export function solveTiered(
     if (sim.status !== 'playing' || isWon(sim)) break;
     if (chordTier(sim)) continue;
     if (subsetTier(sim)) counts.subset++;
-    else if (localTier(sim, cache)) counts.local++;
-    else if (globalTier(sim, cache)) counts.global++;
+    else if (localTier(sim, ctx)) counts.local++;
+    else if (globalTier(sim, ctx)) counts.global++;
     else break;
   }
   return {
@@ -1557,11 +1589,11 @@ function recomputeAdjacentsAround(board: MinesweeperBoard, swapped: readonly num
  * RNG, the budget is a count, and the solver's cache never changes an answer, only its cost.
  */
 function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
-  const cache: ComponentCache = new Map();
+  const ctx = createSolverContext();
   let solve: TieredSolve | null = null;
   for (let attempt = 0; attempt < V2_START_ATTEMPTS; attempt++) {
     placeMines(board, safeIndex);
-    solve = solveTiered(board, safeIndex, cache);
+    solve = solveTiered(board, safeIndex, ctx);
     if (solve.won) break;
   }
   board.minesPlaced = true;
@@ -1571,6 +1603,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
       score: solve?.score ?? 0,
       targetScore: V2_TARGET_SCORE,
       evals: 0,
+      searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
       reachedTarget: false,
       fellBack: true,
     };
@@ -1584,7 +1617,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
 
   let score = solve.score;
   let evals = 0;
-  while (evals < V2_MAX_EVALS && score < V2_TARGET_SCORE) {
+  while (evals < V2_MAX_EVALS && score < V2_TARGET_SCORE && ctx.nodesLeft > 0) {
     evals++;
     const mineSlot = Math.floor(rng() * mines.length);
     const from = mines[mineSlot];
@@ -1601,7 +1634,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
     board.cells[from].mine = false;
     board.cells[to].mine = true;
     recomputeAdjacentsAround(board, [from, to]);
-    const tried = solveTiered(board, safeIndex, cache);
+    const tried = solveTiered(board, safeIndex, ctx);
     if (tried.won && tried.score >= score) {
       score = tried.score;
       mines[mineSlot] = to;
@@ -1616,6 +1649,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
     score,
     targetScore: V2_TARGET_SCORE,
     evals,
+    searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
     reachedTarget: score >= V2_TARGET_SCORE,
     fellBack: false,
   };
@@ -1623,8 +1657,10 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
 
 /** Places the mines with the generator the board was created for. */
 function placeMinesFor(board: MinesweeperBoard, safeIndex: number): void {
-  if (board.generator === 2) placeMinesV2(board, safeIndex);
-  else placeMines(board, safeIndex);
+  // An unknown version is an error, never "the nearest one": the server would replay another board.
+  if (board.generator === 1) placeMines(board, safeIndex);
+  else if (board.generator === 2) placeMinesV2(board, safeIndex);
+  else throw new Error(`unknown minesweeper generator version ${String(board.generator)}`);
 }
 
 function revealAllMines(board: MinesweeperBoard): void {
@@ -1689,6 +1725,15 @@ export function remainingMines(board: MinesweeperBoard): number {
   return Math.max(0, board.mineCount - board.flagCount);
 }
 
+/** The verdict of a replay, with what generation did so the server can log a fall-back it would otherwise swallow. */
+export interface VerifyResult {
+  ok: boolean;
+  status: GameStatus;
+  reason?: string;
+  /** Null when no board was generated (the move list was refused before its first reveal). */
+  generation?: GenerationReport | null;
+}
+
 /**
  * Replays `moves` on a fresh board generated from `seed` by the named `generator` (the one the
  * challenge was issued with; 1 for a challenge that predates versions).
@@ -1699,7 +1744,7 @@ export function verifySolve(
   moves: ReadonlyArray<MinesweeperMove>,
   config: MinesweeperConfig = CHALLENGE,
   generator: GeneratorVersion = 1
-): { ok: boolean; status: GameStatus; reason?: string } {
+): VerifyResult {
   if (moves.length === 0) {
     return { ok: false, status: 'playing', reason: 'no_moves' };
   }
@@ -1711,14 +1756,26 @@ export function verifySolve(
   for (const move of moves) {
     if (board.status !== 'playing') break;
     if (!Number.isInteger(move.x) || !Number.isInteger(move.y)) {
-      return { ok: false, status: board.status, reason: 'invalid_coord' };
+      return {
+        ok: false,
+        status: board.status,
+        reason: 'invalid_coord',
+        generation: board.generationReport,
+      };
     }
     if (move.type === 'reveal') revealCell(board, move.x, move.y);
     else if (move.type === 'flag') toggleFlag(board, move.x, move.y);
-    else return { ok: false, status: board.status, reason: 'invalid_move' };
+    else
+      return {
+        ok: false,
+        status: board.status,
+        reason: 'invalid_move',
+        generation: board.generationReport,
+      };
   }
 
-  if (board.status === 'won') return { ok: true, status: 'won' };
-  if (board.status === 'lost') return { ok: false, status: 'lost', reason: 'hit_mine' };
-  return { ok: false, status: board.status, reason: 'not_cleared' };
+  const generation = board.generationReport;
+  if (board.status === 'won') return { ok: true, status: 'won', generation };
+  if (board.status === 'lost') return { ok: false, status: 'lost', reason: 'hit_mine', generation };
+  return { ok: false, status: board.status, reason: 'not_cleared', generation };
 }

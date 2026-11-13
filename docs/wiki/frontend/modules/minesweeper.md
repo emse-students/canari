@@ -270,6 +270,10 @@ measuring it: not the count rule but the 16-cell enumeration cap - a frontier th
 component was never enumerated. v2 enumerates up to 40 cells, combines the components' counts with the mines
 left (`globalTier`), and counts search nodes (200 000 per component, never a clock, so every machine stops at
 the same place and the server reproduces the client). At a cap of 40 both orders cleared 100 boards of 100.
+A whole generation has its own node budget (3 million: 72 000 at the median, 697 000 at the 99.9th percentile and
+1.79 million at most over 600 boards), because no per-component cap bounds 300 swaps x several components each,
+and the server runs this inside a `submit`; spent, enumerations are refused and the climb stops with the best
+board it has. The enumerations are cached by the component's own constraints (dropped whole past 1000 entries).
 
 **Measured** (the real generator, 600 boards, varied first clicks): 599 reach the target within the 300-swap
 budget, none fall back, the swaps needed are 117 at the median, 178 at the 90th percentile and 231 at the
@@ -292,8 +296,10 @@ this one, which sends nothing - is refused `426` with `code: generator_update_re
 version, BEFORE its open challenge is expired. The screen reads the typed `MinesweeperUpdateRequiredError`,
 says so (`minesweeper_update_required`) and plays an unranked game; it never reads a message. A challenge
 already issued with generator 1 is still replayed with generator 1, for its two hours, and a stored version
-the server does not know rejects the submit and says so (`unknown_generator`) rather than judging an honest
-solve on another board. A casual (unranked) game uses the latest generator: nothing is submitted, so nothing
+the server does not know refuses the submit and says so (`unknown_generator`) rather than judging an honest
+solve on another board - WITHOUT storing a rejection, so a server rolled back past a generator can retry it once rolled
+forward. The engine throws on a version it does not know, and the client refuses one newer than it can make. The
+replay hands back `generation`, and the service logs a warning when generator 2 fell back to an unproven layout. A casual (unranked) game uses the latest generator: nothing is submitted, so nothing
 needs replaying ([legacy-compatibility](../../legacy-compatibility.md#a-tolerated-degradation-ranked-minesweeper-for-a-build-older-than-generator-2-owner-2026-11-13)).
 
 **What is open.** Generation is still synchronous on the main thread (the screen paints the pressed cell first);

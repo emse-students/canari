@@ -8,6 +8,7 @@ import {
   verifySolve,
   hashSeedToU32,
   solveTiered,
+  createSolverContext,
   LATEST_GENERATOR_VERSION,
   DEFAULT_CONFIG,
   CHALLENGE,
@@ -309,7 +310,7 @@ describe('generator v2 (2026-11-13)', () => {
       expect(report.fellBack).toBe(false);
       expect(report.reachedTarget).toBe(true);
       // Solved again from the finished layout, so the claim is about the board and not the climb.
-      const solve = solveTiered(board, y * board.width + x, new Map());
+      const solve = solveTiered(board, y * board.width + x, createSolverContext());
       expect(solve.won).toBe(true);
       expect(solve.score).toBe(report.score);
       expect(solve.score).toBeGreaterThanOrEqual(report.targetScore);
@@ -335,5 +336,37 @@ describe('generator v2 (2026-11-13)', () => {
     });
     expect(verifySolve(seed, moves, CHALLENGE, 2).ok).toBe(true);
     expect(verifySolve(seed, moves, CHALLENGE, 1).ok).toBe(false);
+  }, 60_000);
+
+  it('fails loudly on a generator version it does not know, never playing it as another', () => {
+    const board = createBoard(CHALLENGE, 'seed', 3 as never);
+    expect(() => revealCell(board, 0, 0)).toThrow(/unknown minesweeper generator version 3/);
+  });
+
+  it('a spent search budget only makes the solver deduce less, never wrongly', () => {
+    const [seed, x, y] = fixtures[1];
+    const board = createBoard(CHALLENGE, seed, 2);
+    revealCell(board, x, y);
+    const full = solveTiered(board, y * board.width + x, createSolverContext());
+    const spent = createSolverContext();
+    spent.nodesLeft = 0;
+    const starved = solveTiered(board, y * board.width + x, spent);
+    expect(full.won).toBe(true);
+    // Refusing every enumeration cannot clear MORE than enumerating can.
+    expect(starved.won && starved.score > full.score).toBe(false);
+  }, 30_000);
+
+  it('verifySolve hands back what generation did, so the server can log a fall-back', () => {
+    const [seed, x, y] = fixtures[0];
+    const made = createBoard(CHALLENGE, seed, 2);
+    revealCell(made, x, y);
+    const moves: Array<{ type: 'reveal'; x: number; y: number }> = [{ type: 'reveal', x, y }];
+    made.cells.forEach((c, i) => {
+      if (!c.mine) moves.push({ type: 'reveal', x: i % made.width, y: Math.floor(i / made.width) });
+    });
+    const verdict = verifySolve(seed, moves, CHALLENGE, 2);
+    expect(verdict.generation).toMatchObject({ fellBack: false, reachedTarget: true });
+    expect(verdict.generation!.searchNodes).toBeGreaterThan(0);
+    expect(verifySolve('seed', []).generation).toBeUndefined();
   }, 60_000);
 });
