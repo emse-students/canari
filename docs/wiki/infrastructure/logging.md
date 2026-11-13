@@ -92,6 +92,11 @@ asserts all three) keeps warnings and errors. Both settings are properties of th
 reach it at the next ORDINARY deploy, which recreates a `pinned` service whose definition changed
 (a few seconds of that service); nothing recreates it for this alone (rule above).
 
+**Postgres** logs every checkpoint by default (`log_checkpoints`, on), a routine event several times an
+hour. The `postgres` service of the same three files passes `command: ["postgres", "-c",
+"log_checkpoints=off"]` (the official image's entrypoint keeps initialising the cluster, `postgres`
+being the first word); `compose-logging.test.sh` asserts it. Same deploy-time effect as Garage's.
+
 ## The 90-day ceiling (2026-10-16)
 
 **The promise**, `frontend/src/routes/legal/privacy/+page.svelte`: *"Logs techniques (IP,

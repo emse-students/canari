@@ -158,6 +158,12 @@ for f in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.de
   block="$(awk '/^  garage:[[:space:]]*$/ { on = 1; next } on && /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { exit } on { print }' "$REPO/$f")"
   if grep -Eq '^      RUST_LOG: warn[[:space:]]*$' <<<"$block"; then ok "$f: garage logs warn and above only"; else fail "$f: the garage service does not set RUST_LOG: warn"; fi
 done
+# Postgres logs every checkpoint unless told not to: the same three files pass the flag, and the
+# image's own entrypoint is kept (`postgres` first, so the docker-entrypoint still initialises).
+for f in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml infrastructure/local/docker-compose.yml; do
+  block="$(awk '/^  postgres:[[:space:]]*$/ { on = 1; next } on && /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { exit } on { print }' "$REPO/$f")"
+  if grep -Fxq '    command: ["postgres", "-c", "log_checkpoints=off"]' <<<"$block"; then ok "$f: postgres does not log checkpoints"; else fail "$f: the postgres service does not pass log_checkpoints=off"; fi
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
