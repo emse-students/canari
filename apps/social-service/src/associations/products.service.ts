@@ -54,7 +54,7 @@ import {
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
-import { assertMembersOnlyGateable } from './members-only-gate';
+import { assertMembersOnlyGateable, lockAndAssertMembersOnlyGateable } from './members-only-gate';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
@@ -1398,6 +1398,24 @@ export class ProductsService {
         await this.saveTierWithDerivedKey(product, asso.slug, asso.cotisationMode, dto.name)
       );
     }
+    if (product.membersOnly && (product.requiredTags ?? []).length === 0) {
+      // A gated save is judged AGAIN under the association row's SHARE lock and written in the same
+      // transaction, so a clear of the cotisation mode cannot slip between the two
+      // (`assertCotisationModeClearable`, the other half of the order).
+      return this.toSafeProduct(
+        await this.productRepo.manager.transaction(async (manager) => {
+          await lockAndAssertMembersOnlyGateable(
+            manager,
+            associationId,
+            true,
+            null,
+            this.logger,
+            'product'
+          );
+          return manager.save(AssociationProduct, product);
+        })
+      );
+    }
     return this.toSafeProduct(await this.productRepo.save(product));
   }
 
@@ -1554,7 +1572,8 @@ export class ProductsService {
     const nextMembersOnly = dto.membersOnly ?? product.membersOnly;
     const nextTags = dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags;
     const wasGated = product.membersOnly && (product.requiredTags ?? []).length === 0;
-    if (nextMembersOnly && (nextTags ?? []).length === 0 && !wasGated) {
+    const turnsGateOn = nextMembersOnly && (nextTags ?? []).length === 0 && !wasGated;
+    if (turnsGateOn) {
       const asso = await this.assoRepo.findOne({ where: { id: associationId } });
       if (!asso) throw new NotFoundException('Association not found');
       assertMembersOnlyGateable(asso, nextMembersOnly, nextTags, this.logger, 'product');
@@ -1637,6 +1656,23 @@ export class ProductsService {
       dto.variantKey !== undefined &&
       (dto.variantKey ?? null) !== product.variantKey;
     if (!retags) {
+      if (turnsGateOn) {
+        // Judged again under the association row's SHARE lock, written in the same transaction (see create).
+        return this.toSafeProduct(
+          await this.productRepo.manager.transaction(async (manager) => {
+            await lockAndAssertMembersOnlyGateable(
+              manager,
+              associationId,
+              true,
+              nextTags ?? null,
+              this.logger,
+              'product'
+            );
+            await applyEdits(product, manager);
+            return manager.save(AssociationProduct, product);
+          })
+        );
+      }
       await applyEdits(product, this.productRepo.manager);
       return this.toSafeProduct(await this.productRepo.save(product));
     }
@@ -1649,6 +1685,16 @@ export class ProductsService {
     // the tag names are all read INSIDE, after the lock.
     return this.productRepo.manager.transaction(async (manager) => {
       await lockAssociationTiers(manager, associationId);
+      if (turnsGateOn) {
+        await lockAndAssertMembersOnlyGateable(
+          manager,
+          associationId,
+          true,
+          nextTags ?? null,
+          this.logger,
+          'product'
+        );
+      }
       this.logger.debug(`[COTISATION] tier retag holds association=${associationId.slice(0, 8)}`);
       const current = await manager.findOne(AssociationProduct, {
         where: { id: productId, associationId },
