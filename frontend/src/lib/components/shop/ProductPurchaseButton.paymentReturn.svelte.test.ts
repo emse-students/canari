@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   confirm: null as unknown as (checkoutId: string) => Promise<{ status: string }>,
 }));
 const opened = vi.hoisted(() => [] as string[]);
+const nav = vi.hoisted(() => ({ result: null as unknown as () => Promise<void> }));
 
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
   activePaymentProvider: { current: 'test' },
@@ -27,7 +28,7 @@ vi.mock('$lib/utils/checkoutCallbacks', () => ({
 vi.mock('$lib/utils/openExternal', () => ({
   navigateExternal: (url: string) => {
     opened.push(url);
-    return Promise.resolve();
+    return nav.result();
   },
 }));
 vi.mock('$lib/associations/api', async (orig) => ({
@@ -52,6 +53,7 @@ const mounted: (() => void)[] = [];
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   opened.length = 0;
+  nav.result = () => Promise.resolve();
   api.checkout = () =>
     Promise.resolve({ checkoutUrl: 'https://lydia.test/pay/1', checkoutId: 'c1' });
   api.confirm = vi.fn(() => Promise.resolve({ status: 'open' }));
@@ -132,5 +134,36 @@ describe('the purchase button after handing the payer to Lydia', () => {
     await settle();
     expect(text()).toContain(m.shop_payment_in_progress_note());
     expect(text()).not.toContain(m.shop_return_membership_paid());
+  });
+
+  it('keeps the watch when the hand-off rejects after the browser opened', async () => {
+    nav.result = () => Promise.reject(new Error('openUrl failed'));
+    await render();
+    await buy();
+    expect(text()).toContain(m.shop_payment_in_progress_note());
+    api.confirm = vi.fn(() => Promise.resolve({ status: 'paid' }));
+    await leaveAndReturn();
+    expect(text()).toContain(m.shop_return_membership_paid());
+  });
+
+  it('keeps the watch when the app returns before the hand-off call resolves', async () => {
+    let resolveNav!: () => void;
+    nav.result = () => new Promise<void>((done) => (resolveNav = done));
+    api.confirm = vi.fn(() => Promise.resolve({ status: 'paid' }));
+    await render();
+    await buy();
+    await leaveAndReturn();
+    resolveNav();
+    await settle();
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+    expect(text()).toContain(m.shop_return_membership_paid());
+  });
+
+  it('offers no second purchase of a product that cannot be repeated once it is paid', async () => {
+    await render();
+    await buy();
+    api.confirm = vi.fn(() => Promise.resolve({ status: 'paid' }));
+    await leaveAndReturn();
+    expect(document.querySelector<HTMLButtonElement>('button')!.disabled).toBe(true);
   });
 });

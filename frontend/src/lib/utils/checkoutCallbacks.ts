@@ -21,7 +21,7 @@ export function isMobileTauri(): boolean {
 /** The host of the checkout return deep link (`fr.emse.canari://payment/success`), and the only one. */
 export const CHECKOUT_RETURN_HOST = 'payment';
 
-function checkoutDeepLink(path: 'success' | 'cancel', query: string): string {
+export function checkoutDeepLink(path: 'success' | 'cancel', query: string): string {
   const q = query ? (query.startsWith('?') ? query : `?${query}`) : '';
   return appDeepLink(`${CHECKOUT_RETURN_HOST}/${path}${q}`);
 }

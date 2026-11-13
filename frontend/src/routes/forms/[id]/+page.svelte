@@ -670,11 +670,11 @@
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
       if (res.checkoutUrl) {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(res.checkoutUrl);
         // On a native app the page stays behind the browser: it says the payment is in progress,
         // keeps Lydia's page to reopen, and reads the answer when the payer comes back. On the web
-        // the window has already left for Lydia, and the return page takes over.
+        // the window has already left for Lydia, and the return page takes over. The watch starts
+        // BEFORE the hand-off: the browser may open and the call still reject, or resolve after the
+        // app already returned to the screen - neither may lose it.
         if (res.submissionId) {
           Log.d('FormView', 'payer handed to Lydia, the answer waits for the return');
           paymentRetry = null;
@@ -684,6 +684,8 @@
         } else {
           console.warn('[FormView] a checkout came back without its submission id');
         }
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
         // The previous request of this answer was found PAID while settling it: no new one.

@@ -6,6 +6,8 @@ import {
 } from '$lib/associations/api';
 import { createOnceReader, readUnlessThrottled, type OnceReader } from '$lib/forms/checkoutReturn';
 import { refusalStatus } from '$lib/utils/apiRefusal';
+import { checkoutDeepLink, formPaymentReturnDeepLink } from '$lib/utils/checkoutCallbacks';
+import { paymentReturnSubmissionId } from '$lib/forms/checkoutReturn';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -137,3 +139,33 @@ export const CHECKOUT_RETURN_PARAMS = [
   'checkout_id',
   'association_id',
 ] as const;
+
+/**
+ * The app's own link to a shop purchase's return (`fr.emse.canari://payment/success?purchase_success=1&...`),
+ * for the page in a BROWSER offering "Ouvrir Canari": a tap is a gesture, which a redirect is not.
+ * Only the attempt's own parameters are carried (`shopReturnPath` filters them).
+ */
+export function shopPaymentReturnDeepLink(params: URLSearchParams): string {
+  return checkoutDeepLink('success', shopReturnPath('purchase_success', params).split('?')[1]);
+}
+
+/**
+ * The app's link to the payment a login's `returnTo` is the return of - a paid form
+ * (`/forms/success?submission_id=...`) or a shop purchase (`/shop?purchase_success=1&...` naming its
+ * attempt) - or null. The browser a payer was left in has no session: the page says where the
+ * payment went and offers the app.
+ */
+export function paymentReturnAppLink(returnTo: string): string | null {
+  const submissionId = paymentReturnSubmissionId(returnTo);
+  if (submissionId) return formPaymentReturnDeepLink(submissionId);
+  try {
+    const url = new URL(returnTo, 'https://canari.invalid');
+    if (url.pathname.replace(/\/$/, '') !== '/shop' || !url.searchParams.has('purchase_success'))
+      return null;
+    return checkoutReturnTarget(url.searchParams)
+      ? shopPaymentReturnDeepLink(url.searchParams)
+      : null;
+  } catch {
+    return null;
+  }
+}

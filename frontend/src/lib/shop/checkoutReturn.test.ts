@@ -8,6 +8,7 @@ import {
   checkoutReturnTarget,
   checkoutReturnView,
   createShopCheckoutReader,
+  paymentReturnAppLink,
   shopReturnPath,
 } from './checkoutReturn';
 
@@ -98,5 +99,25 @@ describe('createShopCheckoutReader', () => {
     release({ status: 'declined' });
     await expect(first).resolves.toBe('declined');
     expect(calls).toBe(1);
+  });
+});
+
+describe('paymentReturnAppLink', () => {
+  it('links the app to a shop return that names its attempt, and to a form return', () => {
+    const shop = paymentReturnAppLink(
+      '/shop?purchase_success=1&productId=p1&checkout_id=c1&association_id=a1&evil=x'
+    )!;
+    expect(shop).toContain('payment/success?');
+    expect(shop).toContain('checkout_id=c1');
+    expect(shop).not.toContain('evil');
+    expect(paymentReturnAppLink('/forms/success?submission_id=s1')).toContain('submission_id=s1');
+  });
+
+  it('is null for a shop path naming no attempt, a cancel, or any other page', () => {
+    expect(paymentReturnAppLink('/shop?purchase_success=1&productId=p1')).toBeNull();
+    expect(
+      paymentReturnAppLink('/shop?purchase_cancel=1&checkout_id=c&association_id=a&productId=p')
+    ).toBeNull();
+    expect(paymentReturnAppLink('/posts')).toBeNull();
   });
 });

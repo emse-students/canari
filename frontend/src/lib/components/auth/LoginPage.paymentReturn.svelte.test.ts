@@ -65,6 +65,16 @@ describe('LoginPage in front of a payment return', () => {
     );
   });
 
+  it('does the same in front of a shop purchase return, carrying its attempt', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    await mountAt(
+      `/login?returnTo=${encodeURIComponent('/shop?purchase_success=1&productId=p1&checkout_id=c1&association_id=a1')}`
+    );
+    const href = document.querySelector('[data-payment-return] a')?.getAttribute('href') ?? '';
+    expect(href.startsWith('fr.emse.canari://payment/success?')).toBe(true);
+    expect(new URLSearchParams(href.split('?')[1]).get('checkout_id')).toBe('c1');
+  });
+
   it('says nothing of a payment in front of any other page', async () => {
     await mountAt(`/login?returnTo=${encodeURIComponent('/forms/f1')}`);
     expect(document.querySelector('[data-payment-return]')).toBeNull();

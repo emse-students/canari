@@ -17,6 +17,7 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -62,8 +63,12 @@
           : m.shop_product_type_buy())
   );
 
+  /** Paid just now and the product cannot be bought twice: no "Cotiser" offered after a payment. */
+  const boughtAndFinal = $derived(settled === 'paid' && !product.allowRepeatPurchase);
+
   const isDisabled = $derived(
     disabled ||
+      boughtAndFinal ||
       checkingOut ||
       (product.allowCustomAmount &&
         product.amountCents === null &&
@@ -149,9 +154,10 @@
         payerEmail
       );
       const { navigateExternal } = await import('$lib/utils/openExternal');
-      await navigateExternal(res.checkoutUrl);
       if (isMobileTauri()) {
-        Log.d('ProductPurchase', 'handed to Lydia, watching for the return to the app');
+        // BEFORE the hand-off: the browser may open and the call still reject, or resolve after the
+        // app already returned to the screen - neither may lose the watch.
+        Log.d('ProductPurchase', 'handing to Lydia, watching for the return to the app');
         pending = {
           checkoutUrl: res.checkoutUrl,
           reader: createShopCheckoutReader({
@@ -161,6 +167,7 @@
           }),
         };
       }
+      await navigateExternal(res.checkoutUrl);
     } catch (err) {
       // A provider refusal (Lydia: blocked venue, bad phone...) is an answer about THIS purchase and
       // carries a readable reason; every other failure keeps the generic line.
@@ -199,13 +206,9 @@
 {#if pending}
   <div class="mt-2 flex flex-col gap-1.5 text-xs" role="status" data-purchase-in-progress>
     <p class="text-amber-warn-text font-medium">{m.shop_payment_in_progress_note()}</p>
-    <button
-      type="button"
-      class="text-accent-text self-start font-bold underline"
-      onclick={() => void reopenCheckout()}
-    >
+    <Button variant="link" class="self-start" onclick={() => void reopenCheckout()}>
       {m.form_view_payment_reopen()}
-    </button>
+    </Button>
   </div>
 {:else if settled}
   <p class="text-text-muted mt-2 text-xs" role="status" data-purchase-outcome={settled}>
