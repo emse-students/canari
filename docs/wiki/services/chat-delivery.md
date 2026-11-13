@@ -1917,6 +1917,15 @@ reports. Tests: `push.controller.unavailable.spec.ts` (server, including that it
 `PushNotificationService.unavailable.test.ts` (client - in its own file, because `pushAttempted` is
 module state that latches).
 
+**A status the registration gets is an answer, and the ladder obeys it** (2026-11-13). Each attempt
+reads the session's CURRENT token (`PushAuth`, built once as `sessionPushAuth`), never one captured
+when the service started - the ladder lasts minutes and outlives an access token. A `401` is renewed
+once and sent again through the one 401 rule (`renewOn401.ts`); a `401` on the renewed token, or a
+session with no token left to renew, ends the ladder as `unauthorized` and sends NO report (it would
+be refused with the same bearer). Any other `4xx` ends it as `refused`, reported. Only a `5xx`, a
+transport failure or a renewal that got no verdict is retried. Tests:
+`PushNotificationService.refusal.test.ts`.
+
 #### Transport — single gateway (FCM)
 
 Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
