@@ -135,8 +135,8 @@ if grep -Eq '^[[:space:]]*with_registry_retry "pinned image pull" dc pull ' "$DE
 else
   fail "the pinned pull does not go through with_registry_retry"
 fi
-pull_line="$(grep -n 'with_registry_retry "pinned image pull"' "$DEPLOY" | head -1 | cut -d: -f1)"
-up_line="$(grep -nE '^[[:space:]]*dc up ' "$DEPLOY" | head -1 | cut -d: -f1)"
+pull_line="$(grep -m1 -n 'with_registry_retry "pinned image pull"' "$DEPLOY" | cut -d: -f1)"
+up_line="$(grep -m1 -nE '^[[:space:]]*dc up ' "$DEPLOY" | cut -d: -f1)"
 if [ -n "$pull_line" ] && [ -n "$up_line" ] && [ "$pull_line" -lt "$up_line" ]; then
   ok "and it runs before the first up of the deploy"
 else
