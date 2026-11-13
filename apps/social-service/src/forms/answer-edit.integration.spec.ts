@@ -134,6 +134,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,
+        noteLydiaRequestIssued: async () => undefined,
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
