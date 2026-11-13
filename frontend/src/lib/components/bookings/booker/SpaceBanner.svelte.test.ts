@@ -12,6 +12,10 @@ const shareTextOut = vi.hoisted(() => vi.fn());
 const copyPublicShareLink = vi.hoisted(() => vi.fn());
 const showToast = vi.hoisted(() => vi.fn());
 
+const goto = vi.hoisted(() => vi.fn());
+const savedUserId = vi.hoisted(() => vi.fn());
+vi.mock('$app/navigation', () => ({ goto: (...a: unknown[]) => goto(...a) }));
+vi.mock('$lib/stores/user', () => ({ getSavedUserId: () => savedUserId() }));
 vi.mock('$app/paths', () => ({ resolve: (p: string) => p }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: (...a: unknown[]) => showToast(...a) }));
 vi.mock('$lib/utils/copyShareLink', () => ({
@@ -56,6 +60,10 @@ beforeEach(() => {
   shareTextOut.mockReset();
   copyPublicShareLink.mockReset();
   showToast.mockReset();
+  goto.mockReset();
+  savedUserId.mockReset();
+  savedUserId.mockReturnValue('me-account');
+  sessionStorage.clear();
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 afterEach(() => {
@@ -115,5 +123,29 @@ describe('SpaceBanner', () => {
     await tick();
     expect(showToast).toHaveBeenCalledWith(m.share_out_failed(), 'error');
     expect(copyPublicShareLink).not.toHaveBeenCalled();
+  });
+
+  it('shows nobody when the space names no contact', () => {
+    render({ contact: null });
+    expect(document.querySelector('[data-testid="space-contact"]')).toBeNull();
+    expect(named(m.bookings_space_contact_button())).toBeUndefined();
+  });
+
+  it('names the person responsible and asks the chat page for the DM with them', () => {
+    render({ contact: { userId: 'resp-account', displayName: 'Camille Test' } });
+    expect(document.querySelector('[data-testid="space-contact"]')?.textContent).toContain(
+      m.bookings_space_contact_label({ name: 'Camille Test' })
+    );
+    named(m.bookings_space_contact_button())!.click();
+    expect(JSON.parse(sessionStorage.getItem('canari_pending_direct_peer')!)).toEqual({
+      owner: 'me-account',
+      peer: 'resp-account',
+    });
+    expect(goto).toHaveBeenCalledWith('/chat');
+  });
+
+  it('shows no button when the reader is the person responsible', () => {
+    render({ contact: { userId: 'me-account', displayName: 'Me Test' } });
+    expect(document.querySelector('[data-testid="space-contact"]')).toBeNull();
   });
 });
