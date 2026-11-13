@@ -164,6 +164,39 @@ for (const port of ports) {
 }
 if (!adminerService) fail('the adminer service was not found in the production compose');
 
+// THE IMAGE IS UPSTREAM'S, WITH `libpq` UPGRADED, BUILT BY THE RELEASE (owner, 2026-11-13): the scan reads
+// the built image, so production must run exactly that one. Temporary - docs/wiki/legacy-compatibility.md.
+const ownImage = /^\s*image:\s*\$\{REGISTRY:-ghcr\.io\}\/\$\{IMAGE_PREFIX:-emse-students\/canari\}\/adminer:\$\{TAG:-latest\}\s*$/m;
+if (!ownImage.test(adminerService)) {
+  fail('production does not run the adminer image this repository builds (ghcr .../canari/adminer:${TAG})');
+}
+if (!/^\s*dockerfile:\s*infrastructure\/local\/Dockerfile\.adminer\s*$/m.test(adminerService)) {
+  fail('the production adminer service is not built from infrastructure/local/Dockerfile.adminer');
+}
+if (!/^\s*canari\.deploy\.replace:\s*exclusive\s*$/m.test(adminerService)) {
+  fail('an image built here is replaced by every release: the adminer service must declare `exclusive`');
+}
+if (!/^\s*-\s*\.\/adminer\/php-hardening\.ini:\/usr\/local\/etc\/php\/conf\.d\/zz-hardening\.ini:ro\s*$/m.test(adminerService)) {
+  fail('the adminer service no longer mounts php-hardening.ini read-only');
+}
+const adminerDockerfile = read('infrastructure', 'local', 'Dockerfile.adminer')
+  .split(/\r?\n/)
+  .filter((l) => l.trim() && !l.trim().startsWith('#'));
+const from = adminerDockerfile.filter((l) => /^FROM\s/i.test(l));
+if (from.length !== 1 || !/^FROM\s+adminer:[\w.-]+@sha256:[0-9a-f]{64}$/.test(from[0])) {
+  fail(`Dockerfile.adminer must have ONE stage, FROM upstream adminer pinned by tag and digest (got ${from.join(' | ')})`);
+}
+const runs = adminerDockerfile.filter((l) => /^RUN\s/i.test(l));
+if (runs.length !== 1 || runs[0] !== 'RUN apk upgrade --no-cache libpq') {
+  fail(`Dockerfile.adminer may only upgrade libpq (got ${runs.join(' | ')})`);
+}
+if (adminerDockerfile.at(-1) !== 'USER adminer') {
+  fail('Dockerfile.adminer must end as the user the upstream image runs as, `USER adminer`');
+}
+if (!/\[adminer\]="\.\/infrastructure\/local\/Dockerfile\.adminer"/.test(read('.github', 'workflows', 'build.yml'))) {
+  fail('build.yml does not build Dockerfile.adminer, so no release pushes the image production runs');
+}
+
 if (failures.length > 0) {
   console.error(`adminer-route: ${failures.length} problem(s)\n`);
   for (const f of failures) console.error(`  FAIL  ${f}`);

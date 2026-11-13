@@ -27,8 +27,15 @@ done
 echo "every Dockerfile's SHIPPED stage is scanned, and no builder stage is:"
 for df in "$repo_root"/infrastructure/local/Dockerfile.*; do
   last="$(awk 'toupper($1) == "FROM" { ref = $2 } END { print ref }' "$df")"
-  if grep -qxF "$last" <<< "$list"; then ok "$last (${df##*/})"; else ko "$last, the runtime base of ${df##*/}, is not scanned"; fi
+  built="dockerfile:infrastructure/local/${df##*/}"
+  if grep -qxF "$last" <<< "$list"; then ok "$last (${df##*/})"
+  elif grep -qxF "$built" <<< "$list"; then ok "$built is built and scanned (its shipped stage upgrades packages)"
+  else ko "$last, the runtime base of ${df##*/}, is not scanned, and neither is the image it builds"; fi
 done
+echo "the patched adminer is scanned as BUILT, never as the upstream base it upgrades:"
+adminer_base="$(awk 'toupper($1) == "FROM" { ref = $2 } END { print ref }' "$repo_root/infrastructure/local/Dockerfile.adminer")"
+if grep -qxF "dockerfile:infrastructure/local/Dockerfile.adminer" <<< "$list"; then ok "Dockerfile.adminer is a build target"; else ko "Dockerfile.adminer is not built for the scan"; fi
+if grep -qxF "$adminer_base" <<< "$list"; then ko "$adminer_base, the base the patch upgrades, is scanned instead of the image production runs"; else ok "the upstream adminer base is not a target"; fi
 if grep -q '^rust:' <<< "$list"; then ko "a rust builder image is scanned, and it never reaches an estate"; else ok "no rust builder image is in the list"; fi
 
 echo "an interpolated reference is read as its default, and this repository's own images are left out:"
@@ -46,6 +53,11 @@ printf 'services:\n  a:\n    image: redis:8\n' > "$work/infrastructure/docker-co
 printf 'services:\n  a:\n    image: ${IMG:-postgres}:${TAG:-16-alpine}\n' > "$work/infrastructure/authentik/compose.yml"
 got="$(bash "$script" "$work" 2>/dev/null | tr '\n' ' ')"
 if [ "$got" = "debian:bookworm-slim postgres:16-alpine redis:8 " ]; then ok "a fixture reads as its shipped stage, its images and its defaults"; else ko "the fixture read as '$got'"; fi
+printf 'FROM alpine:3 AS b\nRUN apk upgrade --no-cache x\nFROM debian:bookworm-slim\n# RUN apt-get upgrade, in a comment\n' > "$work/infrastructure/local/Dockerfile.y"
+printf 'FROM alpine:3 AS b\nFROM alpine:3.23\nUSER root\nRUN apk upgrade --no-cache libpq\nUSER app\n' > "$work/infrastructure/local/Dockerfile.z"
+got="$(bash "$script" "$work" 2>/dev/null | tr '\n' ' ')"
+if [ "$got" = "debian:bookworm-slim dockerfile:infrastructure/local/Dockerfile.z postgres:16-alpine redis:8 " ]; then ok "an upgrade in the shipped stage makes the build the target; one in a builder stage or a comment does not"; else ko "the upgrade fixture read as '$got'"; fi
+rm "$work/infrastructure/local/Dockerfile.y" "$work/infrastructure/local/Dockerfile.z"
 # shellcheck disable=SC2016 # the same: a literal compose interpolation.
 printf 'services:\n  a:\n    image: ${NO_DEFAULT}\n' > "$work/infrastructure/authentik/compose.yml"
 if bash "$script" "$work" >/dev/null 2>&1; then ko "an image named by a variable with no default passed"; else ok "an image named by a variable with no default fails"; fi
