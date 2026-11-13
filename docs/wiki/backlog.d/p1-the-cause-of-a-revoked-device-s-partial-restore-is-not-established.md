@@ -1,6 +1,6 @@
 ## P1 - the cause of a REVOKED device's partial restore is not established
 
-target: 1.8.0
+target: 1.7.0
 
 The wipe and tombstone halves are fixed ([auth](../frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)); HEAL-REVOKE-1, -2, -3 are `PASS`. The shortfall report is built ([auth](../frontend/modules/auth.md#a-restore-that-comes-back-partial-says-so-2026-10-08)). Open: which cause the user hit (a session-only row removal, `revokeRowSessions` failing, or the watchdog rebuilding the store) is separable only from the user's own history. Not worth code without a measurement.
 

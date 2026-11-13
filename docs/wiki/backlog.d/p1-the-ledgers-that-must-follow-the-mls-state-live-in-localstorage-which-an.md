@@ -1,6 +1,6 @@
 ## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
 
-target: 1.8.0
+target: 1.7.0
 
 Chrome commits `localStorage` to the profile LAZILY: on a fresh profile a write made 2 s or 4.5 s
 before a hard kill of the browser was lost, one made 7 s before survived, and an IndexedDB write

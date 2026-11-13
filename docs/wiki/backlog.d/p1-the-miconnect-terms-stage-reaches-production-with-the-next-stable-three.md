@@ -1,6 +1,6 @@
 ## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
 
-target: 1.8.0
+target: 1.7.0
 
 **Re-read 2026-11-11: still HELD, and nothing moved since 2026-10-18.** `45-consent.yaml` still waits
 in `infrastructure/authentik/blueprints/held/` (`held-blueprints.test.sh`, `test-blueprints.sh`), so

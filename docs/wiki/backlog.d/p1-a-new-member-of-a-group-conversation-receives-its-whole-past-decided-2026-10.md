@@ -1,6 +1,6 @@
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
-target: 1.8.0
+target: 1.7.0
 
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
 years), which no decision ever chose. 6 of 15 live group conversations had admitted 24 later members by
