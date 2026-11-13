@@ -13,8 +13,9 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
-  // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
-  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
+  // what the estate lists in `ALLOW_ORIGIN` where it passes it (local and dev: the dev-server
+  // pair). The list is exact and lives, with the predicate, in `cors-origins.ts`.
+  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL, process.env.ALLOW_ORIGIN);
   app.enableCors(corsOptions(allowedOrigins));
 
   // Increase payload limit to accommodate base64 background images for posters
