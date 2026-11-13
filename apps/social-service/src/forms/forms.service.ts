@@ -137,6 +137,14 @@ import {
 } from '../pricing/audience';
 import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
+  answerEditOff,
+  answerLocked,
+  answerNotEditable,
+  answerNotFound,
+  editLockedItemIds,
+  sameAnswer,
+} from './answer-edit';
+import {
   pricedQuestionIds,
   pricingViewFor,
   resolveCellPrice,
@@ -273,6 +281,50 @@ export function priceFingerprint(form: CreateFormDto): string {
   });
 }
 
+/** Whether a form takes answers now: past its opening, before its end (`closedAt`). */
+function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
+  const now = new Date();
+  if (form.opensAt && new Date(form.opensAt) > now) return false;
+  return !(form.closedAt && new Date(form.closedAt) < now);
+}
+
+/**
+ * Refuses an answer - a submit or an edit - to a form that is not open: before its opening, or
+ * after its end (`closedAt`, its end date or the manager's close). Typed, worded by the page.
+ */
+function assertFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): void {
+  if (form.opensAt && new Date(form.opensAt) > new Date()) {
+    throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
+  }
+  if (form.closedAt && new Date(form.closedAt) < new Date()) {
+    throw formRefusal(FORM_CLOSED, 'The form is closed.');
+  }
+}
+
+/**
+ * Validates answer sizes to prevent oversized payloads, for a submit and an edit alike. The DTO
+ * already bounds them for an HTTP caller (`IsValidAnswers`); this holds for any caller, with the
+ * typed code the page words (the textarea's `maxlength` keeps a person from ever meeting it).
+ */
+function assertAnswerSizes(answers: Record<string, unknown> | undefined): void {
+  for (const [key, value] of Object.entries(answers ?? {})) {
+    if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
+      throw formRefusal(
+        FORM_ANSWER_TOO_LONG,
+        `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
+        key
+      );
+    }
+    if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
+      throw formRefusal(
+        FORM_ANSWER_TOO_MANY_SELECTIONS,
+        `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
+        key
+      );
+    }
+  }
+}
+
 /**
  * The options of a form that can rule each other out, as the ONE shared rule reads them
  * (`form-option-rules.ts`, the editor's copy byte for byte). `takesPayment` counts every price
@@ -289,6 +341,7 @@ function formOptionStateOf(input: CreateFormDto & { anonymous?: boolean }): Form
     restrictsAudience:
       input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion),
     hasFileQuestion: hasFileQuestion(input.items),
+    allowsAnswerEdit: input.allowAnswerEdit === true,
   };
 }
 
@@ -315,6 +368,8 @@ const FORM_CONFLICT_MESSAGE: Record<FormSaveConflict, string> = {
     'An anonymous form cannot grant a cotisation: a cotisation is granted to an account.',
   FORM_ANONYMOUS_FILE:
     'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
+  FORM_ANONYMOUS_ANSWER_EDIT:
+    'An anonymous form cannot let an answer be changed: its answers name nobody who could reopen one.',
   FORM_PUBLIC_AUDIENCE:
     'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
     'against.',
@@ -1329,6 +1384,7 @@ export class FormsService {
       submitCondition:
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
       allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
+      allowAnswerEdit: input.allowAnswerEdit ?? form.allowAnswerEdit,
       allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
       allowOnlinePayment: input.allowOnlinePayment ?? form.allowOnlinePayment,
       // `!== undefined`, not `??`: an explicit null CLEARS the deadline when the form is saved, so
@@ -2224,33 +2280,8 @@ export class FormsService {
       }
     }
 
-    if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
-    }
-
-    if (form.closedAt && new Date(form.closedAt) < new Date()) {
-      throw formRefusal(FORM_CLOSED, 'The form is closed.');
-    }
-
-    // Validate answer sizes to prevent oversized payloads. The DTO already bounds them for an HTTP
-    // caller (`IsValidAnswers`); this holds for any caller of `submit`, with the typed code the
-    // page words (the textarea's `maxlength` keeps a person from ever meeting it).
-    for (const [key, value] of Object.entries(input.answers ?? {})) {
-      if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
-        throw formRefusal(
-          FORM_ANSWER_TOO_LONG,
-          `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
-          key
-        );
-      }
-      if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
-        throw formRefusal(
-          FORM_ANSWER_TOO_MANY_SELECTIONS,
-          `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
-          key
-        );
-      }
-    }
+    assertFormOpen(form);
+    assertAnswerSizes(input.answers);
 
     // Who a guest says they are, ONLY what the form asks (`guest-identity.ts`): every asked field
     // required, an unasked one refused, and a member carrying any of them refused - a member is
@@ -2822,6 +2853,188 @@ export class FormsService {
     }
 
     return { submissionId: savedSubmission.id };
+  }
+
+  /**
+   * The caller's own answers to a form that lets them be changed, each with the questions an edit
+   * may not touch (`editLockedItemIds`) - what the fill page reopens. Empty when the form does not
+   * allow it, is anonymous, or is not open: nothing could be changed, so nothing is offered. Every
+   * row that IS an answer (`answerHoldingWhere`) is listed, newest first: one on a single-answer
+   * form, each separately on a form taking several.
+   */
+  async myEditableAnswers(formId: string, userId: string) {
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.allowAnswerEdit || form.anonymous || !isFormOpen(form)) {
+      this.logger.debug(
+        `[FORM_EDIT] no editable answer on form=${formId.slice(0, 8)}: ` +
+          `switch=${form.allowAnswerEdit} anonymous=${form.anonymous} open=${isFormOpen(form)}`
+      );
+      return [];
+    }
+    const rows = await this.submissionRepo.find({
+      where: answerHoldingWhere(formId, { userId }),
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((row) => ({
+      ...toSubmitterView(row),
+      lockedItemIds: [...editLockedItemIds(form, row.cotisationGrantedAt != null)],
+    }));
+  }
+
+  /**
+   * A respondent changes their OWN answer (owner, 2026-11-13; forms.md, "A respondent changes their
+   * own answer"). The changed answer goes through the submit's checks - sizes, grids, visibility,
+   * the audience's answer criterion, `required`, declared options, file ownership - and only the
+   * ANSWERS move: never the price, the lines, the status, the seat or the payment request.
+   *
+   * - **Who**: the row's own account, on a form whose switch is on and that is not anonymous (a
+   *   guest's row has no account and is never anyone's). Another person's row answers exactly what
+   *   an absent one does (404 `FORM_ANSWER_NOT_FOUND`).
+   * - **When**: while the form is open (`assertFormOpen`), and while the row IS an answer
+   *   (`answerHoldingWhere`: not cancelled, expired or refunded).
+   * - **What**: every question that touches the price is LOCKED (`editLockedItemIds`): the stored
+   *   answer stays, a payload may repeat or omit it, and one that changes it is 409
+   *   `FORM_ANSWER_LOCKED` naming the question.
+   * - **Admission**: only the ANSWER criterion of `submitCondition` is judged again. Who the person
+   *   is (promo, formation, cotisation) was judged when they answered, and a form selling a
+   *   cotisation to people without it would otherwise refuse every buyer's edit once the cotisation
+   *   it sold them is held.
+   * - **Concurrency**: written under the form lock then the row lock, the order `submit` and
+   *   `markPaid` take them; the row is re-read there, and the locked answers are compared with the
+   *   row as it is THEN - a cash validation, a payment or a retry committed meanwhile is seen.
+   * - **Files**: a NEW file id is claimed as at submit (`FormFilesService.attach`); one kept is not
+   *   claimed again, so its retention keeps counting from its first claim. A replaced file stays
+   *   attached to this answer and goes with the existing retention purge.
+   */
+  async editAnswer(
+    formId: string,
+    submissionId: string,
+    userId: string,
+    answersIn: Record<string, unknown>
+  ): Promise<{ submissionId: string; editedAt: Date | null }> {
+    const tag = `form=${formId.slice(0, 8)} answer=${submissionId.slice(0, 8)} user=${userId.slice(0, 8)}`;
+    this.logger.log(`[FORM_EDIT] edit asked ${tag}`);
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.allowAnswerEdit || form.anonymous) {
+      this.logger.log(`[FORM_EDIT] refused ${tag}: the form does not allow it`);
+      throw answerEditOff();
+    }
+    assertFormOpen(form);
+    assertAnswerSizes(answersIn);
+
+    // Judged OUTSIDE the locks (the profile read may call core-service), against the row as read
+    // now; the write below re-reads it under its lock and re-checks every locked answer.
+    const before = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
+    if (!before || before.userId !== userId) {
+      this.logger.log(`[FORM_EDIT] refused ${tag}: not the caller's answer`);
+      throw answerNotFound();
+    }
+    const { stored, newFiles } = await this.judgeEdit(form, before, answersIn, tag);
+
+    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await lockFormSeats(manager, formId);
+      const row = await manager.findOne(Submission, {
+        where: { id: submissionId, formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row || row.userId !== userId) throw answerNotFound();
+      const isAnswer = await manager.count(Submission, {
+        where: answerHoldingWhere(formId, { id: row.id }),
+      });
+      if (isAnswer === 0) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: the row is ${row.paymentStatus}, no answer`);
+        throw answerNotEditable();
+      }
+      // The invariant, on the row as it is NOW: every locked answer is written back unchanged. A
+      // retry that re-priced the row, or a grant that locked one more question, since the read above
+      // is seen here and refuses rather than overwrites.
+      for (const itemId of editLockedItemIds(form, row.cotisationGrantedAt != null)) {
+        if (!sameAnswer(stored[itemId], row.answers?.[itemId])) {
+          this.logger.warn(`[FORM_EDIT] refused ${tag}: locked ${itemId} moved under the edit`);
+          throw answerLocked(itemId);
+        }
+      }
+      const claimed = newFiles.filter((file) => row.answers?.[file.itemId] !== file.fileId);
+      if (claimed.length > 0) {
+        await this.formFiles.attach(manager, row, formId, userId, claimed);
+      }
+      await manager.update(Submission, row.id, {
+        answers: stored as Record<string, any>,
+        editedAt: () => 'now()',
+      });
+      const written = await manager.findOne(Submission, {
+        where: { id: row.id },
+        select: { id: true, editedAt: true },
+      });
+      this.logger.log(
+        `[FORM_EDIT] answer changed ${tag} status=${row.paymentStatus} files=${claimed.length}`
+      );
+      return { submissionId: row.id, editedAt: written?.editedAt ?? null };
+    });
+  }
+
+  /**
+   * The answers an edit WILL store, judged by the submit's own rules over the merged answer: the
+   * locked questions carried from the stored row (a different value refused), every other question
+   * from the payload. Also the new file answers it cites, for the write to claim.
+   */
+  private async judgeEdit(
+    form: Form,
+    row: Submission,
+    answersIn: Record<string, unknown>,
+    tag: string
+  ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
+    const items = form.items ?? [];
+    const locked = editLockedItemIds(form, row.cotisationGrantedAt != null);
+    const sent = withNormalisedGridAnswers(items, answersIn);
+    const merged: Record<string, unknown> = { ...sent };
+    for (const itemId of locked) {
+      if (itemId in sent && !sameAnswer(sent[itemId], row.answers?.[itemId])) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: question ${itemId} decides the price`);
+        throw answerLocked(itemId);
+      }
+      delete merged[itemId];
+      if (row.answers?.[itemId] !== undefined) merged[itemId] = row.answers[itemId];
+    }
+
+    const fileAnswers = fileAnswersOf(items, merged);
+    const selections = answerSelections(items, merged);
+    const facts = await this.factsFor(form, row.userId ?? undefined, selections);
+    // Admission's ANSWER half only: who the person is was judged when they answered.
+    const answerCriterion = form.submitCondition?.answer
+      ? { answer: form.submitCondition.answer }
+      : null;
+    this.assertMaySubmit({ ...form, submitCondition: answerCriterion } as Form, facts);
+
+    const visible = visibleItemIds(items, facts);
+    const editable = new Set([...visible].filter((id) => !locked.has(id)));
+    assertDeclaredOptionAnswers(items, merged as never, editable, form.priceMatrix);
+    // As at submit, an answer the person cannot see is not kept - except a locked one, which is
+    // what was priced and stays whatever their profile says today.
+    const declared = new Set(items.map((item) => item.id));
+    const stored = Object.fromEntries(
+      Object.entries(merged).filter(
+        ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
+      )
+    );
+    for (const item of items) {
+      if (!editable.has(item.id) || isProductGridItem(item)) continue;
+      if (item.required && !isQuestionAnswered(item, stored[item.id])) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: required ${item.id} left empty`);
+        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+      }
+    }
+    const newFiles = fileAnswers.filter(
+      (file) => file.itemId in stored && row.answers?.[file.itemId] !== file.fileId
+    );
+    const dropped = Object.keys(merged).length - Object.keys(stored).length;
+    this.logger.debug(
+      `[FORM_EDIT] judged ${tag}: ${locked.size} locked, ${dropped} hidden answer(s) dropped, ` +
+        `${newFiles.length} new file(s)`
+    );
+    return { stored, newFiles };
   }
 
   /**
@@ -3909,6 +4122,18 @@ export class FormsService {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
       headers.push({ header: labels.status, key: 'status', width: 14 });
     }
+    // When the respondent last changed the answer (migration 164): on a form that allows it, or
+    // holding an answer changed while it did. Blank on an answer never changed. No history is kept.
+    const editedColumn = form.allowAnswerEdit || submissions.some((s) => s.editedAt != null);
+    if (editedColumn) {
+      if (!labels.edited) throw new BadRequestException('export label "edited" is required');
+      headers.push({
+        header: labels.edited,
+        key: 'editedAt',
+        width: 22,
+        style: { numFmt: 'dd/mm/yyyy hh:mm:ss' },
+      });
+    }
 
     form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
@@ -3954,6 +4179,7 @@ export class FormsService {
           );
         row.status = label ?? sub.paymentStatus;
       }
+      if (editedColumn) row.editedAt = sub.editedAt ? new Date(sub.editedAt) : null;
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
       form.items.forEach((item: FormItemLike) => {

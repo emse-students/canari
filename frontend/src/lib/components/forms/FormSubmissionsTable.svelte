@@ -200,6 +200,16 @@
 <!-- The submitter, and a GUEST's answer (a public form's link, no account) marked as one: its name
      is what the guest typed when the form asked (owner, 2026-11-06), ALWAYS beside the reference it
      was given when it paid and the badge, so a typed name never passes for an account's. -->
+<!-- When the respondent changed their answer afterwards (migration 164): the date of the last
+     change, under the date it was sent. No history is kept, only the last moment. -->
+{#snippet editedMark(sub: Submission)}
+  {#if sub.editedAt}
+    <span class="block font-sans italic">
+      {m.form_responses_edited_at({ date: formatDate(sub.editedAt) })}
+    </span>
+  {/if}
+{/snippet}
+
 {#snippet submitter(sub: Submission)}
   {#if isGuestAnswer(sub, anonymous)}
     {@const given = guestShownName(sub)}
@@ -316,7 +326,7 @@
         <tr class="text-text-main">
           <td class="py-2">{@render expandControl(sub, answered, columns)}</td>
           <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
-            >{formatDate(sub.createdAt)}</td
+            >{formatDate(sub.createdAt)}{@render editedMark(sub)}</td
           >
           {#if !anonymous}
             <td class="py-2 pr-4 whitespace-nowrap">{@render submitter(sub)}</td>
@@ -372,7 +382,9 @@
     <li class="border-cn-border rounded-2xl border bg-(--cn-surface) p-3">
       <div class="flex items-start gap-2">
         <div class="min-w-0 flex-1">
-          <p class="text-text-muted text-2xs font-mono">{formatDate(sub.createdAt)}</p>
+          <p class="text-text-muted text-2xs font-mono">
+            {formatDate(sub.createdAt)}{@render editedMark(sub)}
+          </p>
           {#if !anonymous}
             <p class="text-text-main truncate font-semibold">{@render submitter(sub)}</p>
           {/if}

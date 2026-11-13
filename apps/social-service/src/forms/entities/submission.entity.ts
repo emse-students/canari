@@ -170,6 +170,14 @@ export class Submission {
   @Column({ type: 'varchar', length: 254, nullable: true })
   guestEmail: string | null;
 
+  /**
+   * When the respondent last changed this answer (migration 164, `FormsService.editAnswer`); NULL
+   * for an answer never changed. Not `updatedAt`, which every payment status move rewrites: the
+   * managers read this one as "modifiee le".
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  editedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

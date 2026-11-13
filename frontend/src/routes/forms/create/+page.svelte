@@ -95,6 +95,8 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 164). */
+  let allowAnswerEdit = $state(false);
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -234,6 +236,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -393,6 +396,7 @@
       items: toFormItemsPayload(items),
       maxSubmissions,
       allowMultipleSubmissions,
+      allowAnswerEdit,
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
@@ -639,6 +643,7 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic

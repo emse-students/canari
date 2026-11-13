@@ -336,6 +336,15 @@ export class CreateFormDto {
   @IsOptional()
   allowMultipleSubmissions?: boolean;
 
+  /**
+   * Whether a respondent with an account may change their own answer while the form is open
+   * (migration 164, owner 2026-11-13). Absent keeps the stored value on an edit; refused on an
+   * anonymous form (`FORM_ANONYMOUS_ANSWER_EDIT`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowAnswerEdit?: boolean;
+
   /** Whether cash (physical) payment is accepted alongside the online payment. */
   @IsBoolean()
   @IsOptional()
@@ -519,4 +528,14 @@ export class SubmitFormDto {
   @IsIn(['online', 'cash'])
   @IsOptional()
   paymentMethod?: string;
+}
+
+/**
+ * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 164): the answers
+ * as the fill page holds them, validated like a submit's (`IsValidAnswers`). Nothing about payment
+ * travels here - an edit never charges, refunds or re-prices (`answer-edit.ts`).
+ */
+export class EditAnswerDto {
+  @IsValidAnswers()
+  answers: Record<string, FormAnswerValue>;
 }

@@ -140,6 +140,15 @@ export class Form {
   @Column({ default: false })
   allowMultipleSubmissions: boolean;
 
+  /**
+   * When true, a respondent WITH AN ACCOUNT may change their own answer while the form is open
+   * (migration 164, owner 2026-11-13), the questions that touch the price excepted
+   * (`answer-edit.ts`). Off by default; refused beside `anonymous` (`form-option-rules.ts`): an
+   * anonymous answer names nobody who could reopen it.
+   */
+  @Column({ default: false })
+  allowAnswerEdit: boolean;
+
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   @Column({ default: false })
   allowCashPayment: boolean;

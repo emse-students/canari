@@ -2,6 +2,7 @@ import { m } from '$lib/paraglide/messages';
 import type { FormItem } from './api';
 import {
   allRequiredAnswered,
+  editedAnswers,
   firstMissingAnswer,
   initialSelections,
   isItemAnswered,
@@ -206,6 +207,17 @@ describe('visibleAnswers sends only what is answered (D1, D3)', () => {
   it('sends no key for a form of many unanswered questions', () => {
     const items = Array.from({ length: 80 }, (_, i) => q({ id: `q${i}` }));
     expect(visibleAnswers(items, initialSelections(items))).toEqual({});
+  });
+});
+
+describe('editedAnswers', () => {
+  it('sends the visible answers less the locked questions, which the server keeps', () => {
+    const items = [q({ id: 't' }), q({ id: 'meal', type: 'single_choice' })];
+    expect(editedAnswers(items, { t: 'new', meal: 'o-meal' }, ['meal'])).toEqual({ t: 'new' });
+    expect(editedAnswers(items, { t: 'new', meal: 'o-meal' }, [])).toEqual({
+      t: 'new',
+      meal: 'o-meal',
+    });
   });
 });
 
