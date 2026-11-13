@@ -396,3 +396,143 @@ vulnerabilities:
   # Retires with the next upgrade, like the zlib pair above.
   - id: CVE-2026-123817
     statement: "aiohttp 3.14.3 in authentik server 2026.8.5, fixed in 3.14.4; no authentik release ships it yet (2026.8.5 is the latest, 2026-11-10). Upstream image."
+  # Published 2026-11-13, Debian libpq5 17.11-0+deb13u1 in authentik server 2026.8.5's base: 34 HIGH
+  # PostgreSQL advisories, fixed by Debian 17.12-0+deb13u1 - which only an authentik image rebuild can
+  # carry (2026.8.5 is still the latest release on 2026-11-13). Scoped to that package by its purl, so
+  # no other image is forgiven; they retire with the next upgrade, like the zlib pair above.
+  - id: CVE-2026-6460
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-6467
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-14661
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-18447
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116304
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116306
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116307
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116309
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116314
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116315
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116316
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116317
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116319
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116320
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116323
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116325
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116326
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116328
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116330
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116331
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116332
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116335
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-116336
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120139
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120141
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120142
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120143
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120145
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120147
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120148
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120149
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120150
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120151
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
+  - id: CVE-2026-120153
+    purls:
+      - "pkg:deb/debian/libpq5@17.11-0+deb13u1"
+    statement: "libpq5 17.11 in authentik server 2026.8.5's Debian base, fixed by Debian 17.12-0+deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-13). Upstream image."
