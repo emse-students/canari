@@ -50,8 +50,10 @@
 version: 2
 updates:
   # --- CI ---------------------------------------------------------------------------------------
+  # `/` is the workflows; a composite action is read only from a directory named here, and a
+  # pinned commit nothing updates is frozen for good (action-pins.test.mjs asserts the cover).
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories: ["/", "/.github/actions/*"]
     rebase-strategy: auto
     schedule:
       interval: "weekly"
