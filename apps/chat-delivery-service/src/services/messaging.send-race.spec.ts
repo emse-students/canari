@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { GoneException } from '@nestjs/common';
+import { BadRequestException, GoneException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -68,6 +68,10 @@ describe('MessagingService - a send cannot outlive its group', () => {
   let payloadSaves: object[];
   /** Builds the service again, so a test can boot it under another writer's switch. */
   let compile: () => Promise<MessagingService>;
+  /** `dm_sent_frame_receipt`, keyed `group|sender|device|messageId` -> its receive time. */
+  let receipts: Map<string, Date>;
+  /** Every history-stream append (`XADD` through the pipeline), by group key. */
+  let historyAppends: string[];
 
   const GROUP = 'g-1';
   const SENDER = { userId: 'u-sender', deviceId: 'dev-sender' };
@@ -94,6 +98,23 @@ describe('MessagingService - a send cannot outlive its group', () => {
     publish: jest.fn(),
     del: jest.fn().mockResolvedValue(1),
     keys: jest.fn().mockResolvedValue([]),
+    hdel: jest.fn().mockResolvedValue(0),
+    pipeline: jest.fn(() => {
+      const chain = {
+        xadd: (key: string) => {
+          historyAppends.push(key);
+          return chain;
+        },
+        xtrim: () => chain,
+        expire: () => chain,
+        exec: async () => [
+          [null, '1-0'],
+          [null, 0],
+          [null, 1],
+        ],
+      };
+      return chain;
+    }),
   };
 
   /** One ordinary application frame from the sender's device into `groupId`. */
@@ -118,6 +139,8 @@ describe('MessagingService - a send cannot outlive its group', () => {
     seats = [SENDER, PEER];
     order = [];
     payloadSaves = [];
+    receipts = new Map();
+    historyAppends = [];
 
     // The transaction the fix runs in. `getRepository` hands back the two repositories it uses, and
     // both record what they were asked - the Group read so the test can see the lock, the queue
@@ -125,6 +148,18 @@ describe('MessagingService - a send cannot outlive its group', () => {
     const transaction = async (cb: (m: unknown) => Promise<unknown>) =>
       cb({
         query: async (sql: string, params: unknown[]) => {
+          // The receipt table (migration 048): its primary key is the whole mechanism, so the mock
+          // honours exactly that - an insert of a held key does nothing and returns no row.
+          if (sql.includes('dm_sent_frame_receipt')) {
+            const key = params.slice(0, 4).join('|');
+            if (sql.trimStart().startsWith('INSERT')) {
+              if (receipts.has(key)) return [];
+              receipts.set(key, params[4] as Date);
+              return [{ messageId: params[3] }];
+            }
+            const at = receipts.get(key);
+            return at ? [{ receivedAt: at }] : [];
+          }
           order.push(`${sql.includes('_shared') ? 'shared' : 'exclusive'} ${String(params[0])}`);
           return [];
         },
@@ -477,6 +512,115 @@ describe('MessagingService - a send cannot outlive its group', () => {
       process.env[ENV] = 'yes';
 
       await expect(compile()).rejects.toThrow(/QUEUED_PAYLOAD_SHARED_WRITES/);
+    });
+  });
+  /**
+   * ONE ID IS ONE MESSAGE (migration 048). A native background send reads an answer past its 10 s
+   * read timeout as a failure and sends the same message again under the same `messageId` - a fresh
+   * ciphertext each time, so only the id says it is a repeat. The repeat must reach nobody: no second
+   * queued row, no second history append, no second delivery, and the sender is answered with the
+   * first copy's receive time.
+   */
+  describe('a message sent again under the same messageId', () => {
+    const MSG = '6f1d2c3b-0000-4000-8000-000000000001';
+    const sendId = (messageId: unknown, deviceId = SENDER.deviceId) =>
+      service.sendMessage(
+        {
+          proto: 'Y2lwaGVydGV4dA==',
+          groupId: GROUP,
+          senderId: SENDER.userId,
+          senderDeviceId: deviceId,
+          messageId: messageId as string,
+        },
+        SENDER.userId
+      );
+    const deliveries = () =>
+      jest.spyOn(
+        service as unknown as { deliverQueuedFrame: () => Promise<boolean> },
+        'deliverQueuedFrame'
+      );
+
+    it('queues, appends and delivers the first send once', async () => {
+      const deliver = deliveries();
+
+      const res = await sendId(MSG);
+
+      expect(committed.map((r) => r.deviceId)).toEqual([PEER.deviceId]);
+      expect(historyAppends).toEqual([`history:${GROUP}`]);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(res.queued).toBe(1);
+    });
+
+    it('stores the repeat nowhere and answers it with the receive time of the first copy', async () => {
+      const first = await sendId(MSG);
+      const deliver = deliveries();
+      committed = [];
+      historyAppends = [];
+
+      const again = await sendId(MSG);
+
+      expect(committed).toEqual([]);
+      expect(bareSaved).toEqual([]);
+      expect(historyAppends).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(again).toEqual({
+        status: 'processed',
+        queued: 0,
+        sent: 0,
+        receivedAt: first.receivedAt,
+      });
+      expect(warnings.find((w) => w.includes('REPEATED_MESSAGE_ID'))).toContain(GROUP);
+    });
+
+    it('stores the repeat nowhere even when the roster names nobody else', async () => {
+      const roster = (service as unknown as { deviceGroupRepo: { find: jest.Mock } })
+        .deviceGroupRepo;
+      roster.find.mockResolvedValue([{ ...SENDER, groupId: GROUP, status: 'active' }]);
+      await sendId(MSG);
+      historyAppends = [];
+      warnings = [];
+
+      await sendId(MSG);
+
+      // The emptied-roster path appends to the history stream too, so it is owed the same answer -
+      // and the repeat is not reported as "nobody to queue for".
+      expect(historyAppends).toEqual([]);
+      expect(warnings.some((w) => w.includes('No message queued'))).toBe(false);
+    });
+
+    it('queues the same id from ANOTHER device of the sender: the key names the device', async () => {
+      await sendId(MSG);
+      committed = [];
+
+      await sendId(MSG, 'dev-sender-2');
+
+      expect(receipts.size).toBe(2);
+      expect(historyAppends).toHaveLength(2);
+    });
+
+    it('leaves no receipt behind a refused first send, so its retry is queued', async () => {
+      groups[GROUP] = { id: GROUP, deletedAt: new Date('2026-11-13T09:00:00.000Z') };
+      await expect(sendId(MSG)).rejects.toBeInstanceOf(GoneException);
+      expect(receipts.size).toBe(0);
+
+      groups[GROUP] = { id: GROUP, deletedAt: null };
+      await sendId(MSG);
+
+      expect(committed.map((r) => r.deviceId)).toEqual([PEER.deviceId]);
+    });
+
+    it('queues every send that names no id, as before', async () => {
+      await send(GROUP);
+      await send(GROUP);
+
+      expect(committed).toHaveLength(2);
+      expect(receipts.size).toBe(0);
+    });
+
+    it('refuses a messageId that is not an id, rather than reading it as absent', async () => {
+      await expect(sendId('not an id; DROP')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(sendId(42)).rejects.toBeInstanceOf(BadRequestException);
+      expect(committed).toEqual([]);
     });
   });
 });

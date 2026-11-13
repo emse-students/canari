@@ -43,6 +43,7 @@ import { SeatEviction } from './entities/seat-eviction.entity';
 import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { PushEnvelope } from './entities/push-envelope.entity';
+import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import Redis from 'ioredis';
 import { typeormSynchronize } from './typeorm-synchronize';
 
@@ -110,6 +111,7 @@ class RedisShutdown implements OnModuleDestroy {
         JoinAskPush,
         RevokedDeviceGroup,
         PushEnvelope,
+        SentFrameReceipt,
       ],
       synchronize: typeormSynchronize(),
     }),

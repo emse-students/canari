@@ -46,6 +46,7 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 
 /**
@@ -494,6 +495,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
+    }
+    // The receipts that answer a resend under one messageId (migration 048) age out with the copies
+    // they stand for: past this window there is no queued copy left to duplicate.
+    const receipts = await deleteSentFrameReceiptsBefore(this.queuedMessageRepo.manager, expiry);
+    if (receipts > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: deleted ${receipts} sent-frame receipt(s)`
+      );
     }
     const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
     if (payloads > 0) {

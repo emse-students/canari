@@ -140,10 +140,11 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | 2026-11-12 | The pin register belongs to one account (#3424): D275 closed, its fragment deleted; the legacy move's removal is dated 2027-02-12. |
 | 2026-11-13 | D066 BUILT: overlays register on one stack (`utils/overlayStack.ts`, `useOverlayLayer`) and take their z-index from the open order; `utils/viewerLayer.ts` and the sheet, popover, side-panel, modal, guide, viewer and critical rungs are gone, the ladder keeps navigation, banner, toast, call, tooltip and skip link. Its fragment is deleted; the phone reading (a nested dialog over a viewer, a picker in a sheet) is a row of [the verification table](backlog.md#owed-a-verification-and-nothing-else). |
 | 2026-11-13 | D068 fixed at its source: the social unit run's worker leak came from the real-HTTP specs (undrained `fetch` bodies in `forms.submit-grid.http.spec.ts`, idle sockets at `afterAll` in three more); bodies are read to the end and `closeAllConnections()` runs before `app.close()`. The line is intermittent (seen once in `src/forms` at 3 workers, absent in 10 later runs), so the row stays open to one verification. |
+| 2026-11-13 | D034 BUILT: the server stores one message per sender device and `messageId` (migration 048, `dm_sent_frame_receipt`), so a native resend after a lost answer gets the first copy's time and reaches nobody twice. The 2026-11-12 triage's premise was wrong for the native route (it always sent the id in clear). Fragment deleted; owed: a Mi 9T quick reply on a slowed link reading one message on the receiver and one `REPEATED_MESSAGE_ID` line on dev, then the production rate. D034 moves to the verification table as B418; the foreground half is D300, after that stable. |
 
 ## Annex A - every row of the backlog
 
-333 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+334 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -480,6 +481,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B415 | an institution's reach per post (#3314): the dev reading, the phone readings and the week-in count | P2 | other | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B416 | a live or a reel asks the microphone for one channel (#3226): the `audio layout` line on both phones | P2 | other | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B417 | a slow link is not offline, the ring, local names (#3342): the Mi 9T re-reading under the throttling proxy | P2 | other | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
+| B418 | a message resent under one `messageId` is stored once (D034, migration 048): the Mi 9T quick-reply reading on dev and the production `REPEATED_MESSAGE_ID` rate | P2 | push-notifications | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
@@ -503,7 +505,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D030 | `docs/wiki/backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md` | Live moderation (WP-L8) merged; client standing refusals, viewer cap and readings owed; release blocker D3 | P1 | moderation | built-readings-owed | 2026-10-19; 2026-10-21; v1.4.0 | hardware reading; adversarial reviews |
 | D031 | `docs/wiki/backlog.d/p1-the-admission-rule-fix-forward.md` | The admission rule's fix-forward: refusal disarmed; measure [UNINVITED_ENTRY] before re-arming | P1 | mls-messaging | open | 2026-10-31; 2026-11-01 | none (needs a production count by kind) |
 | D033 | `docs/wiki/backlog.d/p2-a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in.md` | A CallKit Decline is refused for a user whose launch signs in by itself | P2 | calls | open | 2026-10-31; #2782 | none |
-| D034 | `docs/wiki/backlog.d/p2-a-quick-reply-resent-under-the-same-id-after-a-lost-answer.md` | A notification quick reply can be sent twice under one id when its answer is lost | P2 | push-notifications | open | 2026-10-31 | none |
 | D037 | `docs/wiki/backlog.d/p2-an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-wit.md` | Old-PIN recovery installs bytes read before the PIN check, with no compare under the lock | P2 | auth-sessions | open | 2026-10-31; #2782 | none |
 | D038 | `docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md` | Signed avatar URLs phase 2: refuse unsigned requests once measurement says old builds are gone | P2 | security-privacy | blocked | 2026-11-03; 1.6.3; 7 days; 1 % access=unsigned | hardware reading (community-open with cold avatars) then a measured ratio under 1% |
 | D040 | `docs/wiki/backlog.d/p2-governance-follows-reach-a-two-campus-association-has-two-bdes.md` | Governance follows reach: a two-campus association is governed by either BDE (proposal) | P2 | moderation | designed | 2026-11-02 | user decision |
@@ -743,3 +744,4 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D297 | `docs/wiki/backlog.d/p3-silent-promise-catches-in-the-frontend-triage.md` | About a hundred frontend promise rejections end in an empty handler: triage owed | P3 | observability | open | 2026-11-12 | none |
 | D298 | `docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md` | chat-gateway and call-service share no crate: two modules copied | P3 | docs-hygiene | open | 2026-11-12 | none |
 | D299 | `docs/wiki/backlog.d/camera-keeps-its-layout-and-volume-shutter.md` | The camera keeps its layout and the volume keys are its shutter (#3370): built, compiled, readings owed | P2 | other | built-readings-owed | 2026-11-11 | hardware reading (both phones) |
+| D300 | `docs/wiki/backlog.d/p3-the-foreground-send-does-not-name-its-message-id.md` | The foreground send does not name its messageId, so an adopted orphan or a transport retry can still be queued twice | P3 | mls-messaging | blocked | 2026-11-13 | a date (the stable carrying migration 048 in production) |

@@ -88,6 +88,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { claimSentFrameReceipt, type SentFrameKey } from '../utils/sent-frame-receipt';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import {
@@ -215,6 +216,14 @@ export interface SendMessageBody {
    * receive. Absent (every client before 1.2.5, and every other send) means the whole group.
    */
   recipientDevices?: string[];
+  /**
+   * The id the sender named this application frame by - the plaintext's own `messageId`, which the
+   * server never reads inside the ciphertext. A send that repeats it from the same device into the
+   * same group is the SAME message (a resend whose first answer was lost), and is stored once
+   * ({@link FrameAlreadyReceived}, migration 048). Absent (every foreground client today, every
+   * handshake frame) means the frame is queued as it always was.
+   */
+  messageId?: string;
   // legacy fields (frontend fallback / group fan-out)
   content?: string;
   type?: string;
@@ -594,6 +603,45 @@ const MAX_MEMBER_KEY_LENGTH = 256;
 const MAX_ADDRESSED_DEVICES = 16;
 
 /**
+ * What a sender's `messageId` may look like: the UUIDs every client mints (`crypto.randomUUID`, the
+ * native outbox mirror's ids), with room to spare. It is a primary-key column (migration 048), so
+ * anything else is refused rather than stored.
+ */
+const SENT_MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Reads `SendMessageBody.messageId`: the id, or `undefined` when the sender named none. A value that
+ * is present but not an id is REFUSED (400 `message_id_invalid`), never read as absent - absent
+ * means "queue it as a new frame", which is the very duplicate the field exists to prevent.
+ */
+export function readSentMessageId(body: SendMessageBody): string | undefined {
+  const raw: unknown = body.messageId;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'string' || !SENT_MESSAGE_ID.test(raw)) {
+    throw new BadRequestException({
+      error: 'message_id_invalid',
+      message: 'messageId must be 1-128 letters, digits, - or _',
+    });
+  }
+  return raw;
+}
+
+/**
+ * Thrown INSIDE the enqueue transaction when the receipt for this `(group, sender, device,
+ * messageId)` already exists: the message was accepted before and this send is its repeat. Nothing
+ * is written (the transaction rolls back, and it had written nothing), and {@link
+ * MessagingService.sendMessage} answers with the first copy's receive time - no row, no history
+ * append, no push. Classified here, as a type, so the one caller that turns it into an answer never
+ * reads a message.
+ */
+export class FrameAlreadyReceived extends Error {
+  constructor(readonly receivedAt: Date) {
+    super('this messageId was already received from this device into this group');
+    this.name = 'FrameAlreadyReceived';
+  }
+}
+
+/**
  * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
  * the frame is addressed to the whole group (field absent).
  *
@@ -644,6 +692,8 @@ const CLIENT_SEND_FIELDS: ReadonlySet<string> = new Set([
   'silent',
   'durable',
   'recipientDevices',
+  // The id a resend repeats (`readSentMessageId`): a client may name it, and is never required to.
+  'messageId',
 ]);
 
 /**
@@ -1792,10 +1842,30 @@ export class MessagingService {
     let partingConsumed: string[] = [];
     /** An application frame's clear epoch and its author, compared with the group's under the lock. */
     let sealed: SealedFrame | undefined;
+    // THE ID THE SENDER NAMED THIS MESSAGE BY, recorded with its copies so a repeat is stored once
+    // (`claimSentFrame`). Application frames only: a handshake frame is its own idempotent protocol
+    // step, and no caller names one. Keyed on the authenticated author when there is one.
+    const sentMessageId = readSentMessageId(body);
+    const receiptSender = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
+    const receipt: SentFrameKey | undefined =
+      sentMessageId &&
+      !body.isCommit &&
+      !body.isWelcome &&
+      body.groupId &&
+      receiptSender &&
+      body.senderDeviceId
+        ? {
+            senderId: receiptSender,
+            senderDeviceId: body.senderDeviceId,
+            messageId: sentMessageId,
+            receivedAt,
+          }
+        : undefined;
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
-        (addressed ? ` addressed=${[...addressed].join(',')}` : '')
+        (addressed ? ` addressed=${[...addressed].join(',')}` : '') +
+        (sentMessageId ? ` msg=${sentMessageId.slice(0, 8)}` : '')
     );
 
     if (body.proto) {
@@ -2182,15 +2252,28 @@ export class MessagingService {
     // 1. Persist ALL messages first (survives crashes / timing races). What is delivered below is
     // what was queued: a seat evicted after the recipients were read is neither (`enqueueForLiveGroup`).
     let queuedRows: QueuedMessage[] = [];
+    // A REPEAT OF A MESSAGE ALREADY ACCEPTED (`claimSentFrame`) wrote nothing, and is answered here
+    // with the first copy's receive time: no row, no history append, no push - one id is one message
+    // on every receiver, and the sender dates its copy as every receiver already did.
+    const repeat: { of?: Date } = {};
+    const enqueueOnce = async (
+      rows: QueuedMessage[],
+      seats?: { exempt: ReadonlySet<string> }
+    ): Promise<QueuedMessage[]> => {
+      try {
+        return await this.enqueueForLiveGroup(rows, body.groupId, 'SEND', traceId, sealed, {
+          seats,
+          receipt,
+        });
+      } catch (e) {
+        if (!(e instanceof FrameAlreadyReceived)) throw e;
+        repeat.of = e.receivedAt;
+        return [];
+      }
+    };
     if (toDeliver.length > 0) {
-      queuedRows = await this.enqueueForLiveGroup(
-        toDeliver,
-        body.groupId,
-        'SEND',
-        traceId,
-        sealed,
-        { seats: { exempt: new Set(partingConsumed) } }
-      );
+      queuedRows = await enqueueOnce(toDeliver, { exempt: new Set(partingConsumed) });
+      if (repeat.of) return this.answerRepeatedFrame(traceId, body.groupId, receipt, repeat.of);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${queuedRows.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
@@ -2210,7 +2293,8 @@ export class MessagingService {
       // and relies on this refusal, so it is owed on the empty roster too. Handshake frames are
       // left alone: their own paths decide what a dead group means for them.
       if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
-        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId, sealed);
+        await enqueueOnce([]);
+        if (repeat.of) return this.answerRepeatedFrame(traceId, body.groupId, receipt, repeat.of);
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
@@ -6805,6 +6889,10 @@ export class MessagingService {
    * Refused rather than silently skipped: the sender is told its message is never going out, which
    * the outbox turns into a permanent failure rather than a ladder that spins. A send with no
    * `groupId` addresses no group and has nothing to check.
+   *
+   * `opts.receipt` records the frame's `messageId` in the SAME transaction, after the liveness
+   * check and before any row ({@link claimSentFrame}): a repeat of an id already recorded throws
+   * {@link FrameAlreadyReceived} and writes nothing.
    */
   private async enqueueForLiveGroup(
     rows: QueuedMessage[],
@@ -6812,9 +6900,13 @@ export class MessagingService {
     tag: string,
     traceId: string,
     sealed?: SealedFrame,
-    opts: { seats?: { exempt: ReadonlySet<string> }; welcome?: WelcomeSeat } = {}
+    opts: {
+      seats?: { exempt: ReadonlySet<string> };
+      welcome?: WelcomeSeat;
+      receipt?: SentFrameKey;
+    } = {}
   ): Promise<QueuedMessage[]> {
-    const { seats, welcome } = opts;
+    const { seats, welcome, receipt } = opts;
     if (!groupId) return this.queuedMessageRepo.save(rows);
     const stored = await this.queuedMessageRepo.manager.transaction(async (manager) => {
       // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
@@ -6882,6 +6974,10 @@ export class MessagingService {
         const queued = await this.findQueuedWelcome(manager, groupId, welcome, rows[0].proto);
         if (queued) return [queued];
       }
+      // ONE ID IS ONE MESSAGE, whatever its sender retries: recorded before any row, under the group
+      // lock that also orders it against a delete. Asked on an empty batch too - an emptied roster
+      // still appends to the history stream, which a repeat must not do twice.
+      if (receipt) await this.claimSentFrame(manager, groupId, receipt, tag, traceId);
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];
       const kept = seats ? await this.keepSeatedRows(manager, rows, groupId, seats.exempt) : rows;
@@ -6902,6 +6998,56 @@ export class MessagingService {
       return saved;
     });
     return stored;
+  }
+
+  /**
+   * The answer to a send whose `messageId` this device already sent into the group: the first
+   * copy's receive time, and nothing queued or sent. Logged at warn, because a repeat is the visible
+   * end of an answer the sender lost upstream (a native background send reads an answer past its
+   * read timeout as a failure) - and the gap since the first copy is the evidence of which.
+   */
+  private answerRepeatedFrame(
+    traceId: string,
+    groupId: string | undefined,
+    receipt: SentFrameKey | undefined,
+    first: Date
+  ): SendMessageResult {
+    this.logger.warn(
+      `[SEND][${traceId}] REPEATED_MESSAGE_ID group=${groupId ?? 'none'} ` +
+        `sender=${receipt?.senderId ?? 'unknown'}:${receipt?.senderDeviceId ?? 'unknown'} ` +
+        `msg=${receipt?.messageId.slice(0, 8) ?? 'none'} firstReceivedAt=${first.toISOString()} ` +
+        `gapMs=${receipt ? receipt.receivedAt.getTime() - first.getTime() : 'unknown'} ` +
+        `- already stored, answered with the first copy: nothing queued, nothing pushed`
+    );
+    return { status: 'processed', queued: 0, sent: 0, receivedAt: first.getTime() };
+  }
+
+  /**
+   * Records `receipt` for `groupId` in the enqueue transaction `m` ({@link claimSentFrameReceipt},
+   * whose primary key serialises two concurrent sends of one id), or throws
+   * {@link FrameAlreadyReceived} with the first copy's receive time when this device already sent
+   * this id into this group.
+   */
+  private async claimSentFrame(
+    m: EntityManager,
+    groupId: string,
+    receipt: SentFrameKey,
+    tag: string,
+    traceId: string
+  ): Promise<void> {
+    const claim = await claimSentFrameReceipt(m, groupId, receipt);
+    if (claim.kind === 'claimed') return;
+    if (!claim.firstReceivedAt) {
+      // The conflict named a row this statement cannot see: only a sweep deletes one (the retention
+      // window, the account's erasure) between the two statements. Refused as a server failure, so
+      // the sender keeps the frame and its retry inserts afresh - never queued unrecorded.
+      this.logger.error(
+        `[${tag}][${traceId}] RECEIPT_VANISHED group=${groupId} msg=${receipt.messageId.slice(0, 8)} ` +
+          `- the receipt conflicted and was gone when read back`
+      );
+      throw new ServiceUnavailableException({ error: 'receipt_vanished' });
+    }
+    throw new FrameAlreadyReceived(claim.firstReceivedAt);
   }
 
   /**

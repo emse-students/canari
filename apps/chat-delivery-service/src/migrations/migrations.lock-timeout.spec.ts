@@ -71,6 +71,10 @@ describe.each([
   ['043_join_ask_pushes.sql', /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?dm_join_ask_pushes"?/im],
   // `dm_device_group_memberships` is read by every send's fan-out and every commit.
   ['044_device_admission_base_epoch.sql', /^\s*ALTER\s+TABLE\s+"?dm_device_group_memberships"?/im],
+  [
+    '048_sent_frame_receipt.sql',
+    /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?dm_sent_frame_receipt"?/im,
+  ],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);
