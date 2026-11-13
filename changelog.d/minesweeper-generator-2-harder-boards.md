@@ -1,0 +1,3 @@
+### Changed - Minesweeper boards ask for more reasoning (generator 2)
+
+A new board is raised, by solvable mine swaps, to a reasoning score the old generator never reached (its best was 27, a new one targets 60); a ranked challenge names its generator, so open challenges replay on the board they were issued with, and **the ranking is open only to a build that can make the latest generator** - an older build plays unranked. The mine-count deduction no longer depends on the order the solver takes its steps. Reasoning, measurements and what is still open in [minesweeper](docs/wiki/frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13).

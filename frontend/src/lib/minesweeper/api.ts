@@ -1,7 +1,12 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
-import type { MinesweeperConfig, MinesweeperMove } from './game';
+import {
+  LATEST_GENERATOR_VERSION,
+  type GeneratorVersion,
+  type MinesweeperConfig,
+  type MinesweeperMove,
+} from './game';
 
 export interface MinesweeperChallengeResponse {
   challengeId: string;
@@ -10,6 +15,11 @@ export interface MinesweeperChallengeResponse {
   startedAt: string;
   expiresAt: string;
   serverNow: string;
+  /**
+   * The mine-placement generator the server will replay this challenge with. Absent from a server
+   * that predates versions, which replays with generator 1.
+   */
+  generatorVersion?: GeneratorVersion;
 }
 
 export interface MinesweeperSubmitResponse {
@@ -100,20 +110,47 @@ export class MinesweeperBannedError extends Error {
   }
 }
 
+/**
+ * A `426` on starting a ranked game: this build cannot make the generator the ranking now needs
+ * (`generator_update_required`). Typed at the throw, like the ban, so the modal can tell the player to
+ * update instead of dropping them into an unranked game without a word.
+ */
+export class MinesweeperUpdateRequiredError extends Error {
+  constructor() {
+    super('this app version cannot play the ranked minesweeper');
+    this.name = 'MinesweeperUpdateRequiredError';
+  }
+}
+
 /** Base path for minesweeper API on social-service (same-origin via nginx when unset). */
 function minesweeperBase(): string {
   const base = socialUrl();
   return base ? `${base}/api/minesweeper` : '/api/minesweeper';
 }
 
-/** Starts a ranked seeded challenge (server clock begins). */
+/**
+ * Starts a ranked seeded challenge (server clock begins). Names the newest generator this build can
+ * produce; the server answers with the one it will replay with, which may be older.
+ */
 export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeResponse> {
-  const res = await apiFetch(`${minesweeperBase()}/challenges`, { method: 'POST' });
+  const res = await apiFetch(`${minesweeperBase()}/challenges`, {
+    method: 'POST',
+    body: JSON.stringify({ maxGeneratorVersion: LATEST_GENERATOR_VERSION }),
+  });
   if (res.status === 403) throw new MinesweeperBannedError();
+  if (res.status === 426) throw new MinesweeperUpdateRequiredError();
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to start challenge');
   }
-  return res.json();
+  const challenge: MinesweeperChallengeResponse = await res.json();
+  // A generator this build cannot make: playing it as another would be replayed on a different board.
+  if (
+    challenge.generatorVersion !== undefined &&
+    challenge.generatorVersion > LATEST_GENERATOR_VERSION
+  ) {
+    throw new MinesweeperUpdateRequiredError();
+  }
+  return challenge;
 }
 
 /** Submits a move log for server-side replay verification. */

@@ -253,6 +253,24 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
+
+- **What.** `POST /minesweeper/challenges` answers `426 generator_update_required` to a client that does not
+  say it can make the latest generator (`issuedGeneratorVersion`, `minesweeper.service.ts`;
+  [minesweeper](frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13)). An older build, which sends no
+  `maxGeneratorVersion`, cannot start a ranked game: it falls back to an unranked one (its screen
+  treats any failure to start as "play casual") and shows nothing about why.
+- **Who.** Native apps older than the first release carrying generator 2 (they embed their own engine); the web
+  app is always current.
+- **Why accepted knowingly.** The owner's decision: the ranking compares times, and a time on an easier board
+  is not comparable. Issuing such a build the old generator would have kept it ranked, on boards nobody else
+  plays. It still plays the game; it only is not ranked.
+- **What stays in the code, and its removal.** The engine still replays generator 1, for the challenges
+  issued with it before the deploy and still open (two hours). Two hours after the deploy, with no open row
+  at `"generatorVersion" = 1`, drop the `generator === 1` branch of `placeMinesFor` and its fingerprint test
+  (`placeMines` stays: generator 2 starts from it). The refusal itself is not removed: it is how a future
+  generator 3 closes the ranking to generator 2.
+
 ### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
 
 **Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`

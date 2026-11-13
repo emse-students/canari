@@ -23,8 +23,8 @@ export interface MinesweeperSettings {
 
 export const SETTINGS_STORAGE_KEY = 'canari.minesweeper.settings';
 
-/** The range the long-press slider offers: under 200 ms a tap flags by accident, over 600 it feels broken. */
-export const LONG_PRESS_RANGE = { min: 200, max: 600, step: 50 } as const;
+/** The range the long-press slider offers: under 150 ms a tap flags by accident (owner, 2026-11-13: lowered from 200), over 600 it feels broken. */
+export const LONG_PRESS_RANGE = { min: 150, max: 600, step: 50 } as const;
 
 export const ANIMATION_SPEEDS: readonly AnimationSpeed[] = ['normal', 'fast', 'off'];
 

@@ -3630,6 +3630,7 @@
   "minesweeper_submit_action": "Envoi du score",
   "minesweeper_empty_leaderboard": "Aucun temps vérifié pour l'instant.",
   "minesweeper_banned": "Vous êtes banni du classement : cette partie ne sera pas classée.",
+  "minesweeper_update_required": "Mettez l'application à jour pour jouer au classement : cette partie ne sera pas classée.",
   "minesweeper_admin_remove_score": "Retirer ce score",
   "minesweeper_admin_ban": "Bannir ce joueur",
   "minesweeper_admin_confirm_remove": "Retirer le score de {name} ({time}) du classement ?",
