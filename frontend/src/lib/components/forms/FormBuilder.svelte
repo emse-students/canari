@@ -44,6 +44,7 @@
   } from '$lib/forms/questionMenus';
   import { ensureMatrixAxes } from '$lib/forms/matrixEditor';
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -193,6 +194,12 @@
   );
   /** A priced grid: its own editor, and its "Obligatoire" switch like every question's. */
   const isPricedGrid = $derived(item.type === PRODUCT_GRID_TYPE);
+  /**
+   * Whether this card draws the switch and the asterisk: every question's, a priced grid's only on an
+   * estate that stores its switch ([LEGACY] `gridRequiredSwitchOn`: an older one saves every grid
+   * required and means nothing by it, so the card says nothing).
+   */
+  const drawsRequired = $derived(!isPricedGrid || gridRequiredSwitchOn());
 
   /**
    * The type menu's choice. A kind already on screen changes nothing (a "Grille de choix" keeps
@@ -358,7 +365,8 @@
           class="min-w-0 flex-1 truncate text-sm font-semibold {item.label
             ? 'text-text-main'
             : 'text-text-muted/60 italic'}"
-          >{item.label || m.form_builder_title_placeholder()}{#if item.required}<span
+          >{item.label ||
+            m.form_builder_title_placeholder()}{#if item.required && drawsRequired}<span
               class="ml-0.5 text-red-500"
               data-testid="required-mark">*</span
             >{/if}</span
@@ -657,18 +665,20 @@
       role="toolbar"
       aria-label={m.form_builder_settings_row_aria()}
     >
-      <button
-        type="button"
-        onclick={() => (item.required = !item.required)}
-        aria-pressed={!!item.required}
-        aria-label={m.form_builder_required_label()}
-        title={m.form_builder_required_label()}
-        class="ui-icon-button rounded-lg transition-colors {item.required
-          ? 'bg-accent/15 text-accent-text'
-          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-      >
-        <Asterisk size={18} />
-      </button>
+      {#if drawsRequired}
+        <button
+          type="button"
+          onclick={() => (item.required = !item.required)}
+          aria-pressed={!!item.required}
+          aria-label={m.form_builder_required_label()}
+          title={m.form_builder_required_label()}
+          class="ui-icon-button rounded-lg transition-colors {item.required
+            ? 'bg-accent/15 text-accent-text'
+            : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+        >
+          <Asterisk size={18} />
+        </button>
+      {/if}
       {#if onMoveUp && onMoveDown}
         <!-- Touch has no drag handle: reordering is two arrows. -->
         <button

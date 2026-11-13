@@ -3361,6 +3361,7 @@
   "form_pgrid_refusal_guest_price": "Public form: give \"Others\" a price, it is what a guest pays.",
   "form_pgrid_refusal_label": "Every row and every column needs a name ({max} characters at most).",
   "form_pgrid_refusal_max_per_cell": "The maximum per cell goes from {min} to {max}.",
+  "form_pgrid_refusal_not_required": "A product grid must be required.",
   "form_pgrid_refusal_price_invalid": "A price must be a positive amount, 10,000 € at most.",
   "form_pgrid_refusal_prices_incomplete": "A price is missing: fill in every price, in every tab.",
   "form_pgrid_refusal_requires_payment": "A product grid takes payment: switch the form's payment on.",
@@ -4646,9 +4647,11 @@
   "form_viewer_tier_prefix": "Price applied:",
   "form_guest_login_prompt": "Have a Canari account?",
   "form_guest_login_link": "Sign in for your price",
+  "form_view_error_order_empty": "Order at least one item.",
   "form_view_error_grid_empty": "Order at least one item of \"{label}\"",
   "form_refusal_grid_update_app": "This form changed since the page was opened. Reload it, or update the app.",
   "form_refusal_grid_changed": "An item of your order is no longer offered. Reload the page and check your order.",
+  "form_refusal_grid_empty": "Your order is empty: add at least one item.",
   "form_grid_order_count": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

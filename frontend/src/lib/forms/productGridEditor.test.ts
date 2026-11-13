@@ -392,6 +392,15 @@ describe('the words of a refusal', () => {
     expect(productGridDefinitionMessage('SOMETHING_ELSE')).toBeNull();
   });
 
+  it("[LEGACY] still words the refusal of an estate older than each grid's switch", () => {
+    // No contract code any more, but a server before the switch says it until both estates carry it.
+    expect(productGridDefinitionMessage('PRODUCT_GRID_NOT_REQUIRED')).toBe(
+      m.form_pgrid_refusal_not_required()
+    );
+    expect(formCodeMessage('PRODUCT_GRID_NOT_REQUIRED')).toBe(m.form_pgrid_refusal_not_required());
+    expect(formCodeMessage('PRODUCT_GRID_EMPTY')).toBe(m.form_refusal_grid_empty());
+  });
+
   it('names the first faulty grid and its question', () => {
     const blank = newProductGrid();
     const items = [

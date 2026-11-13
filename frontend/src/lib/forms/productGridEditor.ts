@@ -539,11 +539,19 @@ export function withFreshProductGridIds<G extends EditorProductGrid | ProductGri
   return copy;
 }
 
+/** [LEGACY] The code an estate older than each grid's switch refuses an optional grid with. */
+const LEGACY_NOT_REQUIRED_CODE = 'PRODUCT_GRID_NOT_REQUIRED';
+
 /**
  * The sentence for a grid definition's refusal code - the editor's own check and the server's
  * coded 400 read the same words. Null for a code that is not a grid definition's.
  */
 export function productGridDefinitionMessage(code: string | null): string | null {
+  // [LEGACY] An estate older than each grid's switch refuses a grid sent optional. This build sends
+  // none there (`gridRequiredSwitchOn`), but the words stay until both estates carry the switch
+  // (docs/wiki/legacy-compatibility.md, "a form editor or fill page newer than its server's priced
+  // grids"). No longer a contract code, so compared as a string.
+  if (code === LEGACY_NOT_REQUIRED_CODE) return m.form_pgrid_refusal_not_required();
   switch (code as ProductGridDefinitionCode) {
     case 'PRODUCT_GRID_DEFINITION_MISSING':
     case 'PRODUCT_GRID_AXIS_INVALID':

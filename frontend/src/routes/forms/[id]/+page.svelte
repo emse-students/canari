@@ -46,6 +46,9 @@
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
+    isOrderEmpty,
+    ORDER_MISSING_ID,
+    revealOrderMissing,
     selectionsFromAnswers,
     isItemAnswered,
     missingAnswerMessage,
@@ -53,6 +56,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
     Check,
@@ -477,8 +481,15 @@
       return;
     }
 
-    const missing = firstMissingAnswer(visibleItems, selections);
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
     missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
+      Log.d('FormView', 'submit held: the order across the grids is empty');
+      error = '';
+      await revealOrderMissing();
+      return;
+    }
     if (missing) {
       // Said on the question's own card, which is brought into view: the bar is far from it.
       error = '';
@@ -544,9 +555,22 @@
     if (!form) return 0;
     return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
+  /**
+   * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
+   * it), a grid's flag means nothing and the ORDER is held empty-or-not across the grids.
+   */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
   /** What `reachedEnd` waits on: `handleSubmit`'s own validation as a yes/no - every visible
-   * REQUIRED question answered, a required priced grid holding one unit of its own. */
-  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections));
+   * REQUIRED question answered - a required grid one unit of its own, or, before the switch
+   * ([LEGACY] `gridSwitch` off), one unit across the grids. */
+  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections, gridSwitch));
+  /**
+   * The empty-order sentence, shown after a send refused for it and only while the order is still
+   * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
+   */
+  const orderMissing = $derived(
+    missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
+  );
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 
   $effect(() => {
@@ -870,6 +894,17 @@
     <!-- ── Payment method (cash vs online) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
+    {/if}
+
+    <!-- ── The empty order: the form's, announced, gone once a unit is added ── -->
+    {#if orderMissing}
+      <div
+        id={ORDER_MISSING_ID}
+        role="alert"
+        class="border-red-err/30 bg-red-err/10 text-red-err mt-4 rounded-2xl border px-4 py-3 text-sm font-medium dark:bg-red-950/20"
+      >
+        {m.form_view_error_order_empty()}
+      </div>
     {/if}
 
     <!-- ── Error ── -->

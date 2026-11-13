@@ -11,6 +11,15 @@ import { editorProductGrid, productGridPayload } from './productGridEditor';
 export const GRID_REQUIRED_SWITCH = { gridRequiredSwitch: true } as const;
 
 /**
+ * The marker a form payload carries on this estate: {@link GRID_REQUIRED_SWITCH} when the server
+ * stores the switch (`gridRequiredSwitchOn`), nothing otherwise - an older server's validation would
+ * strip it anyway, and this build then saves as the build before it ([LEGACY]).
+ */
+export function gridRequiredPayload(gridSwitch: boolean): Partial<typeof GRID_REQUIRED_SWITCH> {
+  return gridSwitch ? GRID_REQUIRED_SWITCH : {};
+}
+
+/**
  * The questions of an unpublished revision as this editor opens them. A revision saved by an editor
  * older than the switch ([LEGACY], docs/wiki/legacy-compatibility.md) carries no
  * `gridRequiredSwitch` and `required: true` on every grid, which says nothing: each grid takes the
@@ -61,9 +70,11 @@ const TYPES_WITH_PRICED_OPTIONS = ['single_choice', 'multiple_choice', 'dropdown
  * exact shape (`productGridPayload`: cents, one price per category x axis key); every other type
  * sends none - a question turned from a grid into a choice drops it here rather than on the server.
  * A grid's `required` is its "Obligatoire" switch, sent as the card holds it; the form payload says
- * so with `gridRequiredSwitch` ({@link GRID_REQUIRED_SWITCH}).
+ * so with `gridRequiredSwitch` ({@link gridRequiredPayload}). `gridSwitch` false - an estate older
+ * than the switch ([LEGACY], `gridRequiredSwitchOn`) - sends every grid `required: true`, the only
+ * flag that server saves (it refuses anything else `PRODUCT_GRID_NOT_REQUIRED`).
  */
-export function toFormItemsPayload(items: any[]): FormItem[] {
+export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[] {
   return items.map((item) => {
     const hasOptions = !TYPES_WITHOUT_OPTIONS.includes(item.type);
     const pricesOptions = TYPES_WITH_PRICED_OPTIONS.includes(item.type);
@@ -71,7 +82,10 @@ export function toFormItemsPayload(items: any[]): FormItem[] {
     return {
       ...rest,
       ...(item.type === PRODUCT_GRID_TYPE && productGrid
-        ? { productGrid: productGridPayload(productGrid), required: item.required === true }
+        ? {
+            productGrid: productGridPayload(productGrid),
+            required: gridSwitch ? item.required === true : true,
+          }
         : {}),
       options: hasOptions
         ? (item.options ?? [])

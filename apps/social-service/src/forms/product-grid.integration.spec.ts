@@ -255,6 +255,30 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
     expect(count).toBe(1);
   });
 
+  // Each grid's own switch (owner, 2026-11-13): a send with every grid OPTIONAL and empty is an
+  // answer, stored 'free' at 0. On a form answered once per person that row IS the person's answer
+  // (`answerHoldingWhere` counts 'free'), so a later real order is refused ALREADY_ANSWERED - the
+  // same as a once-only form whose other questions were sent without an article. Pinned so the
+  // behaviour is a decision, not an accident: the editor turns "plusieurs reponses" on when a grid
+  // is added, so a manager reaches this only by turning it back off.
+  it('an empty send on optional grids is the answer of a once-only form: a later order is refused', async () => {
+    const formId = await gridForm({
+      allowMultipleSubmissions: false,
+      items: [{ ...GRID_ITEM, required: false }] as any,
+    });
+    const empty: any = await service.submit(formId, { userId: MEMBER, answers: {} } as any);
+    const stored = await row(empty.submissionId);
+    expect(stored.paymentStatus).toBe('free');
+    expect(stored.totalPaid).toBe(0);
+    expect(stored.lines).toBeNull();
+    const before = charged.length;
+    await expect(
+      service.submit(formId, { userId: MEMBER, answers: { 'q-grid': { 'vert:m': 1 } } } as any)
+    ).rejects.toMatchObject({ response: { code: 'ALREADY_ANSWERED' } });
+    // Nothing was asked of Lydia for the refused order.
+    expect(charged.length).toBe(before);
+  });
+
   it('a paid order holds its seat, and the seat a refund frees is taken again', async () => {
     const formId = await gridForm({ maxSubmissions: 1 });
     const paid: any = await service.submit(formId, {

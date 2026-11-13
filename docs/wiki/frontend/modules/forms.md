@@ -1889,6 +1889,25 @@ nor drops a choice a newer one made. A revision such an editor saved opens here 
 page still holds a send on "Commandez au moins un article" across the grids (stricter than the server)
 and does not mark a required grid's card - the server's `FORM_ANSWER_MISSING` then words it.
 
+**A newer app reaching a SERVER older than the switch** (a store build lives on phones days before
+production deploys) is the reverse hazard: that server refuses a grid sent optional
+(`PRODUCT_GRID_NOT_REQUIRED`), drops `gridRequiredSwitch`, and refuses an empty order
+(`PRODUCT_GRID_EMPTY`). So core-service's `GET /api/version` says `gridRequiredSwitch: true`, and the
+client reads it through ONE gate, `gridRequiredSwitchOn()` (`lib/forms/gridRequiredGate.ts`). Off -
+an older server, or no answer yet - the editor draws no switch and no asterisk on a grid and sends
+every grid `required: true` without the marker; the fill pages ignore a grid's flag and hold an
+empty ORDER across the visible grids beside the send button (`firstMissingAnswer(..., gridSwitch)`,
+kind `order`). The two old codes keep their words. [LEGACY] in
+[legacy-compatibility](../../legacy-compatibility.md), "a form editor or fill page newer than its
+server's priced grids".
+
+**An empty send on a once-only form is that person's answer.** A send with every grid optional and
+empty is stored `free` at 0, and `answerHoldingWhere` counts `free`: on a form with
+`allowMultipleSubmissions` off, that person's later real order is refused `409 ALREADY_ANSWERED`,
+exactly as a once-only form sent without an article always was. Adding a grid turns "plusieurs
+reponses" on in the editor, so a manager reaches this only by turning it back off.
+`product-grid.integration.spec.ts` pins it.
+
 ### One contract, copied byte for byte
 
 `apps/social-service/src/forms/product-grid-contract.ts` = `frontend/src/lib/forms/productGridContract.ts`

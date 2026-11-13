@@ -2,4 +2,5 @@
 
 A grid switched on demands one unit of its own, held on its card; the rule over the whole order is
 gone, so a form whose grids are all optional is sent with no article. Migration 164 turns every stored
-grid off ([forms](docs/wiki/frontend/modules/forms.md), [legacy](docs/wiki/legacy-compatibility.md)).
+grid off; an app keeps the old behaviour until its server's `/api/version` says `gridRequiredSwitch`
+([forms](docs/wiki/frontend/modules/forms.md), [legacy](docs/wiki/legacy-compatibility.md)).

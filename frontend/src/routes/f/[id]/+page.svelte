@@ -16,6 +16,9 @@
     firstMissingAnswer,
     formatAmount,
     initialSelections,
+    isOrderEmpty,
+    ORDER_MISSING_ID,
+    revealOrderMissing,
     isItemAnswered,
     missingAnswerMessage,
     visibleAnswers,
@@ -23,6 +26,7 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
@@ -149,8 +153,15 @@
 
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting || blocked) return;
-    const missing = firstMissingAnswer(visibleItems, selections);
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
     missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
+      Log.d('PublicForm', 'submit held: the order across the grids is empty');
+      error = '';
+      await revealOrderMissing();
+      return;
+    }
     if (missing) {
       // Said on the question's own card, brought into view.
       error = '';
@@ -208,6 +219,19 @@
       submitting = false;
     }
   }
+
+  /**
+   * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
+   * it), a grid's flag means nothing and the ORDER is held empty-or-not across the grids.
+   */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
+  /**
+   * The empty-order sentence, shown after a send refused for it and only while the order is still
+   * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
+   */
+  const orderMissing = $derived(
+    missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
+  );
 
   /** What a question's card says after a refused send: why, while it is still unanswered. */
   function questionError(item: { id: string }): string | null {
@@ -388,6 +412,17 @@
           />
         </label>
       </div>
+
+      <!-- The empty order: the form's, announced, gone once a unit is added. -->
+      {#if orderMissing}
+        <p
+          id={ORDER_MISSING_ID}
+          role="alert"
+          class="text-red-err mt-4 text-center text-sm font-medium"
+        >
+          {m.form_view_error_order_empty()}
+        </p>
+      {/if}
       {#if error}
         <p class="text-red-err mt-4 text-center text-sm font-medium">{error}</p>
       {/if}

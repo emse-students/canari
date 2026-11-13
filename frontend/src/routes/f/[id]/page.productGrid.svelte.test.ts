@@ -16,6 +16,10 @@ const fixture = vi.hoisted(() => ({
   jacketShownBy: null as null | { questionId: string; optionIds: string[] },
 }));
 
+/** Whether the estate stores each priced grid's own switch (`/api/version`), per test. */
+const gate = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/forms/gridRequiredGate', () => ({ gridRequiredSwitchOn: () => gate.on }));
+
 vi.mock('$app/state', () => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/f/f1'), state: {} },
 }));
@@ -94,6 +98,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   submitPublicForm.mockClear();
+  gate.on = true;
   fixture.hoodieRequired = true;
   fixture.jacketRequired = false;
   fixture.jacketShownBy = null;
@@ -196,6 +201,47 @@ describe('a guest form of priced grids', () => {
     send();
     await settle();
     await vi.waitFor(() => expect(submitPublicForm).toHaveBeenCalledTimes(1));
+  });
+});
+
+/**
+ * [LEGACY] An estate older than each grid's switch (`gridRequiredSwitchOn` false): it stores every
+ * grid required and means nothing by it, and refuses an EMPTY ORDER across the grids. The page holds
+ * that send itself, the form's sentence and no card's, and draws no asterisk on a grid.
+ */
+describe('a guest form of priced grids, before the switch', () => {
+  beforeEach(() => {
+    gate.on = false;
+  });
+
+  it("holds an empty order, the form's and no card's, until a unit is added in ANY grid", async () => {
+    await render();
+    expect(document.getElementById('q-hoodie')!.querySelector('h2')!.textContent).not.toContain(
+      '*'
+    );
+    send();
+    await settle();
+    const alert = document.getElementById('form-order-missing');
+    expect(alert!.textContent).toContain(m.form_view_error_order_empty());
+    expect(cardAlert('hoodie')).toBeNull();
+    expect(submitPublicForm).not.toHaveBeenCalled();
+
+    // A unit in the grid that was NOT the required one is enough: the order is what is held.
+    await add('Veste XL');
+    expect(document.getElementById('form-order-missing')).toBeNull();
+    send();
+    await settle();
+    await vi.waitFor(() => expect(submitPublicForm).toHaveBeenCalledTimes(1));
+    expect(submitPublicForm.mock.calls[0][1].answers).toEqual({ jacket: { 'Taille:XL': 1 } });
+  });
+
+  it('holds the empty order of a form whose grids are all optional too', async () => {
+    fixture.hoodieRequired = false;
+    await render();
+    send();
+    await settle();
+    expect(document.getElementById('form-order-missing')).not.toBeNull();
+    expect(submitPublicForm).not.toHaveBeenCalled();
   });
 });
 

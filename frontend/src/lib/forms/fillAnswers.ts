@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { intlLocale } from '$lib/utils/intlLocale';
 import type { FormItem } from './api';
@@ -80,17 +81,20 @@ export function isItemAnswered(item: FormItem, value: unknown): boolean {
 
 /**
  * Why the form cannot be sent yet - what the page has to say, and which question (`itemId`), so the
- * page can mark that card and bring it into view. Always a question's: no rule is the whole form's
- * (owner, 2026-11-13).
+ * page can mark that card and bring it into view. `order` is the FORM's ([LEGACY], an estate older
+ * than each grid's switch, `gridRequiredSwitchOn` false): no question is at fault (`itemId` null),
+ * the page says it beside its send button.
  */
-export type MissingAnswer = { itemId: string } & (
-  | { kind: 'matrix'; label: string }
-  | { kind: 'row'; label: string; row: string }
-  | { kind: 'select'; label: string }
-  | { kind: 'grid'; label: string }
-  | { kind: 'answer'; label: string }
-  | { kind: 'update'; label: string }
-);
+export type MissingAnswer =
+  | ({ itemId: string } & (
+      | { kind: 'matrix'; label: string }
+      | { kind: 'row'; label: string; row: string }
+      | { kind: 'select'; label: string }
+      | { kind: 'grid'; label: string }
+      | { kind: 'answer'; label: string }
+      | { kind: 'update'; label: string }
+    ))
+  | { itemId: null; kind: 'order' };
 
 /**
  * The first REQUIRED question, in order, that has no answer - or null when the form may be sent.
@@ -103,13 +107,20 @@ export type MissingAnswer = { itemId: string } & (
  * then wants ONE unit of its own; a grid the person does not see is not in `items` (the VISIBLE
  * questions), so it is never demanded. No rule spans the grids: a form whose grids are all optional
  * is sent with no article.
+ *
+ * `gridSwitch` false ([LEGACY], an estate older than the switch, `gridRequiredSwitchOn`): that
+ * server stores every grid required and means nothing by it, and demands the ORDER - one unit across
+ * the visible grids (`PRODUCT_GRID_EMPTY`). So a grid is skipped whatever its flag, and an empty
+ * order is answered last, `{ itemId: null, kind: 'order' }`.
  */
 export function firstMissingAnswer(
   items: FormItem[],
-  selections: Selections
+  selections: Selections,
+  gridSwitch: boolean
 ): MissingAnswer | null {
   for (const item of items) {
     if (!item.required) continue;
+    if (!gridSwitch && isProductGrid(item)) continue;
     const value = selections[item.id];
     const itemId = item.id;
     if (!isKnownQuestionType(item.type)) {
@@ -130,15 +141,44 @@ export function firstMissingAnswer(
       return { itemId, kind: 'answer', label: item.label };
     }
   }
+  if (!gridSwitch && isOrderEmpty(items, selections)) return { itemId: null, kind: 'order' };
   return null;
 }
 
 /**
- * Whether every REQUIRED visible question is answered - the same rule `firstMissingAnswer` applies,
- * as a yes/no.
+ * [LEGACY] Whether `items` (the VISIBLE questions) hold priced grids and not one unit is ordered
+ * across them - the ORDER rule of an estate older than each grid's switch (`PRODUCT_GRID_EMPTY`).
+ * False on a form showing no grid. Read only while `gridRequiredSwitchOn` is false.
  */
-export function allRequiredAnswered(items: FormItem[], selections: Selections): boolean {
-  return firstMissingAnswer(items, selections) === null;
+export function isOrderEmpty(items: FormItem[], selections: Selections): boolean {
+  const grids = items.filter(isProductGrid);
+  return grids.length > 0 && !grids.some((item) => hasOrderedUnits(selections[item.id]));
+}
+
+/** [LEGACY] The id of the fill pages' empty-order sentence, which `revealOrderMissing` brings into view. */
+export const ORDER_MISSING_ID = 'form-order-missing';
+
+/**
+ * [LEGACY] Brings the empty-order sentence into view once the page has drawn it: the sticky order
+ * bar of a grid form hides the end of the page, where both fill pages say it.
+ */
+export async function revealOrderMissing(): Promise<void> {
+  await tick();
+  document
+    .getElementById(ORDER_MISSING_ID)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+/**
+ * Whether every REQUIRED visible question is answered - the same rule `firstMissingAnswer` applies,
+ * as a yes/no, under the same `gridSwitch`.
+ */
+export function allRequiredAnswered(
+  items: FormItem[],
+  selections: Selections,
+  gridSwitch: boolean
+): boolean {
+  return firstMissingAnswer(items, selections, gridSwitch) === null;
 }
 
 /** The sentence for a missing answer, in the reader's language. */
@@ -152,6 +192,8 @@ export function missingAnswerMessage(missing: MissingAnswer): string {
       return m.form_view_error_select_option({ label: missing.label });
     case 'grid':
       return m.form_view_error_grid_empty({ label: missing.label });
+    case 'order':
+      return m.form_view_error_order_empty();
     case 'answer':
       return m.form_view_error_answer({ label: missing.label });
     case 'update':

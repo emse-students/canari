@@ -11,6 +11,10 @@ const submitForm = vi.hoisted(() =>
   )
 );
 
+/** Whether the estate stores each priced grid's own switch (`/api/version`), per test. */
+const gate = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/forms/gridRequiredGate', () => ({ gridRequiredSwitchOn: () => gate.on }));
+
 vi.mock('$app/state', () => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/forms/f1'), state: {} },
 }));
@@ -98,6 +102,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   submitForm.mockClear();
+  gate.on = true;
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -217,5 +222,45 @@ describe('a form of priced grids', () => {
     await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
     const [, body] = submitForm.mock.calls[0];
     expect(body.answers).toEqual({ jacket: { 'Taille:XL': 1 } });
+  });
+});
+
+/**
+ * [LEGACY] An estate older than each grid's switch (`gridRequiredSwitchOn` false): it stores every
+ * grid required and means nothing by it, and refuses an EMPTY ORDER across the grids. The page holds
+ * that send itself, the form's sentence and no card's, and draws no asterisk on a grid.
+ */
+describe('a form of priced grids, before the switch', () => {
+  beforeEach(() => {
+    gate.on = false;
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("holds an empty order, the form's and no card's, until a unit is added in ANY grid", async () => {
+    submission.productGridPrices = {
+      hoodie: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+      jacket: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+    };
+    await render();
+    expect(document.getElementById('q-hoodie')!.querySelector('h2')!.textContent).not.toContain(
+      '*'
+    );
+    const send = () =>
+      bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
+    send();
+    await settle();
+    expect(document.getElementById('form-order-missing')!.textContent).toContain(
+      m.form_view_error_order_empty()
+    );
+    expect(document.getElementById('q-hoodie')!.querySelector('[role="alert"]')).toBeNull();
+    expect(submitForm).not.toHaveBeenCalled();
+
+    // A unit in the grid that was NOT the required one is enough: the order is what is held.
+    await add('Veste XL');
+    expect(document.getElementById('form-order-missing')).toBeNull();
+    send();
+    await settle();
+    await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
+    expect(submitForm.mock.calls[0][1].answers).toEqual({ jacket: { 'Taille:XL': 1 } });
   });
 });

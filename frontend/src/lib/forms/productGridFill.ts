@@ -198,6 +198,9 @@ export function appliedTierLabels(
   return labels;
 }
 
+/** [LEGACY] The code an estate older than each grid's switch refuses an empty order with. */
+const LEGACY_EMPTY_ORDER_CODE = 'PRODUCT_GRID_EMPTY';
+
 /**
  * The sentence for a coded refusal of a priced grid's answer, or null for any other code.
  *
@@ -206,6 +209,12 @@ export function appliedTierLabels(
  * the grid changed under the page (a cell closed, a row removed).
  */
 export function productGridRefusalMessage(code: string | null): string | null {
+  // [LEGACY] An estate older than each grid's switch refuses an answer whose visible grids hold no
+  // unit between them. This build holds that send itself (`gridRequiredSwitchOn` off), but the words
+  // stay until both estates carry the switch (docs/wiki/legacy-compatibility.md, "a form editor or
+  // fill page newer than its server's priced grids"). No longer a contract code, so compared as a
+  // string.
+  if (code === LEGACY_EMPTY_ORDER_CODE) return m.form_refusal_grid_empty();
   switch (code as ProductGridAnswerCode | null) {
     case 'PRODUCT_GRID_ANSWER_MISSING':
       return m.form_refusal_grid_update_app();
