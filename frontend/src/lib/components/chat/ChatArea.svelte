@@ -53,7 +53,12 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadBelow, countingReadPoint, seenByAnchors } from '$lib/utils/chat/readState';
+  import {
+    countUnreadBelow,
+    countingReadPoint,
+    dmReadAnchorId,
+    seenByAnchors,
+  } from '$lib/utils/chat/readState';
   import {
     lastRowAbove,
     resolveAnchor,
@@ -82,6 +87,17 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import {
+    dropAnchorsExcept,
+    firstRowEndingBelow,
+    peekConversationAnchor,
+    rememberConversationAnchor,
+    resolveEntryAnchor,
+    takeConversationAnchor,
+    type ConversationAnchor,
+    type EntryAnchorDecision,
+  } from '$lib/utils/chat/scrollAnchors';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
@@ -580,6 +596,171 @@
   }
 
   /**
+   * Where the reader stands, kept for their return from another page (a profile opened from a sender,
+   * a members row or a direct header). MEASURED when a navigation to ANOTHER ROUTE begins
+   * (`beforeNavigate`, the DOM still mounted), COMMITTED only when this pane is actually torn down
+   * (`onDestroy`): a navigation that is cancelled, or that leaves this pane mounted, commits nothing
+   * (`afterNavigate` drops the measure). Never a scroll listener or a timer. The next entry of this
+   * conversation reads it (`decideEntryAnchor`). A reader at the bottom saves nothing: the usual
+   * entry (first unread, bottom) is where they belong.
+   */
+  function measureReaderPosition(): ConversationAnchor | null {
+    const c = conversation;
+    if (!c) return null;
+    if (!chatContainer || entering || isNearBottom) {
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} left at the bottom - nothing kept`);
+      return null;
+    }
+    const drawnIds = new Set(
+      visibleMessageGroups.filter(isMessageGroupRow).map((group) => group.message.id)
+    );
+    const rows = Array.from(chatContainer.querySelectorAll<HTMLElement>('[id^="msg-"]')).filter(
+      (row) => drawnIds.has(row.id.slice('msg-'.length))
+    );
+    // The top of what the reader SEES: the scroller runs under the floating chrome, whose height is
+    // its padding-top (the same edge the sticky date is measured from).
+    const visibleTop =
+      chatContainer.getBoundingClientRect().top +
+      (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+    const index = firstRowEndingBelow(
+      rows.length,
+      (i) => rows[i].getBoundingClientRect().bottom,
+      visibleTop
+    );
+    if (index < 0) {
+      Log.d('chat.anchor', `${c.id.slice(0, 8)} no row in view on leaving - nothing kept`);
+      return null;
+    }
+    return {
+      messageId: rows[index].id.slice('msg-'.length),
+      windowStart: renderWindow.start,
+      offsetPx: rows[index].getBoundingClientRect().top - visibleTop,
+      lastMessageId: c.messages.at(-1)?.id ?? null,
+    };
+  }
+  let pendingLeave: { conversationId: string; anchor: ConversationAnchor | null } | null = null;
+  beforeNavigate((nav) => {
+    // Only a real leave of this route: not a page unload (memory dies anyway), not a navigation that
+    // stays on the same path (a query change, a shallow push of an overlay).
+    if (nav?.willUnload) return;
+    const to = nav?.to?.url.pathname;
+    if (!to || to === nav?.from?.url.pathname || !conversation) return;
+    pendingLeave = { conversationId: conversation.id, anchor: measureReaderPosition() };
+  });
+  afterNavigate(() => {
+    // Still mounted after a navigation completed: this pane did not leave, so nothing is committed.
+    if (!pendingLeave) return;
+    Log.d('chat.anchor', 'navigation ended with the pane still mounted - nothing kept');
+    pendingLeave = null;
+  });
+  onDestroy(() => {
+    if (!pendingLeave) return;
+    const { conversationId, anchor } = pendingLeave;
+    pendingLeave = null;
+    rememberConversationAnchor(conversationId, anchor);
+    if (anchor) {
+      Log.d(
+        'chat.anchor',
+        `${conversationId.slice(0, 8)} kept at ${anchor.messageId.slice(0, 8)} (window ${anchor.windowStart})`
+      );
+    }
+  });
+
+  /**
+   * THE ONE PLACE A SAVED POSITION ENTERS THE ENTRY (`resolveEntryAnchor` decides).
+   *
+   * An anchor serves the IMMEDIATE return only: every other conversation's anchor ends at this entry,
+   * and one whose conversation has newer messages than when the reader left is declined (the usual
+   * entry puts them at the first unread). The anchor is TAKEN only once the entry has its groups: an
+   * entry onto a list still loading leaves it in place, silently, for a later entry. A message gone
+   * from a settled list is the one stale case, and it says so: a fallback is a signal.
+   */
+  function decideEntryAnchor(c: Conversation): EntryAnchorDecision {
+    const dropped = dropAnchorsExcept(c.id);
+    if (dropped > 0) Log.d('chat.anchor', `${dropped} position(s) of other conversations dropped`);
+    const anchor = peekConversationAnchor(c.id);
+    if (anchor === null) return { kind: 'bottom', reason: 'none' };
+    const index = messageGroups.findIndex(
+      (group) => isMessageGroupRow(group) && group.message.id === anchor.messageId
+    );
+    if (index < 0 && (messageGroups.length === 0 || isLoadingHistory || isCatchingUpMessages)) {
+      Log.d(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} list still loading - saved position kept for later`
+      );
+      return { kind: 'bottom', reason: 'none' };
+    }
+    takeConversationAnchor(c.id);
+    const decision = resolveEntryAnchor(
+      anchor,
+      index,
+      messageGroups.length,
+      c.messages.at(-1)?.id ?? null
+    );
+    if (decision.kind === 'bottom' && decision.reason === 'message-not-in-list') {
+      Log.w(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} saved position is stale (${decision.reason}) - opening at the usual entry`
+      );
+    } else if (decision.kind === 'bottom' && decision.reason === 'newer-messages') {
+      Log.d(
+        'chat.anchor',
+        `${c.id.slice(0, 8)} messages arrived since the reader left - usual entry`
+      );
+    }
+    return decision;
+  }
+
+  /** A restore is running (the window opened, the row not yet revealed): a late merge must not pin. */
+  let restoringEntry = false;
+
+  /**
+   * Opens the conversation where the reader left it: the render window opens at the saved start, the
+   * anchor row is put back at its saved offset, and only then is the list revealed. It goes through
+   * the entry's own machinery - the hidden frame, `entering`, the widen after the reveal - so nothing
+   * about it is a second mechanism; only the landing differs from `fillViewportThenPin`.
+   */
+  async function restoreEntryAnchor(decision: Extract<EntryAnchorDecision, { kind: 'restore' }>) {
+    const epoch = ++entryEpoch;
+    windowStart = decision.windowStart;
+    await tick();
+    if (epoch !== entryEpoch) return;
+    const place = (): boolean => {
+      const row = document.getElementById(`msg-${decision.messageId}`);
+      if (!row || !chatContainer) return false;
+      const visibleTop =
+        chatContainer.getBoundingClientRect().top +
+        (parseFloat(getComputedStyle(chatContainer).paddingTop) || 0);
+      chatContainer.scrollTop += row.getBoundingClientRect().top - visibleTop - decision.offsetPx;
+      return true;
+    };
+    if (!place()) {
+      Log.w(
+        'chat.anchor',
+        `row ${decision.messageId.slice(0, 8)} not mounted after the window opened at ${decision.windowStart} - usual entry`
+      );
+      restoringEntry = false;
+      isNearBottom = true;
+      void fillViewportThenPin();
+      return;
+    }
+    Log.d(
+      'chat.anchor',
+      `restored ${decision.messageId.slice(0, 8)} (window ${decision.windowStart})`
+    );
+    requestAnimationFrame(() => {
+      if (epoch !== entryEpoch) return;
+      place();
+      restoringEntry = false;
+      // The same reveal as the usual entry: one flush, the floor held at the entry frame's until the
+      // widen after it has finished.
+      entryWidening = true;
+      entering = false;
+      void widenEntryWindow(epoch);
+    });
+  }
+
+  /**
    * Grows the entry window from its first-frame size to `INITIAL_RENDER_GROUPS`, AFTER the frame
    * that showed the tail, so a page of rows is never one long task before the first paint.
    *
@@ -912,6 +1093,20 @@
           chatView.conversation.serverReadWatermarks
         )
       : undefined
+  );
+  /**
+   * A DM: the one own message that carries the "Lu" marker, under the newest message the peer has
+   * read (owner, 2026-11-13), computed over every row like `seenBy`, never the render window.
+   */
+  let dmReadAnchor = $derived(
+    chatView?.isDirect
+      ? dmReadAnchorId(
+          messageRows,
+          chatView.conversation.readWatermarks,
+          currentUserId,
+          chatView.conversation.serverReadWatermarks
+        )
+      : null
   );
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
@@ -1263,6 +1458,8 @@
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
+        const entryAnchor = decideEntryAnchor(c);
+        restoringEntry = entryAnchor.kind === 'restore';
         hasMoreInDb = !isChannel;
         // The previous conversation's older-history load and scroll offset are not this one's.
         olderLoadToken++;
@@ -1277,8 +1474,13 @@
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
         entryReportOwed = true;
-        tick().then(() => fillViewportThenPin());
-        isNearBottom = true;
+        if (entryAnchor.kind === 'restore') {
+          isNearBottom = false;
+          tick().then(() => restoreEntryAnchor(entryAnchor));
+        } else {
+          tick().then(() => fillViewportThenPin());
+          isNearBottom = true;
+        }
       } else if (hasNewMessage) {
         // WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION IS ONE DECISION, AND IT IS NOT HERE.
         // `respondToNewMessage` holds it, tested on its own; this branch only carries it out.
@@ -1295,12 +1497,16 @@
         // `scrollToBottom` moves the pane, not the slice, and with the window stopped short of the
         // list it scrolled to the bottom of something that did not contain the message that had
         // just arrived - so the message was, to the reader, simply not delivered.
-        const response = respondToNewMessage({
-          entering,
-          catchupActive,
-          isNearBottom,
-          ownMessageAdded: c.messages.at(-1)?.isOwn === true,
-        });
+        // A RESTORE IN FLIGHT IS NOT AN ENTRY TO PIN: a late merge or catch-up lands as `stay`, and the
+        // row the reader is put back on is kept by the thread's row anchor.
+        const response: NewMessageResponse = restoringEntry
+          ? 'stay'
+          : respondToNewMessage({
+              entering,
+              catchupActive,
+              isNearBottom,
+              ownMessageAdded: c.messages.at(-1)?.isOwn === true,
+            });
         viewResponse = response;
         if (response !== 'stay') {
           // A re-pin of the entry never RAISES the start: a window already widened to 60 stays
@@ -1438,7 +1644,11 @@
     if (!el) return;
     return observeThreadGrowth(
       el,
-      () => ({ wasNearBottom: isNearBottom, isLoadingOlder, isEntering: entering }),
+      () => ({
+        wasNearBottom: isNearBottom,
+        isLoadingOlder,
+        isEntering: entering && !restoringEntry,
+      }),
       composerBand
     );
   });
@@ -1889,6 +2099,7 @@
             readWatermarks={conversation?.readWatermarks}
             serverReadWatermarks={conversation?.serverReadWatermarks}
             {seenBy}
+            {dmReadAnchor}
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}

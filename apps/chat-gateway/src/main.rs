@@ -1,6 +1,7 @@
 mod addressing;
 mod audience;
 mod census;
+mod frame_census;
 mod handlers;
 mod log_repeat;
 mod models;
@@ -58,9 +59,9 @@ fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
 }
 
 /// CORS for `/api/ws` (browser `Origin`) and HTTP helpers on the same router.
-/// `ALLOW_ORIGIN=*` allows all. Otherwise use a comma-separated list, e.g.
-/// `https://canari-emse.fr,http://localhost:1420` so local Vite (`Origin: http://localhost:1420`)
-/// is accepted when the chat-gateway runs with a non-wildcard policy.
+/// `ALLOW_ORIGIN=*` allows all. Otherwise it is a comma-separated list matched exactly. The local
+/// and dev estates list `http://localhost:1420` so Vite's page is accepted there; production's
+/// list names no loopback origin.
 ///
 /// THE LIST IS A FACT ABOUT THE CLIENTS, AND EVERY CANARI CLIENT MUST BE IN IT. A Tauri WebView
 /// presents one origin per platform and calls this gateway cross-origin (its page is served from
@@ -319,10 +320,10 @@ mod tests {
     /// BOTH public apexes are present, deliberately: the estate answers on `canari.emse.fr`
     /// and on the legacy `canari-emse.fr`, which apps already installed on a phone still
     /// call. While the secret still names the legacy one, `compute_allow_origin`
-    /// deduplicates and emits the seven-entry list this used to pin - so this is the shape
+    /// deduplicates and emits the five-entry list - so this is the shape
     /// the renderer produces, not a claim about what is in the secret today.
     const PRODUCTION_ALLOW_ORIGIN: &str = "https://canari.emse.fr,https://canari-emse.fr,\
-         https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,\
+         https://dev.canari-emse.fr,\
          http://tauri.localhost,https://tauri.localhost,tauri://localhost";
 
     /// Minimal router carrying only the CORS layer, so what is asserted is the layer and nothing
@@ -399,7 +400,7 @@ mod tests {
     #[test]
     fn keeps_every_segment_of_the_production_list() {
         let origins = parse_allowed_origins(PRODUCTION_ALLOW_ORIGIN);
-        assert_eq!(origins.len(), 8, "one entry lost: {origins:?}");
+        assert_eq!(origins.len(), 6, "one entry lost: {origins:?}");
     }
 
     #[test]
@@ -414,8 +415,6 @@ mod tests {
             "https://canari.emse.fr",
             "https://canari-emse.fr",
             "https://dev.canari-emse.fr",
-            "http://localhost:1420",
-            "http://127.0.0.1:1420",
             "http://tauri.localhost",
             "https://tauri.localhost",
             "tauri://localhost",
@@ -424,6 +423,24 @@ mod tests {
                 preflight(PRODUCTION_ALLOW_ORIGIN, origin).await.as_deref(),
                 Some(origin),
                 "{origin} is a Canari client and was refused"
+            );
+        }
+    }
+
+    /// The production list is exact and names no loopback origin: the dev server is a client of
+    /// the dev and local estates, whose own lists carry it.
+    #[tokio::test]
+    async fn sends_no_allow_origin_header_to_a_loopback_origin_in_production() {
+        for origin in [
+            "http://localhost:1420",
+            "http://127.0.0.1:1420",
+            "http://localhost",
+            "http://localhost:8081",
+        ] {
+            assert_eq!(
+                preflight(PRODUCTION_ALLOW_ORIGIN, origin).await,
+                None,
+                "{origin}"
             );
         }
     }

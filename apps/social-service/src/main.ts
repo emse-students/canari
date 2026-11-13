@@ -18,8 +18,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
-  // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
-  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
+  // what the estate lists in `ALLOW_ORIGIN` where it passes it (local and dev: the dev-server
+  // pair). The list is exact and lives, with the predicate, in `cors-origins.ts`.
+  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL, process.env.ALLOW_ORIGIN);
   /**
    * The phone apps read Canari's API through the WebView's own `fetch` (`fetchRouting.ts`), so
    * they are a cross-origin client: a response header the browser does not expose is `null` to

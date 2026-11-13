@@ -189,7 +189,7 @@ jobs:
       # THE RELEASE'S OWN TAG, `v<version>`, AND NOT `latest` (2026-10-06). `latest` is whatever the
       # newest stable pushed, so re-running an OLD release's deploy passed twenty steps and
       # redeployed the NEWEST one (v0.16.1's rerun put v0.16.4 up on 2026-09-06): a version could be
-      # shipped and never unshipped. `build.yml` pushes `v<version>` for ALL EIGHT services on every
+      # shipped and never unshipped. `build.yml` pushes `v<version>` for EVERY service it builds on every
       # release - the selective rebuild that once made a moving tag the only one resolving for every
       # service was deleted on 2026-09-03 - so the immutable tag always exists and a rerun IS a
       # rollback. `latest` still moves, for a human typing `docker pull`, and decides nothing here.

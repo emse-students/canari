@@ -1,3 +1,3 @@
-version: 1.6.10
+version: 1.6.11
 
-Toucher une vidéo du fil l'ouvre en plein écran dans les CanaReels, sans repartir de zéro, et on peut de nouveau avancer dans les vidéos. Moins de notifications : les suggestions sont plus rares et se coupent dans les réglages. Les institutions choisissent qui voit chaque publication. L'agenda se filtre par campus ou formation, et le démineur a sa page Jeux. Corrigé : une réponse perdue en joignant une photo, des lenteurs sur une connexion faible.
+Les vidéos en paysage se regardent en plein écran : le téléphone tourne avec elles. Vidéos et messages vocaux jouent à un volume proche. On peut modifier la légende d'une photo ou d'une vidéo envoyée et mentionner quelqu'un par son prénom ou son nom. Les touches de volume déclenchent l'appareil photo. Sur une connexion lente, l'app s'ouvre plus vite. Corrigé : des conversations en double avec la même personne, un appel qui raccrochait en perdant le son.

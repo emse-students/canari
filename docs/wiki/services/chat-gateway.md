@@ -227,6 +227,28 @@ window rather than as a rate per week. The baseline was reachable only because i
 an unusually long quiet period. Anything wanting a genuinely comparable 7-day count would have to
 name a mechanism that outlives the container, and none is deployed.
 
+## What one connection sent, said once when it ends (2026-11-13)
+
+Each connection carries a `FrameCensus` (`frame_census.rs`), fed by the receive loop, whose `Drop`
+writes one line whichever way the connection ends - a close frame, a reset, or the sender half
+ending first:
+
+```
+[WS FRAMES] <user>:<device> closed after 75s: frames=2 heartbeats=1 bytes=135 largest=120 peakPerMinute=2
+```
+
+`frames` is every inbound text frame, `heartbeats` the application pings among them, `largest` the
+largest frame in bytes. It counts and refuses nothing.
+
+**`peakPerMinute` is the busiest FIXED minute, counted from the open.** A burst that straddles two
+windows is split between them, so the true count over any sixty seconds is at most twice the value
+written. The clock only names the window.
+
+**Why it exists.** A per-connection limit has to sit above what real clients send, and only the
+gateway sees that: the delivery queue holds what is still stored, a sample of what was accepted.
+A week of this line is the distribution the frame limits are sized from
+([entry](../backlog.d/p2-gateway-frame-limits-sized-from-a-week-of-counts.md)).
+
 ## WebSocket message routing
 
 On each WebSocket connection, the gateway registers the user+device key (`userId:deviceId`) in the in-memory `connected_users` map (a `Mutex<HashMap<String, HashMap<String, Sender>>>`).
@@ -713,16 +735,23 @@ Enumerated in `infrastructure/.env.example`, written by `serve-prod.yml`, and pi
 |---|---|
 | `https://canari-emse.fr` | the deployed site (`FRONTEND_URL`) |
 | `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
-| `http://localhost:1420` | Vite dev server / Tauri desktop dev |
-| `http://127.0.0.1:1420` | the same, spelt as `tauri.conf.json`'s `devUrl` actually spells it |
 | `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
 | `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
 
 The Tauri app calls this gateway **cross-origin** (its page is served from `tauri://localhost`, the
 API from `https://canari-emse.fr`), so dropping a spelling costs that platform `/api/presence` with
-no server-side error to show for it. This list is exact-match where the Nest services accept any
-loopback port, which is why both `localhost` and `127.0.0.1` are spelt out. Keep it in step with
-`TAURI_WEBVIEW_ORIGINS` in `apps/*/src/cors-origins.ts`.
+no server-side error to show for it. Keep it in step with `TAURI_WEBVIEW_ORIGINS` in
+`apps/*/src/cors-origins.ts`.
+
+**The CORS allowlist is exact, here and in the four Nest services; no loopback origin in
+production.** The Vite dev server (`http://localhost:1420`, and `http://127.0.0.1:1420` as
+`tauri.conf.json`'s `devUrl` spells it) is a client of the dev and local estates only, so only
+their lists name it: `compute_allow_origin` in `infrastructure/deploy/render-env.sh` writes the
+pair for dev and not for production, and the local compose file spells it out. The Nest services
+accept an origin on one ground, that a list names it: `FRONTEND_URL`, the three WebView
+spellings, and this same `ALLOW_ORIGIN` on the estates whose compose file hands it to them (dev
+and local; production's does not). Pinned by `deploy-env.test.sh` (both rendered lists), the
+preflight tests in `main.rs` and `cors-origins.spec.ts`.
 
 ### Verifying it, and why the deploy's colour is not the proof
 
