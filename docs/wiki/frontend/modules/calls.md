@@ -1930,9 +1930,111 @@ SFU mid-call, transforms in the path throughout (D1); both relays are kept - Clo
 serves now, the Rust `call-service` is kept working for the day the School opens UDP, one
 server-side setting picks (D2); `call-service` is proven by an encrypted end-to-end call in CI (D3,
 [built](../../services/call-service.md#the-end-to-end-call-in-ci)); direct peer to peer keeps no IP
-masking (D4). Per-sender keys and the TURN volume of a relayed mesh stay open, and the work
+masking (D4). Per-sender keys are built ([below](#one-key-per-sender-wp-gc1-2026-11-13)); the TURN
+volume of a relayed mesh stays open, and the work
 packages that follow are listed in order:
 [backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
+
+### One key per sender (WP-GC1, 2026-11-13)
+
+A mesh carries N senders, so the 1:1 call's per-DIRECTION keys (`<callId>|caller`,
+`<callId>|callee`) cannot name them. A group call exports ONE key per participant from the
+conversation's MLS group, under its own label `mls-webrtc-media-group-v1`, with the sender's user id
+as context: `<callId>|<userId lowercased>` (`utils/callKeys.ts`, `deriveGroupCallKeys`,
+`deriveSenderKey`). Every participant derives the same N keys; each device encrypts with its own and
+holds one receive key per other participant.
+
+- **The worker** (`workers/encryption.worker.ts`) holds one send key and a MAP of receive keys:
+  `setGroupKeys` replaces all of them at once (`keyReady`), `addReceiveKey` adds one participant
+  (`peerKeyReady`, awaited before that participant's peer connection is made, so the rule "key the
+  worker before the first track" holds per peer), `dropReceiveKey` removes one. Each RECEIVER
+  transform is told whose frames it carries (`CallTransformOptions.peer`); the key is looked up per
+  frame, and a frame of a participant the worker holds no key for is dropped and counted
+  (`droppedNoKey` with its side and participant), never forwarded. A receive key equal to the send
+  key is refused, in a set or an add, as two equal 1:1 keys already were.
+- **The 1:1 call is NOT the N=2 case, on purpose.** It keeps the v2 label and the role contexts, and
+  its worker command `setKeys` is unchanged (one receive key in the worker's 1:1 slot, used by a
+  receiver transform that names no participant). So a 1:1 call between a client of before 1.7.0 and
+  a client of after derives the same two keys, and no shim is needed - nothing enters
+  [legacy-compatibility](../../legacy-compatibility.md). A group call is offered only to clients that
+  carry the group label (the server's `group_calls_mode`, WP-GC2). The two labels never meet: a key of
+  one is never a key of the other (`callKeys.test.ts`).
+- **What it does not prove.** Every member can export every member's key - the exporter secret is
+  the group's - so a frame that opens under Bob's key was sealed by A MEMBER, not necessarily by Bob.
+  The 1:1 roles were the same; the screen's claim stays "end-to-end encrypted", meaning nobody
+  outside the conversation, never "this exact member" (the SFrame-over-MLS designs share this).
+- **The epoch.** Each participant derives at its own moment, so an epoch move between two joins
+  gives them different keys - the 1:1 call's known class, wider in a group because more members can
+  commit. The worker's `undecryptable` report now names the participant whose frames never opened.
+
+- **Key commands apply in the order posted.** The worker's handler awaits (digests, imports), so
+  it runs every command on one promise chain: a `setGroupKeys` followed at once by an
+  `addReceiveKey` can no longer finish after it and wipe it, and a `dropReceiveKey` can no longer run
+  inside an add's import and be undone (review of #3489). Every participant id is lowercased in the
+  worker as in the derivation, a drop without a participant is a `keyError`, and two participants
+  posted one receive key are refused like a receive key equal to the send key.
+- **One device per user in a group call (decided 2026-11-13, reversible).** Keys are per USER, so
+  two devices of one person would seal under one key and one nonce space and could not be told
+  apart. A user holds ONE seat: the second device's join REPLACES the first - call-service already
+  evicts a sibling device in p2p mode, and the group client treats the replaced device as left.
+  ([open-questions](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible),
+  [backlog](../../backlog.d/group-calls-one-device-per-user.md).)
+
+Pinned by `utils/callKeys.test.ts` (four participants agree on every sender key, the contexts and
+label on the wire, the lowercasing, a late participant, the 1:1 keys never coincide with a group
+key, every exporter buffer zeroed) and `workers/encryption.worker.test.ts` (each sender opened with
+its key and refused on another's transform, its OWN sealed frame refused on every receiver, a
+participant keyed late, a dropped key, the equal-key and duplicate-key refusals, all-or-nothing sets,
+the 1:1 slot, lowercased ids, and commands posted back to back applied in order).
+
+## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
+
+**Built, behind a switch that is OFF in production.** The client's mesh (one peer connection per
+other participant, the tile grid, the start control in a group) is the next pull request; until it
+lands nothing in the app can start or join a group call.
+
+- **The switch: `platform_config.group_calls_mode`** (`off` | `mesh`, core-service migration 022,
+  edited at `/admin/platform`, published by `GET /api/version` as `calls.groupMode`). `off` is the
+  default and production's value; the dev seed writes `mesh`. chat-delivery reads it at
+  `initiate`, never cached (`utils/group-calls-mode.ts`): a conversation of more than two admitted
+  members is a group call, refused `403 GROUP_CALLS_DISABLED` while the switch is off.
+  `calls_mode = off` still closes every call first. `groupCallsModesAgree.test.ts` holds the copies
+  together.
+- **The seat cap is signed into the room token.** `initiate` takes `video`; a group call's binding
+  holds `maxSeats` (4 audio, 3 video, D-A) and every token of that room carries `max_seats`, which
+  call-service enforces ([the mesh](../../services/call-service.md#the-mesh-wp-gc2-2026-11-13)).
+  The kind is fixed at `initiate` and bound with the cap: a ring announcing another kind is refused
+  (403, before any window opens), so an audio room's 4 seats can never carry video, and `initiate`
+  itself applies `calls_mode = audio` to a video ask. An audio group call offers no camera later
+  (interim, reversible). A group `room-token` checks the review cohort against every participant.
+  A `ring-end` naming no room of its conversation stops only its sender's devices, at WARN.
+  A 1:1 call carries no claim and is unchanged.
+- **Past the cap - INTERIM, reversible, 2026-11-13:** the 5th participant of an audio call or the
+  4th of a video one is refused by call-service (`Refused { room-full }`), worded
+  `call_room_full` ("Cet appel de groupe est complet."). Superseded by D1 once the SFU leg lands
+  (WP-GC3/GC4): everyone then moves to the relay instead.
+- **Old clients are never offered a group call.** A build declares `groupCallVersion` (1 = the
+  mesh) on every push registration (`push_token."groupCallVersion"`, chat-delivery migration 050)
+  and on a group call's `initiate` and `room-token`. A group call rings only devices at `>= 1`
+  (`[ring] ... skipped=N device(s) whose build predates group calls`), and a token request without
+  it is refused `403 GROUP_CALL_CLIENT_TOO_OLD` - an old build would join as a 1:1 call, with the
+  1:1 keys, and break every other leg. The start control was already 1:1 only (`selectedIsDirect`).
+  The in-app ring (the MLS `CallInvite`) is the client PR's to keep from old builds.
+- **WP-C11, a block in a group call - decided 2026-11-13, reversible: ONE BLOCK DROPS THAT MEMBER,
+  NEVER THE CALL.** Every member, the caller excepted, who stands in a block with another admitted
+  member is not rung and gets no token (`USER_BLOCKED`, the neutral sentence): a mesh pairs everyone
+  with everyone and each leg exposes both addresses (D4), so two people who blocked each other are
+  never put in one call, and the caller, who chose to call, is the one kept. One query per ring or
+  token over the whole member set (`blocksAmong`), never one per pair. The review cohort's boundary
+  still refuses the whole call. A 1:1 call keeps `refuseIfBlocked`.
+- **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
+  does not end the call; the call ends for a participant when the last other participant has left.
+  On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
+  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
+  join (interim).
+- **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
+  `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
+  version specs.
 
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 

@@ -48,6 +48,7 @@ describe('PlatformService', () => {
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
+      groupCallsMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -64,6 +65,7 @@ describe('PlatformService', () => {
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
+      groupCallsMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -82,6 +84,7 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -127,6 +130,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ liveReplaysMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with group calls OFF - no group call may start until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ groupCallsMode: 'off' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -140,6 +152,7 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -192,6 +205,7 @@ describe('PlatformService', () => {
         pushMode: 'full',
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
+        groupCallsMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -266,6 +280,7 @@ describe('PlatformService', () => {
         pushMode: 'full',
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
+        groupCallsMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -325,6 +340,7 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -348,6 +364,7 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -438,6 +455,22 @@ describe('PlatformService', () => {
     expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { liveReplaysMode: 'on' });
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
       'liveReplaysMode off -> on by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the group calls switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio_video';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ groupCallsMode: 'mesh' }, ADMIN);
+
+    expect(result.groupCallsMode).toBe('mesh');
+    expect(result.callsMode).toBe('audio_video');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { groupCallsMode: 'mesh' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'groupCallsMode off -> mesh by=aaaaaaaa'
     );
     warn.mockRestore();
   });

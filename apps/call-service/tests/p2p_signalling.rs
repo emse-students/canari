@@ -4,7 +4,9 @@
 //! WHAT IT PROVES. Two users joining a `mode: "p2p"` room are paired with complementary roles, every
 //! handshake frame one sends arrives VERBATIM at the other, a third user is refused with a reason,
 //! and a party leaving is announced to the one left behind. That is the whole server half of a
-//! 1:1 call since 2026-10-17: the media never touches this service.
+//! 1:1 call since 2026-10-17: the media never touches this service. Since WP-GC2 (2026-11-13) it
+//! also drives the MESH - a room of up to four seats with addressed frames - and every 1:1 test
+//! reads through the pre-mesh view (`recv`), which is the proof the 1:1 wire did not change.
 //!
 //! WHAT IT DOES NOT. No browser and no ICE: whether two browsers then connect is the clients' half,
 //! taken by hand (docs/wiki/frontend/modules/calls.md). The default 10 s keepalive is not waited
@@ -207,6 +209,16 @@ fn room_token(user: &str, room: &str) -> String {
     room_token_for_group(user, room, "g")
 }
 
+/// A room token naming `seats` (the `max_seats` claim chat-delivery-service signs for a group call).
+fn room_token_with_seats(user: &str, room: &str, seats: usize) -> String {
+    encode(
+        &Header::default(),
+        &json!({ "sub": user, "room_id": room, "group_id": "g", "exp": exp(), "max_seats": seats }),
+        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
+    )
+    .unwrap()
+}
+
 fn room_token_for_group(user: &str, room: &str, group: &str) -> String {
     encode(
         &Header::default(),
@@ -295,8 +307,21 @@ async fn send(ws: &mut Ws, frame: Value) {
         .unwrap();
 }
 
-/// The next JSON frame, skipping transport frames.
+/// The next JSON frame AS A CLIENT OLDER THAN THE MESH READS IT: the two mesh fields, `peer` (on
+/// `PeerReady`, `PeerLeft`, `PeerAway`) and `from` (stamped on every relayed frame), are removed -
+/// such a client ignores both. Every 1:1 test below asserts through this view, so it is also the
+/// proof that the 1:1 wire is unchanged for a client of before 1.7.0 (WP-GC2).
 async fn recv(ws: &mut Ws) -> Value {
+    let mut frame = recv_raw(ws).await;
+    if let Some(o) = frame.as_object_mut() {
+        o.remove("peer");
+        o.remove("from");
+    }
+    frame
+}
+
+/// The next JSON frame exactly as the service wrote it, skipping transport frames.
+async fn recv_raw(ws: &mut Ws) -> Value {
     timeout(LIVENESS, async {
         loop {
             match ws
@@ -399,6 +424,61 @@ async fn two_users_are_paired_and_their_handshake_crosses_verbatim() {
     // Alice hangs up: Bob is told, and his next frame has nobody to reach.
     alice.close(None).await.unwrap();
     assert_eq!(recv(&mut bob).await, json!({ "type": "PeerLeft" }));
+}
+
+/// THE 1:1 WIRE, RAW (review of #3491): the `recv` view strips the mesh fields, so it cannot see
+/// them added. This test reads the frames EXACTLY as written: a 1:1 relay adds only the
+/// server-stamped `from` and the `PeerReady`/`PeerLeft` `peer`, both of which a pre-mesh client
+/// ignores, and never a `to` - and no other field. A new field on the 1:1 path fails here.
+#[tokio::test]
+async fn the_raw_one_to_one_wire_carries_exactly_the_known_fields() {
+    let svc = start().await;
+    let room = "room-raw";
+
+    let mut alice = join(&svc, "alice", room).await;
+    joined(&mut alice, room).await;
+    let mut bob = join(&svc, "bob", room).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "peer": "alice" })
+    );
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "peer": "bob" })
+    );
+
+    // An unaddressed 1:1 offer still reaches the other party, with `from` stamped and no `to`.
+    let sdp = "{\"type\":\"offer\",\"sdp\":\"v=0 alice\"}";
+    send(&mut alice, json!({ "type": "Offer", "sdp": sdp })).await;
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "Offer", "sdp": sdp, "from": "alice" })
+    );
+
+    alice.close(None).await.unwrap();
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerLeft", "peer": "alice" })
+    );
+}
+
+/// An SFU join whose token carries a group call's seat cap is refused until the SFU enforces one
+/// (WP-GC4): admitted, it would hold more participants than the cap it was signed with.
+#[tokio::test]
+async fn an_sfu_join_with_a_seat_cap_is_refused() {
+    let svc = start().await;
+    let room = "room-sfu-cap";
+    let mut alice = connect(&svc, "alice").await;
+    send(
+        &mut alice,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token_with_seats("alice", room, 4) }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "Refused", "reason": "seats-refused" })
+    );
 }
 
 #[tokio::test]
@@ -903,12 +983,17 @@ fn drained(mut ws: Ws) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
     rx
 }
 
-/// The next frame a drained socket forwarded.
+/// The next frame a drained socket forwarded, in the pre-mesh view [`recv`] reads.
 async fn next(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>) -> Value {
-    timeout(LIVENESS, rx.recv())
+    let mut frame = timeout(LIVENESS, rx.recv())
         .await
         .expect("no frame arrived")
-        .expect("socket ended")
+        .expect("socket ended");
+    if let Some(o) = frame.as_object_mut() {
+        o.remove("peer");
+        o.remove("from");
+    }
+    frame
 }
 
 /// Alice joins and is drained AT ONCE, then Bob joins and reads his pairing; Bob's socket is then
@@ -965,5 +1050,151 @@ async fn a_peer_held_dead_by_the_keepalive_can_still_resume() {
     assert_eq!(
         next(&mut alice).await,
         json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
+}
+
+// ---- The mesh (WP-GC2, 2026-11-13) ----
+
+/// Joins `room` as `user` with a token naming `seats`, and reads its `Joined`.
+async fn join_mesh(svc: &Service, user: &str, room: &str, seats: usize) -> Ws {
+    let mut ws = connect(svc, user).await;
+    send(
+        &mut ws,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token_with_seats(user, room, seats), "mode": "p2p" }),
+    )
+    .await;
+    ws
+}
+
+/// Three users in a four-seat room: each newcomer is paired with every one already there, the
+/// earlier one initiating; a frame reaches ONLY the user it names, stamped with its sender (a
+/// forged `from` is overwritten); one participant leaving is told to the others by name, and the
+/// two left go on talking.
+#[tokio::test]
+async fn a_mesh_pairs_everyone_routes_by_addressee_and_survives_a_departure() {
+    let svc = start().await;
+    let room = "room-mesh";
+
+    let mut alice = join_mesh(&svc, "alice", room, 4).await;
+    joined(&mut alice, room).await;
+    let mut bob = join_mesh(&svc, "bob", room, 4).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "peer": "alice" })
+    );
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "peer": "bob" })
+    );
+    let mut carol = join_mesh(&svc, "carol", room, 4).await;
+    joined(&mut carol, room).await;
+    // Carol is the polite side of both of her pairs; alice and bob each initiate toward her.
+    let mut carols = vec![recv_raw(&mut carol).await, recv_raw(&mut carol).await];
+    carols.sort_by_key(|f| f["peer"].as_str().unwrap_or("").to_string());
+    assert_eq!(
+        carols,
+        vec![
+            json!({ "type": "PeerReady", "initiator": false, "peer": "alice" }),
+            json!({ "type": "PeerReady", "initiator": false, "peer": "bob" }),
+        ]
+    );
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "peer": "carol" })
+    );
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": true, "peer": "carol" })
+    );
+
+    // Alice offers to carol, claiming to be bob: carol receives it FROM alice, and bob nothing.
+    send(
+        &mut alice,
+        json!({ "type": "Offer", "sdp": "v=0 a-to-c", "to": "carol", "from": "bob" }),
+    )
+    .await;
+    assert_eq!(
+        recv_raw(&mut carol).await,
+        json!({ "type": "Offer", "sdp": "v=0 a-to-c", "from": "alice" })
+    );
+    // An unaddressed frame in a mesh goes nowhere, and says so.
+    send(&mut alice, json!({ "type": "Offer", "sdp": "v=0 nobody" })).await;
+    svc.logged(&["naming no addressee", "room-mesh"]).await;
+    // A microphone state names nobody and reaches everyone.
+    send(
+        &mut carol,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "MicSuspended", "suspended": true, "from": "carol" })
+    );
+    assert_eq!(
+        recv_raw(&mut bob).await,
+        json!({ "type": "MicSuspended", "suspended": true, "from": "carol" })
+    );
+    // Bob's first frame was the broadcast: the misaddressed offer never reached him.
+
+    // Bob hangs up: both others are told it was BOB, and alice and carol go on.
+    bob.close(None).await.unwrap();
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "PeerLeft", "peer": "bob" })
+    );
+    assert_eq!(
+        recv_raw(&mut carol).await,
+        json!({ "type": "PeerLeft", "peer": "bob" })
+    );
+    send(
+        &mut carol,
+        json!({ "type": "Answer", "sdp": "v=0 c-to-a", "to": "alice" }),
+    )
+    .await;
+    assert_eq!(
+        recv_raw(&mut alice).await,
+        json!({ "type": "Answer", "sdp": "v=0 c-to-a", "from": "carol" })
+    );
+}
+
+/// The cap is the server's: the fifth user of an audio group call (4 seats) and the fourth of a
+/// video one (3 seats) are refused `room-full`, and the seated are untouched.
+#[tokio::test]
+async fn a_mesh_refuses_the_user_past_its_cap() {
+    let svc = start().await;
+    for (room, seats) in [("room-audio-cap", 4usize), ("room-video-cap", 3)] {
+        let mut seated = Vec::new();
+        for i in 0..seats {
+            let mut ws = join_mesh(&svc, &format!("u{i}"), room, seats).await;
+            joined(&mut ws, room).await;
+            seated.push(ws);
+        }
+        let mut late = join_mesh(&svc, "late", room, seats).await;
+        assert_eq!(
+            recv(&mut late).await,
+            json!({ "type": "Refused", "reason": "room-full" })
+        );
+        svc.logged(&["refused from p2p room", room, "already hold its"])
+            .await;
+    }
+}
+
+/// A token whose seat count no mesh may have, or another count than the room was opened with, is
+/// refused with its reason and seats nobody.
+#[tokio::test]
+async fn a_seat_count_out_of_range_or_disagreeing_is_refused() {
+    let svc = start().await;
+    let mut big = join_mesh(&svc, "alice", "room-seats", 5).await;
+    assert_eq!(
+        recv(&mut big).await,
+        json!({ "type": "Refused", "reason": "seats-refused" })
+    );
+    let mut alice = join_mesh(&svc, "alice", "room-seats", 4).await;
+    joined(&mut alice, "room-seats").await;
+    let mut bob = join_mesh(&svc, "bob", "room-seats", 3).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "Refused", "reason": "seats-mismatch" })
     );
 }

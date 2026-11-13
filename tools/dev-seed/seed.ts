@@ -587,6 +587,9 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // `on` by hand at `/admin/platform` for the readings of docs/wiki/live-replays.md, and a
         // reset puts it back.
         live_replays_mode: 'off',
+        // Dev seeds group calls on `mesh` (core migration 022) so the peer-to-peer group call is read
+        // on the bench phones without a click; production's row defaults to `off`.
+        group_calls_mode: 'mesh',
       },
     ],
     users,

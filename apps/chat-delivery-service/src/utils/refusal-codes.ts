@@ -57,6 +57,13 @@ export const RefusalCode = {
   CALLS_DISABLED: 'CALLS_DISABLED',
   /** 403 - this estate allows audio calls only (`calls_mode = audio`) and the ring asked for video. */
   CALLS_VIDEO_DISABLED: 'CALLS_VIDEO_DISABLED',
+  /** 403 - group calls are closed on this estate (`platform_config.group_calls_mode = off`). */
+  GROUP_CALLS_DISABLED: 'GROUP_CALLS_DISABLED',
+  /**
+   * A group call asked of by a client that did not declare it speaks the mesh
+   * (`groupCallVersion`): an old build, which would join as a 1:1 call and break the others' legs.
+   */
+  GROUP_CALL_CLIENT_TOO_OLD: 'GROUP_CALL_CLIENT_TOO_OLD',
   /** 429 - a per-user rate limit (`UserThrottlerGuard`); `retryAfterMs` says how long to wait. */
   RATE_LIMITED: 'RATE_LIMITED',
   /**

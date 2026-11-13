@@ -20,11 +20,29 @@ interface TransformEventLike {
 }
 
 /**
- * One key per direction (`utils/callKeys.ts`): this device encrypts with `sendKey` and decrypts
- * with `receiveKey`. Each is imported for that ONE use, so the send key cannot open a frame.
+ * The keys this worker holds (`utils/callKeys.ts`): ONE send key, and one receive key per sender it
+ * opens frames of. A 1:1 call holds a single receive key under `DIRECT_PEER` (`setKeys`); a group
+ * call holds one per other participant, keyed by that participant's user id (`setGroupKeys`,
+ * `addReceiveKey`, `dropReceiveKey`), and each receiver transform is told whose frames it carries
+ * (`CallTransformOptions.peer`). Each key is imported for its ONE use, so the send key cannot open a
+ * frame and no receive key can seal one.
  */
 let sendKey: CryptoKey | null = null;
-let receiveKey: CryptoKey | null = null;
+/** SHA-256 of the raw send key: a receive key equal to it is refused, without keeping the bytes. */
+let sendDigest: string | null = null;
+const receiveKeys = new Map<string, CryptoKey>();
+/** SHA-256 of each raw receive key, by peer: two peers posted one key are refused (`installKeys`). */
+const receiveDigests = new Map<string, string>();
+/** The receive-key slot of a 1:1 call, whose receiver transforms name no peer. */
+const DIRECT_PEER = '';
+
+/**
+ * A participant's id as every map here keys it: lowercased, as `deriveGroupCallKeys` derives it
+ * (`senderContext`), so a page that posts `Bob` and a transform that names `bob` meet one key.
+ */
+function normalizePeer(peer: string): string {
+  return peer.toLowerCase();
+}
 const ivLength = 12;
 let decryptFailures = 0;
 /** The same failures per kind: a video key mismatch or a mangled clear header shows apart. */
@@ -97,60 +115,188 @@ type RtcTransformWorkerScope = typeof self & {
 
 const workerScope = self as RtcTransformWorkerScope;
 
-/** Receives the call's two AES-GCM keys from the main thread (raw bytes, not CryptoKey). */
-self.onmessage = async (
-  event: MessageEvent<{ type: string; send?: ArrayBuffer; receive?: ArrayBuffer }>
-) => {
-  if (event.origin && event.origin !== self.location.origin) return;
-  if (event.data?.type === 'report') {
-    self.postMessage(workerReport((event.data as { tag?: string }).tag ?? ''));
-    return;
-  }
-  if (event.data?.type === 'setKeys') {
-    const detail = keysProblem(event.data.send, event.data.receive);
-    if (detail) {
-      self.postMessage({ type: 'keyError', detail });
-      return;
-    }
-    try {
-      const send = await crypto.subtle.importKey(
-        'raw',
-        event.data.send!,
-        { name: 'AES-GCM' },
-        false,
-        ['encrypt']
-      );
-      const receive = await crypto.subtle.importKey(
-        'raw',
-        event.data.receive!,
-        { name: 'AES-GCM' },
-        false,
-        ['decrypt']
-      );
-      // Both or neither: a frame never meets one call's send key and another's receive key.
-      sendKey = send;
-      receiveKey = receive;
-      self.postMessage({ type: 'keyReady' });
-    } catch (e) {
-      self.postMessage({ type: 'keyError', detail: String(e) });
-    }
-  }
-};
+/** One receive key as the page posts it: whose frames it opens, and its raw bytes. */
+interface PostedPeerKey {
+  peer: string;
+  key: ArrayBuffer;
+}
+
+/** The messages the page sends this worker (raw key bytes, never a `CryptoKey`). */
+interface WorkerCommand {
+  type: string;
+  tag?: string;
+  send?: ArrayBuffer;
+  receive?: ArrayBuffer | PostedPeerKey[];
+  peer?: string;
+  key?: ArrayBuffer;
+}
 
 /**
- * Why a `setKeys` pair cannot be used, or `null`. Two EQUAL keys are refused: they would put both
- * directions back in one nonce space and let a reflected frame open - exactly what two keys exist
- * to prevent - and only a broken derivation produces them.
+ * EVERY COMMAND RUNS AFTER THE ONE POSTED BEFORE IT. The key commands await (`digestOf`,
+ * `importKey`), and a handler that ran on each message as it came would let them interleave: an
+ * `addReceiveKey` posted after a `setGroupKeys` could finish first and be wiped by its `clear()`,
+ * a `dropReceiveKey` could run inside an add's import and the dropped key come back. One promise
+ * chain applies them in the order the page posted them - the order is the proof, not a timing.
  */
-function keysProblem(send?: ArrayBuffer, receive?: ArrayBuffer): string | null {
-  if (!send || send.byteLength !== 32) return `invalid send key length ${send?.byteLength ?? 0}`;
-  if (!receive || receive.byteLength !== 32) {
-    return `invalid receive key length ${receive?.byteLength ?? 0}`;
+let commandQueue: Promise<void> = Promise.resolve();
+
+self.onmessage = (event: MessageEvent<WorkerCommand>): Promise<void> | undefined => {
+  if (event.origin && event.origin !== self.location.origin) return undefined;
+  const data = event.data;
+  commandQueue = commandQueue.then(() => handleCommand(data));
+  // The engine ignores a handler's return value; a test awaits it to read the command's effect.
+  return commandQueue;
+};
+
+/** One command, run in its turn by {@link commandQueue}; a failure is posted, never thrown on. */
+async function handleCommand(data: WorkerCommand): Promise<void> {
+  try {
+    switch (data?.type) {
+      case 'report':
+        self.postMessage(workerReport(data.tag ?? ''));
+        return;
+      case 'setKeys':
+        // A 1:1 call: one send key, one receive key for the other end.
+        await installKeys(data.send, [
+          { peer: DIRECT_PEER, key: data.receive as ArrayBuffer | undefined },
+        ]);
+        return;
+      case 'setGroupKeys':
+        // A group call: one send key, one receive key per other participant (possibly none yet).
+        await installKeys(data.send, Array.isArray(data.receive) ? data.receive : []);
+        return;
+      case 'addReceiveKey':
+        await addReceiveKey(data.peer, data.key);
+        return;
+      case 'dropReceiveKey': {
+        if (typeof data.peer !== 'string' || data.peer === DIRECT_PEER) {
+          self.postMessage({
+            type: 'keyError',
+            peer: data.peer,
+            detail: 'a receive key drop without a participant',
+          });
+          return;
+        }
+        const peer = normalizePeer(data.peer);
+        receiveKeys.delete(peer);
+        receiveDigests.delete(peer);
+        self.postMessage({ type: 'peerKeyDropped', peer });
+        return;
+      }
+    }
+  } catch (e) {
+    self.postMessage({ type: 'keyError', peer: data?.peer, detail: String(e) });
   }
-  const a = new Uint8Array(send);
-  const b = new Uint8Array(receive);
-  if (a.every((byte, i) => byte === b[i])) return 'the send and receive keys are equal';
+}
+
+/** SHA-256 of raw key bytes, in hex: how two keys are compared without keeping either. */
+async function digestOf(raw: ArrayBuffer): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', raw));
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Why a raw key cannot be used, or `null`: AES-256 only. */
+function lengthProblem(what: string, raw: ArrayBuffer | undefined): string | null {
+  if (!raw || raw.byteLength !== 32) return `invalid ${what} key length ${raw?.byteLength ?? 0}`;
   return null;
+}
+
+/**
+ * Replaces EVERY key at once - the send key and the whole receive map - then posts `keyReady`. All
+ * or nothing: a frame never meets one call's send key and another's receive key, and a refused set
+ * leaves the previous one in place. A receive key EQUAL to the send key is refused: it would put two
+ * senders back in one nonce space and let a reflected frame open - only a broken derivation makes it.
+ */
+async function installKeys(
+  send: ArrayBuffer | undefined,
+  receive: Array<{ peer: string; key: ArrayBuffer | undefined }>
+): Promise<void> {
+  const problem =
+    lengthProblem('send', send) ??
+    receive.map((r) => lengthProblem('receive', r.key)).find((p) => p !== null) ??
+    null;
+  if (problem) {
+    self.postMessage({ type: 'keyError', detail: problem });
+    return;
+  }
+  const digest = await digestOf(send!);
+  const digests = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const r of receive) {
+    const d = await digestOf(r.key!);
+    if (d === digest) {
+      self.postMessage({ type: 'keyError', detail: 'the send and receive keys are equal' });
+      return;
+    }
+    // Two senders under one key share one nonce space, and either could pass for the other.
+    if (seen.has(d)) {
+      self.postMessage({ type: 'keyError', detail: 'two participants were given one receive key' });
+      return;
+    }
+    seen.add(d);
+    digests.set(normalizePeer(r.peer), d);
+  }
+  const importedSend = await crypto.subtle.importKey('raw', send!, { name: 'AES-GCM' }, false, [
+    'encrypt',
+  ]);
+  const imported = new Map<string, CryptoKey>();
+  for (const r of receive) {
+    imported.set(
+      normalizePeer(r.peer),
+      await crypto.subtle.importKey('raw', r.key!, { name: 'AES-GCM' }, false, ['decrypt'])
+    );
+  }
+  sendKey = importedSend;
+  sendDigest = digest;
+  receiveKeys.clear();
+  receiveDigests.clear();
+  for (const [peer, k] of imported) receiveKeys.set(peer, k);
+  for (const [peer, d] of digests) receiveDigests.set(peer, d);
+  self.postMessage({ type: 'keyReady', peers: receiveKeys.size });
+}
+
+/**
+ * Adds (or replaces) ONE participant's receive key in a group call - a participant who arrived after
+ * the call was keyed - and posts `peerKeyReady` naming it, which the page awaits before it creates
+ * that participant's peer connection. Refused without a send key (the call was never keyed) and for
+ * a key equal to the send key or to another participant's. Ids are lowercased ({@link normalizePeer}).
+ */
+async function addReceiveKey(posted: string | undefined, raw: ArrayBuffer | undefined) {
+  if (typeof posted !== 'string' || posted === DIRECT_PEER) {
+    self.postMessage({
+      type: 'keyError',
+      peer: posted,
+      detail: 'a receive key without a participant',
+    });
+    return;
+  }
+  const peer = normalizePeer(posted);
+  const problem = lengthProblem('receive', raw);
+  if (problem || !sendKey || !sendDigest) {
+    self.postMessage({ type: 'keyError', peer, detail: problem ?? 'no send key yet' });
+    return;
+  }
+  const digest = await digestOf(raw!);
+  if (digest === sendDigest) {
+    self.postMessage({ type: 'keyError', peer, detail: 'the send and receive keys are equal' });
+    return;
+  }
+  for (const [other, d] of receiveDigests) {
+    if (other !== peer && d === digest) {
+      self.postMessage({
+        type: 'keyError',
+        peer,
+        detail: 'two participants were given one receive key',
+      });
+      return;
+    }
+  }
+  receiveKeys.set(
+    peer,
+    await crypto.subtle.importKey('raw', raw!, { name: 'AES-GCM' }, false, ['decrypt'])
+  );
+  receiveDigests.set(peer, digest);
+  self.postMessage({ type: 'peerKeyReady', peer });
 }
 
 workerScope.onrtctransform = (event: Event) => {
@@ -164,6 +310,10 @@ workerScope.onrtctransform = (event: Event) => {
   // The codec this transform's transceiver is HELD to, from the page (`framesAsVp8`): the frame
   // layout follows it, so it is the same on an engine whose metadata names no codec (WebKit).
   const videoCodec = typeof options?.videoCodec === 'string' ? options.videoCodec : undefined;
+  // Whose frames a RECEIVER transform carries (a group call), or the 1:1 slot when it names nobody.
+  // Its key is looked up per frame, so a participant keyed after its transform was made opens from
+  // the first frame after `peerKeyReady`, and one dropped stops opening at once.
+  const peer = typeof options?.peer === 'string' ? normalizePeer(options.peer) : DIRECT_PEER;
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
@@ -208,10 +358,11 @@ workerScope.onrtctransform = (event: Event) => {
       if (!mediaKind) return;
       const kindKey = framesKey(epoch, sideKey, mediaKind);
       framesInBy[kindKey] = (framesInBy[kindKey] ?? 0) + 1;
-      if (!sendKey || !receiveKey) {
+      const receiveKey = receiveKeys.get(peer);
+      if (!sendKey || (side === 'receiver' && !receiveKey)) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
-          self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
+          self.postMessage({ type: 'droppedNoKey', count: droppedNoKey, side: sideKey, peer });
         }
         return;
       }
@@ -259,13 +410,14 @@ workerScope.onrtctransform = (event: Event) => {
           }
           // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
-          const outcome = await decryptFrame(frame, controller, mediaKind, vp8);
+          const outcome = await decryptFrame(frame, controller, mediaKind, vp8, receiveKey!);
           if (outcome === 'failed' && !opened && ++failedUnopened === DECRYPT_MISMATCH_FAILURES) {
             self.postMessage({
               type: 'undecryptable',
               epoch: epoch ?? 0,
               mediaKind,
               failures: failedUnopened,
+              peer,
             });
           }
           if (outcome !== 'opened') return;
@@ -375,12 +527,12 @@ function checkOpus(
 }
 
 /**
- * A decrypted audio payload that is not Opus: does it decrypt AGAIN with the receive key and the
+ * A decrypted audio payload that is not Opus: does it decrypt AGAIN with its receive key and the
  * audio additional data? If so the sender applied the transform twice, which is proof, not
  * inference - logged, never undone here.
  */
-async function probeDoubleEncryption(clear: Uint8Array): Promise<void> {
-  if (clear.byteLength <= ivLength || !receiveKey) return;
+async function probeDoubleEncryption(clear: Uint8Array, receiveKey: CryptoKey): Promise<void> {
+  if (clear.byteLength <= ivLength) return;
   try {
     await crypto.subtle.decrypt(
       {
@@ -608,14 +760,15 @@ function noteUnexpectedVideoCodec(
 type DecryptOutcome = 'opened' | 'skipped' | 'failed';
 
 /**
- * Decrypts one frame with the RECEIVE key (`clear header || IV || ciphertext`, see `encryptFrame`)
+ * Decrypts one frame with its sender's RECEIVE key (`clear header || IV || ciphertext`, see `encryptFrame`)
  * and forwards it with its header put back.
  */
 async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
   mediaKind: CallMediaKind,
-  vp8: boolean
+  vp8: boolean,
+  receiveKey: CryptoKey
 ): Promise<DecryptOutcome> {
   const data = new Uint8Array(frame.data);
   // An empty video frame was passed through by the sender (`encryptFrame`): passed on the same way.
@@ -653,12 +806,13 @@ async function decryptFrame(
   try {
     const plaintext = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv, additionalData: frameAad(mediaKind, header) },
-      receiveKey!,
+      receiveKey,
       ciphertext
     );
     if (mediaKind === 'audio') {
       const clearAudio = new Uint8Array(plaintext);
-      if (!checkOpus(frame, clearAudio, 'receiver')) await probeDoubleEncryption(clearAudio);
+      if (!checkOpus(frame, clearAudio, 'receiver'))
+        await probeDoubleEncryption(clearAudio, receiveKey);
       frame.data = plaintext;
     } else {
       const out = new Uint8Array(clear + plaintext.byteLength);

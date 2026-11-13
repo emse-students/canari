@@ -60,9 +60,9 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
    2026-11-13** (run [43521609635](https://github.com/emse-students/canari/actions/runs/43521609635):
    252 audio + 151 VP8 frames decrypted through two Cloudflare sessions, 0 failed, every one
    byte-identical; [calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)).
-3. **Keys in a mesh.** Today's media keys are per DIRECTION of a 1:1 call (`utils/callKeys.ts`,
-   `<callId>|<role>`); a mesh needs one key per sender, derived the same way from the group's MLS
-   exporter. The SFU leg needs the same per-sender keys, so this is settled once for both.
+3. ~~**Keys in a mesh.**~~ **Built (WP-GC1, 2026-11-13)**: one key per sender, label
+   `mls-webrtc-media-group-v1`, context `<callId>|<userId>`; the 1:1 call keeps its v2 per-direction
+   keys, so no shim ([calls](../frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13)).
 4. **TURN volume.** A relayed mesh pays Cloudflare TURN per pair, so a 4-way mesh with every leg
    relayed is 12 streams of egress: read against the B7 budget
    ([calls](../frontend/modules/calls.md#the-turn-budget-reads-cloudflares-meter-b7)).
@@ -71,12 +71,17 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
 
 Each is one pull request or more; none is built by the D3 change.
 
-1. **WP-GC1 - per-sender media keys** (open point 3): one key per sender from the group's MLS
-   exporter, the worker keyed with one send key and N-1 receive keys. Both the mesh and the SFU
-   leg need it, so it comes first.
+1. **WP-GC1 - per-sender media keys** (open point 3): **built 2026-11-13** - the derivation and the
+   worker's per-participant receive keys
+   ([calls](../frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13)).
 2. **WP-GC2 - the mesh**: `call-service`'s peer-to-peer room grows from two seats to the cap (4 in
    audio, 3 in video) with addressed signalling (`to`/`from` per frame), and the client holds one
-   peer connection per other participant, each armed as the 1:1 one is.
+   peer connection per other participant, each armed as the 1:1 one is. **Server half BUILT
+   2026-11-13** (the seats, the addressing, the signed cap, `group_calls_mode` OFF in production,
+   the client-version gate, WP-C11's block and ring-end rules:
+   [calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13));
+   **past the cap is REFUSED (`room-full`) as an interim decision, superseded by D1 when WP-GC3
+   lands.** Owed: the client half and its 3-party CI call.
 3. **WP-GC3 - the Cloudflare Realtime SFU leg**: ~~the Q4 probe~~ **done 2026-11-13, PASS**
    ([sfu-e2ee-probe](../../../tools/sfu-e2ee-probe/README.md), dispatch `scheduled.yml` with
    `job=sfu-probe`); ~~the owner's one-off (a Realtime SFU app and its two secrets)~~ **done
@@ -95,11 +100,9 @@ Each is one pull request or more; none is built by the D3 change.
    outside a transform, as `fault-transform-late` does for 1:1.
 6. **Open point 4** is read against the B7 meter once WP-GC2 runs on the bench, not before.
 
-**And one decision WP-C11 owes** (moved here 2026-11-11 from the review of #1997):
-`refuseIfBlocked` (`calls.service.ts`) lets ANY block between the caller and ANY other member refuse
-the whole call, at `initiate`, `ring` and `join-token`. Right for 1:1; for a group, decide whether one
-block refuses the call or only drops that member
-([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+**And one decision WP-C11 owed** (moved here 2026-11-11 from the review of #1997): **decided
+2026-11-13 (reversible) - one block drops that member, never the call**
+([calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13)).
 
 Delete this entry when WP-C11 ships; its rule goes to `durable-rules.md`, the mechanism to
 [calls](../frontend/modules/calls.md).
