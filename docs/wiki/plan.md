@@ -303,6 +303,7 @@ earliest version, as a checklist.
 - [P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)](backlog.d/p3-two-association-deletes-that-co-organise-each-other-s-events-can-deadlock.md)
 - [P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)](backlog.d/p3-android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android.md)
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)
+- [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 
 ## 1.9.0
 
