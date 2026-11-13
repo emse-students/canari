@@ -36,6 +36,9 @@
      (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
      in dark mode and wreck contrast. */
   --color-cn-ink: #151b2c;
+  /* The ink one step lighter, the middle stop of a brand gradient that runs from `cn-ink` to the
+     accent. Fixed in both themes for the same reason. */
+  --color-cn-ink-soft: #1e2848;
   /* The other two fixed colours, same reasoning as `cn-ink`: surfaces that are deliberately dark
      in BOTH themes, so they must not be built from `cn-surface`. `cn-scrim` is the call/video
      chrome, `cn-tooltip` the dark tooltip bubble - both always carry white text. */
@@ -242,7 +245,7 @@
    case: *"les panneaux peuvent se retrouver en dessous d'une partie de l'interface, comme les
    bandeaux"*.
 
-   HOW TO USE IT: `z-(--z-modal)` in markup, `z-index: var(--z-modal)` in this file. A NEW LAYER
+   HOW TO USE IT: `z-(--z-banner)` in markup, `z-index: var(--z-banner)` in this file (an OVERLAY takes no rung: see `utils/overlayStack.ts`). A NEW LAYER
    TAKES AN EXISTING RUNG OR ADDS ONE HERE - never a number at the call site. A rung is a SENTENCE
    about what the thing is, so choosing one is a design decision made once, in the open, against
    every other layer rather than against the one that came to mind.
@@ -291,56 +294,30 @@
   /* Window scale: the banner column in the root layout. */
   --z-banner: 120;
 
-  /* A surface a GESTURE opened, over the whole window: the message actions sheet, the GIF and poll
-     pickers. Above the banner deliberately - a banner is ambient, a sheet is what the reader just
-     asked for, and a full-screen scrim with a banner painted through it reads as a rendering
-     fault. This is one of the two inversions the ladder was written to end. */
-  --z-sheet: 160;
-
-  /* Anchored to a control rather than to the window: the notification panel, the emoji picker. */
-  --z-popover-scrim: 190;
-  --z-popover: 200;
-
-  --z-side-panel-scrim: 255;
-  --z-side-panel: 260;
-
-  --z-modal: 280;
-  /* The guided help (`GuideOverlay`): coach marks over the real interface. A rung of its own, one
-     over the modal it must never be confused with - it only starts on a QUIET app (no modal, sheet,
-     call, viewer or PIN lock open), and when one opens over it the help is suspended, not drawn
-     under it, so the rung decides nothing against them; above the drawer, the rail and the banner
-     column it points at. Under `--z-modal-popover` and everything above. */
-  --z-guide: 285;
-  /* A dropdown opened from INSIDE a modal, portalled out of it so nothing can clip it. It has to
-     clear the modal it belongs to, which is the whole reason it is a rung of its own. */
-  --z-modal-popover: 290;
-  /* A full-screen media viewer. Above a modal because it opens from one. */
-  --z-viewer: 300;
-  /* A dialog opened from INSIDE a full-screen viewer (the reel comments' GIF picker and report
-     dialog): its own rung, sheet or modal, is under the viewer it opens from. `ModalOverlay` and
-     `Modal` take this one when `utils/viewerLayer.ts` says they are inside a viewer. Under the
-     toast, which answers whatever was done in it. */
-  --z-viewer-dialog: 305;
-  /* A dropdown portalled out of a dialog that sits on `--z-viewer-dialog` (inside a viewer, a nested
-     `Modal` or a comments drawer): `--z-modal-popover` (290) would paint under its own dialog.
-     `FloatingSurface` and `UserAutocomplete` take it through `popoverLayerClass`. Under the toast. */
-  --z-viewer-dialog-popover: 307;
+  /* OVERLAYS ARE NOT ON THIS LADDER (2026-11-13). A dialog, a sheet, a popover, a drawer, a viewer, a
+     guide, a confirmation: each REGISTERS on the overlay stack when it opens and takes its z-index
+     from the open order, the last opened on top, released on close (`utils/overlayStack.ts`,
+     `utils/overlayLayer.svelte.ts`). No component names a rung, so no nesting - a dialog in a viewer,
+     a popover in that dialog, a picker in a sheet - needs a new one. The stack's range is
+     `OVERLAY_Z_BASE` (200) up to the toast: ABOVE the banner column and the navigation, BELOW the
+     toast and the call, so a toast still answers whatever was done in the topmost overlay. What
+     stays here is what is not opened by the reader and is not stacked by open time: navigation,
+     the banner column, the toast, the call, tooltips, the skip link. */
 
   /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
-     full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted
-     BEHIND the reel viewer's rung 300, so a save (and its refusal) answered nothing on screen
-     (iPhone 12, 2026-10-02). Non-interactive (`pointer-events-none`), so it traps no click; below
-     `--z-critical`, which a confirmation holds. */
+     full-screen viewer or a confirmation. It sat at 60 and "CanaReel enregistre dans votre galerie"
+     was painted BEHIND the reel viewer, so a save (and its refusal) answered nothing on screen
+     (iPhone 12, 2026-10-02). Non-interactive (`pointer-events-none`), so it traps no click. Over the
+     whole overlay stack, whose range ends at 310. */
   --z-toast: 310;
 
-  /* Interrupts everything below: a confirmation. Nothing decorative may be here. */
-  --z-critical: 320;
-  /* The full-screen call, OVER a confirmation, decided 2026-10-19: both used to share 320, so DOM
-     order picked the winner. A call is the thing the reader is doing; a confirmation raised behind
-     it waits (its promise with it) until the call is minimised or over. Below it on purpose: the
-     PIN lock (`--z-modal`), which the call never covers - while the lock is up the call is the
-     banner (`callView.showsFullScreen`). A minimised call is a row of the banner column, in flow,
-     and needs no rung. (The incoming-call toast's 340 went with the toast the same day.) */
+  /* The full-screen call, OVER every overlay and any confirmation (decided 2026-10-19: both used to
+     share 320, so DOM order picked the winner). A call is the thing the reader is doing; a
+     confirmation raised behind it waits (its promise with it) until the call is minimised or over.
+     Below it on purpose: the PIN lock (an overlay), which the call never covers - while the lock is
+     up the call is the banner (`callView.showsFullScreen`). A minimised call is a row of the banner
+     column, in flow, and needs no rung. (The incoming-call toast's 340 went with the toast the same
+     day.) */
   --z-call: 330;
 
   /* Follows the pointer and is never interactive, so it may sit over anything without trapping it. */
@@ -1321,6 +1298,27 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
       transform 120ms ease;
   }
 
+  /* A CAMERA'S CONTROLS TURN IN PLACE (owner, 2026-11-11; screen-orientation.md, "The camera keeps
+     its layout"). The camera's layout never turns, so a phone held sideways would show every glyph
+     sideways; each round control turns by `--camera-glyph-rotation` (set by `CameraScreen` from the
+     sensor) about its own centre, a quarter turn animated, as the system camera apps do. `rotate`,
+     not `transform`, so the press feedback's transform is untouched; after `.ui-icon-button`, whose
+     transition it extends. Outside a camera the variable is unset and nothing turns. */
+  .camera-glyph-turn {
+    rotate: var(--camera-glyph-rotation, 0deg);
+    transition:
+      rotate var(--motion-slow) var(--motion-ease-out),
+      background-color 180ms ease,
+      color 180ms ease,
+      transform 120ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .camera-glyph-turn {
+      transition-property: background-color, color, transform;
+    }
+  }
+
   /* UNDER A POINTER, NOT FROM A WIDTH. 768px was standing in for "a mouse", and a touch tablet is
      768px wide too: in portrait the header's icon buttons measured 38px there, under the 44px
      floor (viewport audit, 2026-09-30). The width alone never knew which it was. */
@@ -1860,7 +1858,6 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   top: var(--visual-viewport-offset-top, 0px);
   right: 0;
   left: 0;
-  z-index: var(--z-sheet);
   height: var(--app-viewport-height, 100dvh);
   padding-top: var(--safe-area-inset-top, 0px);
   padding-bottom: var(--safe-area-inset-bottom, 0px);
@@ -2271,7 +2268,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: var(--z-side-panel);
+  z-index: var(--overlay-z, auto);
   width: 100%;
   /* A PHONE GETS THE WHOLE SCREEN (owner, 2026-11-04): no cap below 768px, where the drawer used to
      stop at 28rem and leave a strip of the page beside it on a wide phone or in landscape. */

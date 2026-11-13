@@ -14,7 +14,7 @@
  * reader reaching for them, so the viewer asks the player to raise its controls ({@link raise}),
  * which brings the header back - otherwise a focused Back button would sit at opacity 0.
  */
-import { getContext, setContext } from 'svelte';
+import { getContext, setContext, untrack } from 'svelte';
 
 const KEY = Symbol('video-viewer-chrome');
 
@@ -24,6 +24,16 @@ export class ViewerChrome {
   videoControlsHidden = $state(false);
   /** A video player is on screen: its controls, not the viewer's tap toggle, own the bars. */
   present = $state(false);
+  /**
+   * How many video players of ANY variant are mounted in the viewer (`conversation`, `lightbox`...):
+   * "the item on show is a video", which the rotation request reads. `present` above is the
+   * lightbox variant's chrome report only, and a chat's full-screen video is a `conversation` player.
+   */
+  private playerCount = $state(0);
+  /** A video player is mounted in the viewer, whatever its variant. */
+  get hasVideo(): boolean {
+    return this.playerCount > 0;
+  }
   /** Bumped when the viewer wants the player's controls up (a mouse or focus on the header). */
   raised = $state(0);
   /** The player that spoke last: only it may take its report back when it leaves. */
@@ -45,6 +55,17 @@ export class ViewerChrome {
     this.owner = null;
     this.present = false;
     this.videoControlsHidden = false;
+  }
+
+  /** A player of any variant mounted in the viewer. */
+  enter(): void {
+    // untrack: called from a player's effect, which must not depend on the count it changes.
+    untrack(() => (this.playerCount += 1));
+  }
+
+  /** That player unmounted. */
+  exit(): void {
+    untrack(() => (this.playerCount = Math.max(0, this.playerCount - 1)));
   }
 
   /** Asks the player to raise its controls. */

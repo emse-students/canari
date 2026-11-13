@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -15,7 +16,6 @@
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { RefreshCw, Search, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   const PAGE_SIZE = 50;
   const SEARCH_DEBOUNCE_MS = 300;
@@ -118,7 +118,7 @@
   });
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+    return new Date(iso).toLocaleDateString(intlLocale());
   }
 
   /** The claimant's own name, which is what tells a homonym apart from the source's spelling. */

@@ -153,6 +153,7 @@
       <input
         type="search"
         bind:value={query}
+        aria-label={m.post_republish_search_placeholder()}
         placeholder={m.post_republish_search_placeholder()}
         class="border-cn-border text-text-main w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
       />

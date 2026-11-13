@@ -107,6 +107,7 @@ import {
   getTabLeadership,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -276,7 +277,7 @@ export interface PreparedOutboxMedia {
   width?: number;
   height?: number;
   durationMs?: number;
-  /** The video's measured sound - see `MediaRef.loudness`. */
+  /** The video's or voice note's measured sound - see `MediaRef.loudness`. */
   loudness?: MediaLoudness;
 }
 
@@ -2815,7 +2816,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       let proto: Uint8Array;
       let mediaContent: string | undefined;
       // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
-      let commitQuote: () => Promise<void> = async () => {};
+      let commitQuote: () => Promise<void>;
       if (entry.kind === 'media') {
         const media = entry.media;
         if (!media) throw new LocalAttachmentError('the queued attachment has no payload');
@@ -3292,7 +3293,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // (WP-MULTITAB-1). Leadership already gated the WebSocket and `initializeConnection`; this is
     // the write path it never covered - the follower was observed flushing the LEADER's entry.
     // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
-    if (!getIsTabLeader()) {
+    //
+    // THE GATE IS THE STATE'S, NOT THE ELECTION'S (review of #3371): a leader promoted in place
+    // leads on a copy it loaded as a follower, and sends nothing until its promotion reload - the
+    // queue waits for the reloaded page, whose own first flush drains it. Asking "the leader" from
+    // there would ask this very tab.
+    if (refusesCommitsHere()) {
+      if (promotedSinceLoad()) {
+        log(
+          '[OUTBOX] Flush skipped - this tab has just become the leader and reloads; the reloaded page drains the shared queue.'
+        );
+        return;
+      }
       log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
       requestLeaderOutboxFlush();
       return;

@@ -50,6 +50,9 @@ pull request and its own adversarial review for that.
 "Defini avant votre arrivee" and clears the marker; a reload between the Welcome and the answer still
 asks; an older responder leaves the marker set.
 
-**The reading owed on a pre-release:** item 2b of
-[the defect entry](p2-a-member-added-after-a-nickname-does-not-receive-it.md) (the offline newcomer),
-which FAILS until this ships and must then pass. Mechanism: [chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), "The late joiner".
+**The reading owed on a pre-release, which FAILS until this ships and must then pass:** reading 2 of
+the nicknames row of the [verification table](../backlog.md#owed-a-verification-and-nothing-else) with the new
+member's device NOT connected (the app killed, or the tab closed) when "Ajouter" is pressed, then
+opened a minute later. Today the inviter's log reads `[JOIN_PUSH] <group>... NOT DELIVERED to
+<account>:<device>` at warn and the new member shows no nickname; once built, the nickname reads
+"Defini avant votre arrivee" after the newcomer's digest ask is answered. Mechanism: [chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), "The late joiner".

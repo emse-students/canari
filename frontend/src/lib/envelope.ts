@@ -330,7 +330,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
               ...(typeof media.expiresAtMs === 'number' && media.expiresAtMs > 0
                 ? { expiresAtMs: media.expiresAtMs }
                 : {}),
-              // A video's measured sound: kept only when it is one a player may apply.
+              // A video's or voice note's measured sound: kept only when it is one a player may apply.
               ...(isMediaLoudness(media.loudness) ? { loudness: media.loudness } : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
@@ -554,7 +554,10 @@ export function mkCallStartedEnvelope(
   };
 }
 
-/** Reads a stored `startClocks`, or `null` when the row carries none (a row of an older build). */
+/**
+ * Reads a stored `startClocks`, or `null` when the row carries none - a build before `1.6.2` wrote such
+ * a row, and the duration that would read it accuses it (`callDurationMs`).
+ */
 function readStartClocks(v: unknown): { startClocks: { server?: number; local: number } } | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;

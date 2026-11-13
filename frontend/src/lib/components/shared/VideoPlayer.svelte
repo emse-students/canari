@@ -462,6 +462,11 @@
     viewerChrome?.report(chromeOwner, !controlsVisible);
   });
   $effect(() => () => viewerChrome?.leave(chromeOwner));
+  // Any variant counts as "a video is on show" for the viewer's rotation (not only the lightbox one).
+  $effect(() => {
+    viewerChrome?.enter();
+    return () => viewerChrome?.exit();
+  });
   // The reader reached for the header (a mouse over it, a focus on Back): the controls come up.
   $effect(() => {
     const raised = viewerChrome?.raised ?? 0;
@@ -621,7 +626,7 @@
     if (scope === 'silent') return;
     video.muted = !video.muted;
     // The unmute is the reader's GESTURE: a measured video's AudioContext is resumed inside it.
-    if (!video.muted) loudnessHandle?.prime();
+    if (!video.muted) void loudnessHandle?.prime();
     // Drawn from the element at once, not at its `volumechange`: the speaker is the answer.
     muted = video.muted;
     if (inline && scope === 'app') videoSound.setMuted(video.muted);

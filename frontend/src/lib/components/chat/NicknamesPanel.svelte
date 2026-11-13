@@ -344,7 +344,6 @@
   title={m.chat_nicknames_report_title()}
   targetPreview={reporting?.text ?? ''}
   submitting={reportSubmitting}
-  layer="critical"
   onSubmit={(reason) => void submitReport(reason)}
   onClose={() => (reporting = null)}
 />

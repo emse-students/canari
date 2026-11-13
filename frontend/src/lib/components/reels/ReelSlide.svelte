@@ -67,6 +67,10 @@
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import ReelFrame from './ReelFrame.svelte';
+  import {
+    orientationCanBeForced,
+    viewportOrientation,
+  } from '$lib/mobile/screenOrientation.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
   import ReelMediaPane from './ReelMediaPane.svelte';
   import ReplayPane from './ReplayPane.svelte';
@@ -119,6 +123,8 @@
     onMediaGone?: () => void;
     /** On a carousel page: the visible media (the viewer's, kept per post). 0 elsewhere. */
     mediaIndex?: number;
+    /** The viewer's verdict: this slide is on show and its visible media is a landscape video. */
+    turnedOverVideo?: boolean;
     /** Where a held horizontal drag has taken the carousel's strip, in px; 0 at rest. */
     mediaDragX?: number;
     /** A drag holds the strip: it follows the finger with no transition. */
@@ -137,6 +143,7 @@
     onReady,
     onMediaGone,
     mediaIndex = 0,
+    turnedOverVideo: turnedOverVideoOnShow = false,
     mediaDragX = 0,
     mediaDragging = false,
     onMediaStep,
@@ -215,6 +222,15 @@
   let textEl = $state<HTMLDivElement | undefined>();
   /** Whether the folded text hides lines - measured, so a short caption shows no "Voir plus". */
   let overflows = $state(false);
+  /**
+   * A LANDSCAPE VIDEO is on show and the phone is turned (owner, 2026-11-12, #3407): the frame fills the
+   * screen and the caption and the rail make room for the picture and the notch's side. Scoped to
+   * this AND the native app (`orientationCanBeForced`): a desktop window is always wider than tall and
+   * never turns, and the bare `landscape:` variant would match it too.
+   */
+  const turnedOverVideo = $derived(
+    turnedOverVideoOnShow && viewportOrientation.landscape && orientationCanBeForced()
+  );
   /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
   let frameReachesBottom = $state(true);
 
@@ -335,6 +351,7 @@
             <div
               class="h-full w-full shrink-0"
               data-reel-pane={i}
+              data-media-id={pane.ref.mediaId}
               data-backdrop-ignore={i === visibleIndex ? undefined : ''}
             >
               <ReelMediaPane
@@ -369,9 +386,15 @@
          letterboxed frame sits well above the home indicator, and the inset there would leave the
          caption about one line. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent pl-4 text-white {showRail
-        ? 'pr-16'
-        : 'pr-4'} {expanded ? 'pt-4' : 'pt-16'}"
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {turnedOverVideo
+        ? 'pl-[calc(var(--safe-area-inset-left,env(safe-area-inset-left,0px))+1rem)] ' +
+          (showRail
+            ? 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+4rem)]'
+            : 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+1rem)]')
+        : showRail
+          ? 'pr-16 pl-4'
+          : 'pr-4 pl-4'} {expanded ? 'pt-4' : turnedOverVideo ? 'pt-6' : 'pt-16'}"
+      data-reel-turned={turnedOverVideo ? '' : undefined}
       style={bottomPad}
       data-reel-caption
       data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
@@ -483,7 +506,9 @@
             bind:element={textEl}
             class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_button]:pointer-events-auto {expanded
               ? ''
-              : 'line-clamp-2'}"
+              : turnedOverVideo
+                ? 'line-clamp-1'
+                : 'line-clamp-2'}"
           />
         </div>
         {#if overflows || expanded}
@@ -505,7 +530,12 @@
            the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
            (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
            and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
-      <div class="pointer-events-none absolute right-1 bottom-0 z-30" style={bottomPad}>
+      <div
+        class="pointer-events-none absolute bottom-0 z-30 {turnedOverVideo
+          ? 'right-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+0.25rem)]'
+          : 'right-1'}"
+        style={bottomPad}
+      >
         <ReelActionRail
           {readerReaction}
           reactionCount={reactionTotal(post.reactions, post.otherReactionCounts)}

@@ -27,10 +27,12 @@
   import type { Snippet } from 'svelte';
   import { ArrowLeft, X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Announced as the dialog's name; also what a screen reader reads on open. */
@@ -93,6 +95,9 @@
     backdropOpacity = 1,
   }: Props = $props();
 
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'FullScreenViewer');
+
   const touchStyle = $derived(lockTouch ? 'touch-action: none;' : '');
 
   function handleKeydown(e: KeyboardEvent) {
@@ -124,9 +129,8 @@
   <div
     role="presentation"
     use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center {immersive
-      ? ''
-      : 'bg-cn-scrim sm:p-4'}"
+    style:z-index={layer.z}
+    class="fixed inset-0 flex items-center justify-center {immersive ? '' : 'bg-cn-scrim sm:p-4'}"
     style="{touchStyle}{immersive ? `background-color: rgb(0 0 0 / ${backdropOpacity});` : ''}"
     onclick={onClose}
     transition:fade={{ duration: 160 }}
@@ -161,7 +165,9 @@
         role="presentation"
         style="padding-top: max({immersive
           ? '0.5rem'
-          : '0.75rem'}, var(--safe-area-inset-top, 0.75rem));"
+          : '0.75rem'}, var(--safe-area-inset-top, 0.75rem)); {immersive
+          ? sideSafePadding('0.75rem')
+          : ''}"
       >
         <div class="flex min-w-0 flex-1 items-center gap-2">
           {#if immersive}
@@ -205,7 +211,9 @@
           class="shrink-0 {immersive
             ? 'absolute inset-x-0 bottom-0 z-20 transition-opacity duration-200'
             : ''} {immersive && chromeHidden ? 'pointer-events-none opacity-0' : ''}"
-          style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem));"
+          style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem)); {immersive
+            ? sideSafePadding()
+            : ''}"
         >
           {@render footer()}
         </div>

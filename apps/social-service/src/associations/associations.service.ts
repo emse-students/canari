@@ -38,6 +38,7 @@ import {
 } from '../common/secret-box';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { assertCotisationModeClearable } from './members-only-gate';
 import { isUUID } from 'class-validator';
 import { In, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
@@ -1260,18 +1261,27 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    if (dto.archived !== undefined) {
+    if (dto.archived !== undefined || dto.cotisationMode === null) {
       // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
       // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
       // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      // CLEARING the cotisation mode takes the same lock and counts the members-only rows under it
+      // (`assertCotisationModeClearable`, 409 `COTISATION_MODE_IN_USE`), the order a members-only
+      // save's `FOR SHARE` gate reads the mode in.
       await this.assoRepo.manager.transaction(async (manager) => {
-        await manager.findOne(Association, {
-          where: { id },
-          lock: { mode: 'pessimistic_write' },
-        });
+        if (dto.cotisationMode === null) {
+          await assertCotisationModeClearable(manager, id, this.logger);
+        } else {
+          await manager.findOne(Association, {
+            where: { id },
+            lock: { mode: 'pessimistic_write' },
+          });
+        }
         await manager.update(Association, id, patch);
       });
-      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      if (dto.archived !== undefined) {
+        this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+      }
     } else {
       await this.assoRepo.update(id, patch);
     }

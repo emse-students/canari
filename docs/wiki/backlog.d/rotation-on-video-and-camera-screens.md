@@ -1,4 +1,4 @@
-## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera and the broadcaster built, two viewers owed after the video-player stack
+## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera, the broadcaster and both viewers built (step 4, 2026-11-12), phone readings owed
 
 The owner's decisions and the mechanism are in [screen-orientation](../frontend/screen-orientation.md):
 portrait everywhere; the full-screen video viewer, the live viewer, the live broadcaster and the
@@ -15,12 +15,13 @@ is letterboxed in the vertical pager.
    hook on tao's root view controller and the geometry request, the Info.plist, the side safe areas
    on iOS, and the page's one store (`screenOrientation.svelte.ts`). Nothing requests anything yet, so
    the app stays portrait: the only change a member can see is none.
-3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`: the
-   frame follows the screen, a take freezes it, the rotate button) and the live broadcaster (chosen in
+3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`; since
+   2026-11-11 it keeps its layout portrait and turns its glyphs instead -
+   [its own entry](camera-keeps-its-layout-and-volume-shutter.md)) and the live broadcaster (chosen in
    the preview, frozen on air, the rotate button; and the owner's double tap on the preview to switch
    the lens, 2026-11-09). The button is `ui/player/RotateButton.svelte`, the sides' padding
    `utils/sideSafeArea.ts` - both for step 4 to reuse.
-4. **Owed after the stack lands** (#3201 rewrites `MediaLightbox.svelte` and the player kit, #3202
+4. **BUILT 2026-11-12 (draft PR, refs issue #3407; readings below still owed)** - after the stack landed (#3201 rewrites `MediaLightbox.svelte` and the player kit, #3202
    `LiveViewer.svelte`; neither may be edited under them):
    - **`LiveViewer.svelte`**: `const orientation = useScreenOrientation('live-viewer')` for its whole
      mount; a `RotateButton` (step 3's kit button) in the top bar, beside the close, drawn when
@@ -34,11 +35,23 @@ is letterboxed in the vertical pager.
      released when the item changes to an image or the lightbox closes) - photos stay portrait, as the
      owner scoped it. The `RotateButton` in the glass bar, `glass={false}` there (the bar is already
      glass - design-reference section 3); the bar and the caption padded on the sides as above.
-   - **`ReelViewer` / the pager**: stays PORTRAIT (no request). A landscape reel is letterboxed by
-     `ReelFrame` with the media's own ratio - already the case for a gallery import; read it on the
-     phones with a reel filmed in landscape (below).
+   - **`ReelViewer` / the pager** (owner, 2026-11-12, replacing "stays portrait"): portrait, EXCEPT
+     while the item on show is a LANDSCAPE VIDEO (stored width > height) - then `auto` and the
+     rotate button, one request across landscape-to-landscape swipes. Vertical or square videos and
+     photos change nothing. Draft PR, refs #3407 ([mechanism](../frontend/screen-orientation.md)).
 
 ### Readings owed on a pre-release
+
+- **Step 4, both viewers (issue #3407, iPhone 11 / iOS 18.7.6)**: on the iPhone 12 and the Mi 9T, a
+  landscape video opened from a post turns with the phone (lock off) and the rotate button turns it
+  with the lock on, then back; a photo in the same gallery stays upright (swipe video -> photo ->
+  video, the log shows `auto` / `portrait` / `auto`); closing returns to portrait; the header clears
+  the notch on both sides. The live viewer on a live filmed in landscape: turns, chat as a column
+  with the reaction bar at its right, the button forces landscape. The reel pager (a video tapped in a feed
+  post): a landscape video turns with the phone (lock off) and with the rotate button (lock on), the
+  log shows `auto` then `portrait` on a swipe to a vertical item or a photo, closing returns to
+  portrait; the caption and the action column clear the notch and do not bury the picture; a swipe up
+  or down while turned still pages; a vertical or square video never turns.
 
 Native is verified by COMPILING (CI's Compile Android / Compile iOS), which proves nothing about
 running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation lock OFF and then ON:
@@ -47,11 +60,8 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   with the phone sideways (lock off). A cold start with the phone held sideways opens in portrait
   (iOS: no landscape launch screen, `supported-orientations hook installed ... at launch` in the log
   before the first scene).
-- **The camera** (reel tab, a chat's camera, a post's camera): lock off, it turns with the phone and
-  the frame becomes 16:9; lock on, it does not turn, and the rotate button turns it; a second press
-  returns to portrait. A photo and a take filmed in landscape are 16:9 files (read the size in the
-  review), a take does not turn when the phone does, and a landscape reel publishes and plays
-  letterboxed in the pager.
+- **The camera**: replaced by [its own entry's readings](camera-keeps-its-layout-and-volume-shutter.md)
+  (2026-11-11: the layout no longer turns).
 - **The broadcaster**: turned in the preview, `[LIVE-CAM] opened` then a landscape track size; the
   orientation stays put once on air; a viewer in portrait sees the whole picture with bars; the
   double tap on the preview switches the lens and never toggles anything else.
@@ -66,4 +76,5 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
 
 Chrome back around the camera when turned, and the rotate button unlike its siblings: cause and fix in
 [screen-orientation](../frontend/screen-orientation.md#a-turned-phone-is-still-a-phone-and-a-full-screen-place-draws-no-chrome-2026-11-11).
-Owed: a Mi 9T reading turned on `/camera` (no header, no rail, the rotate button the size of flip).
+Owed: a Mi 9T reading turned on a video screen (no header, no rail). The camera's rotate button is
+gone since 2026-11-11 (the camera keeps its layout).

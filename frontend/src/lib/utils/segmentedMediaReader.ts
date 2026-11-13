@@ -29,6 +29,7 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  resolveMediaCredential,
 } from './mediaErrors';
 import { mediaRequestGate, type GateLane, type GateRank } from './requestGate';
 
@@ -101,7 +102,7 @@ export function httpRangeSource(
         async () => {
           grantedAt = clock();
           const headers = {
-            Authorization: `Bearer ${await getToken()}`,
+            Authorization: `Bearer ${await resolveMediaCredential(getToken)}`,
             Range: `bytes=${start}-${endExclusive - 1}`,
           };
           try {

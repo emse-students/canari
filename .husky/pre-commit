@@ -44,10 +44,20 @@ fi
 # that case: no formatter can have rewritten a file that is not there, and the deletion is already
 # in the index exactly as its author staged it. The `-e` test is the whole fix, and it is a test
 # rather than a swallowed error on purpose - a `|| true` here would also hide a real failure.
+#
+# ONLY A FILE THE FIXER ACTUALLY CHANGED IS RE-ADDED (2026-11-12). Every `git add` takes the index
+# lock, and the old loop took it once per staged path - several hundred times for a merge from
+# `main`, all while an editor watching the tree (VS Code's git refresh) takes the same lock on the
+# files the formatter just touched. A merge commit for #3349 failed eight times in a row on
+# "Unable to create index.lock". A fixer that changed nothing leaves nothing to re-stage, so the
+# worktree-versus-index diff is the list: when the tree was already formatted, no lock is taken.
 restage() {
+  fixed_paths=$(git diff --name-only -- "$1")
+  [ -z "$fixed_paths" ] && return 0
   echo "$STAGED_FILES" | grep -E "^$1" | while IFS= read -r staged_path; do
     [ -z "$staged_path" ] && continue
     [ -e "$staged_path" ] || continue
+    echo "$fixed_paths" | grep -Fxq -- "$staged_path" || continue
     git add -A -- "$staged_path"
   done
 }

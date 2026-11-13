@@ -24,6 +24,8 @@
 		BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */; };
 		BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF03 /* CallKit.framework */; };
 		BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF04 /* PushKit.framework */; };
+		BD49C8A3300FAFC5000960D9 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF05 /* AVKit.framework */; };
+		BD49C8A4300FAFC5000960DA /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF06 /* CoreMotion.framework */; };
 		BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BD49C868300FAFFF000960D5 /* libapp.a */; };
 		BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */; };
 		BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE02300EA4C0003EBA05 /* FirebaseCore */; };
@@ -120,6 +122,8 @@
 		D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF03 /* CallKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CallKit.framework; path = System/Library/Frameworks/CallKit.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF04 /* PushKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PushKit.framework; path = System/Library/Frameworks/PushKit.framework; sourceTree = SDKROOT; };
+		D4E5F6012345678ABCDEF05 /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
+		D4E5F6012345678ABCDEF06 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
 		5AE1A2B3C4D5E6F700000030 /* Intents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Intents.framework; path = System/Library/Frameworks/Intents.framework; sourceTree = SDKROOT; };
 		DA10CA11E0000000000000F1 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -164,6 +168,8 @@
 				BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */,
 				BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */,
 				BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */,
+				BD49C8A3300FAFC5000960D9 /* AVKit.framework in Frameworks */,
+				BD49C8A4300FAFC5000960DA /* CoreMotion.framework in Frameworks */,
 				5AE1A2B3C4D5E6F700000031 /* Intents.framework in Frameworks */,
 				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
@@ -208,6 +214,8 @@
 				D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */,
 				D4E5F6012345678ABCDEF03 /* CallKit.framework */,
 				D4E5F6012345678ABCDEF04 /* PushKit.framework */,
+				D4E5F6012345678ABCDEF05 /* AVKit.framework */,
+				D4E5F6012345678ABCDEF06 /* CoreMotion.framework */,
 				5AE1A2B3C4D5E6F700000030 /* Intents.framework */,
 			);
 			name = Frameworks;
@@ -751,7 +759,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100601101;
+				CURRENT_PROJECT_VERSION = 100601103;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -848,7 +856,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100601101;
+				CURRENT_PROJECT_VERSION = 100601103;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -1052,7 +1060,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100601101;
+				CURRENT_PROJECT_VERSION = 100601103;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -1141,7 +1149,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100601101;
+				CURRENT_PROJECT_VERSION = 100601103;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;

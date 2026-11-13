@@ -16,7 +16,7 @@
    * the heart, the comments and the send (`ReelActionRail`); the comments open over the playing
    * reel (`ReelCommentsSheet`). A conversation's reel is not a post and gets neither - the rail is
    * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
-   * picker) is drawn above the viewer (`markViewerLayer`).
+   * picker) opens later than the viewer, so it is drawn above it (`utils/overlayStack.ts`).
    *
    * A CAROUSEL PAGE (owner, 2026-11-06): vertical still pages POSTS, horizontal pages the MEDIA of
    * the post on screen (`reelViewerNav.ts` decides, `ReelSlide` draws the strip). The visible media
@@ -33,7 +33,6 @@
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
-  import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { pickedReactionToggle, railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
   import {
     WheelPageLock,
@@ -59,7 +58,24 @@
     type MediaPosition,
     type ReelSwipeVerdict,
   } from '$lib/reels/reelViewerNav';
-  import { fullScreenMediaListOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
+  import {
+    fullScreenMediaListOf,
+    fullScreenPageOf,
+    isLandscapeVideo,
+    visibleMediaOf,
+  } from '$lib/reels/fullScreenPost';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
+  import {
+    orientationCanBeForced,
+    requestOrientation,
+    rotateTarget,
+    viewportOrientation,
+    type OrientationRequest,
+  } from '$lib/mobile/screenOrientation.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import { measuredMediaSize } from '$lib/utils/mediaSizeCache';
+  import { createFirstSighting } from '$lib/utils/firstSighting';
+  import type { MediaSize } from '$lib/utils/mediaFrame';
   import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
     GESTURE,
@@ -81,6 +97,7 @@
   } from '$lib/posts/postReaction';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** The reel shown first: the one touched, or the newest when opened from the feed's icon. */
@@ -133,6 +150,9 @@
     orderChoice,
   }: Props = $props();
 
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'ReelViewer');
+
   /** The label of each order, in the order `REEL_ORDERS` lists them. */
   const REEL_ORDER_LABELS: Record<ReelOrder, () => string> = {
     ranked: m.reels_order_for_you,
@@ -145,8 +165,6 @@
    */
   const NOT_A_GESTURE =
     'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-comments-drawer]';
-
-  markViewerLayer();
 
   // WHATEVER PLAYS BEHIND THE VIEWER STOPS WHEN IT OPENS, not when its first player mounts (owner,
   // 2026-11-06): held from the first line, released on destroy, which brings the feed's video back.
@@ -216,6 +234,77 @@
     if (!post || fullScreenPageOf(post) !== 'carousel') return { index: 0, count: 1 };
     const count = fullScreenMediaListOf(post).length;
     return { index: Math.min(list.mediaIndexById[post.id] ?? 0, count - 1), count };
+  }
+
+  // ---- Rotation: the pager is portrait, EXCEPT over a LANDSCAPE VIDEO (owner, 2026-11-12, #3407) ----
+  /** The hold on the orientation while a landscape video is on show, or null. */
+  let landscapeOrientation: OrientationRequest | null = null;
+  // A DERIVED boolean: a swipe from one landscape video to the next flips nothing, so the SAME
+  // request lives on instead of posting portrait and auto back to back (the lightbox's `videoShown`).
+  /**
+   * What the decoded videos reported (`loadedmetadata`), by media id: what actually serves a video
+   * posted before 2026-09-29, which declares no size: a feed post is never measured (only the chat
+   * and GIF embeds file sizes in the cache), so such a post opens portrait and turns once its
+   * metadata loads. A `$state`, so the boolean below turns true once the video reports - and stays ONE boolean.
+   */
+  let decodedSizes = $state<Record<string, MediaSize>>({});
+  /** Items whose read failed, so the accusing line is written once per item, not per recompute. */
+  const firstUnreadable = createFirstSighting();
+  const landscapeVideoShown = $derived.by(() => {
+    // Outside the `svelte:boundary` (like the look-ahead): a post that throws when read costs the
+    // rotation, never the page - the slide that reads it trips the boundary itself.
+    const post = list.reels[list.index];
+    try {
+      const media = visibleMediaOf(post, mediaPositionOf(post).index);
+      const measured = media
+        ? (measuredMediaSize(media.mediaId) ?? decodedSizes[media.mediaId] ?? null)
+        : null;
+      return isLandscapeVideo(media, measured);
+    } catch (err) {
+      if (firstUnreadable(post?.id ?? '')) {
+        console.error(
+          '[reel-viewer] the item on show could not be read - the pager stays portrait',
+          err
+        );
+      }
+      return false;
+    }
+  });
+  // `loadedmetadata` does not bubble: caught in the capture phase on the viewer, and keyed by the
+  // pane's media id (the same pattern as the lightbox's dimensions line).
+  $effect(() => {
+    const el = viewerEl;
+    if (!el) return;
+    const onMeta = (e: Event) => {
+      const video = e.target;
+      if (!(video instanceof HTMLVideoElement) || video.videoWidth <= 0) return;
+      const id = video.closest('[data-media-id]')?.getAttribute('data-media-id');
+      if (!id || decodedSizes[id]) return;
+      decodedSizes[id] = { width: video.videoWidth, height: video.videoHeight };
+      console.debug(`[reel-viewer] ${id} reported ${video.videoWidth}x${video.videoHeight}`);
+    };
+    el.addEventListener('loadedmetadata', onMeta, true);
+    return () => el.removeEventListener('loadedmetadata', onMeta, true);
+  });
+  const showRotate = $derived(landscapeVideoShown && orientationCanBeForced());
+  $effect(() => {
+    if (!landscapeVideoShown) return;
+    const held = requestOrientation('auto', 'reel-landscape-video');
+    landscapeOrientation = held;
+    console.debug(
+      '[reel-viewer] a landscape video is on show - the pager follows the phone (auto)'
+    );
+    return () => {
+      held.release();
+      if (landscapeOrientation === held) landscapeOrientation = null;
+      console.debug('[reel-viewer] no landscape video on show - the pager is portrait again');
+    };
+  });
+  /** The rotate button: the other orientation, kept until the landscape video leaves. */
+  function rotateLandscapeVideo() {
+    const target = rotateTarget(viewportOrientation.landscape);
+    console.info(`[reel-viewer] the rotate button asks ${target}`);
+    landscapeOrientation?.set(target);
   }
 
   /**
@@ -458,7 +547,7 @@
    * The post whose share sheet is open (the rail's send), by id. The sheet (`PostShareSheet`) is
    * loaded on the first send, never with the viewer: it reads the conversation list, which a
    * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
-   * take the viewer's rung (`markViewerLayer`).
+   * open later and are drawn above it (`utils/overlayStack.ts`).
    */
   let ShareSheet = $state<
     typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
@@ -915,7 +1004,8 @@
     <div
       bind:this={viewerEl}
       use:coversScreen
-      class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
+      style:z-index={layer.z}
+      class="fixed inset-0 overflow-hidden bg-black text-white {expandOrigin
         ? 'motion-expand-in'
         : ''}"
       style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
@@ -962,6 +1052,7 @@
                 onLike={likerId ? () => likeReel(slot.post) : undefined}
                 rail={railFor(slot.post)}
                 mediaIndex={mediaPositionOf(slot.post).index}
+                turnedOverVideo={slot.i === list.index && landscapeVideoShown}
                 mediaDragX={slot.i === list.index ? list.mediaDragX : 0}
                 mediaDragging={slot.i === list.index && list.mediaDragging}
                 onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
@@ -977,6 +1068,7 @@
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
       <div
         class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        style={sideSafePadding('0.5rem')}
         data-reel-top-scrim
       >
         <button
@@ -1003,7 +1095,16 @@
               class="w-56"
             />
           </div>
-          <span class="w-11 shrink-0" aria-hidden="true"></span>
+          {#if !showRotate}
+            <span class="w-11 shrink-0" aria-hidden="true"></span>
+          {/if}
+        {/if}
+        {#if showRotate}
+          <!-- Over a landscape video only: landscape past the rotation lock, and back. It takes the
+             place of the empty box that balances the X, so the order tabs stay centred. -->
+          <div class="pointer-events-auto ml-auto shrink-0" data-reel-rotate>
+            <RotateButton onrotate={rotateLandscapeVideo} />
+          </div>
         {/if}
       </div>
 

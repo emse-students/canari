@@ -108,8 +108,10 @@
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
+  import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
   import { loadCommunityNicknames } from '$lib/utils/chat/nicknameActions';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -1271,9 +1273,9 @@
    * runs, so a silent rejection would be a voice note the user watched themselves record and that
    * nothing ever received.
    */
-  function handleSendVoiceNote(file: File) {
+  function handleSendVoiceNote(file: File, loudness: MediaLoudness | null) {
     whenSessionUp('a voice note', () => {
-      void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
+      void messaging.sendVoiceNote(file, msgCtx(), loudness).catch((e: unknown) => {
         convs.sendError = m.chat_send_error_generic();
         log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
       });
@@ -1693,7 +1695,11 @@
         <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
       {/if}
 
-      <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
+      <!-- A crash, so it ACCUSES (`console.error`), and it names the error: `${e}` printed
+           `[object Object]` in the one log that reported a looping chat (Android 1.6.6, 2026-11-12). -->
+      <svelte:boundary
+        onerror={(e) => console.error(`[UI] ChatArea error recovered: ${describeCaughtError(e)}`)}
+      >
         {#snippet failed(_error, reset)}
           <div
             class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center"

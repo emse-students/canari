@@ -35,6 +35,8 @@ describe('GET bookings/:id/calendar.ics', () => {
   });
 
   afterAll(async () => {
+    // Sockets a test left idle or half-read must not outlive the worker (open handle at teardown).
+    app?.getHttpServer().closeAllConnections();
     await app?.close();
   });
 

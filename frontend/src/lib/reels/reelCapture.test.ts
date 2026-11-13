@@ -9,6 +9,7 @@ import {
   captureReducer,
   destinationRules,
   handsBackTake,
+  hardwareShutterEvent,
   classifyLimitsFault,
   lensFlipAllowed,
   formatTakeTime,
@@ -265,5 +266,41 @@ describe('captureFileFrom', () => {
     );
     expect(errors).toHaveBeenCalledTimes(1);
     errors.mockRestore();
+  });
+});
+
+describe('hardwareShutterEvent - a volume key is the white shutter (owner, 2026-11-11)', () => {
+  const ready: CaptureState = { kind: 'ready' };
+
+  it('a quick press and release is a photo, through the same reducer', () => {
+    const down = hardwareShutterEvent('down', 100, true)!;
+    const pressing = captureReducer(ready, down);
+    expect(pressing).toEqual({ kind: 'pressing', pressedAt: 100 });
+    expect(captureReducer(pressing, hardwareShutterEvent('up', 200, true)!)).toEqual({
+      kind: 'photo',
+    });
+  });
+
+  it('a held key films until it is let go', () => {
+    const pressing = captureReducer(ready, hardwareShutterEvent('down', 0, true)!);
+    const recording = captureReducer(pressing, { type: 'hold' });
+    expect(recording.kind).toBe('recording');
+    // The shutter is disabled-for-presses during parts of a take; the release still ends it.
+    expect(captureReducer(recording, hardwareShutterEvent('up', 5000, false)!)).toEqual({
+      kind: 'finishing',
+    });
+  });
+
+  it('a press the shutter would refuse is refused', () => {
+    expect(hardwareShutterEvent('down', 0, false)).toBeNull();
+  });
+
+  it('a press the system took back is a cancel: no photo, a take kept', () => {
+    const pressing = captureReducer(ready, hardwareShutterEvent('down', 0, true)!);
+    expect(captureReducer(pressing, hardwareShutterEvent('cancel', 50, true)!)).toEqual(ready);
+    const recording: CaptureState = { kind: 'recording', pressedAt: 0 };
+    expect(captureReducer(recording, hardwareShutterEvent('cancel', 50, false)!)).toEqual({
+      kind: 'finishing',
+    });
   });
 });

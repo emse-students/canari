@@ -17,7 +17,7 @@ const SECRET = 'test-secret';
 function token(sub: string): string {
   const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const head = b64({ alg: 'HS256', typ: 'JWT' });
-  const body = b64({ sub });
+  const body = b64({ sub, exp: 4_000_000_000 });
   const sig = crypto.createHmac('sha256', SECRET).update(`${head}.${body}`).digest('base64url');
   return `${head}.${body}.${sig}`;
 }

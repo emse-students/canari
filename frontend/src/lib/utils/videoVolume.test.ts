@@ -21,8 +21,8 @@ function webkit() {
   const audio = new LoudnessAudio({
     createContext,
     isWebKit: () => true,
+    isArbitrated: () => true,
     onScreenChange: () => () => {},
-    onScreen: () => true,
   });
   return { audio, createContext };
 }

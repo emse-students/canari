@@ -1,7 +1,13 @@
 <script lang="ts">
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
+  import { tick } from 'svelte';
   import { applyComposerMarkdownFormat } from '$lib/utils/markdown/composerMarkdownFormat';
+  import {
+    ComposerFormatHistory,
+    historyKeyAction,
+    type FormatSnapshot,
+  } from '$lib/utils/markdown/composerFormatHistory';
   import { trimComposerTextIfNeeded } from '$lib/utils/markdown/composerText';
 
   interface Props {
@@ -63,8 +69,35 @@
         value = text;
         onchange?.(text);
       },
-      composerEl
+      composerEl,
+      history
     );
+  }
+
+  /** Toolbar actions only: typing and pastes stay with the browser's own undo. */
+  const history = new ComposerFormatHistory();
+
+  async function restore(snapshot: FormatSnapshot) {
+    value = snapshot.text;
+    onchange?.(snapshot.text);
+    await tick();
+    composerEl?.focusEditor();
+    composerEl?.setSelectionRange(snapshot.start, snapshot.end);
+  }
+
+  /** Ctrl/Cmd+Z and redo over a toolbar action; anything else goes on to the caller. */
+  function handleKeydown(e: KeyboardEvent) {
+    // An IME composition owns its own keys: its Ctrl+Z is the composition's, never the toolbar's.
+    const action = e.isComposing ? null : historyKeyAction(e);
+    if (action) {
+      const snapshot = action === 'undo' ? history.undo(value) : history.redo(value);
+      if (snapshot) {
+        e.preventDefault();
+        void restore(snapshot);
+        return;
+      }
+    }
+    onkeydown?.(e);
   }
 
   function commitTrimmedValue(): string {
@@ -103,7 +136,7 @@
     class="w-full min-w-0"
     {editorClass}
     {onchange}
-    {onkeydown}
+    onkeydown={handleKeydown}
     {onpaste}
     {onmedia}
     {onfocus}

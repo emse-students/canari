@@ -1,7 +1,7 @@
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { deviceWindowMs, parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
@@ -12,6 +12,8 @@ import type {
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  MergeMessagesOptions,
+  MessageRowStanding,
   OutboxEntry,
   PageKey,
   PendingGroupExit,
@@ -1052,9 +1054,17 @@ export class IndexedDbStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts: MergeMessagesOptions = {}
   ): Promise<Set<string>> {
-    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+    return casMergeMessages(
+      this.revisedRows(),
+      conversationId,
+      ids,
+      merge,
+      deviceKeyB64,
+      opts.foreignExpected === true
+    );
   }
 
   /**
@@ -1064,8 +1074,12 @@ export class IndexedDbStorage implements IStorage {
    */
   private revisedRows() {
     return {
-      read: (conversationId: string | null, ids: readonly string[], deviceKeyB64: string) =>
-        this.readRows(conversationId, ids, deviceKeyB64),
+      read: (
+        conversationId: string | null,
+        ids: readonly string[],
+        deviceKeyB64: string,
+        foreignExpected: boolean
+      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
       writeIfUnchanged: async (
         conversationId: string | null,
         writes: ReadonlyArray<RevisedWrite>,
@@ -1113,12 +1127,14 @@ export class IndexedDbStorage implements IStorage {
 
   /**
    * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn.
+   * a row of another conversation is never opened, and is said at warn unless the caller handles it
+   * (`foreignExpected`).
    */
   private async readRows(
     conversationId: string | null,
     ids: readonly string[],
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    foreignExpected = false
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
@@ -1139,7 +1155,7 @@ export class IndexedDbStorage implements IStorage {
     });
     for (const existing of found) {
       if (conversationId !== null && existing.conversationId !== conversationId) {
-        warnForeignRow(existing.id, conversationId);
+        if (!foreignExpected) warnForeignRow(existing.id, conversationId);
         continue;
       }
       try {
@@ -1179,6 +1195,26 @@ export class IndexedDbStorage implements IStorage {
       rows: new Map([...read.rows].map(([id, row]) => [id, row.msg])),
       unreadable: read.unreadable,
     };
+  }
+
+  /** See {@link IStorage.getMessageStanding}: one `get`, one open, nothing said. */
+  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const req = db.transaction('messages', 'readonly').objectStore('messages').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return { kind: 'absent' };
+    try {
+      await decryptData(row.cipherText, row.iv, deviceKeyB64);
+    } catch (e) {
+      if (e instanceof PayloadUnreadableError) {
+        return { kind: 'unreadable', conversationId: row.conversationId };
+      }
+      throw e;
+    }
+    return { kind: 'readable', conversationId: row.conversationId };
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
@@ -1396,6 +1432,40 @@ export class IndexedDbStorage implements IStorage {
       tx.oncomplete = () => resolve(found);
       tx.onerror = () => reject(tx.error);
     });
+    return this.openPendingRows(rows, deviceKeyB64, out, true);
+  }
+
+  /** See {@link IStorage.getPendingMutationsOf}: the conversation's whole key range, then opened. */
+  async getPendingMutationsOf(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const req = db
+        .transaction(PENDING_MUTATIONS, 'readonly')
+        .objectStore(PENDING_MUTATIONS)
+        .getAll(conversationMutationsRange(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // Found by conversation, not by this key's tags: a row that does not open may be under another
+    // key (a reseal in flight), so it is left as it is.
+    return this.openPendingRows(rows, deviceKeyB64, { entries: [], removedUnreadable: 0 }, false);
+  }
+
+  /**
+   * Opens the pending-mutation `rows` read, into `out`. With `removeDead` (rows found under this
+   * key's tags, so written under it) the ones that no longer open are removed in a second
+   * transaction - each only while it still holds the bytes read.
+   */
+  private async openPendingRows(
+    rows: any[],
+    deviceKeyB64: string,
+    out: PendingMutationRead,
+    removeDead: boolean
+  ): Promise<PendingMutationRead> {
+    const db = this.ensureDb();
     const dead: any[] = [];
     for (const row of rows) {
       let sealed: Record<string, unknown>;
@@ -1405,8 +1475,8 @@ export class IndexedDbStorage implements IStorage {
           unknown
         >;
       } catch (e) {
-        if (e instanceof PayloadUnreadableError) dead.push(row);
-        else throw e;
+        if (!(e instanceof PayloadUnreadableError)) throw e;
+        if (removeDead) dead.push(row);
         continue;
       }
       const joined = joinPendingMutation(row, sealed);
@@ -1816,8 +1886,9 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
-  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds (this device's window, `deviceWindowMs()`, unless a caller names another); returns the number of deleted rows. */
+  async deleteOldMessages(maxAgeMs: number = deviceWindowMs()): Promise<number> {
+    appendLog(`[GC] deleteOldMessages maxAgeMs=${maxAgeMs}`);
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();

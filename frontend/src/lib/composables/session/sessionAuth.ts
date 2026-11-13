@@ -6,6 +6,8 @@
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
+import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
@@ -158,7 +160,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
-import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
+import { keptVerdictLatch, type AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   beginStartupCatchupBench,
   beginStartupCatchupPhase,
@@ -209,6 +211,7 @@ import {
   handleHistoryRequest,
   processPendingInvitations,
   raiseAnnouncedJoinAsk,
+  uiKeptLatch,
 } from '$lib/utils/chat/actions';
 import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
 import {
@@ -627,6 +630,11 @@ export function savedStateFailure(
   // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
   // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
   if (reason instanceof MlsStateWriteRefusedError) {
+    // Refused before any write, because this tab does not own the state (a follower): nobody wrote
+    // over anything, so "another tab has just saved" would be false.
+    if (reason.outcome === 'follower-tab') {
+      return new LoginFailure('state_owned_by_another_tab', m.auth_state_owned_by_another_tab());
+    }
     return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
   }
   if (reason instanceof SavedStateOfAnotherAccountError) {
@@ -813,6 +821,8 @@ async function eraseAccountRecordsLocally(
   localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
   forgetConversationNicknames(userIdToReset);
+  forgetConversationPins(userIdToReset);
+  clearConversationAnchors();
 
   const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];
@@ -3659,7 +3669,12 @@ export function tearDownLiveSession(
     // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
     // the caller chains the MLS client's retirement, and the next login's wait, on it.
     finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .catch((e) => {
+        // A REFUSAL HAS BEEN SAID WHERE IT WAS DECIDED (the version guard, or a follower tab, which
+        // owns no MLS state to write); only an unexplained failure is said here.
+        if (e instanceof MlsStateWriteRefusedError) return;
+        console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
+      })
       .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
@@ -3698,6 +3713,10 @@ export function tearDownLiveSession(
   cb.conversations.clear();
   cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
+  // The `kept` verdicts already said belong to the account that leaves: two accounts on one install
+  // share their 1:1 group, and the next one's first sweep would otherwise say nothing about it.
+  keptVerdictLatch.reset();
+  uiKeptLatch.reset();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.

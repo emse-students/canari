@@ -96,6 +96,10 @@ jobs:
 
       - name: Build test matrices
         id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
@@ -127,11 +131,11 @@ jobs:
 
           # ── Determine base commit ──
           BASE=""
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          elif [[ -n "${{ github.event.before }}" ]] && \
-               [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
-            BASE="${{ github.event.before }}"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE="$PR_BASE_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" ]] && \
+               [[ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            BASE="$PUSH_BEFORE_SHA"
           elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
             BASE="$(git rev-parse HEAD~1)"
           fi
@@ -178,8 +182,9 @@ jobs:
           # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
           # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
           # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
-          # change runs them: ask what the gate reads.
-          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/'; then
+          # change runs them, and chat-delivery's device limit (`state.rs` asserts its copy of it):
+          # ask what the gate reads.
+          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/' || has '^apps/chat-delivery-service/src/retention\.constants\.ts$'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native
@@ -449,7 +454,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -556,7 +561,10 @@ jobs:
         working-directory: ${{ matrix.component.path }}
         env:
           GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
-        run: ${{ matrix.component.cmd }}
+          COMPONENT_CMD: ${{ matrix.component.cmd }}
+        # Unquoted on purpose: the matrix names a command and its arguments in one string
+        # (`cargo test --all-targets`), and word splitting is what makes it a command line.
+        run: $COMPONENT_CMD
 
   # =================================================================================================
   # THE REAL APPLICATION, BOOTED
@@ -620,7 +628,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -829,7 +837,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379:6379
         options: >-
@@ -1194,7 +1202,9 @@ jobs:
 
       - name: Assert what the build carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
-        run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: bun .github/scripts/assert-frontend-build.mjs frontend "$BUILD_SHA"
 
   # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
   # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
@@ -1238,7 +1248,9 @@ jobs:
 
       - name: Run Vitest shard with coverage
         working-directory: frontend
-        run: bun run test:coverage --shard=${{ matrix.shard }}/4
+        env:
+          VITEST_SHARD: ${{ matrix.shard }}
+        run: bun run test:coverage --shard="$VITEST_SHARD"/4
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7

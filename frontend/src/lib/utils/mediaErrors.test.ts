@@ -1,3 +1,4 @@
+import { TransportFailureError } from './transportFailure';
 import { describe, it, expect, vi } from 'vitest';
 import { SegmentedMediaError } from '$lib/mediaSegmented';
 import {
@@ -11,6 +12,7 @@ import {
   isRetryableMediaFailure,
   logMediaFailure,
   mediaFailureCause,
+  resolveMediaCredential,
 } from './mediaErrors';
 
 describe('logMediaFailure - one line, at the level its cause deserves', () => {
@@ -98,5 +100,20 @@ describe('media error classification', () => {
     expect(isMediaPurgedError(undefined)).toBe(false);
     expect(isMediaPurgedError(null)).toBe(false);
     expect(isMediaPurgedError({ message: MEDIA_PURGED_MESSAGE })).toBe(false);
+  });
+});
+
+describe('resolveMediaCredential - an unreachable refresh is typed at the throw', () => {
+  it('types a transport failure as MediaUnreachableError, retryable', async () => {
+    const cause = new TransportFailureError(new TypeError('Failed to fetch'));
+    const err = await resolveMediaCredential(() => Promise.reject(cause)).catch((e) => e);
+    expect(err).toBeInstanceOf(MediaUnreachableError);
+    expect(mediaFailureCause(err)).toBe('unreachable');
+  });
+
+  it('lets any other rejection through untouched', async () => {
+    const dead = new Error('session ended');
+    await expect(resolveMediaCredential(() => Promise.reject(dead))).rejects.toBe(dead);
+    await expect(resolveMediaCredential(() => Promise.resolve('tok'))).resolves.toBe('tok');
   });
 });

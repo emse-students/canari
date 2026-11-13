@@ -980,8 +980,8 @@ below; **owed on both phones**
   removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
   the whole thread used to adopt it and collapse.
 - **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
-  (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
-  viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
+  (rungs under the viewer's): since 2026-11-13 the viewer and its dialogs are on the overlay stack
+  (`utils/overlayStack.ts`), so what opens later is above it with no rung or mark.
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
@@ -990,7 +990,7 @@ below; **owed on both phones**
   text kept a post out too until the owner reversed it on 2026-11-06
   ([below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **The list is newest first and nothing else** (lead's
   decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
-  (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
+  (`kind=reel&multiMedia=true` since 2026-11-11, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
 
 - **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
@@ -1118,10 +1118,10 @@ CanaReels, the link tappable in the caption. Until then it stayed out because th
 the link's preview card; the preview is still not drawn - the link itself is, which was the point.
 
 - **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
-  event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
-  ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
-  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
-  post ([legacy-compatibility](../../legacy-compatibility.md)).
+  event still keep a post out. `multiMedia=true` alone brings it since 2026-11-11
+  ([server half](../../services/reels.md#reading)); `withLinks`, which kept it from the builds that
+  could not draw it (every release through `1.6.6-alpha.1`), went when the `1.6.6` floor locked them
+  out ([legacy-compatibility](../../legacy-compatibility.md)).
 - **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
   `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
   that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
