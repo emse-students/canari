@@ -1,5 +1,7 @@
 ## P3 - a lives integration spec failed once: the association's live pushed to nobody
 
+target: 1.7.0
+
 `apps/social-service/src/lives/lives.integration.spec.ts`, "the push to the followers when a live goes
 on air (WP-L7) > an association announces at most one live per 6 hours (WP-1b) > a member's live is
 never limited by it, even right after the association's", failed once in CI's "Social-service
