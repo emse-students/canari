@@ -1,5 +1,7 @@
 ## P2 - the gateway's frame size and rate limits, sized from a week of its own counts
 
+target: 1.10.0
+
 **The order (lead, 2026-11-13).** First the counter, which changes nothing a client sees: one
 `[WS FRAMES]` line per connection when it ends, with its frames, its largest frame and its busiest
 minute ([chat-gateway](../services/chat-gateway.md#what-one-connection-sent-said-once-when-it-ends-2026-11-13)).

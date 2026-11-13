@@ -1908,7 +1908,7 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 | 7 | a revoke restores the baseline | PASS | after the revoke: post 404, reaction 404, comment 404, the posts gone from the feed, `Publication introuvable` on screen |
 | 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
 
-Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+Two P3 client defects were found on the way, both in the [backlog](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md).
 
 ### Follow requests, member reposts and visibility between spaces - the decisions of 2026-10-25, all shipped
 
@@ -2684,7 +2684,7 @@ revisit them:**
    predicate. An event announced by the post keeps its own visibility.
 6. "Clair, propre, user-friendly": one compact block.
 
-Shipped in `1.6.10` (#3314); the readings owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else).
+Shipped in `1.6.10` (#3314); the readings owed are an entry of [the readings owed](plan.md#readings-owed).
 
 The rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
 targets and the public in them (everyone, the students, the staff), with no default, and may change

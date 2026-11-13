@@ -1,4 +1,6 @@
-## P2 - the Swift log lines on a store build: built, two readings owed
+## Reading owed - Swift log lines in clear on a store build (R1a, R1b on the iPhone 12)
+
+target: 1.7.0
 
 A store build redacts a Swift `NSLog` to `<private>` whole, so every Swift line moved to a public
 `Logger` with each value's privacy named: the extension (`NseLog`, `1.6.5-alpha.1`), then on

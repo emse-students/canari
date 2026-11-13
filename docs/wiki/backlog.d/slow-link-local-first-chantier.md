@@ -1,5 +1,7 @@
 ## P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)
 
+target: 1.7.0
+
 **Decision.** The owner, 2026-11-10: *"a slow connection is common and a real plague"*. The chantier
 starts right after `1.6.10` and is carried to the end, not abandoned at the first improvement.
 

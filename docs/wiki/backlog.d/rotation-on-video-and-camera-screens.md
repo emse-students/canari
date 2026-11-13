@@ -1,4 +1,6 @@
-## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera, the broadcaster and both viewers built (step 4, 2026-11-12), phone readings owed
+## Reading owed - rotation on the video, live and camera screens on both phones
+
+target: 1.7.0
 
 The owner's decisions and the mechanism are in [screen-orientation](../frontend/screen-orientation.md):
 portrait everywhere; the full-screen video viewer, the live viewer, the live broadcaster and the

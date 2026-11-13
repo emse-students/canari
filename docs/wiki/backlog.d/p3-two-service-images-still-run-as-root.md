@@ -1,5 +1,7 @@
 ## P3 - two service images still run as root: the nginx frontend and media-service (Trivy DS-0002, 2026-10-23, narrowed 2026-11-11)
 
+target: 1.9.0
+
 Six of the eight images run as a non-root user since 2026-11-11, asserted by
 `.github/scripts/tests/image-user.test.mjs` ([cicd](../cicd.md#container-images-are-scanned-2026-10-23)).
 The two left are in that test's `ROOT_ALLOWED`, each blocked by something a `USER` line cannot fix:

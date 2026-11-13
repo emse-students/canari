@@ -1,5 +1,7 @@
 ## P3 - the video speaker does not follow the device volume (owner, 2026-11-09)
 
+target: 1.10.0
+
 The owner's sound decision for the shared video player includes *"follow the device volume where the
 platform exposes it (muted glyph at volume 0)"* - Instagram does, measured on the Mi 9T: at volume 0
 the speaker shows struck, and raising the volume restores it. **No WebView exposes the system volume**

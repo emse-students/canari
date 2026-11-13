@@ -769,7 +769,7 @@ hour against 1 to 12 an hour the rest of the evening, 426 of them in two minutes
 
 None of this is a client retry loop gone wrong, and none of it is a large group: it is two reads
 that claim. The adder device stayed connected throughout, and a pool is refilled only at connection
-([backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable)).
+([backlog](../backlog.d/p2-a-device-s-one-time-keypackage-pool-is-topped-up-only-when-it-connects.md)).
 So the account's pools stayed empty until each device reconnected.
 
 **What changed.** The pending-invitation sweep and the `welcome_request` answer claim the one device

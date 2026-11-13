@@ -1219,7 +1219,7 @@ here:** a request/do that reaches Lydia after core's 60 s bound (Lydia's own pro
 Canari's wait) may still create a request after the 3-minute window; if that attempt was meanwhile
 read `not-found` and closed, a payment for it is still recorded by its callback (paid over a closed
 row, at ERROR). A crash between a top-up's commit and its Cercle dispatch loses the dispatch with no
-line ([backlog](../../backlog.md#p2---a-crash-between-a-top-ups-purchase-commit-and-its-cercle-dispatch-loses-the-top-up-silently-review-of-2218-2026-10-21)).
+line ([backlog](../../backlog.d/p2-a-crash-between-a-top-up-s-purchase-commit-and-its-cercle-dispatch-loses-the.md)).
 Concurrent attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.
 
 ## A form answer sends one order_ref per request (2026-10-27)

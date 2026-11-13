@@ -1,4 +1,6 @@
-## P3 - what the bench readings of `v1.6.7-alpha.3` filed (2026-11-08): the video ladder drops early
+## Reading owed - the video ladder dropping 480p30 to 180p15 early in a call, when seen again
+
+target: 1.7.0
 
 Read on dev on the Mi 9T and the iPhone 12; every reading the release owed passed and `1.6.7`
 shipped on them. The sign-out and sign-in noise was fixed at its causes (#3149).

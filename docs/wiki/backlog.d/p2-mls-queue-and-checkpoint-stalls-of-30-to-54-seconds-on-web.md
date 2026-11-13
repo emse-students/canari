@@ -1,5 +1,7 @@
 ## P2 - MLS checkpoint and queue stalls of 30-54 s on web, with a worker timeout and an add-device failure on `lock_budget_spent` (web log, 2026-11-08)
 
+target: 1.10.0
+
 One web log shows inbound-queue and checkpoint phases taking 30-54 s, a worker timeout, and an
 add-device attempt failing with `lock_budget_spent` (`mls-client/CommitRefusedError.ts`).
 

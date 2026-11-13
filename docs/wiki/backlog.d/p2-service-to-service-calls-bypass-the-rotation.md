@@ -1,5 +1,7 @@
 ## P2 - a service-to-service call can still be reset while its peer is retired: the rotation covers only nginx (2026-11-01)
 
+target: 1.10.0
+
 The replica lists take a retiring replica out of the two nginx before it stops
 ([cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)), so a request that goes
 through nginx is never reset by a release. A call from one service to another does not go through
