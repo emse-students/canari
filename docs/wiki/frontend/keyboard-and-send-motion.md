@@ -171,9 +171,124 @@ the safe area: it is positioned in `ChatArea`'s root, inside the app shell that 
   gap` a different decision there.
 - **The fall still resizes before the page redraws** (100-117 ms measured). With the synced animation
   the keyboard now covers that band while it slides, as Messenger's covers its composer.
-- **iOS** is untouched: its native layer already resizes the WebView on every keyboard frame
-  (`CanariApplyKeyboardLayout`, [mobile](mobile.md)). The composer's dimensions and the send motion are
-  CSS and apply there too.
+- **iOS** had the rise defect in another shape and takes the same hand-off; its fall now rides the
+  keys like Messenger iOS's - section 5 below. The composer's dimensions and the send motion are CSS
+  and apply there too.
+
+## 5. iOS, measured on the iPhone 12 (2026-11-13)
+
+`1.6.11` TestFlight (dev), iOS 27.0.1, light theme, `canari-test-gamma` in a DM; Messenger in a
+test session, observe only, nothing sent. The store build's WebView is not inspectable
+(`get-task-allow` false, `webinspector` lists nothing), so the page was not sampled per frame:
+the screen was read from WDA's MJPEG stream (`mjpegScalingFactor` 25, a frame every 30-45 ms, so
+**one frame here is two to three of the display's**), the native side from `syslog live`
+(`[CanariIOS] keyboard overlap=301 -> webview height 543`). Positions are points, as the distance
+from where the thing finally rests. WDA freezes the stream while it delivers a tap, so the frames
+start with the keyboard already moving.
+
+**The keyboard opening, Canari** (`CanariApplyKeyboardLayout` animating the WebView frame on the
+keyboard's duration and curve):
+
+| frame (ms) | keyboard top still to travel | page content still to travel | web composer |
+| --- | --- | --- | --- |
+| 1251 | 240 | 275 | half covered |
+| 1288 | 148 | 269 | hidden behind the keyboard |
+| 1325 | 82 | 209 | hidden |
+| 1364 | 48 | 127 | hidden |
+| 1419 | 23 | 55 | half covered |
+| 1474 | 2 | 5 | visible, in place |
+
+On the first frame that moves, the page is ALREADY laid out for the keyboard (the video in the
+thread is already its keyboard-up size, and the native "+" twin, placed from the page's rects,
+stands at its final place) but it is DRAWN one keyboard overlap lower, then slides up 60-75 ms
+behind the keyboard. **The web composer is hidden behind the rising keyboard for four frames
+(~150 ms)** while the native "+" floats alone above it - the same shape as the reading of
+2026-10-11 on `v1.2.3-alpha.5` ([device-verification](../device-verification.md)), so it was never
+fixed. The native completion lands 478 ms after `UIKeyboardWillChangeFrame`. A second run gave the
+same picture. No band: the window's ground is `app.html`'s two literals, which are `--cn-bg` in
+both themes.
+
+**The keyboard opening, Messenger iOS**: the thread is at its final place on the first frame that
+moves, and the composer stands ABOVE the rising keyboard on every frame - 125, 87, 57, 42, then 35 pt
+between the field's centre and the keyboard's top - never covered.
+
+**The keyboard closing.** Canari: the page is drawn full height on the first frame after the
+keyboard starts down, and the keyboard slides off over the composer - Messenger Android's shape.
+Messenger iOS instead keeps its composer riding on the falling keyboard (a near-constant ~58 pt
+from the field's centre to the keyboard's top) and scrolls the thread with it. The owner wants
+Messenger's, so the fall now rides (below).
+
+### What changed on iOS (PR `feat/ios-keyboard-handoff`, on this branch)
+
+**The rise is handed to the page, as on Android.** `CanariHandKeyboardRiseToPage` calls
+`window.canariImeTarget(301)` (the same `imeTarget.ts`); the page lays itself out for the keyboard,
+synchronously, inside the still full-size WebView. Then the PROOF that this layout is on screen,
+`CanariAfterScreenUpdates`: `takeSnapshotWithConfiguration:` with `afterScreenUpdates = YES` on a 1 pt
+rect, which WebKit takes "after incorporating any pending screen updates" - and the page's change is
+pending once the script has returned. It is the public form of Android's `postVisualStateCallback`; the
+private `_doAfterNextPresentationUpdate:` would say the same and is never called in a store build, and
+a `CADisplayLink` watching commits sees the UI process's frames, not WebKit's. Only in the proof's
+completion is the frame set, WITHOUT animation, since the page already is that picture.
+
+A rise ends, without its proof, on a newer keyboard change or a navigation (the WebView's `URL`, read
+by KVO since wry owns the navigation delegate), and says so apart: `rise #n ended WITHOUT its proof
+after N ms: <why>`. A content process that dies fails the script's or the proof's completion with an
+error: an `ERROR` line, as is a page that does not take the target; the frame is then set at once. A
+fall withdraws the page's target with `canariImeTarget(0)` only when a rise was still pending - a rise
+that landed spent its target when the WebView shrank.
+
+**What would prove the proof insufficient.** Each rise logs `on screen after N ms (script S ms, proof
+P ms)`. Two readings judge it: (1) in the MJPEG frames, any frame at the resize where the web composer
+is missing, cropped or one keyboard lower means the snapshot completed before the page's layout was
+presented - the proof does not cover what it claims; (2) an N past ~50 ms means the keys are seen
+arriving under a composer that has not moved yet - the proof is true but too slow (P says whether the
+proof or the script is the cost), and the cheaper order (frame set as soon as the script returns) is
+the next candidate.
+
+**Every frame change settles after the page's own reaction.** The frame is set by
+`CanariSnapKeyboardFrame`, which removes any animation still running on the WebView's layer first (a
+height change overtaken), and the settle - scroll clamp, safe-area publish, the settled report - runs
+in a second proof's completion, so the report reads the page AFTER its resize handler and the safe area
+is published after the page's CSS variables, never before. Every late callback (a proof, an animation's
+completion) is checked against `g_keyboardChangeSeq`: an overtaken one settles nothing, so nothing
+reports twice.
+
+**The fall rides the keys** (`keyboardRide.ts`, `CanariHandKeyboardFallToPage`). Before resizing,
+the shell calls `window.canariKeyboardFall({ durationMs, curve, fromPx })` with the keyboard's own
+`UIKeyboardAnimationDurationUserInfoKey` and `UIKeyboardAnimationCurveUserInfoKey` and the overlap it
+had. The page records, for each `[data-keyboard-ride]` piece, the top of its probe: the composer band
+itself (`"box"`), the thread's last row (`"last-row"` - a scroll container's box does not move when it
+grows, its content does, and only by what the bottom pin scrolls). Then the frame is set without
+animation. On the resize the page lays itself out full height as before, and the ride is armed: a
+`ResizeObserver` created then is notified in the next rendering update after every observer created
+before it - after the thread's bottom pin (`threadGrowthObserver`) - and before that frame is painted.
+There each piece is measured again and rides ITS OWN move, from where it stood to its new place: a Web
+Animations transform over the keyboard's duration and the CSS easing of its curve. A thread shorter
+than its box does not move and does not ride; a thread overflowing by less than the keyboard rides its
+overflow; a reader scrolled up is not moved. The native "+" twin is re-read on every frame until the
+LATEST ride settles (`followKeyboardRides`).
+
+**A ride ends early** - every piece jumps to its place - on any rise (the rise's layout, and the proof
+taken of it, must carry no stale transform), on a new fall's capture, and on any pointer press: while a
+piece rides it is the containing block of its `position: fixed` descendants, so a picker opened by a
+tap during the ~250 ms would be placed against the piece, not the screen.
+
+**Which falls ride, and what is said.** Not announced by the shell, and refused by the page silently
+(debug only): an instant fall (duration 0), a keyboard shorter than the page's open threshold (100 pt,
+held equal on both sides by a test - a hardware keyboard's shortcut bar), a keyboard of another app
+(`UIKeyboardIsLocalUserInfoKey` false), reduced motion. A WARN: a curve UIKit does not define, or a page
+already full height when the announcement arrives - the order broke.
+
+**The keyboard's curve 7 has no public definition.** `UIKIT_KEYBOARD_CURVE_EASING`
+(`cubic-bezier(0.38, 0.7, 0.125, 1)`) is the ecosystem's stand-in for it, named in one place and NOT
+measured here; the fall reading below confirms or replaces it. Curves 0-3 map to their CSS names.
+Height changes while open keep the frame animated on the keyboard's curve, unmeasured against
+Messenger. Android is unchanged.
+
+Tests: `iosKeyboardRiseHandoff.test.ts` reads the native contract against the page's hooks,
+`iosKeyboardSettledReport.test.ts` the settle's place behind a proof, `keyboardRide.test.ts` the
+parsing, the refusals, each piece's own move and the frame follower, `keyboardViewport.ride.test.ts`
+the wiring (the close arming the ride, a rise or a press ending it, the refusals).
 
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
@@ -193,5 +308,29 @@ On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the 
    scroll under it. A pull-to-refresh reload with the keyboard up: the composer still lifts
    (`IME hand-off to <px> ended: the page started a new document`).
 
-And on the iPhone 12: the composer's dimensions and the send motion, which apply there unchanged, and
-the composer in landscape clear of the notch.
+And on the iPhone 12, a pre-release carrying both PRs (the store build cannot be inspected, so the
+MJPEG stream and the syslog are the instruments, as in section 5):
+
+6. Keyboard open in a DM, five times: syslog `keyboard overlap=301 -> webview height 543, handed to
+   the page first` then `keyboard rise #n: the page's keyboard layout is on screen after N ms`, and
+   never an `ERROR` line. In the frames, the web composer above the keyboard on every frame from the
+   first one that moves (no frame where it is hidden or the page is drawn lower), the native "+"
+   beside its web twin, no band, no cropped frame. N, five values: the two readings that would prove
+   the proof insufficient are above.
+7. Keyboard close in a DM resting on its last message, five times: syslog `keyboard fall (N ms, curve
+   7): the page rides it` and the page's `keyboard fall ridden over N ms: D, D px`. In the frames, the
+   gap from the field's centre to the keyboard's top near-constant through the fall, like Messenger's
+   ~58 pt (a gap that grows then closes means the curve-7 stand-in leads or lags the keys), the thread
+   moving with the composer, no frame with the composer at the bottom before the keys get there. **The
+   native "+" against its web twin on every frame of the fall**: it is re-read per frame over the
+   bridge, so a "+" trailing the web composer by a frame or more is the cost of that bridge, measured
+   here. Then: a thread with two short messages (shorter than its box) - only the composer rides
+   (`D px`, one value); a thread scrolled up a screen - the same; once with Reduce Motion on - no ride,
+   the page full height at once, no WARN. And a tap on the thread during a fall: the ride ends, the
+   pieces at their places, nothing left translated.
+8. Open, then switch to the emoji keyboard and back (a height change while open), then close before
+   the rise lands (tap the field and the thread at once): the frame always ends at the keyboard's
+   edge, `ended WITHOUT its proof` when a rise was overtaken (never confused with a slow one), never a
+   ride left half way, and one settled report per change, never two.
+9. The composer's dimensions and the send motion, which apply there unchanged, and the composer in
+   landscape clear of the notch.
