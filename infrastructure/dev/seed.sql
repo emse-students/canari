@@ -6,8 +6,8 @@
 -- seed-marker: Fictif
 -- seed-tables: platform_config users associations association_audiences spaces association_members association_follows user_follows association_calendar_events posts
 
-INSERT INTO "platform_config" ("id", "maintenance_enabled", "min_client_version", "payment_provider", "calls_mode", "lives_mode", "push_mode", "checkpoint_skip_mode", "live_replays_mode") VALUES
-  (1, false, '1.2.7', 'disabled', 'audio_video', 'on', 'full', 'off', 'off');
+INSERT INTO "platform_config" ("id", "maintenance_enabled", "min_client_version", "payment_provider", "calls_mode", "lives_mode", "push_mode", "checkpoint_skip_mode", "live_replays_mode", "group_calls_mode") VALUES
+  (1, false, '1.2.7', 'disabled', 'audio_video', 'on', 'full', 'off', 'off', 'mesh');
 
 INSERT INTO "users" ("id", "displayName", "firstName", "lastName", "promo", "formation", "campus", "cursus", "bio", "createdAt", "updatedAt") VALUES
   ('9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', 'Alice Fictif', 'Alice', 'Fictif', 2024, 'ICM', 'saint-etienne', '[{"formation":"ICM","promo":2024}]'::jsonb, 'Personne fictive de l''environnement de test (ICM 2024).', now() - interval '30 days 0 hours', now() - interval '30 days 0 hours'),

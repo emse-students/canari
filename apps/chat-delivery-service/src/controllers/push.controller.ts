@@ -48,6 +48,7 @@ import {
   type WakeAnswer,
 } from '../services/push-payload';
 import { MLS_WAKE_VERSION, parseWakeVersion } from '../utils/push-mode';
+import { parseGroupCallVersion } from '../utils/group-calls-mode';
 import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
 import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
@@ -373,6 +374,7 @@ export class PushController {
       locale?: string;
       wake?: boolean;
       wakeVersion?: number;
+      groupCallVersion?: number;
     },
     @Headers('x-user-id') userIdRaw: string,
     @Headers('x-session-id') sessionIdRaw?: string
@@ -417,6 +419,17 @@ export class PushController {
     const wakeVersion = declared.version;
     const wakeCapable = wakeVersion >= MLS_WAKE_VERSION;
 
+    // WHICH GROUP CALL THIS BINARY SPEAKS (migration 050), written on every registration and 0
+    // unless said, like the wake: an old build is never rung for a group call it would break.
+    const groupCall = parseGroupCallVersion(body.groupCallVersion);
+    if (groupCall.malformed) {
+      this.logger.warn(
+        `[PUSH_REGISTER] user=${userId} device=${deviceId} declared an unreadable groupCallVersion=` +
+          `${sanitizeLogValue(String(body.groupCallVersion))} - stored 0, never rung for a group call`
+      );
+    }
+    const groupCallVersion = groupCall.version;
+
     // Generate a per-device push secret, hash it for storage so a plaintext DB
     // leak doesn't expose usable push secrets directly.
     const rawSecret = crypto.randomUUID().replace(/-/g, '');
@@ -435,6 +448,7 @@ export class PushController {
         sessionId,
         wakeCapable,
         wakeVersion,
+        groupCallVersion,
         ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -443,7 +457,7 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
         `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
-        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeVersion}`
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeVersion} groupCall=${groupCallVersion}`
     );
     // THE APP IS OPEN, so the envelopes this device was woken for are on screen over HTTP - the second
     // of an envelope's three deaths (`utils/push-envelope.ts`). A failure here costs storage, never

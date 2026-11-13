@@ -7,6 +7,7 @@ import type {
   CheckpointSkipMode,
   LivesMode,
   LiveReplaysMode,
+  GroupCallsMode,
 } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
@@ -32,6 +33,13 @@ export type AppVersionResponse = {
    */
   calls: {
     mode: CallsMode;
+    /**
+     * The group calls switch (`platform_config.group_calls_mode`): `mesh` lets a group conversation
+     * call peer to peer (4 in audio, 3 in video). ENFORCED BY CHAT-DELIVERY-SERVICE at `initiate`
+     * (403 `GROUP_CALLS_DISABLED`); a client reads it to hide the control, and reads an absent or
+     * unknown value as `off`. `mode = off` still closes everything.
+     */
+    groupMode: GroupCallsMode;
   };
   /**
    * The server's kill switch for lives (`platform_config.lives_mode`). Clients hide the live card,
@@ -159,7 +167,7 @@ export class VersionService {
         enabled: platform.maintenanceEnabled,
         message: platform.maintenanceMessage,
       },
-      calls: { mode: platform.callsMode },
+      calls: { mode: platform.callsMode, groupMode: platform.groupCallsMode },
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },

@@ -86,6 +86,18 @@ export class PlatformConfig {
     default: 'off',
   })
   liveReplaysMode!: LiveReplaysMode;
+
+  /**
+   * Whether a group conversation may hold a call (migration 022). Read by chat-delivery-service at
+   * `initiate`; published by `GET /api/version` as `calls.groupMode`. `calls_mode = off` still wins.
+   */
+  @Column({
+    name: 'group_calls_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  groupCallsMode!: GroupCallsMode;
 }
 
 /**
@@ -149,3 +161,14 @@ export type LiveReplaysMode = 'off' | 'on';
 
 /** Every {@link LiveReplaysMode}, for the DTO's validation. */
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
+
+/**
+ * Whether a group conversation may hold a call (owner decision D-A). `off` refuses every group
+ * `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` allows peer-to-peer group calls up to 4 participants
+ * in audio and 3 in video. Read by chat-delivery-service at `initiate`, held together with the column's
+ * CHECK and the frontend by `groupCallsModesAgree.test.ts`. `callsMode = off` still closes everything.
+ */
+export type GroupCallsMode = 'off' | 'mesh';
+
+/** Every {@link GroupCallsMode}, for the DTO's validation. */
+export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];

@@ -113,6 +113,15 @@ export class PushToken {
   @Column({ type: 'integer', default: 0 })
   wakeVersion: number;
 
+  /**
+   * Which GROUP call this device's binary can take part in (migration 050, WP-GC2): 0 none, 1 the
+   * peer-to-peer mesh (`GROUP_CALL_MESH_VERSION`). Written on EVERY `POST /mls/push/register`, 0
+   * unless the body says otherwise. Its ONE reader: a group call's ring is pushed only to devices at
+   * `>= 1`, so an old binary is never rung for a call it would join as a 1:1 call.
+   */
+  @Column({ type: 'integer', default: 0 })
+  groupCallVersion: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -6,6 +6,8 @@ import {
   CallE2eUnsupportedError,
   CallInitiateError,
   CallRelayWithheldError,
+  CallSignallingRefusedError,
+  CALL_ROOM_FULL_REASON,
   describeCallFailure,
 } from './callFailure';
 
@@ -82,6 +84,37 @@ describe('describeCallFailure', () => {
     );
 
     expect(out).toBe(m.call_video_disabled());
+  });
+
+  it('reads a group call refused by the switch (GROUP_CALLS_DISABLED) as such, not as a failure', () => {
+    const out = describeCallFailure(
+      new CallInitiateError('initiate', 403, 'calls/initiate failed (403)', 'GROUP_CALLS_DISABLED')
+    );
+
+    expect(out).toBe(m.call_group_calls_disabled());
+  });
+
+  it('reads a group call this build does not speak (GROUP_CALL_CLIENT_TOO_OLD) as an update to make', () => {
+    const out = describeCallFailure(
+      new CallInitiateError(
+        'room-token',
+        403,
+        'room-token failed (403)',
+        'GROUP_CALL_CLIENT_TOO_OLD'
+      )
+    );
+
+    expect(out).toBe(m.call_group_client_too_old());
+  });
+
+  it('reads a join past the seat cap (Refused room-full) as a full call, by its typed reason', () => {
+    expect(describeCallFailure(new CallSignallingRefusedError(CALL_ROOM_FULL_REASON))).toBe(
+      m.call_room_full()
+    );
+    // Any other relay refusal keeps the generic line: room-full is the only reason worded so.
+    expect(describeCallFailure(new CallSignallingRefusedError('group-mismatch'))).not.toBe(
+      m.call_room_full()
+    );
   });
 
   it('a 403 with no code keeps the generic refusal line', () => {

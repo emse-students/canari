@@ -149,6 +149,22 @@ describe('PushController - the wake-up push', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable wakeVersion'));
     });
 
+    it('stores the group-call version a binary declares, 0 when it says nothing (WP-GC2)', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      await controller.registerPushToken({ ...body, groupCallVersion: 1 }, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, groupCallVersion: 9 }, 'user-1', undefined);
+      await controller.registerPushToken(body, 'user-1', undefined);
+      await controller.registerPushToken(
+        { ...body, groupCallVersion: 'mesh' as unknown as number },
+        'user-1',
+        undefined
+      );
+      expect(pushTokenRepo.upsert.mock.calls.map(([row]) => row.groupCallVersion)).toEqual([
+        1, 1, 0, 0,
+      ]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable groupCallVersion'));
+    });
+
     it('sweeps the envelopes of the device that registered - the app is open', async () => {
       sweep.mockResolvedValue(3);
       await controller.registerPushToken(body, 'user-1', undefined);
