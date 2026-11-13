@@ -31,8 +31,18 @@ let sendKey: CryptoKey | null = null;
 /** SHA-256 of the raw send key: a receive key equal to it is refused, without keeping the bytes. */
 let sendDigest: string | null = null;
 const receiveKeys = new Map<string, CryptoKey>();
+/** SHA-256 of each raw receive key, by peer: two peers posted one key are refused (`installKeys`). */
+const receiveDigests = new Map<string, string>();
 /** The receive-key slot of a 1:1 call, whose receiver transforms name no peer. */
 const DIRECT_PEER = '';
+
+/**
+ * A participant's id as every map here keys it: lowercased, as `deriveGroupCallKeys` derives it
+ * (`senderContext`), so a page that posts `Bob` and a transform that names `bob` meet one key.
+ */
+function normalizePeer(peer: string): string {
+  return peer.toLowerCase();
+}
 const ivLength = 12;
 let decryptFailures = 0;
 /** The same failures per kind: a video key mismatch or a mangled clear header shows apart. */
@@ -121,9 +131,25 @@ interface WorkerCommand {
   key?: ArrayBuffer;
 }
 
-self.onmessage = async (event: MessageEvent<WorkerCommand>) => {
-  if (event.origin && event.origin !== self.location.origin) return;
+/**
+ * EVERY COMMAND RUNS AFTER THE ONE POSTED BEFORE IT. The key commands await (`digestOf`,
+ * `importKey`), and a handler that ran on each message as it came would let them interleave: an
+ * `addReceiveKey` posted after a `setGroupKeys` could finish first and be wiped by its `clear()`,
+ * a `dropReceiveKey` could run inside an add's import and the dropped key come back. One promise
+ * chain applies them in the order the page posted them - the order is the proof, not a timing.
+ */
+let commandQueue: Promise<void> = Promise.resolve();
+
+self.onmessage = (event: MessageEvent<WorkerCommand>): Promise<void> | undefined => {
+  if (event.origin && event.origin !== self.location.origin) return undefined;
   const data = event.data;
+  commandQueue = commandQueue.then(() => handleCommand(data));
+  // The engine ignores a handler's return value; a test awaits it to read the command's effect.
+  return commandQueue;
+};
+
+/** One command, run in its turn by {@link commandQueue}; a failure is posted, never thrown on. */
+async function handleCommand(data: WorkerCommand): Promise<void> {
   try {
     switch (data?.type) {
       case 'report':
@@ -142,15 +168,26 @@ self.onmessage = async (event: MessageEvent<WorkerCommand>) => {
       case 'addReceiveKey':
         await addReceiveKey(data.peer, data.key);
         return;
-      case 'dropReceiveKey':
-        if (typeof data.peer === 'string') receiveKeys.delete(data.peer);
-        self.postMessage({ type: 'peerKeyDropped', peer: data.peer });
+      case 'dropReceiveKey': {
+        if (typeof data.peer !== 'string' || data.peer === DIRECT_PEER) {
+          self.postMessage({
+            type: 'keyError',
+            peer: data.peer,
+            detail: 'a receive key drop without a participant',
+          });
+          return;
+        }
+        const peer = normalizePeer(data.peer);
+        receiveKeys.delete(peer);
+        receiveDigests.delete(peer);
+        self.postMessage({ type: 'peerKeyDropped', peer });
         return;
+      }
     }
   } catch (e) {
     self.postMessage({ type: 'keyError', peer: data?.peer, detail: String(e) });
   }
-};
+}
 
 /** SHA-256 of raw key bytes, in hex: how two keys are compared without keeping either. */
 async function digestOf(raw: ArrayBuffer): Promise<string> {
@@ -183,11 +220,21 @@ async function installKeys(
     return;
   }
   const digest = await digestOf(send!);
+  const digests = new Map<string, string>();
+  const seen = new Set<string>();
   for (const r of receive) {
-    if ((await digestOf(r.key!)) === digest) {
+    const d = await digestOf(r.key!);
+    if (d === digest) {
       self.postMessage({ type: 'keyError', detail: 'the send and receive keys are equal' });
       return;
     }
+    // Two senders under one key share one nonce space, and either could pass for the other.
+    if (seen.has(d)) {
+      self.postMessage({ type: 'keyError', detail: 'two participants were given one receive key' });
+      return;
+    }
+    seen.add(d);
+    digests.set(normalizePeer(r.peer), d);
   }
   const importedSend = await crypto.subtle.importKey('raw', send!, { name: 'AES-GCM' }, false, [
     'encrypt',
@@ -195,14 +242,16 @@ async function installKeys(
   const imported = new Map<string, CryptoKey>();
   for (const r of receive) {
     imported.set(
-      r.peer,
+      normalizePeer(r.peer),
       await crypto.subtle.importKey('raw', r.key!, { name: 'AES-GCM' }, false, ['decrypt'])
     );
   }
   sendKey = importedSend;
   sendDigest = digest;
   receiveKeys.clear();
+  receiveDigests.clear();
   for (const [peer, k] of imported) receiveKeys.set(peer, k);
+  for (const [peer, d] of digests) receiveDigests.set(peer, d);
   self.postMessage({ type: 'keyReady', peers: receiveKeys.size });
 }
 
@@ -210,26 +259,43 @@ async function installKeys(
  * Adds (or replaces) ONE participant's receive key in a group call - a participant who arrived after
  * the call was keyed - and posts `peerKeyReady` naming it, which the page awaits before it creates
  * that participant's peer connection. Refused without a send key (the call was never keyed) and for
- * a key equal to the send key.
+ * a key equal to the send key or to another participant's. Ids are lowercased ({@link normalizePeer}).
  */
-async function addReceiveKey(peer: string | undefined, raw: ArrayBuffer | undefined) {
-  if (typeof peer !== 'string' || peer === DIRECT_PEER) {
-    self.postMessage({ type: 'keyError', peer, detail: 'a receive key without a participant' });
+async function addReceiveKey(posted: string | undefined, raw: ArrayBuffer | undefined) {
+  if (typeof posted !== 'string' || posted === DIRECT_PEER) {
+    self.postMessage({
+      type: 'keyError',
+      peer: posted,
+      detail: 'a receive key without a participant',
+    });
     return;
   }
+  const peer = normalizePeer(posted);
   const problem = lengthProblem('receive', raw);
   if (problem || !sendKey || !sendDigest) {
     self.postMessage({ type: 'keyError', peer, detail: problem ?? 'no send key yet' });
     return;
   }
-  if ((await digestOf(raw!)) === sendDigest) {
+  const digest = await digestOf(raw!);
+  if (digest === sendDigest) {
     self.postMessage({ type: 'keyError', peer, detail: 'the send and receive keys are equal' });
     return;
+  }
+  for (const [other, d] of receiveDigests) {
+    if (other !== peer && d === digest) {
+      self.postMessage({
+        type: 'keyError',
+        peer,
+        detail: 'two participants were given one receive key',
+      });
+      return;
+    }
   }
   receiveKeys.set(
     peer,
     await crypto.subtle.importKey('raw', raw!, { name: 'AES-GCM' }, false, ['decrypt'])
   );
+  receiveDigests.set(peer, digest);
   self.postMessage({ type: 'peerKeyReady', peer });
 }
 
@@ -247,7 +313,7 @@ workerScope.onrtctransform = (event: Event) => {
   // Whose frames a RECEIVER transform carries (a group call), or the 1:1 slot when it names nobody.
   // Its key is looked up per frame, so a participant keyed after its transform was made opens from
   // the first frame after `peerKeyReady`, and one dropped stops opening at once.
-  const peer = typeof options?.peer === 'string' ? options.peer : DIRECT_PEER;
+  const peer = typeof options?.peer === 'string' ? normalizePeer(options.peer) : DIRECT_PEER;
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
