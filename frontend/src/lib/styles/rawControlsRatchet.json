@@ -1212,7 +1212,7 @@
   "src/routes/directory/+page.svelte": {
     "button": 1,
     "select": 0,
-    "input": 3
+    "input": 0
   },
   "src/routes/documents/+page.svelte": {
     "button": 2,
