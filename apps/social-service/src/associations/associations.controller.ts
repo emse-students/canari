@@ -619,14 +619,14 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Param('id', ParseUUIDPipe) id: string
   ) {
-    const allowed = await this.service.canManagePayoutAccount(userId, id, {
-      isGlobalAdmin: ga === 'true',
-    });
+    const isGlobalAdmin = ga === 'true';
+    const allowed = await this.service.canManagePayoutAccount(userId, id, { isGlobalAdmin });
     if (!allowed) {
       this.logger.debug(`[PERM] payout account read refused on ${sanitizeLog(id)}`);
       throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
     }
-    return this.service.getPayoutAccount(id);
+    // A global admin also reads a bridge's both states (lydia-account-bridge.ts).
+    return this.service.getPayoutAccount(id, { isGlobalAdmin });
   }
 
   /**

@@ -240,7 +240,12 @@ describe('AssociationsService payment delegation', () => {
     const withTaken = (service: AssociationsService, taken: string[]) => {
       const repo = (service as unknown as { assoRepo: { manager: Record<string, unknown> } })
         .assoRepo;
-      const query = jest.fn(async () => taken.map((id) => ({ id })));
+      // The Businesses the parent holds (lydia-account-bridge.ts) are read first, then the payments.
+      const query = jest.fn(async (sql: string) =>
+        sql.includes('"vendorToken" FROM')
+          ? [{ vendorToken: 'vendor-p' }]
+          : taken.map((id) => ({ id }))
+      );
       repo.manager.query = query;
       return query;
     };
@@ -266,7 +271,8 @@ describe('AssociationsService payment delegation', () => {
       await expect(service.childAccountingScope('parent', 'club')).resolves.toEqual({
         onlyRecordIds: ['p1', 'p2'],
       });
-      expect(query.mock.calls[0]).toEqual([expect.any(String), ['club', 'vendor-p']]);
+      expect(query.mock.calls[0]).toEqual([expect.any(String), ['parent']]);
+      expect(query.mock.calls[1]).toEqual([expect.any(String), ['club', 'vendor-p']]);
     });
 
     it('refuses a parent that is not approved and took nothing (a pending request included)', async () => {

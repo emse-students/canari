@@ -2805,6 +2805,25 @@ export interface AssociationPayoutAccount {
    * server older than lot 3: read as none.
    */
   cashiers?: LydiaCashier[];
+  /**
+   * A GLOBAL ADMIN's read only, on an association whose historical Lydia account collects until the
+   * enrolled Business is validated (the bridge, owner 2026-11-13). The managers never receive it:
+   * the historical account is invisible to them. Absent on a server older than the bridge.
+   */
+  bridge?: LydiaAccountBridge;
+}
+
+/** Which Business of a bridge collects, and what it did - the global admin's panel. */
+export interface LydiaAccountBridge {
+  /** `historical`: the historical account collects; `switched`: the enrolled Business does. */
+  state: 'historical' | 'switched';
+  historicalReady: boolean;
+  /** Whether the enrolment linked its Business yet. */
+  enrolledLinked: boolean;
+  switchedAt: string | null;
+  switchCount: number;
+  switchBackCount: number;
+  reissueCount: number;
 }
 
 /** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
@@ -2877,9 +2896,12 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
     { method: 'POST' }
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    const body = (await res.json().catch(() => ({}))) as { message?: string; code?: unknown };
+    // Typed, so the screen can say WHY (LYDIA_BUSINESS_HOLDS_PAYMENTS) and never reads the prose.
+    throw new SocialApiError(
+      body?.message || `Lydia disconnect failed (${res.status})`,
+      typeof body?.code === 'string' ? body.code : null,
+      res.status
     );
   }
 }
