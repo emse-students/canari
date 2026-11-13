@@ -125,7 +125,7 @@ export type DelegatedRemovalResult =
   | 'not-removed';
 
 /** What each gesture answers, as plain data a structured clone and JSON both carry. */
-export interface DelegatedCommitResults {
+interface DelegatedCommitResults {
   'create-group': ConversationOutcome;
   'start-direct': ConversationOutcome;
   invite: BulkAdditionOutcome;

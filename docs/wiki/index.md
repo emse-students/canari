@@ -161,6 +161,7 @@
 - [The search contract](search-contract.md) — What every search box in the ecosystem promises, the tolerance ladder, and the roster measurement that chose its numbers
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions: CI on a pull request and again at merge, deployment at the BUMP and never at a push, which estate a release reaches, mobile builds, the self-hosted runner
+- [Dead code](dead-code.md) — knip and the unused-translation-key scan: the config, the entry points declared reachable, the ratchet that only lets the counts go down, how to allow-list
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
 - [Bench readings for calls and live, 2026-10-18](device-readings-calls-live-2026-10-18.md) - calls BLOCKED (no tag carries lot 1); the WP-L1 live bench on both phones: 720p fMP4 segments for 36-42 min, a growing MSE source with 0 append errors, bitrate, battery and heat

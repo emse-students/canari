@@ -77,7 +77,7 @@ export function communityNicknameScope(workspaceId: string): string {
 }
 
 /** Whether `scope` is a community's (server-held) rather than an MLS room's (device-held). */
-export function isCommunityNicknameScope(scope: string): boolean {
+function isCommunityNicknameScope(scope: string): boolean {
   return scope.startsWith(COMMUNITY_PREFIX);
 }
 

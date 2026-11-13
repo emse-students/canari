@@ -318,7 +318,7 @@ export async function getFormDraft(id: string): Promise<FormDraft> {
  * keepalive requests in flight at 64 KiB together. A larger revision is not lost - the device copy
  * holds it until the next send (`draftCopies.ts`).
  */
-export const KEEPALIVE_BODY_MAX = 60_000;
+const KEEPALIVE_BODY_MAX = 60_000;
 
 /**
  * The autosave: stores `document` as the revision after `baseRevision`, under the client's `saveId`.
