@@ -10,8 +10,13 @@ import { associationVisibleToUserSql, eventVisibleToUserSql } from '../spaces/re
  * withdraws the push, and a widening tells nobody new (an edit announces nothing).
  */
 function eventOpeningSeenBySql(kind: string, targetId: string, user: string): string {
-  return `(${kind} <> 'event' OR EXISTS (SELECT 1 FROM association_calendar_events op_ev
-      WHERE op_ev.id = ${targetId} AND ${eventVisibleToUserSql('op_ev', user)}))`;
+  return `(${kind} <> 'event' OR ${eventSeenBySql(targetId, user)})`;
+}
+
+/** Event row `targetId` exists and user row `user` sees it (`eventVisibleToUserSql`). */
+function eventSeenBySql(targetId: string, user: string): string {
+  return `EXISTS (SELECT 1 FROM association_calendar_events op_ev
+      WHERE op_ev.id = ${targetId} AND ${eventVisibleToUserSql('op_ev', user)})`;
 }
 
 /**
@@ -143,18 +148,22 @@ export async function isTold(
  *
  * "Who sees it" is the association's own visibility (`associationVisibleToUserSql`, the PLAIN
  * predicate an entity post's announcement uses: a member anywhere, or anyone its rules reach - read
- * grants never notify), and for an EVENT also the event's own predicate (`eventOpeningSeenBySql`:
- * an institution's reach, owner 2026-11-13); an ARCHIVED association announces nothing. The target's own audience
- * condition (a form's `submitCondition`) is NOT asked: it is a profile predicate evaluated in code
- * against core-service facts, one call per person, and the form's page tells a follower it does not
- * admit (lead decision, engagement.md L25). A booking space WITH an audience is never announced
+ * grants never notify), and for an EVENT also the event's own predicate (`eventSeenBySql`, written
+ * for that kind only: an institution's reach, owner 2026-11-13); an ARCHIVED association announces
+ * nothing. The target's own audience condition (a form's `submitCondition`) is NOT asked: it is a
+ * profile predicate evaluated in code against core-service facts, one call per person, and the
+ * form's page tells a follower it does not admit (lead decision, engagement.md L25). A booking space WITH an audience is never announced
  * (its caller, `announceSpaceOpening`, writes nothing; L25 as amended). Both are read again at the
  * opening (`DUE_OPENINGS_SQL`, `stillOwed`).
  *
  * `ON CONFLICT DO NOTHING`: a row already there - an ask, or a follower already written - keeps its
  * origin and its stamps, so nobody is told twice.
  */
-export const ANNOUNCE_OPENING_TO_FOLLOWERS_SQL = `INSERT INTO opening_reminders
+function announceOpeningToFollowersSql(kind: OpeningKind): string {
+  // The event gate is written for an event only: a form's or a booking's statement names no
+  // calendar table, so it reads nothing an event-free schema lacks.
+  const eventGate = kind === 'event' ? `AND ${eventSeenBySql('$2::uuid', 'op_user')}` : '';
+  return `INSERT INTO opening_reminders
     (kind, "targetId", "userId", "opensAt", origin, "notified5min")
   SELECT $1, $2::uuid, op_user.id, COALESCE($4::timestamptz, now()), 'followed', true
     FROM association_follows op_follow
@@ -162,9 +171,10 @@ export const ANNOUNCE_OPENING_TO_FOLLOWERS_SQL = `INSERT INTO opening_reminders
     JOIN users op_user ON op_user.id = op_follow."followerUserId"
    WHERE op_follow."associationId" = $3::uuid AND op_user.id <> $5
      AND ${associationVisibleToUserSql('op_asso.id', 'op_user')}
-     AND ${eventOpeningSeenBySql('$1::varchar', '$2::uuid', 'op_user')}
+     ${eventGate}
   ON CONFLICT (kind, "targetId", "userId") DO NOTHING
   RETURNING "userId"`;
+}
 
 /** What `announceOpeningToFollowers` is told about the target. */
 export interface OpeningAnnouncement {
@@ -190,7 +200,7 @@ export async function announceOpeningToFollowers(
     logger.debug(`[OPENING] ${a.kind}=${short(a.targetId)} is personal: no follower to tell`);
     return 0;
   }
-  const rows = await returned(db, ANNOUNCE_OPENING_TO_FOLLOWERS_SQL, [
+  const rows = await returned(db, announceOpeningToFollowersSql(a.kind), [
     a.kind,
     a.targetId,
     a.associationId,
