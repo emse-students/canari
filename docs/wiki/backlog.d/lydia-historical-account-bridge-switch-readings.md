@@ -1,4 +1,6 @@
-## P2 - the historical-account bridge: the BDE's and Le Cercle's switch readings are owed
+## Reading owed - the historical-account bridge: the BDE's and Le Cercle's switch readings
+
+target: 1.7.0
 
 Built (owner, 2026-11-13), in the release after `1.6.11`: an association whose historical Lydia
 account collects keeps collecting there until Lydia validates the Business its enrolment created,

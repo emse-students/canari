@@ -703,7 +703,7 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+  ([the readings owed](../../plan.md#readings-owed)).
 - **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
   when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
   2026-10-16).
@@ -1615,7 +1615,7 @@ request held by a live document is waited for; a pending request whose tab close
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
 fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
-**Owed: the two-tab readings on dev**, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else).
+**Owed: the two-tab readings on dev**, an entry of [the readings owed](../../plan.md#readings-owed).
 
 ### The flusher resolves its token, and does not run while offline
 
@@ -1930,7 +1930,7 @@ on a weak one. Refusals keep their clock. The reasoning, the bounds and the numb
 
 ### A deploy's "not now" is not a send failure (R05, 2026-11-09)
 
-**The defect** ([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
+**The defect** ([backlog](../../plan.md#readings-owed)).
 A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
 its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
 read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
@@ -5745,7 +5745,7 @@ it changes the reconciliation's wire and deserves its own review.
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
 (reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
-[verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+[readings owed](../../plan.md#readings-owed)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
@@ -5754,7 +5754,7 @@ is held to the current answer. For a newcomer every chunk is withheld, so a stor
 one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
 per-chunk read is the correctness property); it no longer delays the member's gesture.
 
-**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+**Why it does not breach step A** ([the decision](../../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)).
 Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
 device and filtered on its owner's server windows, so for a newcomer it carries no message from
 before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:

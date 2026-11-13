@@ -1,5 +1,7 @@
 ## P2 - sending several photos or videos is slow on a bad network, and the send stops when the app goes to the background
 
+target: 1.10.0
+
 Owner report, 2026-11-06 (a heavy evening). The server side is not the cost: the 2026-11-05 evening
 read of the production frontend log shows 110 `POST /api/media/upload` at 0.08 s on average (0.25 s
 at most) and 2 chunked completions at 0.4 s, so the time is the client's uplink and the work done

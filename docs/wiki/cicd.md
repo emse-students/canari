@@ -2888,7 +2888,7 @@ and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN`
   `brotli-libs@1.2.0-r1` so a later build is not covered: the inventory shows only libcurl (all four)
   and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
   in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
-  ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+  ([backlog](backlog.d/p3-bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-1-2-1-2026-10-24.md)).
 - Later the same day, two more on every pull request. **`CVE-2026-109869`**, `undici` 6.28.0 in
   `node:24-alpine`, is npm's own copy (`usr/local/lib/node_modules/npm/node_modules/undici`) and the
   tag was already the newest Node 24 (24.22.1, npm 11.19.1): **allowlisted** by path with the other
@@ -2896,7 +2896,7 @@ and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN`
   not that file. **`CVE-2026-111497` again**, as Debian's `libbrotli1` 1.1.0-2+b7 in
   `goauthentik/server:2026.8.5` (fixed in 1.1.0-2+deb13u1): 2026.8.5 is the newest authentik release,
   so **allowlisted** by purl
-  ([backlog](backlog.md#p3---bump-authentik-when-a-release-ships-debians-libbrotli1-110-2deb13u1-2026-10-24)).
+  ([backlog](backlog.d/p3-bump-authentik-when-a-release-ships-debian-s-libbrotli1-1-1-0-2-deb13u1-2026.md)).
   One id on two packages exposed a hole in the retirement: the id check stays satisfied while EITHER
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
@@ -2917,7 +2917,7 @@ digest plus `apk upgrade --no-cache libpq`, built and pushed by every release li
 builds it and reads the result. It goes the day upstream ships the fix
 ([legacy-compatibility](legacy-compatibility.md#removal-once-upstream-adminer-ships-libpq--187-r0---the-adminer-image-this-repository-builds-owner-2026-11-13)).
 
-**2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+**2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.d/p3-bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-1-2-1-2026-10-24.md)).
 
 **Trivy's Dockerfile misconfiguration scan is not run; its two findings are asserted instead.**
 Measured the same day, it found `DS-0002` (no non-root `USER`) in all eight Dockerfiles and `DS-0029`
@@ -3006,7 +3006,7 @@ runtime bump and stops being this recipe.
 
 ### Five audit advisories are suppressed on one edge of media-service, and why each is unreachable
 
-The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire-themselves); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
+The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire.md); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
 
 - `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. It is ignored for that one service only: nothing in the chain can move (minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2`), and the fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot instead of at audit.
 - `GHSA-qr28-fpjm-wq7f` (high, denial of service; added 2026-10-29 when it turned every pull request red) is quadratic replacement of percent-encoded runs in the same `decode-uri-component`, every version at or below 0.5.0, on the same edge. Its fix, 0.5.1, is `type: module` as well, so the override stays refused for the same reason, and it rides the same premise: minio's dist calls query-string only as `stringify`, which never reaches `decodeComponent`.

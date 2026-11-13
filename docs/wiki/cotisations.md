@@ -183,7 +183,7 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
   then sees its row. Everything that may call another service (payment routing) runs BEFORE the
   lock. `tier-key-derivation.integration.spec.ts` holds it against a real PostgreSQL, and fails
   with the lock removed. A unique index would be a migration, proposed in
-  [backlog](backlog.md#p3---post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026-10-26).
+  [backlog](backlog.d/p3-post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026.md).
 - **The key fits the tag.** A tag is `varchar(100)`, and the dated form
   `cotisant:<slug>-<key>-YYYY-YYYY` is the longest, so `variantKeyCap(slug)` is 100 minus that
   form's fixed part minus room for a `-999` suffix, at most 60. A slug that leaves no room is

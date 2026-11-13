@@ -4,7 +4,7 @@
 reply is sent - and that whole path must be extremely fluid, app killed OR backgrounded, on Android
 and iOS.** This page is the MEASUREMENT behind that goal and the ranked plan it argues for. Phase 1
 was study only: nothing here changed production code. What is owed is in
-[backlog](../backlog.md#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11);
+[backlog](../backlog.d/p2-a-notification-tap-takes-2-7-s-to-a-usable-conversation-when-killed-5-s.md);
 the cold start in general is [cold-start](cold-start.md), whose instruments this page reuses.
 
 **NOTHING ON THIS PAGE IS A PRODUCTION NUMBER.** The phone ran `1.2.3-alpha.5` against

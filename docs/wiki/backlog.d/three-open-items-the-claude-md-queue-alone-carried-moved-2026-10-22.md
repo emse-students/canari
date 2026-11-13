@@ -1,5 +1,7 @@
 ## Three open items the CLAUDE.md queue alone carried (moved 2026-10-22)
 
+target: 1.9.0
+
 Re-read 2026-11-11: all three still open; none is readable from the code alone.
 
 - **Later, not designed: association enrolment with conditions and documents.**

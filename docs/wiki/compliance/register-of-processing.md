@@ -2,7 +2,7 @@
 
 **Status: first version, 2026-10-16**, written from the code and the wiki inventories named in each
 row, after the owner's GDPR review of the same day. Items marked **OPEN** are gaps or unverified
-facts; each is in [backlog](../backlog.md#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16)
+facts; each is in [backlog](../backlog.d/p2-gdpr-compliance-the-open-items-of-the-register-2026-10-16.md)
 and in the [DPO dossier](dso-dossier.md). The public face of the Canari rows is the privacy policy
 (`frontend/src/routes/legal/privacy/+page.svelte`, <https://canari.emse.fr/legal/privacy>): **a
 change to one is a change to the other.**

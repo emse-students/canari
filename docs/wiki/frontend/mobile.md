@@ -1419,7 +1419,7 @@ three answers and reason codes as Android:
 Only the JSON literal `true` proves (a CFBoolean: `isJSONTrue`, and the same test in `canari_push.mm`; a
 JSON `1` does not). An older native library answers without `authorProven`, which reads as not proven: such a build
 names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
-reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+reading on the iPhone 12** ([backlog](../plan.md#readings-owed)).
 
 #### What the extension did, in the app's log (2026-11-01)
 
@@ -2300,7 +2300,7 @@ already built, #2184, and only the Mi 9T reading below is owed).
   (no back-forward swipe), the iOS Back is the app's own `swipeBack`, only in a conversation, so the
   feed's left edge already belongs to the page. The bridge is absent there and the call is a no-op.
 - **Owed:** a Mi 9T reading on the next pre-release
-  ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+  ([backlog](../plan.md#readings-owed)).
 
 ### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
 

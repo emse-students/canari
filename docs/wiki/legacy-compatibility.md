@@ -560,8 +560,7 @@ tables). They ship behind `BOOKING_NOTIFICATIONS_ENABLED = false`
 `BOOKING_NOTIFICATIONS_LIVE`. A `1.2.9` client draws them as the neutral unknown-type row, shows the
 push's French legacy sentence, and on Android a tap opens the app where it was (no `bookings` host);
 the version CARRYING this pull request draws all of it. That degraded display between `1.2.9` and
-the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
-stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
+the release carrying #2692 was ACCEPTED (2026-10-29); the floor passed that release: both estates read `minClientVersion` 1.6.6 (2026-11-13).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
 
 **Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
@@ -1041,7 +1040,7 @@ challenges, and its sign-in fails against the older server until it reads `/api/
 **Removal condition:** `minClientVersion` at or above the first stable carrying the client half, on
 both estates with both stores serving it, AND the warning silent on production for a week. Then the
 branch becomes a 400, which is what makes PKCE REQUIRED rather than offered. It also needs the
-redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app-2026-10-23)
+redirect hardening in [backlog](backlog.d/p2-the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not.md)
 to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22

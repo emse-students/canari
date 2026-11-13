@@ -1,5 +1,7 @@
 ## P2 - a call started while another call holds the audio focus runs with a live microphone (review of #3395, 2026-11-12)
 
+target: 1.10.0
+
 **Found by the second review of #3395 (D056); the defect is older than that PR.** `CallAudio.open`
 in `CallForegroundService.kt` asks for the audio focus once, when the service starts. If Android
 refuses it, for example because a cellular call is already in progress, the refusal is only logged

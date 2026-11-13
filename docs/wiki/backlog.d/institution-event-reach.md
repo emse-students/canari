@@ -1,4 +1,6 @@
-## An institution chooses the reach of each calendar event (owner, 2026-11-13) - built, readings owed
+## Reading owed - an institution chooses the reach of each calendar event (owner, 2026-11-13)
+
+target: 1.7.0
 
 The owner's decision of 2026-11-13: an institution chooses the spaces and the public of every
 calendar event it files, as it does for posts since `1.6.10`; one model, the posts' picker, refusals

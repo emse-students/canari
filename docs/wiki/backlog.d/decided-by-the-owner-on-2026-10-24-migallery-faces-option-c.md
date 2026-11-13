@@ -1,5 +1,7 @@
 ## Decided by the owner on 2026-10-24 - MiGallery faces: option C
 
+target: 1.9.0
+
 The DPIA's measure 1 ([dpia-migallery-faces](../compliance/dpia-migallery-faces.md#6-open-measures)) is
 **option C**: a per-photo store of face embeddings, **no clustering and no persons**; a member's
 photographs are found by matching their own reference at search time. The embeddings are kept as long

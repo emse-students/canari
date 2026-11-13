@@ -1,4 +1,6 @@
-## P2 - the named readers' comment switch (owner, 2026-11-04): built, owed its dev reading and one policy look
+## Reading owed - the named readers' live chat switch on dev
+
+target: 1.7.0
 
 Built and proven against PostgreSQL ([profiles-and-access](../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
 What closes it:

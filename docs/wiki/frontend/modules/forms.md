@@ -1892,7 +1892,7 @@ test and the geometry is exported instead of inlined: a retuned radius moves the
 
 ## The paid half: what it needs, scoped 2026-09-30
 
-Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end); the paid half itself is its own work packages):
+Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md); the paid half itself is its own work packages):
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
@@ -1968,7 +1968,7 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **`declined` and `cancelled-or-expired` are `SETTLED_REFUSED_REQUEST_STATES`**: a retry's settle frees the row on them, and `confirmPayment` releases a `pending` row to `cancelled` on them. `confirmPayment` answers `requestState` (the typed state read on that call), from which `paymentReturnVerdict` (`paymentReturn.ts`) derives `declined` / `ended`: the success page says so (`form_success_declined_*`, `form_success_ended_*`) with a retry link.
 - **The form page asks once on load.** `GET forms/:id/check` now answers the caller's own `submissionId`; when it is `pending` the page calls `confirm-payment` once, and on a dead request it re-enables the pay button (the retry) with `form_view_payment_declined_note` / `form_view_payment_ended_note`. The same mechanism covers an expired or cancelled request whose callback was lost (state 6 while the row still reads `pending`).
 - **A stale state is never answered** (review of #2210): a retry may replace the request between `confirmPayment`'s read and its answer (two tabs, the success page polling while the payer retries). `requestState` is answered only while the row still names the uuid that was read, and the client never derives `declined` / `ended` from a row still `pending`: either would offer a retry that cancels the request being paid.
-- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.md#p2---an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for-up-to-28-minutes-2026-10-21)).
+- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)).
 
 ### The native payer's return: read on resume, and an https return on Android (2026-11-13)
 

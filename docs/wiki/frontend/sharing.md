@@ -227,7 +227,7 @@ and the picker still opens**. What differs is only what the platform holds.
   `NSError` codes only, through `GalleryLog` (`Logger`, every interpolation `.public` and never a
   label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
 - **Erased at sign-out**, an account switch included (on one install, B signs in only after A
-  signed out, [backlog](../backlog.md#owed-a-verification-and-nothing-else)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
+  signed out, [backlog](../plan.md#readings-owed)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
   (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
   notification extension donates no intent and publishes no shortcut, so there is no second set.
 - **The pick comes back through the Share Extension.** Its `Info.plist` declares

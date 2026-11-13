@@ -546,7 +546,7 @@ EDGE of a USER (a device leaving while another stays is no edge, which needs a S
 (2) a per-connection watch set checked against this same audience, (3) a client that keeps polling
 until the gateway proves it pushes (a phone build can reach the stores before production carries the
 gateway that answers it). **None of the three is built**, and the backlog entry that owns the poll
-says so ([backlog](../backlog.md#p3---the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02)).
+says so ([backlog](../backlog.d/p3-the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02.md)).
 
 ## The anonymous census and its 24-hour series (2026-11-02)
 

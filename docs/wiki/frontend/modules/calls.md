@@ -95,7 +95,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`); the declaration is in `src/main/AndroidManifest.xml` since the flip PR (2026-10-22); Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings |
 | B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, in the committed plist since the flip PR (2026-10-22) | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
 | B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
-| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
+| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.d/p2-a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20.md)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
 | B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
 | B13 | **The production server preflight** (read-only, below) | **checklist written** (P1-P10, each with its command, 2026-10-21); **owed**: running it after #2180 deploys production, P7 and P8 (c) in the review window | every line of the preflight read |
 | B15 | **An unanswered call was written as a call with a duration** (CALL-WEB-4..7, `1.4.1-alpha.6`, 2026-10-26): cancelled, declined, unreachable and busy calls all read "lasted less than a minute". Two writers disagreed about the same call (`recordCallMissed` and `recordCallEnded`) | **built (draft PR, 2026-10-27)**: ONE writer, `recordCallEnded(ctx, groupId, callId, outcome?, starterId?)` in `utils/chat/callSystemMessages.ts`; `recordCallMissed` is deleted. The outcome is TYPED (`CallEndReason`: `cancelled` / `declined` / `not-answered` / `busy`, absent = answered), sent on the hangup as proto `CallMsg.end_reason`, stored in the row as `callEvent.outcome`, never read from text. See [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27) | read on the web rows (CALL-WEB-4..7), then the blocker closes |
@@ -2762,7 +2762,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
+[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
 
 ### One call screen on every platform (2026-10-23)
 
@@ -3055,7 +3055,7 @@ the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
 work packages WP-C-BG-A and WP-C-BG-I below, built in `v1.3.1`, their readings owed in
-[the verification table](../../backlog.md#owed-a-verification-and-nothing-else)):
+[the readings owed](../../plan.md#readings-owed)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|

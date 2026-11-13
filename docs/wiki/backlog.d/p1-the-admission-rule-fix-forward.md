@@ -1,5 +1,7 @@
 ## P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one
 
+target: 1.8.0
+
 #2815 made a conversation refuse an external commit by a user holding no leaf, then freeze. Its
 post-merge review found it froze legitimate members out for good and dropped every later frame, so
 the owner DISARMED it on 2026-10-31: the verdict is computed and logged, the commit is merged, and
