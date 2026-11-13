@@ -40,7 +40,7 @@ export function memoryAccusationLedger(
         });
         return Promise.resolve(written);
       }
-      if (text.startsWith('DELETE FROM report_accusations')) {
+      if (text.startsWith('WITH gone AS (') && text.includes('DELETE FROM report_accusations')) {
         const [report, ids] = params as [string, string[]];
         const table = of(report);
         const left: { itemId: string; state: string; accusedAt: Date }[] = [];

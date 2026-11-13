@@ -106,10 +106,15 @@ export async function settleAccusations<T extends ReportItem>(
     claimed = new Set(rows.map((r) => r.itemId));
   }
 
+  // Wrapped in a CTE so the statement is a SELECT: TypeORM's PostgreSQL driver answers a bare
+  // `DELETE ... RETURNING` with `[rows, rowCount]`, not the rows (measured by the integration spec).
   const left = (await db.query(
-    `DELETE FROM report_accusations
-      WHERE report = $1 AND NOT ("itemId" = ANY($2::text[]))
-     RETURNING "itemId", state, "accusedAt"`,
+    `WITH gone AS (
+       DELETE FROM report_accusations
+        WHERE report = $1 AND NOT ("itemId" = ANY($2::text[]))
+       RETURNING "itemId", state, "accusedAt"
+     )
+     SELECT "itemId", state, "accusedAt" FROM gone ORDER BY "itemId"`,
     [report, ids]
   )) as LeftItem[];
   if (left.length > 0) {
