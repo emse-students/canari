@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 #
-# Did Docker's DNS fail the two nginx in front of the estate? A READ-ONLY daily report.
+# Did Docker's DNS fail the nginx in front of the estate and between its services? A READ-ONLY daily report.
 #
 # WHY THIS EXISTS (2026-11-02 review of the target lists). Since the replica lists became variable
 # targets, EVERY request the frontend proxies and every connection the edge relays waits on Docker's
@@ -23,7 +23,7 @@
 # The estates read - the two this repository deploys - and the proxies in front of each.
 # shellcheck disable=SC2034 # read by resolver-report.sh
 RESOLVER_REPORT_PROJECTS="canari-prod canari-dev"
-RESOLVER_REPORT_PROXIES="edge frontend"
+RESOLVER_REPORT_PROXIES="edge frontend mesh"
 # One day: the job runs daily, so each line is read once.
 RESOLVER_REPORT_HOURS=24
 

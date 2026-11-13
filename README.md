@@ -58,6 +58,8 @@ Browser / Tauri (Native App)
     |-> social-service:3014    (NestJS)     Posts, reels, lives, forms, bookings, channels, associations
     `-> frontend-ssr:3000      (SvelteKit)  Server-rendered pages (adapter-node)
 
+Service to service:  caller ──> mesh:<port> (nginx) ──> chat-delivery | core | social
+
 Infrastructure: PostgreSQL · Redis · Garage
 ```
 

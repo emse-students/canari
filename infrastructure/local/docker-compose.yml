@@ -134,10 +134,17 @@ services:
     ports:
       - "3010:3010"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
       NODE_ENV: development
+      # Set explicitly, as the deployed estates set them to the mesh; this stack has no rolling
+      # deploy, so it names the peer (docs/wiki/cicd.md, service-to-service calls).
+      CORE_SERVICE_INTERNAL_URL: http://core-service:3012
+      SOCIAL_SERVICE_URL: http://social-service:3014
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
       # production and dev compose files never set it, and a service refuses it next to production.
       TYPEORM_SYNCHRONIZE: "1"
@@ -252,8 +259,13 @@ services:
     ports:
       - "3011:3011"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3011"
       NODE_ENV: development
+      # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
+      SOCIAL_SERVICE_URL: http://social-service:3014
       # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
       # never sent back - so the refresh cookie drops it here, and ONLY here. There is
       # no default: the value decides whether a credential crosses the network
@@ -303,8 +315,13 @@ services:
     ports:
       - "3012:3012"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
       NODE_ENV: development
+      # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
+      CHAT_DELIVERY_URL: http://chat-delivery-service:3010
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
       # production and dev compose files never set it, and a service refuses it next to production.
       TYPEORM_SYNCHRONIZE: "1"
@@ -386,6 +403,9 @@ services:
     ports:
       - "3014:3014"
     environment:
+      # As the deployed estates set it (a recreated peer is re-resolved in 2 s, not Bun's 30 s);
+      # compose-wiring.test.sh holds this estate to the keys production forwards.
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
       NODE_ENV: development
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The

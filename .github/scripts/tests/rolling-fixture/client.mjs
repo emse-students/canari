@@ -3,18 +3,32 @@
 // got. A POST on purpose - it is the request nginx may NOT replay once a byte has been sent, so it is
 // the one a careless replacement turns into a 502 ("Echec de l'envoi").
 //
-// Prints {statuses, versions, maxMs, failed}: `failed` holds the first 20 non-200 answers with the
-// moment each was sent, so a failure can be placed in the deploy's timeline.
+// Prints {statuses, versions, maxMs, failed, lastFailedSent, lastOkSent}: `failed` holds the first 20
+// non-200 answers with the moment each was sent, so a failure can be placed in the deploy's timeline;
+// `lastFailedSent` and `lastOkSent` the moment the LAST failing and the last answered one were sent
+// (null when there was none).
 //
-// Usage: bun client.mjs <url> <stop-file> [concurrency]
+// ALSO ONE SERVICE CALLING ANOTHER (2026-11-07): run inside the fixture's `caller` container, against
+// the mesh or the API's own name. With `keepalive` it pools its connections as a service's `fetch`
+// does, rather than opening one per request.
+//
+// Usage: bun client.mjs <url> <stop-file> [concurrency] [keepalive|close] [bound-ms]
 import { existsSync } from 'node:fs';
 
-const [url, stopFile, concurrencyArg] = process.argv.slice(2);
+const [url, stopFile, concurrencyArg, mode, boundArg] = process.argv.slice(2);
 const concurrency = Number(concurrencyArg ?? 4);
+const keepAlive = mode === 'keepalive';
+// A request that never ends would hold the stop forever: a connection to the address of a replica
+// already removed is not refused on a Docker bridge, it times out. Bounds the FAILURE case only - the
+// longest request a passing run sees is ~200 ms - and it is counted as one. A case that counts how long
+// failures last passes a shorter one, so a worker stuck on a dead address sends again sooner.
+const REQUEST_BOUND_MS = Number(boundArg ?? 10_000);
 const statuses = new Map();
 const versions = new Map();
 let maxMs = 0;
 const failed = [];
+let lastFailedSent = null;
+let lastOkSent = null;
 
 async function worker() {
   while (!existsSync(stopFile)) {
@@ -28,8 +42,9 @@ async function worker() {
       const res = await fetch(url, {
         method: 'POST',
         body: '{"text":"hello"}',
-        headers: { connection: 'close' },
-        keepalive: false,
+        headers: keepAlive ? {} : { connection: 'close' },
+        keepalive: keepAlive,
+        signal: AbortSignal.timeout(REQUEST_BOUND_MS),
       });
       const body = await res.text();
       key = String(res.status);
@@ -42,7 +57,12 @@ async function worker() {
     }
     maxMs = Math.max(maxMs, Date.now() - started);
     if (key !== '200') {
-      failed.push({ key, sent: new Date(started).toISOString(), ms: Date.now() - started });
+      const sent = new Date(started).toISOString();
+      failed.push({ key, sent, ms: Date.now() - started });
+      if (lastFailedSent === null || sent > lastFailedSent) lastFailedSent = sent;
+    } else {
+      const sent = new Date(started).toISOString();
+      if (lastOkSent === null || sent > lastOkSent) lastOkSent = sent;
     }
     statuses.set(key, (statuses.get(key) ?? 0) + 1);
   }
@@ -55,5 +75,7 @@ console.log(
     versions: Object.fromEntries(versions),
     maxMs,
     failed: failed.slice(0, 20),
+    lastFailedSent,
+    lastOkSent,
   })
 );
