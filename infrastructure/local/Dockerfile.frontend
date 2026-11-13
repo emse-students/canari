@@ -663,6 +663,11 @@ server {\n\
     }\n\
     \n\
     location /api/ws {\n\
+    # THE ERROR LOG MUST NOT RECORD A WEBSOCKET REQUEST LINE: the short-lived socket credential rides\n\
+    # in the query, and the redaction of the access log ($logged_request_uri) does not reach the error\n\
+    # log, which prints the raw request line (an upstream reset of an upgraded connection is an\n\
+    # `error` naming it). `crit` records only what stops nginx itself - docs/wiki/infrastructure/logging.md.\n\
+    error_log /var/log/nginx/error.log crit;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
@@ -772,6 +777,11 @@ server {\n\
     }\n\
     \n\
     location /api/call {\n\
+    # THE ERROR LOG MUST NOT RECORD A WEBSOCKET REQUEST LINE: the short-lived socket credential rides\n\
+    # in the query, and the redaction of the access log ($logged_request_uri) does not reach the error\n\
+    # log, which prints the raw request line (an upstream reset of an upgraded connection is an\n\
+    # `error` naming it). `crit` records only what stops nginx itself - docs/wiki/infrastructure/logging.md.\n\
+    error_log /var/log/nginx/error.log crit;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
