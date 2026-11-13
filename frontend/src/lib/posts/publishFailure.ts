@@ -40,6 +40,7 @@ import { COMMENT_REMOVED_BY_MODERATION } from '$lib/posts/commentRemovedRefusal'
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { localizedMessage } from '$lib/utils/localizedError';
+import { overDailyLimitSentence } from '$lib/utils/mediaErrors';
 import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 
@@ -106,5 +107,7 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
     return m.post_comment_removed_by_moderation_refusal();
   }
   if (isVideoPrepareError(error)) return videoPrepareFailureMessage(error) ?? fallback;
-  return localizedMessage(error, fallback);
+  // A file the media service refused because the member reached the daily bound: its own sentence,
+  // the one the chat thread shows (`overDailyLimitSentence`).
+  return overDailyLimitSentence(error) ?? localizedMessage(error, fallback);
 }

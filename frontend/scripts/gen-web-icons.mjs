@@ -6,7 +6,7 @@
  * reproducible when the logo changes - otherwise the next person redraws them by
  * hand and the two surfaces drift apart.
  *
- * `apple-touch-icon.png` is deliberately OPAQUE: iOS composites a transparent
+ * `apple-touch-icon.png` (and its byte-identical `-precomposed` twin) is deliberately OPAQUE: iOS composites a transparent
  * home-screen icon onto black, which turns the navy bird into a black square
  * with a bird in it. The navy is painted here instead, and it is the same
  * `--color-canvas` the splash screen uses.
@@ -52,6 +52,10 @@ async function makeTouchIcon() {
     .removeAlpha()
     .png()
     .toFile(out);
+  // The same bytes under the OTHER name older iOS and some crawlers probe (`-precomposed`), which
+  // answered 404 on production until 2026-11-13. A copy and not a route: the static directory is
+  // how every other icon is served.
+  await fs.copyFile(out, path.join(STATIC, 'apple-touch-icon-precomposed.png'));
   return out;
 }
 

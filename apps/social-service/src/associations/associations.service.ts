@@ -40,7 +40,7 @@ import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { assertCotisationModeClearable } from './members-only-gate';
 import { isUUID } from 'class-validator';
-import { In, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
+import { In, IsNull, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -149,6 +149,7 @@ import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
+import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -4826,22 +4827,23 @@ ${rejectionReason}`
 
   /** Returns all forms linked to this association, newest first (for the MANAGE_FORMS tab). */
   async listFormsByAssociation(associationId: string) {
-    await this.findById(associationId);
-    return this.formRepo.find({
-      where: { associationId },
+    const asso = await this.findById(associationId);
+    // The WHOLE form, as the managers' list reads it (`FormsService.list`): the unified forms list
+    // draws the export menu, the responses accordion and the preview link from it, so a global
+    // admin's tab and a manager's `/forms` carry the same row. An archived form is in no list.
+    const forms = await this.formRepo.find({
+      where: { associationId, deletedAt: IsNull() },
       order: { createdAt: 'DESC' },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        basePrice: true,
-        currency: true,
-        allowCashPayment: true,
-        // A draft is the managers' alone: the tab marks it, so nobody links it believing it live.
-        status: true,
-        createdAt: true,
-      },
     });
+    const changed = await formsWithUnpublishedChanges(
+      this.formRepo.manager,
+      forms.map((f) => f.id)
+    );
+    return forms.map((form) => ({
+      ...form,
+      associationName: asso.name,
+      hasUnpublishedChanges: changed.has(form.id),
+    }));
   }
 
   // ── Lydia helpers ────────────────────────────────────────────────────────

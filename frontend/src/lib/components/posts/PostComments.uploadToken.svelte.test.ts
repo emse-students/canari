@@ -19,6 +19,7 @@ vi.mock('$lib/media', () => ({
     encryptAndUpload = encryptAndUpload;
   },
   compressImage: vi.fn(),
+  readImageDimensions: vi.fn(async () => ({ width: 1, height: 1 })),
   IMAGE_COMPRESS_PRESETS: { comment: { maxWidth: 1, maxHeight: 1, quality: 1 } },
 }));
 vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn(async () => 'fresh-token') }));

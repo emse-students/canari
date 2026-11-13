@@ -20,6 +20,7 @@ type Internals = {
   uploadLocks: Map<string, Promise<void>>;
   logger: { log: jest.Mock; warn: jest.Mock };
   storage: { putFileStream: jest.Mock };
+  meta: { items: Record<string, unknown> };
   setAccess: jest.Mock;
   persistMetadata: jest.Mock;
   chunkTempPath: (id: string) => string;
@@ -33,6 +34,8 @@ function service(putDelayMs = 0) {
   internals.storage = {
     putFileStream: jest.fn(() => new Promise<void>((resolve) => setTimeout(resolve, putDelayMs))),
   };
+  // An empty index: the member's daily bound reads it at assembly.
+  internals.meta = { items: {} };
   internals.setAccess = jest.fn();
   internals.persistMetadata = jest.fn().mockResolvedValue(undefined);
   return { svc, internals };

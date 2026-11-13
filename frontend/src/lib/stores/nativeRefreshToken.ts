@@ -27,6 +27,7 @@
 
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 
 /** Store file holding the native refresh credential. Separate from OIDC state, which is per-login. */
 const NATIVE_AUTH_STORE_FILE = 'auth-native.json';
@@ -71,6 +72,28 @@ export function usesBodyRefreshTransport(): boolean {
   if (typeof window === 'undefined') return false;
   if (window.location.protocol === 'tauri:') return true;
   return !apiCanIssueThirdPartyCookie();
+}
+
+/**
+ * True when NO cookie can carry this runtime's session, so the credential carried here is the only
+ * one there is - and an empty store then proves there is no session, without asking the server.
+ *
+ * A NARROWER QUESTION than {@link usesBodyRefreshTransport}, which answers "must the credential be
+ * carried". This one answers "is the carried credential ALL there is", and it is true for:
+ * - **iOS** (`tauri://localhost` on an iPhone or iPad): WKWebView drops the third-party cookie on
+ *   every deployment - an iPhone presented `cookies=[]` on each of 120 refreshes (2026-08-27);
+ * - **a `tauri.localhost` shell (Android, Windows) against a plain-HTTP API**: the only cookie such a
+ *   server can issue is `SameSite=Lax`, which cannot be SET in a third-party context.
+ *
+ * NOT for macOS or a Linux desktop build: the same `tauri://localhost` scheme, but whether their
+ * engine keeps the cookie was never measured (`docs/wiki/sessions.md`), so an empty store proves
+ * nothing there and the request stays the only witness. The platform is read from the compile-time
+ * target (`detectRuntimeDeviceOs`), never the user agent, which calls an iPad a Mac.
+ */
+export function onlyCarriedCredentialCanExist(): boolean {
+  if (!usesBodyRefreshTransport()) return false;
+  if (window.location.protocol !== 'tauri:') return true;
+  return detectRuntimeDeviceOs('desktop') === 'ios';
 }
 
 /**
