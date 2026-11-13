@@ -13,7 +13,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
   import MenuList from '$lib/components/ui/MenuList.svelte';
-  import { opensAsSheet } from '$lib/components/ui/floatingSurface';
+  import { OverflowMenuState } from '$lib/components/ui/overflowMenuState.svelte';
   import type { MenuListSection } from '$lib/components/ui/menuList';
   import { exportEntries } from '$lib/forms/exportEntries';
   import type { SubmissionsExportFormat } from '$lib/forms/api';
@@ -45,9 +45,7 @@
     onDelete,
   }: Props = $props();
 
-  let open = $state(false);
-  let asSheet = $state(false);
-  let anchor = $state<HTMLElement | null>(null);
+  const menu = new OverflowMenuState();
 
   const EXPORT_PREFIX = 'export:';
 
@@ -75,17 +73,8 @@
     { items: [{ key: 'delete', label: m.common_delete_button(), Icon: Trash2, danger: true }] },
   ]);
 
-  function toggle() {
-    if (open) {
-      open = false;
-      return;
-    }
-    asSheet = opensAsSheet();
-    open = true;
-  }
-
   function select(key: string) {
-    open = false;
+    menu.close();
     Log.d('FormRowMenu', `picked ${key}`);
     if (key.startsWith(EXPORT_PREFIX)) {
       onExport(key.slice(EXPORT_PREFIX.length) as SubmissionsExportFormat);
@@ -96,15 +85,15 @@
   }
 </script>
 
-<span bind:this={anchor} class="inline-flex shrink-0">
+<span bind:this={menu.anchor} class="inline-flex shrink-0">
   <Button
     variant="secondary"
     icon
-    onclick={toggle}
+    onclick={() => menu.toggle()}
     aria-label={m.form_row_more_actions()}
     title={m.form_row_more_actions()}
     aria-haspopup="menu"
-    aria-expanded={open}
+    aria-expanded={menu.open}
     data-testid="form-row-menu"
   >
     <Ellipsis size={16} class="shrink-0" aria-hidden="true" />
@@ -112,15 +101,12 @@
 </span>
 
 <FloatingSurface
-  {open}
-  {asSheet}
-  {anchor}
+  open={menu.open}
+  asSheet={menu.asSheet}
+  anchor={menu.anchor}
   label={m.form_row_more_actions()}
   popoverWidth="content"
-  onClose={(refocus) => {
-    open = false;
-    if (refocus) anchor?.querySelector('button')?.focus();
-  }}
+  onClose={(refocus) => menu.close(refocus)}
 >
   <div class="min-w-64">
     <MenuList {sections} label={m.form_row_more_actions()} onSelect={select} />
