@@ -106,6 +106,7 @@ jobs:
             [frontend]="./infrastructure/local/Dockerfile.frontend"
             [frontend-ssr]="./infrastructure/local/Dockerfile.frontend-ssr"
             [media-service]="./infrastructure/local/Dockerfile.media-service"
+            [adminer]="./infrastructure/local/Dockerfile.adminer"
           )
 
           ALL_SERVICES=(
@@ -117,7 +118,12 @@ jobs:
             frontend
             frontend-ssr
             media-service
+            adminer
           )
+
+          # `adminer` IS UPSTREAM'S IMAGE WITH `libpq` UPGRADED, BUILT HERE ONLY UNTIL UPSTREAM SHIPS THE
+          # FIX (owner, 2026-11-13; docs/wiki/legacy-compatibility.md). Production alone runs it: dev
+          # pulls only the built services its compose file declares (`deploy-environment.sh`).
 
           # EVERY SERVICE, EVERY RELEASE - THE DIFF WAS DELETED ON 2026-09-03 (user: *"On pourrait
           # retirer ce qui est du detect changed services pour tout recompiler, de toute facon ce
@@ -440,4 +446,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,ignore-error=true
           cache-to: type=gha,mode=min,ignore-error=true
+          # ADMINER IS NEVER BUILT FROM THE CACHE (review of #3442): its one layer is `apk upgrade
+          # libpq`, keyed on the base digest and the command, so a cached layer could hold an OLD
+          # libpq while the image scan builds fresh - the gate would measure an image production
+          # does not run. Its build is seconds.
+          no-cache: ${{ matrix.name == 'adminer' }}
 

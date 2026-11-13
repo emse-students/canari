@@ -101,6 +101,8 @@ permission - the route would be open to the internet.
 
 **PHP hardening (2026-10-22, host IT):** `infrastructure/adminer/php-hardening.ini` is mounted read-only into the container and sets `session.upload_progress.enabled = Off` (measured on the pinned image: default `1`, `0`-equivalent with the file). The image already runs the CLI SAPI (`php -S`), so there is no FPM or Apache to move; PHP is patched by moving the digest, never by the host's unattended-upgrades, which cannot reach a container. IT was told Docker is the chosen route.
 
+**The image is built here, temporarily (owner, 2026-11-13).** Upstream's newest build (`adminer:6.3.0`) carried Alpine's `libpq 18.6-r0` and 38 HIGH advisories fixed in `18.7-r0`, so `infrastructure/local/Dockerfile.adminer` takes that same digest and upgrades `libpq` alone, keeping `USER adminer`, its entrypoint and the hardening mount. Every release builds and pushes it with the services (`build.yml`) and production runs `canari/adminer:v<version>`, replaced `exclusive`ly - a short gap per release. The digest moves in the Dockerfile's `FROM` (Dependabot's `docker` ecosystem), and the image scan reads the BUILT image ([cicd](../cicd.md#container-images-are-scanned-2026-10-23)). It returns to the upstream pin when upstream ships the fix ([legacy-compatibility](../legacy-compatibility.md#removal-once-upstream-adminer-ships-libpq--187-r0---the-adminer-image-this-repository-builds-owner-2026-11-13)).
+
 **The database account Adminer asks for is the user's decision** (2026-10-02). A `SELECT`-only role
 is the way to narrow the route and is tracked in the [backlog](../backlog.md).
 

@@ -253,6 +253,25 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
+
+**Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`
+(`SERVICE_DOCKERFILE`, `ALL_SERVICES`), its line in `scheduled.yml`'s GHCR prune list, and production's
+`adminer` service (`image: ghcr.io/.../canari/adminer:${TAG}`, `build:`, `canari.deploy.replace: exclusive`).
+**What it humours:** upstream's newest image, `adminer:6.3.0` (`sha256:3a07decd...`, 2026-11-06), carries
+Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.24's `18.7-r0`; the
+image scan failed every pull request from 2026-11-13. The owner chose a patched image over an allowlist
+and over removing the console: that same digest, `apk upgrade --no-cache libpq`, back to `USER adminer`.
+The scan builds it and reads the result ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+**The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
+gap on a console only a global admin opens) where a pinned image moved only with its digest.
+**Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
+to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of that pull request, or with
+`trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
+adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
+Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
+this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
