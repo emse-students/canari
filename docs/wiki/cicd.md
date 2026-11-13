@@ -791,7 +791,10 @@ names a retiring replica until it STOPS, so a call can be accepted into its back
 `wait_unqueued` read it empty, and is reset when the listener closes - a POST cannot be replayed. The
 first enumeration also missed four calls made by CODE DEFAULTS that no compose file set
 (chat-delivery's `CORE_SERVICE_INTERNAL_URL` and `SOCIAL_SERVICE_URL`, core's `CHAT_DELIVERY_URL`,
-media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`).
+media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`). **And the callers held the address longer than
+Docker did** (2026-11-07 review): the services run on Bun, whose `fetch` keeps a resolved address
+30 s by default, so a caller went on dialling a replica's address after Docker had stopped naming
+it - a large part, probably, of the control's failures below.
 
 **The fix: one more proxy in the rotation, `mesh`** (`infrastructure/edge/mesh.conf`):
 
@@ -808,6 +811,17 @@ media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`).
 - The rotation label is a list: `canari.deploy.rotation: frontend:3012,mesh:3012`. A take-out writes
   and reloads EVERY proxy named, and is refused at the first that fails; a restore tries them all
   and reports a failure only after.
+- **Every Bun caller keeps a resolved address the resolver lifetime** (2 s,
+  `BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS` in both compose files, held equal to
+  `ROLLING_RESOLVER_TTL_SECONDS` by `deploy-replace.test.sh`), not Bun's 30 s: the mesh's address
+  changes when it is recreated, and the review measured failures until t=30 s across a compose-style
+  recreate with the default.
+- An answer's headers get the frontend @ssr location's 32 KB buffer, not nginx's 4 KB: past it nginx
+  answers a `502` the service never sent.
+- **A mesh routing nowhere does not deploy green.** After its reload, `deploy-environment.sh` asks
+  every route the plan gives it (`mesh_route_status`) for the routed service's `/api/health`, from
+  inside that service, through the mesh, and fails the deploy on anything but `200` - every other
+  post-deploy check goes through the edge and the frontend, and stayed `200` with the mesh dead.
 
 **Two gates keep it whole.** `replace-modes.py` refuses, before anything stops, an `environment` value
 naming a rotated service by its DNS name (`calls core-service by Docker's DNS, around its
@@ -822,7 +836,9 @@ the control, the same caller on `http://api:3000`, sees the reset. Storm 2b relo
 frontend and the edge under a pooled caller, with no failure. Measured 2026-11-07 on a workstation:
 through the mesh, 4,872 pooled and 5,160 unpooled calls, all `200`, both versions answering; by DNS,
 4,008 `200` beside 2,609 refused and 12 hung to the client's 10 s bound; the storm, 41,281 calls
-through the mesh, all `200`.
+through the mesh, all `200`. Case 2d recreates the mesh itself under two callers: the one keeping an
+address the resolver lifetime sends nothing that fails once the new mesh has settled (healthy, plus
+that lifetime and a second); the control, on Bun's 30 s default, still fails after that moment.
 
 **The count stays.** `rolling.sh` (`transport_resets`) reads each retiring replica's log before its
 `docker rm`, and one sweep at the end of `replace_services` reads every running container of every
@@ -836,8 +852,16 @@ external callers and is read against an ordinary day; after the mesh, a rise at 
 - **The first deploy carrying it**: callers not yet replaced still call by DNS, and the mesh is
   created by `up` before its first reload. From the next deploy on, every call goes through it. A
   rollback to an older release returns to DNS, and `--remove-orphans` removes the mesh.
-- **A bump of the nginx image recreates it**, about one second of refused calls - the edge's cost.
-- media-service and call-service are `exclusive`: a call to them keeps their stop-first gap.
+- **A bump of the nginx image recreates it** (it shares the edge's digest): calls fail until the new
+  container is healthy and the callers' 2 s address cache has expired - a few seconds, not the
+  edge's one.
+- **A rollback to a release from before the mesh** runs that release's library, which never takes a
+  replica out of the mesh, and its `git reset --hard` deletes `edge/mesh.conf` under the running mesh:
+  callers not yet rolled back still call through it and can be reset as before this, and a mesh that
+  restarted in that window could not load its configuration. `--remove-orphans` removes it once every
+  caller is back on DNS, which bounds the window to that one deploy.
+- media-service and call-service are `exclusive`: a call to them keeps their stop-first gap, which a
+  caller's address cache lengthened to up to 30 s before the 2 s setting above.
 - A public throttled route called from inside (the SSR to `/api/public/*`, no `X-Real-IP`) is keyed
   on the mesh's address instead of the SSR's - one internal caller either way.
 

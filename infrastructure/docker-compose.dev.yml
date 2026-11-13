@@ -229,6 +229,9 @@ services:
     expose:
       - "3010"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
@@ -366,6 +369,9 @@ services:
     expose:
       - "3011"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
       # NestJS service here is not in production mode, and `auth.controller.ts` then decided
       # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
@@ -429,6 +435,9 @@ services:
     expose:
       - "3012"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
       # NestJS service here is not in production mode, and `auth.controller.ts` then decided
       # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
@@ -531,6 +540,9 @@ services:
     expose:
       - "3014"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
       # NestJS service here is not in production mode, and `auth.controller.ts` then decided
       # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.

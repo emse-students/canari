@@ -252,6 +252,9 @@ services:
     expose:
       - "3010"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
@@ -373,6 +376,9 @@ services:
     expose:
       - "3011"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3011"
       NODE_ENV: ${NODE_ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -441,6 +447,9 @@ services:
     expose:
       - "3012"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
@@ -533,6 +542,9 @@ services:
     expose:
       - "3014"
     environment:
+      # Bun keeps a resolved address 30 s by default: a recreated mesh would be dialled at its old one
+      # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
+      BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
       NODE_ENV: ${NODE_ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -725,7 +737,8 @@ services:
   # decides nothing, and why it closes every connection after one answer. Pinned for the edge's
   # reason: its configuration is reloaded in place, and a reload resets nothing; only this
   # definition changing (the image, the edge's - deploy-replace.test.sh holds them equal) recreates
-  # it, about a second of refused calls on that one deploy.
+  # it with a new address: a few seconds of failed calls on that one deploy, until it is healthy and
+  # each caller has resolved it again (the Bun callers' BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS).
   # docs/wiki/cicd.md#service-to-service-calls-go-through-the-mesh
   mesh:
     logging: *logging

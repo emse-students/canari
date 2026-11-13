@@ -330,6 +330,16 @@ if grep -qE '^    keepalive_timeout 0;$' "$MESH_NGINX" && ! grep -qE '^[[:space:
 else
   fail "the mesh keeps caller connections alive, or declares an upstream block"
 fi
+# IT DECIDES NOTHING, AN ANSWER'S HEADERS INCLUDED: nginx's 4 KB header buffer would turn a peer's
+# larger answer into a 502 the peer never sent - the frontend's @ssr location carries the same lines
+# for the same reason.
+for directive in 'proxy_buffer_size 32k;' 'proxy_buffers 8 32k;' 'proxy_busy_buffers_size 64k;'; do
+  if grep -qxF "    $directive" "$MESH_NGINX" && grep -qF "    $directive" "$FRONTEND_NGINX"; then
+    ok "the mesh and the frontend's @ssr location both carry '$directive'"
+  else
+    fail "'$directive' is not in both the mesh and the frontend nginx - a large answer header would be a 502 the service never sent"
+  fi
+done
 if grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FRONTEND_NGINX" && grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FIXTURE_NGINX"; then
   ok "the frontend nginx and the fixture both read /etc/nginx/targets/frontend.conf"
 else
@@ -397,6 +407,48 @@ else
   fail "the resolver lifetimes disagree: rolling.sh '$ttl', the older libraries '$frozen_ttl', the configurations '$others'"
 fi
 
+# THE CALLERS' OWN DNS CACHE, THE SAME NUMBER (2026-11-07 review of the mesh). Bun's `fetch` keeps a
+# resolved address for 30 s by default, so when the mesh is recreated (an nginx digest bump, shared
+# with the edge) every Bun caller kept dialling the removed container's address for up to 30 s:
+# measured, failures until t=30 s. Every service that runs on Bun and calls the mesh sets
+# BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS to the resolver lifetime, as does the fixture's caller, whose
+# case 2d in deploy-rolling.test.sh measures the gap with and without it.
+for file in docker-compose.prod.yml docker-compose.dev.yml; do
+  while read -r verdict message; do
+    if [ "$verdict" = ok ]; then ok "$file: $message"; else fail "$file: $message"; fi
+  done < <(docker compose -f "$REPO/infrastructure/$file" config --no-interpolate --format json 2>/dev/null |
+    "$PYTHON" -c '
+import json, os, sys
+ttl = sys.argv[1]
+seen = 0
+for name, s in sorted(json.load(sys.stdin)["services"].items()):
+    env = s.get("environment") or {}
+    if not any("://mesh:" in str(v) for v in env.values()):
+        continue
+    # The image this repository builds for the service: its build section, or (the dev estate pulls
+    # the images production built and declares none) the Dockerfile named after it.
+    b = s.get("build") or {}
+    dockerfile = os.path.join(b.get("context", ""), b.get("dockerfile", "")) if b else os.path.join(sys.argv[2], "infrastructure", "local", "Dockerfile." + name)
+    froms = [l.split()[1] for l in open(dockerfile, encoding="utf8") if l.upper().startswith("FROM ")] if dockerfile and os.path.isfile(dockerfile) else []
+    if not froms or not froms[-1].startswith("oven/bun"):
+        continue
+    seen += 1
+    got = str(env.get("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS"))
+    if got == ttl:
+        print("ok", name, "runs on Bun and calls the mesh, and keeps a resolved address", ttl, "s")
+    else:
+        print("fail", name, "runs on Bun and calls the mesh, but BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is", got, "not", ttl, "- a recreated mesh would be dialled at its old address for 30 s")
+if seen == 0:
+    print("fail no service both runs on Bun and calls the mesh - the check reads nothing")
+' "$ttl" "$REPO" | tr -d '\r')
+done
+fixture_bun_ttl="$(printf '%s' "$fixture_config" | "$PYTHON" -c 'import json, sys; print((json.load(sys.stdin)["services"]["caller"].get("environment") or {}).get("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS"))' | tr -d '\r')"
+if [ "$fixture_bun_ttl" = "$ttl" ]; then
+  ok "the fixture's caller keeps a resolved address ${ttl}s, as production's Bun callers do"
+else
+  fail "the fixture's caller keeps a resolved address '$fixture_bun_ttl' s, not the ${ttl}s production's Bun callers keep"
+fi
+
 # THE RESOLVER'S BOUND (2026-11-02 review): every target at rest is looked up for its request, so a
 # resolver that does not answer holds that request for `resolver_timeout` - 30 s by default. Each
 # configuration that resolves a target must bound it, once per resolver.
@@ -459,6 +511,18 @@ if [ -z "$reloads" ]; then
   ok "deploy-environment.sh tests then reloads the edge and the mesh after replacing the estate"
 else
   fail "deploy-environment.sh does not test-then-reload, after the replacement:$reloads"
+fi
+# A MESH ROUTING NOWHERE MUST NOT DEPLOY GREEN (2026-11-07 review): every route the plan gives the mesh
+# is asked through it after the reload, and a failure fails the deploy like the edge's checks do.
+mesh_reload_line="$(grep -n '^dc exec -T mesh nginx -s reload ' "$DEPLOY" | cut -d: -f1)"
+# shellcheck disable=SC2016 # deploy-environment.sh text, unexpanded on purpose
+mesh_check_line="$(grep -n '^  retry_http "the mesh routes port \$route_port to \$route_service" .*"mesh_route_status \$route_service \$route_port"$' "$DEPLOY" | cut -d: -f1)"
+# shellcheck disable=SC2016 # deploy-environment.sh text, unexpanded on purpose
+if [ -n "$mesh_reload_line" ] && [ -n "$mesh_check_line" ] && [ "$mesh_reload_line" -lt "$mesh_check_line" ] &&
+  grep -qxF 'done <<<"$ROTATION_ROUTES"' "$DEPLOY" && grep -qF "fetch('http://mesh:\$2/api/health')" "$DEPLOY"; then
+  ok "deploy-environment.sh asks every mesh route for its service's health, through the mesh, after reloading it"
+else
+  fail "deploy-environment.sh does not check every mesh route through the mesh after reloading it - a dead mesh would deploy green"
 fi
 
 # The lists exist before anything that includes them starts: a fresh host, or a lost directory, would

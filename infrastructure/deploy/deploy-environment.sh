@@ -511,6 +511,29 @@ retry_http "media-service /touch route present" '^401$' \
 retry_http "api/version answers, which needs the database" '^200$' \
   "curl -s -o /dev/null -w '%{http_code}' $BASE/api/version"
 
+# AND THE PATH EVERY SERVICE-TO-SERVICE CALL TAKES (2026-11-07 review of the mesh). Every check above
+# goes through the edge and the frontend, never through the mesh: a mesh routing a port nowhere, or
+# not at all, left `/` and `/api/version` at 200 while every payment, presence read and delivery
+# between services failed - a deploy green on an estate that does not work. So each route the plan
+# gives the mesh is asked, from INSIDE the service it routes to (a caller of the mesh like any other,
+# on the runtime the callers run), for that service's own health, through the mesh.
+# mesh_route_status <service> <port> - the HTTP status the mesh answers for <service>'s health on
+# <port>, asked from a running replica of <service>; 000 when nothing answered.
+mesh_route_status() {
+  local cid
+  cid="$(containers_of "$1" running | head -n 1)"
+  [ -n "$cid" ] || {
+    echo 000
+    return 0
+  }
+  # shellcheck disable=SC2086 # DOCKER_CLI may be "sudo docker"
+  $DOCKER_CLI exec "$cid" node -e "fetch('http://mesh:$2/api/health').then(r => console.log(r.status)).catch(() => console.log('000'))" 2>/dev/null || echo 000
+}
+while read -r route_service route_proxy route_port; do
+  [ "$route_proxy" = mesh ] || continue
+  retry_http "the mesh routes port $route_port to $route_service" '^200$' "mesh_route_status $route_service $route_port"
+done <<<"$ROTATION_ROUTES"
+
 # ── Housekeeping ─────────────────────────────────────────────────────────────
 # HOST-WIDE, not per estate, and safe for both: `-a` removes only images no container references, so
 # the other estate's running images are untouched. The build cache was never pruned and reached ~30

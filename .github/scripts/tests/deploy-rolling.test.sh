@@ -23,6 +23,9 @@
 #   2c. ONE SERVICE CALLING ANOTHER across that one's release: every call through the mesh answered
 #      200, pooled connections or not - and, as its control, the same calls made to the API by its own
 #      DNS name DO fail: the reset the mesh removes, reproduced;
+#   2d. THE MESH ITSELF RECREATED (an nginx digest bump) under calls: a caller keeping a resolved address
+#      the resolver lifetime, as production's Bun callers do, sends nothing that fails once the new mesh
+#      has settled - and, as its control, one on Bun's 30 s default still does;
 #   3. a request held in its `auth_request` when the release starts: the pairing check waits for it
 #      to choose its upstream, and it is answered;
 #   4. TWO ROLLBACKS, each run by the library an older release shipped (frozen in rolling-fixture/):
@@ -643,6 +646,52 @@ if [ -n "$bad" ]; then
   ok "calls to the API by its DNS name fail across its release ($bad) - the reset the mesh removes, reproduced"
 else
   fail "calls to the API by its DNS name saw NO failure across its release - the fixture cannot show the gap, so the case above proves nothing"
+fi
+
+# ── 2d. The mesh itself recreated, under calls ──────────────────────────────
+# THE ONE DEPLOY THAT REPLACES THE MESH (2026-11-07 review): an nginx digest bump, which it shares with
+# the edge, recreates it, and the new container has a new address. Bun's `fetch` keeps a resolved
+# address 30 s by default, so its callers went on dialling the removed one: measured, failures until
+# t=30 s, where the docs said "about a second". Production's Bun callers keep it the resolver lifetime
+# (BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS, held equal to it by deploy-replace.test.sh), as the fixture's
+# caller does. Two callers across one recreate: the production setting, and Bun's default as the
+# control. Event-ordered, not timed: once the new mesh is healthy and one resolver lifetime (+1 s) has
+# passed, a caller keeping addresses that long has re-resolved, so it may send NOTHING that fails
+# after that moment - and the control, still on the old address, must: without that, a recreate that
+# kept the address would pass this for nothing. A 2 s request bound so a worker stuck on the removed
+# address sends again soon (its request is counted at the moment it was SENT).
+printf '\ndeploy-rolling: the mesh recreated under calls, with the callers'"'"' DNS lifetime and with Bun'"'"'s default\n'
+for name in recreate-prod recreate-default; do nopath dc exec -T caller rm -f "/tmp/$name.stop"; done
+nopath dc exec -T caller bun /fixture/client.mjs http://mesh:3000/api/send /tmp/recreate-prod.stop 12 close 2000 >"$TMP/recreate-prod.json" &
+CALLER_PIDS="$CALLER_PIDS $!"
+nopath dc exec -T -e BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=30 caller bun /fixture/client.mjs http://mesh:3000/api/send /tmp/recreate-default.stop 12 close 2000 >"$TMP/recreate-default.json" &
+CALLER_PIDS="$CALLER_PIDS $!"
+sleep 2
+old_mesh="$(containers_of mesh running)"
+dc up -d --no-deps --force-recreate mesh >"$TMP/recreate.log" 2>&1 || cat "$TMP/recreate.log" >&2
+new_mesh="$(containers_of mesh running)"
+if [ -n "$new_mesh" ] && [ "$new_mesh" != "$old_mesh" ] && wait_healthy "$new_mesh" mesh; then
+  ok "the mesh was recreated, and its new container is healthy"
+else
+  fail "the mesh was not recreated, or its new container never turned healthy"
+fi
+# shellcheck disable=SC2031 # this file's own value; the older library's lived in its subshell
+sleep "$((ROLLING_RESOLVER_TTL_SECONDS + 1))"
+settled="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+# Long enough for every worker of the control to send again on its stale address (2 s bound).
+sleep 5
+stop_callers recreate-prod recreate-default
+prod_last="$(field recreate-prod 'r.lastFailedSent ?? ""')"
+default_last="$(field recreate-default 'r.lastFailedSent ?? ""')"
+if [ -n "$default_last" ] && [[ "$default_last" > "$settled" ]]; then
+  ok "with Bun's default, a call sent after the new mesh had settled ($settled) still failed ($default_last) - the gap the setting closes, reproduced"
+else
+  fail "with Bun's default, no call failed after the new mesh had settled (last failure '${default_last:-none}', settled $settled) - the fixture cannot show the gap, so the case below proves nothing"
+fi
+if [ -z "$prod_last" ] || [[ ! "$prod_last" > "$settled" ]]; then
+  ok "with the callers' DNS lifetime, no call sent after the new mesh had settled failed (last failure '${prod_last:-none}', settled $settled)"
+else
+  fail "with the callers' DNS lifetime, a call sent after the new mesh had settled failed ($prod_last > $settled): $(failures recreate-prod)"
 fi
 
 # ── 3. A request held in its auth_request ────────────────────────────────────
