@@ -2825,8 +2825,11 @@ are builder stages and the local compose file, which reach no estate. **A Docker
 stage UPGRADES its base's packages** (`apk upgrade`, `apt-get upgrade`) is the exception: its base is
 exactly what it does not run, so it is listed as `dockerfile:<path>` and `image-scan.sh` BUILDS it
 (`docker build`, the repository as context, as `build.yml` does) and scans the local result
-(`--image-src docker`); a build that fails is unread, like a registry that did not answer. The one
-such file is `Dockerfile.adminer` (below).
+(`--image-src docker`). Both that build and the release's are uncached (`--no-cache`, `no-cache:` for
+`adminer` in `build.yml`), so a cached upgrade layer cannot hold an older package than the scan read. A
+build that fails is a FINDING (exit 1), not an outage: the file is ours; exit 2 stays for the registry
+and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN` also checks
+`apk info -e 'libpq>=18.7-r0'` so a repository that hands over no fix fails the build.
 
 | Choice | Why |
 | --- | --- |
@@ -2886,7 +2889,7 @@ such file is `Dockerfile.adminer` (below).
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 
 **2026-11-13, the image scan red on every pull request: 38 HIGH PostgreSQL advisories in `libpq
-18.6-r0`**, fixed in Alpine 3.23's `18.7-r0`, in `adminer@sha256:3a07decd...` - which was `adminer:6.3.0`,
+18.6-r0`**, fixed in Alpine 3.24's `18.7-r0`, in `adminer@sha256:3a07decd...` - which was `adminer:6.3.0`,
 the newest upstream build (2026-11-06): no digest to move to. **The owner chose a patched image**, not
 an allowlist and not removing the console: `infrastructure/local/Dockerfile.adminer` is that same
 digest plus `apk upgrade --no-cache libpq`, built and pushed by every release like the services

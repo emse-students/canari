@@ -1,7 +1,7 @@
 # THE DATABASE CONSOLE, UPSTREAM'S IMAGE WITH ONE PACKAGE MOVED - A TEMPORARY IMAGE (owner, 2026-11-13).
 #
 # `adminer:6.3.0` (the newest upstream build on 2026-11-13, published 2026-11-06) carries Alpine's
-# `libpq 18.6-r0`, and Alpine 3.23 fixed 38 HIGH PostgreSQL advisories in `18.7-r0`. No upstream digest
+# `libpq 18.6-r0`, and Alpine 3.24 fixed 38 HIGH PostgreSQL advisories in `18.7-r0`. No upstream digest
 # carried the fix, so the image scan failed every pull request. The owner chose to patch the package here,
 # not to allowlist the advisories and not to remove the console: the base is the SAME digest production
 # ran, and `libpq` is the only package that moves.
@@ -11,10 +11,11 @@
 # `FROM` below, so the scan of its pull request is where that is seen
 # (docs/wiki/legacy-compatibility.md, the patched adminer image).
 #
-# `--no-cache` leaves no index in the image; `USER root` only for the upgrade, and back to the user the
+# `apk info -e` fails the build if the repository did not hand over a fixed `libpq`, rather than ship
+# 18.6 under a green build. `--no-cache` leaves no index in the image; `USER root` only for the upgrade, and back to the user the
 # base runs as (`adminer`, read from the base's own config) - its ENTRYPOINT and CMD are inherited.
 FROM adminer:6.3.0@sha256:3a07decd833c2375ea749aa8018250c1db4859a78bd55354f797bfb591733233
 
 USER root
-RUN apk upgrade --no-cache libpq
+RUN apk upgrade --no-cache libpq && apk info -e 'libpq>=18.7-r0'
 USER adminer

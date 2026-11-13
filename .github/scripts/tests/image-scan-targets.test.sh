@@ -64,6 +64,21 @@ if bash "$script" "$work" >/dev/null 2>&1; then ko "an image named by a variable
 rm "$work/infrastructure/docker-compose.dev.yml"
 if bash "$script" "$work" >/dev/null 2>&1; then ko "a missing compose file passed"; else ok "a missing compose file fails"; fi
 
+echo "image-scan.sh: a build target we own that does not build is a FINDING (1), an outage stays 2:"
+# Stubs on PATH, no network: `trivy` answers every scan clean, `docker` fails every build.
+stubs="$work/stubs"
+mkdir -p "$stubs"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stubs/trivy"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/docker"
+chmod +x "$stubs/trivy" "$stubs/docker"
+rc=0
+out="$(PATH="$stubs:$PATH" bash "$here/../image-scan.sh" 2>&1)" || rc=$?
+if [ "$rc" -eq 1 ] && grep -F 'could not be built for the scan' <<< "$out" >/dev/null; then ok "a dockerfile: target that does not build exits 1, as a finding"; else ko "a failed dockerfile: build exited $rc: $(tail -2 <<< "$out")"; fi
+printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/trivy"
+rc=0
+PATH="$stubs:$PATH" bash "$here/../image-scan.sh" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 2 ]; then ok "a database that cannot be downloaded is still an outage (2)"; else ko "a database outage exited $rc, not 2"; fi
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."
   exit 1

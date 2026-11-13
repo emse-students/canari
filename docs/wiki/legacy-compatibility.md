@@ -259,7 +259,7 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 (`SERVICE_DOCKERFILE`, `ALL_SERVICES`), its line in `scheduled.yml`'s GHCR prune list, and production's
 `adminer` service (`image: ghcr.io/.../canari/adminer:${TAG}`, `build:`, `canari.deploy.replace: exclusive`).
 **What it humours:** upstream's newest image, `adminer:6.3.0` (`sha256:3a07decd...`, 2026-11-06), carries
-Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.23's `18.7-r0`; the
+Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.24's `18.7-r0`; the
 image scan failed every pull request from 2026-11-13. The owner chose a patched image over an allowlist
 and over removing the console: that same digest, `apk upgrade --no-cache libpq`, back to `USER adminer`.
 The scan builds it and reads the result ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).

@@ -446,4 +446,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,ignore-error=true
           cache-to: type=gha,mode=min,ignore-error=true
+          # ADMINER IS NEVER BUILT FROM THE CACHE (review of #3442): its one layer is `apk upgrade
+          # libpq`, keyed on the base digest and the command, so a cached layer could hold an OLD
+          # libpq while the image scan builds fresh - the gate would measure an image production
+          # does not run. Its build is seconds.
+          no-cache: ${{ matrix.name == 'adminer' }}
 
