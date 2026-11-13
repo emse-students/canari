@@ -82,6 +82,16 @@ deploy, or a human's operation on the hand-run Authentik stack. No job, cron or 
 container for that alone: a recreation is a short outage of a service on a host this project does not
 own, and a log setting is never worth one.
 
+### Third-party services told to be quiet (2026-11-13)
+
+A line is demoted only when its own code says it is the ordinary path, and a datastore's own request
+log is one: **Garage** wrote every S3 request and every health check at INFO, about 53k lines a day on
+production and nearly all of its volume, each already visible in media-service's and nginx's logs.
+`RUST_LOG: warn` on the `garage` service of the prod, dev and local compose files (`compose-logging.test.sh`
+asserts all three) keeps warnings and errors. Both settings are properties of the container, so they
+reach it at the next ORDINARY deploy, which recreates a `pinned` service whose definition changed
+(a few seconds of that service); nothing recreates it for this alone (rule above).
+
 ## The 90-day ceiling (2026-10-16)
 
 **The promise**, `frontend/src/routes/legal/privacy/+page.svelte`: *"Logs techniques (IP,

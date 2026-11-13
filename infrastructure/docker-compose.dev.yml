@@ -330,6 +330,9 @@ services:
       # volumes), so this is not what isolates it - but a shared name is how a copy-paste of an
       # endpoint, a tool invocation or a support answer ends up pointed at the wrong one.
       GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
+      # Garage logs every S3 request and every health check at INFO (~53k lines a day on production,
+      # 2026-11-13) and nothing else worth keeping: warn and above only (docs/wiki/infrastructure/logging.md).
+      RUST_LOG: warn
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta

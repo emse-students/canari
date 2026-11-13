@@ -232,6 +232,9 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?run 'make local-env' - infrastructure/.env carries no GARAGE_ACCESS_KEY_ID}
       GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
       GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
+      # Garage logs every S3 request and every health check at INFO (~53k lines a day on production,
+      # 2026-11-13) and nothing else worth keeping: warn and above only (docs/wiki/infrastructure/logging.md).
+      RUST_LOG: warn
     volumes:
       - ../garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
