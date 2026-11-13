@@ -38,6 +38,16 @@
     maxSubmissions: number | undefined;
     /** Whether one person may answer more than once. */
     allowMultipleSubmissions: boolean;
+    /**
+     * Whether a respondent with an account may change their own answer while the form is open, the
+     * price-affecting questions locked (migration 166). Shut on an anonymous form.
+     */
+    allowAnswerEdit: boolean;
+    /**
+     * Whether this estate serves the change of an answer (`formAnswerEdit` in `/api/version`): an
+     * older server would drop the switch, so it is not drawn there (`answerEditGate.ts`).
+     */
+    answerEditAvailable?: boolean;
     /** Whether answers are stored without their author. */
     anonymous: boolean;
     /** True once the form exists: anonymity is fixed at creation and shown, not offered. */
@@ -78,6 +88,8 @@
   let {
     maxSubmissions = $bindable(),
     allowMultipleSubmissions = $bindable(),
+    allowAnswerEdit = $bindable(),
+    answerEditAvailable = false,
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
@@ -98,6 +110,7 @@
   const activeCount = $derived(
     (maxSubmissions != null && maxSubmissions > 0 ? 1 : 0) +
       (allowMultipleSubmissions ? 1 : 0) +
+      (allowAnswerEdit ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
       (isPublic && guestFields.length > 0 ? 1 : 0) +
@@ -114,6 +127,9 @@
    */
   const anonymousBlocker = $derived(conflictHint(conflictsIfEnabled(optionState, 'anonymous')));
   const publicBlocker = $derived(conflictHint(conflictsIfEnabled(optionState, 'isPublic')));
+  const answerEditBlocker = $derived(
+    conflictHint(conflictsIfEnabled(optionState, 'allowsAnswerEdit'))
+  );
   const audienceBlocker = $derived(
     conflictHint(conflictsIfEnabled(optionState, 'restrictsAudience'))
   );
@@ -150,6 +166,17 @@
       label={m.form_allow_multiple_label()}
       hint={isPublic ? m.form_allow_multiple_hint_public() : m.form_allow_multiple_hint()}
     />
+
+    <!-- An anonymous answer names nobody who could reopen it: the switch is shut beside anonymity,
+         with the reason as its hint (the shared option rule, `FORM_ANONYMOUS_ANSWER_EDIT`). -->
+    {#if answerEditAvailable}
+      <Toggle
+        bind:checked={allowAnswerEdit}
+        disabled={answerEditBlocker != null}
+        label={m.form_answer_edit_label()}
+        hint={answerEditBlocker ?? m.form_answer_edit_hint()}
+      />
+    {/if}
 
     <!-- Anonymity is a promise about what is STORED, so it is chosen once: turning it on later would
          promise it to answers already written with a name. Said in the hint, not left to a refusal. -->

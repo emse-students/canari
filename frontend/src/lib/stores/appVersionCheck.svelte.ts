@@ -188,6 +188,19 @@ export function serverRankedFeeds(): boolean | null {
 }
 
 /**
+ * Whether this estate lets a respondent change their own answer (`formAnswerEdit`), as the last
+ * `/api/version` answer said - or `null` when no server has ever answered. The form editors show the
+ * switch, and the fill page asks for the caller's changeable answers, only when it is `true`: an
+ * older server answers those routes `404` and strips the switch (docs/wiki/legacy-compatibility.md,
+ * "an answer editor newer than its server"). The cached answer counts, for the reason
+ * {@link serverPresencePost} gives.
+ */
+export function serverFormAnswerEdit(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.formAnswerEdit;
+  return loadCachedServerInfo()?.formAnswerEdit ?? null;
+}
+
+/**
  * Whether this estate stores an institution event's reach (`eventReach`), as the last
  * `/api/version` answer said - or `null` when no server has ever answered. The event form offers
  * the reach only when it is `true` (docs/wiki/legacy-compatibility.md, "an event form newer than

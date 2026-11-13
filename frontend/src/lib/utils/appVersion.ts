@@ -118,6 +118,8 @@ export type ServerVersionInfo = {
   gridRequiredSwitch: boolean;
   /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
   rankedFeeds: boolean;
+  /** Whether this estate lets a respondent change their answer - see {@link AppVersionCheckResult}. */
+  formAnswerEdit: boolean;
   /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
   eventReach: boolean;
 };
@@ -185,6 +187,14 @@ export type AppVersionCheckResult = {
    * production deploys. `false` for every server older than the field.
    */
   rankedFeeds: boolean;
+  /**
+   * Whether this estate's social-service lets a respondent change their own answer
+   * (`formAnswerEdit`, migration 166). An older one answers the answer routes `404` and strips the
+   * form's switch from a save - and a store build reaches phones before production deploys, so the
+   * switch and "Modifier ma reponse" are offered only when this is true. `false` for every server
+   * older than the field.
+   */
+  formAnswerEdit: boolean;
   /**
    * A CAPABILITY of the estate, not a switch: social-service stores an institution calendar event's
    * reach and serves its options route. The event form draws the reach picker, and requires a
@@ -263,6 +273,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     formDrafts?: unknown;
     gridRequiredSwitch?: unknown;
     rankedFeeds?: unknown;
+    formAnswerEdit?: unknown;
     eventReach?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
@@ -282,6 +293,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     formDrafts: obj.formDrafts === true,
     gridRequiredSwitch: obj.gridRequiredSwitch === true,
     rankedFeeds: obj.rankedFeeds === true,
+    formAnswerEdit: obj.formAnswerEdit === true,
     eventReach: obj.eventReach === true,
   };
 }
@@ -306,6 +318,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   formDrafts: boolean;
   gridRequiredSwitch: boolean;
   rankedFeeds: boolean;
+  formAnswerEdit: boolean;
   eventReach: boolean;
 } {
   return {
@@ -322,6 +335,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     formDrafts: info.formDrafts,
     gridRequiredSwitch: info.gridRequiredSwitch,
     rankedFeeds: info.rankedFeeds,
+    formAnswerEdit: info.formAnswerEdit,
     eventReach: info.eventReach,
   };
 }
@@ -511,6 +525,7 @@ export function buildAppVersionCheckResult(
     formDrafts: serverInfo?.formDrafts ?? false,
     gridRequiredSwitch: serverInfo?.gridRequiredSwitch ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
+    formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
     eventReach: serverInfo?.eventReach ?? false,
   };
 }

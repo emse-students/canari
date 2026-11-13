@@ -969,6 +969,7 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
 | anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
 | anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| anonymous + "Autoriser la modification de la réponse" | refused | `FORM_ANONYMOUS_ANSWER_EDIT` | an anonymous answer names nobody who could reopen it ([changing an answer](#a-respondent-changes-their-own-answer-owner-2026-11-13)) |
 | public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
 | public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
 | public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
@@ -1186,6 +1187,132 @@ the price is only as good as the answer it is computed from:
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
   required, unconditional question whose every option is grouped never reaches it, so a 0 there is
   accepted.
+
+## A respondent changes their own answer (owner, 2026-11-13)
+
+A per-form switch, **"Autoriser la modification de la réponse"** (`forms.allowAnswerEdit`, OFF by
+default, migration 166), lets a respondent WITH AN ACCOUNT reopen their own answer and change it.
+The owner's decisions are final; the reasons below are why the code holds them.
+
+**Who and when.**
+
+- Only the account that wrote the row. A guest's row (`userId` NULL) is nobody's, so a guest is
+  never offered it; on an ANONYMOUS form the switch is shut (`FORM_ANONYMOUS_ANSWER_EDIT`, one row of
+  [the option rule](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), on both
+  sides) and a stored `true` beside `anonymous` is refused at the edit anyway (`FORM_ANSWER_EDIT_OFF`).
+- Only while the form is OPEN: after `opensAt`, before `closesAt`, not closed by hand
+  (`assertFormOpen`, the submit's own check: `FORM_NOT_OPEN_YET` / `FORM_CLOSED`).
+- Only a row that IS an answer (`answerHoldingWhere`: paid, free, a live pending one, pending cash,
+  paid over capacity). A cancelled, expired or refunded row is `FORM_ANSWER_NOT_EDITABLE`.
+- Another person's row answers exactly what an absent one does: 404 `FORM_ANSWER_NOT_FOUND`.
+
+**The price is never moved by an edit - the LOCK RULE** (`apps/social-service/src/forms/answer-edit.ts`,
+`editLockedItemIds`). No top-up and no partial refund exist, ever. So every question that can change
+what is charged is LOCKED:
+
+- a priced grid (`product_grid`): its quantities are the order;
+- a question the price grid divides on (an `answer` criterion of `priceMatrix`);
+- a choice question with an option supplement (`decidesPrice`; the TYPE decides, as at submit);
+- CLOSED UNDER VISIBILITY: every question whose answer shows or hides a locked one (`showIf.answer`
+  or the legacy `dependsOn`), transitively - hiding a priced question drops its supplement or moves
+  the person to the "everyone else" cell, a price change made one question away;
+- **the lead's REVERSIBLE decision (2026-11-13)**: once the answer's cotisation was GRANTED
+  (`cotisationGrantedAt`), the question that decides admission on a granting form (the ANSWER
+  criterion of `submitCondition`) is locked too, like a price. No question chooses the tier itself
+  today (the tier is the form's `cotisationVariantKey`), and every granting form charges, so its
+  priced questions are locked already; this line only closes "change the answer that let me buy".
+  To reverse it, drop the `grantMade` branch in `editLockedItemIds`.
+- **the lead's REVERSIBLE decisions (2026-11-13), what the ROW says**: the lock set of an answer is
+  today's rule UNITED with every question the row recorded of its price (`rowLockedItemIds`, closed
+  under visibility like the rest): the `itemId`s of its stored `lines` (migration 137), and its
+  SNAPSHOT `submissions."priceLockedItemIds"` (migration 166), written by `submit` - and by a retry
+  that re-prices the row - with the questions today's rule says the price depends on at that moment
+  (`priceSnapshot`). So a grid unpriced, or a supplement REMOVED, after answers were priced with it
+  still locks its question on those rows (`answer-edit.integration.spec.ts`, "keeps a question
+  locked on a row priced with its supplement, after the supplement is removed"). **The residual, for
+  rows written before migration 166 only** (snapshot NULL): today's rule and `lines`, so a supplement
+  removed after such a row was priced unlocks that question there - the answer may then disagree
+  with `totalPaid`, never the money with what was charged. To reverse: drop the third argument of
+  `editLockedItemIds` (and stop writing the snapshot).
+
+**When does the lock start - the unpaid-but-requested decision.** The owner preferred "locked as
+soon as a payment request exists". The rule is STRICTER: the price-affecting questions are locked
+on EVERY answer from the moment it is sent - paid, pending online, pending cash, AND free. Why:
+re-pricing a free answer would read TODAY's profile and grid (a promo or a cotisation acquired since,
+a cell the manager changed), and an edit from a 0 EUR cell to a paid one would be a top-up - the one
+thing that may not exist. One rule for every status is also one rule a reader can predict. A free
+answer to a form whose priced questions are all 0 EUR still has them locked; the hint in the editor
+says so.
+
+What an edit therefore NEVER writes: `totalPaid`, `lines`, `priceLockedItemIds`, `paymentStatus`, the payment ids, the
+seat, the cotisation grant. It never reaches the payment provider.
+
+**The server enforces it; the client only draws it.** `FormsService.editAnswer`
+(`PUT /api/forms/:id/submissions/:submissionId/answers`, body `{ answers }`):
+
+1. the switch, anonymity, openness, the answer sizes (`assertAnswerSizes`, the submit's own);
+2. `judgeEdit`, outside the locks (the profile read may call core-service): grid answers normalised;
+   a locked question SENT with a different value is 409 `FORM_ANSWER_LOCKED` naming it (a locked one
+   repeated or omitted is fine - the stored value is carried); then the submit's own checks over the
+   merged answer: the ANSWER half of `submitCondition` only (who the person is - promo, formation,
+   cotisation - was judged when they answered, and a form selling a cotisation with `notCotisation`
+   would otherwise refuse every buyer's edit once they hold it), declared options on the editable
+   questions, `required` on the editable ones (`FORM_ANSWER_MISSING`), and an answer the person
+   cannot see DROPPED as at submit - except a locked one, which is what was priced and stays whatever
+   their profile says today;
+3. the write, in ONE READ COMMITTED transaction: `lockFormSeats` (the form row, `FOR UPDATE`), then
+   the submission row `FOR UPDATE` - the order `submit` and `markPaid` take them. The row is re-read
+   there; ownership and `answerHoldingWhere` are checked again; every locked answer is compared with
+   the row AS IT IS NOW (`sameAnswer`: empty spellings equal, a multiple choice a set, a grid by its
+   non-empty cells), so a retry, a payment or a grant committed meanwhile refuses rather than
+   overwrites; then `answers` and `editedAt = now()` - nothing else.
+
+**Version skew.** The client offers the switch and "Modifier ma réponse", and asks the routes below,
+only on an estate whose `/api/version` says `formAnswerEdit: true`; an editor older than the switch
+saving a form keeps the stored value ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-answer-editor-newer-than-its-server---formansweredit-2026-11-13)).
+
+`GET /api/forms/:id/my-answers` lists the caller's rows that may be changed, newest first, each with
+its `lockedItemIds`; empty when the switch is off, the form anonymous or not open. The fill page
+reads it, offers "Modifier ma réponse" under the sent answer (or a "Vos réponses" list on a form
+taking several answers - each is changed separately), draws the locked questions disabled with one
+line ("Fixe le prix payé : ne peut plus être modifiée."), hides the order bar, the payment choice and
+the total, and sends the visible answers LESS the locked ones (`editedAnswers`, `fillAnswers.ts`) -
+re-sending them through a read-back that might spell them differently would only risk a false 409.
+
+**Capacity.** The model has ONE cap, `maxSubmissions`, counted in answers; there is no per-option
+capacity. An edit keeps the same row, so it keeps its seat and never takes a second one: a full form
+still lets its respondents change their answers, and the form lock is taken anyway so an edit is
+serialised with every submit and payment. Never a second row: the single-answer guard and
+`hasSubmission` read the same row as before.
+
+**Files.** A new file id in a FILE answer is claimed as at submit (`FormFilesService.attach`, which
+checks its uploader); a kept one is not claimed again, so its retention keeps counting from its first
+claim. A REPLACED file stays attached to this answer and goes with the existing purge
+(`fileRetentionDays`): no orphan, no early deletion.
+
+**What managers see.** `submissions.editedAt` (null until a first change; no history kept) is in the
+responses list as "modifiée le <date>" under the answer's date, and in the XLSX export as a "Modifiée
+le" column - present when the form allows changes or any row was changed. No notification.
+
+**The codes** (`libs/contracts/form-answers.json`, exported by `answer-bounds.ts`, worded by
+`formCodeMessage` on the client): `FORM_ANSWER_EDIT_OFF` (403), `FORM_ANSWER_LOCKED` (409, with
+`itemId`), `FORM_ANSWER_NOT_EDITABLE` (409), `FORM_ANSWER_NOT_FOUND` (404); and
+`FORM_ANONYMOUS_ANSWER_EDIT` (400) at the form's save.
+
+**Logs**: `[FORM_EDIT]` at entry, at each refusal (with its reason) and at the write (status, files
+claimed); the fill page logs under `FormView`.
+
+**Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
+`forms."allowAnswerEdit" boolean NOT NULL DEFAULT false`, `submissions."editedAt" timestamptz
+NULL` and `submissions."priceLockedItemIds" jsonb NULL` (the price snapshot above). Reverse: drop the
+three columns (written in the file).
+
+**Tests**: `answer-edit.spec.ts` (the lock rule, the row's own `lines` united with it, and `sameAnswer`), `answerEditGate.test.ts` and `appVersion.test.ts` (the capability gate), `forms.service.public.spec.ts` (an older editor's save keeps the switch), `answer-edit.integration.spec.ts`
+against PostgreSQL (CI's `test-social-integration`): an edit done in place, a locked question refused
+on a paid answer, pending cash locked too, a full form keeping its seat, a hidden answer dropped, a
+closed form, an anonymous form and a switch-off form refused, another person's answer 404, a
+cancelled answer, several answers edited separately, file claims, an edit queued behind a cash
+validation's row lock, and concurrent cash validations and edits with no lost write.
 
 ## The file question (2026-10-15)
 

@@ -120,6 +120,17 @@ export type AppVersionResponse = {
    */
   rankedFeeds: true;
   /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: it lets a
+   * respondent change their own answer (`forms.allowAnswerEdit`, migration 166: `GET
+   * /forms/:id/my-answers`, `PUT /forms/:id/submissions/:submissionId/answers`). An older
+   * social-service answers both `404` and strips the switch from a form's save (its validation
+   * whitelists the body) - and a store build reaches phones before production deploys: the client
+   * offers neither the switch nor "Modifier ma reponse" on an estate that does not say so. Always
+   * `true` from this release on (docs/wiki/legacy-compatibility.md, "an answer editor newer than its
+   * server").
+   */
+  formAnswerEdit: true;
+  /**
    * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: an
    * institution's calendar event carries a reach (migration 165, `GET
    * /api/associations/:id/events/reach-options`). An older social-service answers the options route
@@ -158,6 +169,7 @@ export class VersionService {
       formDrafts: true,
       gridRequiredSwitch: true,
       rankedFeeds: true,
+      formAnswerEdit: true,
       eventReach: true,
     };
   }

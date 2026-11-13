@@ -332,7 +332,9 @@
       <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
-          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
+          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires (et, si le
+          formulaire vous laisse modifier votre réponse, la date de votre dernière modification,
+          visible de ceux qui le gèrent, sans historique des versions précédentes) et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
           attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une

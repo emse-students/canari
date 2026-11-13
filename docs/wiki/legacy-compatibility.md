@@ -658,6 +658,26 @@ without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
 
+### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
+
+**Site:** `serverFormAnswerEdit()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read through
+`offersAnswerEdit` and `answerEditPayload` (`frontend/src/lib/forms/answerEditGate.ts`) by the fill page
+and both form editors; the server half is `formAnswerEdit: true` in core-service's `GET /api/version`.
+**Why.** A store build reaches phones days before production deploys. A social-service older than
+migration 166 answers `GET /forms/:id/my-answers` and `PUT /forms/:id/submissions/:id/answers` `404`,
+and its validation strips `allowAnswerEdit` from a form's save.
+**What the client does.** Only on an estate that says `formAnswerEdit: true` does the editor draw the
+switch and send it, and the fill page ask for the caller's changeable answers; on any other answer -
+`false`, or no answer yet (`null`) - neither the switch nor "Modifier ma réponse" is offered and
+nothing is asked: the client never learns the feature by a refusal. Pinned by
+`answerEditGate.test.ts` and `appVersion.test.ts`; the server half by `version.service.spec.ts`.
+**The reverse skew** (an editor of 1.6.6 to 1.6.11 saving a form whose switch is on): its save carries
+no `allowAnswerEdit`, and `FormsService.update` keeps a stored value for an absent field, so the
+switch survives - pinned by `forms.service.public.spec.ts` ("the answer-edit switch across an older
+editor"). Nothing to remove there.
+**Removal condition:** when no estate older than the release carrying `formAnswerEdit` is served (both
+estates deployed past 1.6.12), the client branch for `false` may go; the field stays, always `true`.
+
 ### No date yet - Suivis (`feed=followed`) and the client-placed suggested posts, for installed clients older than 1.6.9 (2026-11-10)
 
 **Site:** the `followed` arm of `PostsService.listPostRows` (`followedFeedSql` in

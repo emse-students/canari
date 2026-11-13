@@ -239,6 +239,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'submissions.lines': NO_ACCOUNT(
     'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
   ),
+  'submissions.priceLockedItemIds': NO_ACCOUNT(
+    "the ids of the form's questions an answer's price depended on (migration 166)"
+  ),
   'forms.guestFields': NO_ACCOUNT(
     'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'
   ),
