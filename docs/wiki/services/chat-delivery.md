@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)), SentFrameReceipt (one row per application frame a sender named by its `messageId`, [below](#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -30,7 +30,7 @@ The chat-delivery-service is the MLS API layer. It:
 | Interval | Task |
 |---|---|
 | 1h | Detect stale devices -> reset to pending |
-| 1h | Clean expired queued messages |
+| 1h | Clean expired queued messages, and the sent-frame receipts of the same age |
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
 | 1h | Report stranded pending device memberships (observation only, deletes nothing) |
@@ -438,6 +438,103 @@ than inferring it. Two things the gate must not do, both asserted in `messaging.
 The discriminator was in the row the server already reads to address the recipients: this is the
 rule about never learning by failing what a fact could have told you, applied to a seam that held
 the fact and forwarded the frame anyway.
+
+### A message sent twice under one id is stored once (migration 048, 2026-11-13)
+
+**The defect.** A native background send - the notification quick reply, an outbox drain while the
+app is shut (`sendQueuedMessagePush` in `CanariFirebaseMessagingService.kt`, its twin in
+`canari_push.mm`) - POSTs `mls/push/send` with a 10 s `readTimeout`. An answer that arrives later
+is read as a failure, the entry stays in `outbox_pending.ndjson`, and the next drain sends the SAME
+`messageId` again. Each send re-encrypts, so the second copy is a fresh MLS ciphertext: until this
+change the server queued it like a new message, every receiver decrypted it, deduplicated it on the
+id inside, and kept one of two server times - which one decided where the message was drawn
+([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+
+**What the server knew and did not use.** The 2026-11-12 triage wrote that the server never sees a
+`messageId`. True of the foreground route (`POST mls/send` carries none), false of the native one:
+both native senders have always put `messageId` in the clear JSON beside the ciphertext, and the
+route logged it and dropped it.
+
+**The mechanism.** `sendMessage` takes an optional `messageId` (validated by `readSentMessageId`:
+1-128 of `[A-Za-z0-9_-]`, anything else is a typed `400 message_id_invalid`, never read as absent).
+For an application frame naming one, `enqueueForLiveGroup` inserts
+`(groupId, senderId, senderDeviceId, messageId, receivedAt, protoSha256)` into `dm_sent_frame_receipt` in the
+SAME transaction that queues the copies, after the group's liveness check and before any row
+(`claimSentFrameReceipt`, `utils/sent-frame-receipt.ts`). `ON CONFLICT DO NOTHING` on the primary
+key is the whole mechanism:
+
+- a repeat finds the row: the transaction throws `FrameAlreadyReceived` (a type, caught by type),
+  writes nothing, and `sendMessage` answers `queued: 0` with the FIRST copy's `receivedAt`. The
+  native sender marks the entry sent with the receive time every receiver already holds. What else
+  it does depends on whether the first send FINISHED (below);
+- two concurrent sends of one id serialise on the key: the second waits for the first transaction,
+  then finds its committed row, or inserts its own if the first rolled back;
+- a first send REFUSED inside the transaction (a deleted group, an evicted seat) leaves no receipt,
+  so its retry is queued.
+
+Keyed on the device as well as the author: the same id from another device of the same person is
+not a repeat. The authenticated caller is the `senderId` when there is one. Logged at warn as
+`REPEATED_MESSAGE_ID`, with the first receive time and the gap: a repeat is the visible end of an
+answer the sender lost upstream, and that line is the count the triage asked for.
+
+**A first send that died between its commit and its delivery is finished by its repeat.** The
+receipt and the queued copies commit together, but the history append, the live delivery and the push
+come after that commit; a process killed in between leaves the copies queued and nothing else done.
+So the receipt carries `settled`, set once those steps ran (`markSentFrameSettled`), and
+`protoSha256`, the SHA-256 of the first copy's ciphertext. A repeat of a SETTLED receipt is answered
+alone - no row, no append, no push.
+
+**`settled = false` means "not finished yet", never "the first send died"** - a repeat arriving
+while a slow first send is still in its delivery steps sees the same row. The proof that the first send
+is GONE is a PostgreSQL session advisory lock (`takeSentFrameLock`), keyed on the first 8 bytes of a
+SHA-256 over `group|sender|device|messageId` and held by every named send from before its claim until
+after its settlement, on ONE dedicated connection (a query runner held for the phase: a session lock
+taken through the pool could be released on another connection). A repeat tries the same lock:
+
+- it CANNOT take it - the first send is alive. It finishes nothing: a committed receipt is answered as
+  a plain repeat (`REPEATED_MESSAGE_ID`); none committed yet is `503 send_in_flight`
+  (`SEND_IN_FLIGHT` at warn), and the sender keeps the message and retries;
+- it TAKES it and the receipt is unsettled - the session that wrote it ended, and PostgreSQL ended its
+  lock with it. No clock: the process death IS the release. That repeat finishes the first copy
+  (`finishFirstCopy`).
+
+The lock is released in a `finally`; an unlock that fails destroys the connection instead of handing
+it back to the pool (`SENT_FRAME_UNLOCK_FAILED` at error), which ends the session and its lock. The
+finish:
+
+- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count). A crash
+  after that take and before the steps loses the push and the history entry; the queued copies
+  survive it and go out on each device's next pull;
+- delivers and pushes the copies STILL QUEUED: the group's rows from that device dated at the first
+  copy's instant whose ciphertext hashes to `protoSha256` (another frame received at the same instant
+  is not touched); a copy already pulled and acknowledged is gone, and nothing is done for it;
+- appends to `history:{groupId}` only when no entry from that device carries the first copy's
+  `timestamp` and a `content` hashing to `protoSha256` (`historyHoldsFirstCopy`, an `XRANGE` from the
+  first copy's instant - an append comes after its receive time), with the first copy's own
+  ciphertext when a queued row still holds it.
+
+It logs `REPEAT_FINISHED_FIRST_COPY` at warn with what it found. A crash in the MIDDLE of a fan-out
+(some devices pushed, the rest not) is finished the same way, so the devices pushed before the crash
+are pushed once more - the queued row, the only copy a device decrypts, stays one.
+
+**Two consequences, written down.** A frame sealed beyond the past-epoch window is REPORTED
+(`STALE_EPOCH_FRAME`), not refused, so it still claims its receipt: a repeat that re-sealed the same
+message at the group's current epoch is then answered as a repeat, and the members at that epoch keep
+only the stale copy they cannot open. That is the stale-epoch report's measurement to settle, not
+this one's. And `RECEIPT_VANISHED` (below) can let ONE duplicate through: its 503 makes the sender
+insert afresh, behind a receipt deleted by the retention sweep or an erasure.
+
+**Bounded.** Rows older than the retention window go with the hourly queue sweep
+(`cleanupExpiredQueuedMessages`) - past it there is no queued copy left to duplicate. The table is in
+`GROUP_OWNED_TABLES` (it goes with the group) and the account erasure deletes the sender's rows. A
+`RECEIPT_VANISHED` error (a conflict whose row a sweep deleted before it was read back) answers 503,
+so the sender keeps the frame and inserts afresh.
+
+**What is not covered yet.** The foreground route accepts `messageId` (`CLIENT_SEND_FIELDS`), but no
+foreground client sends it: a store build reaches phones before production's server deploys, and an
+older server refuses an unknown field (`send_field_refused`). So an orphan the app ADOPTS from the
+native mirror (`adoptOrphanedMirrorEntries`) and resends through the foreground flusher can still be
+queued a second time - [backlog](../backlog.d/p3-the-foreground-send-does-not-name-its-message-id.md).
 
 ### Who a frame is queued for, and who owns the gateway's routing set
 

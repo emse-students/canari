@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="10/11/2026"
+  updated="13/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -81,10 +81,13 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
-          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
-          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
-          déconnexion, et il n'apparaît jamais dans une notification.
+          l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
+          l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
+          jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
+          réponse perdue. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
+          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
+          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
+          jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -818,6 +821,10 @@
           <tr>
             <td>Historique chiffré d'une conversation sur le serveur</td>
             <td>90 jours au plus</td>
+          </tr>
+          <tr>
+            <td>Trace d'un message privé envoyé (expéditeur, appareil, identifiant aléatoire)</td>
+            <td>90 jours au plus ; avant, avec la conversation ou le compte de l'expéditeur</td>
           </tr>
           <tr>
             <td>Messages de salon (chiffrés)</td>
