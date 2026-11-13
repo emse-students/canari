@@ -14,6 +14,7 @@ import {
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { BanMinesweeperUserDto } from './dto/ban-minesweeper-user.dto';
+import { StartMinesweeperDto } from './dto/start-minesweeper.dto';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperService } from './minesweeper.service';
 
@@ -25,8 +26,8 @@ export class MinesweeperController {
 
   /** Issues a seeded challenge; server clock starts here. */
   @Post('challenges')
-  start(@Headers('x-user-id') userId: string) {
-    return this.minesweeperService.startChallenge(userId);
+  start(@Headers('x-user-id') userId: string, @Body() dto?: StartMinesweeperDto) {
+    return this.minesweeperService.startChallenge(userId, dto?.maxGeneratorVersion);
   }
 
   /** Replays moves against the challenge seed; stores server-measured time if won. */

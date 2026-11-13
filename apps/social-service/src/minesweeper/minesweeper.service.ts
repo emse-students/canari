@@ -13,7 +13,13 @@ import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
-import { CHALLENGE as BOARD_CONFIG, verifySolve, type MinesweeperMove } from './engine/game';
+import {
+  CHALLENGE as BOARD_CONFIG,
+  LATEST_GENERATOR_VERSION,
+  verifySolve,
+  type GeneratorVersion,
+  type MinesweeperMove,
+} from './engine/game';
 
 /** Challenge board must be cleared in at least this long (blocks 0ms cheats). */
 const MIN_DURATION_MS = 8_000;
@@ -71,6 +77,16 @@ function sameSideAsSql(userId: string | undefined, column: string): string {
   return isInReviewCohort(userId) ? inCohort : `NOT ${inCohort}`;
 }
 
+/**
+ * The generator a new challenge is issued with: the newest the client says it can produce, capped at
+ * the newest this server replays. A client that says nothing - every build before versions - gets 1,
+ * so it is never asked to play a board its engine cannot make.
+ */
+export function chooseGeneratorVersion(requested: number | undefined): GeneratorVersion {
+  if (requested === undefined) return 1;
+  return Math.min(Math.max(1, requested), LATEST_GENERATOR_VERSION) as GeneratorVersion;
+}
+
 @Injectable()
 export class MinesweeperService {
   private readonly logger = new Logger(MinesweeperService.name);
@@ -101,7 +117,7 @@ export class MinesweeperService {
    * Starts a ranked run: cancels prior open challenges for this user and returns
    * a fresh seed. Duration is measured from `startedAt` on the server.
    */
-  async startChallenge(userId: string) {
+  async startChallenge(userId: string, maxGeneratorVersion?: number) {
     await this.assertNotBanned(userId);
     const now = new Date();
     await this.challenges
@@ -112,9 +128,11 @@ export class MinesweeperService {
       .execute();
 
     const seed = randomBytes(16).toString('hex');
+    const generatorVersion = chooseGeneratorVersion(maxGeneratorVersion);
     const row = this.challenges.create({
       userId,
       seed,
+      generatorVersion,
       width: BOARD_CONFIG.width,
       height: BOARD_CONFIG.height,
       mineCount: BOARD_CONFIG.mineCount,
@@ -123,11 +141,14 @@ export class MinesweeperService {
       status: 'open',
     });
     await this.challenges.save(row);
-    this.logger.log(`minesweeper challenge started user=${userId} id=${row.id}`);
+    this.logger.log(
+      `minesweeper challenge started user=${userId} id=${row.id} generator=${generatorVersion} requested=${maxGeneratorVersion ?? 'none'}`
+    );
 
     return {
       challengeId: row.id,
       seed: row.seed,
+      generatorVersion: row.generatorVersion,
       config: {
         width: row.width,
         height: row.height,
@@ -182,11 +203,31 @@ export class MinesweeperService {
       y: m.y,
     }));
 
-    const result = verifySolve(challenge.seed, moves, {
-      width: challenge.width,
-      height: challenge.height,
-      mineCount: challenge.mineCount,
-    });
+    // A version this server does not know cannot be replayed, and replaying it with another would
+    // judge an honest solve on a board the player never saw.
+    if (
+      !Number.isInteger(challenge.generatorVersion) ||
+      challenge.generatorVersion < 1 ||
+      challenge.generatorVersion > LATEST_GENERATOR_VERSION
+    ) {
+      challenge.status = 'rejected';
+      await this.challenges.save(challenge);
+      this.logger.error(
+        `minesweeper reject unknown_generator user=${userId} id=${challengeId} generator=${challenge.generatorVersion}`
+      );
+      throw new BadRequestException('Challenge was issued with an unknown generator');
+    }
+
+    const result = verifySolve(
+      challenge.seed,
+      moves,
+      {
+        width: challenge.width,
+        height: challenge.height,
+        mineCount: challenge.mineCount,
+      },
+      challenge.generatorVersion as GeneratorVersion
+    );
 
     if (!result.ok) {
       challenge.status = 'rejected';

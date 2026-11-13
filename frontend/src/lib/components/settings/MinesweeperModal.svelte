@@ -9,6 +9,7 @@
     toggleFlag,
     remainingMines,
     DEFAULT_CONFIG,
+    LATEST_GENERATOR_VERSION,
     type MinesweeperBoard,
     type MinesweeperMove,
   } from '$lib/minesweeper/game';
@@ -363,10 +364,24 @@
    */
   /** An unseeded, unranked board: no challenge, nothing to submit. */
   function startCasualBoard() {
-    installBoard(createBoard(DEFAULT_CONFIG, null));
+    installBoard(createBoard(DEFAULT_CONFIG, null, LATEST_GENERATOR_VERSION));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
+  }
+
+  /** Logs what the board's generator did; a fall-back to an unproven layout is a warning, never silent. */
+  function logGeneration() {
+    const report = board.generationReport;
+    if (!report) return;
+    if (report.fellBack) {
+      console.warn(
+        '[minesweeper] generator v2 found no layout it can clear; the board may need a guess',
+        report
+      );
+    } else {
+      console.debug('[minesweeper] board generated', report);
+    }
   }
 
   async function digWithSeedIfNeeded(x: number, y: number) {
@@ -387,7 +402,11 @@
           const t0 = performance.now();
           const challenge = await startMinesweeperChallenge();
           challengeRoundTripMs = Math.round(performance.now() - t0);
-          installBoard(createBoard(DEFAULT_CONFIG, challenge.seed));
+          // The server names the generator it will replay with; one that predates versions says nothing,
+          // and replays with the first.
+          installBoard(
+            createBoard(DEFAULT_CONFIG, challenge.seed, challenge.generatorVersion ?? 1)
+          );
           challengeId = challenge.challengeId;
           rankedMode = true;
           console.debug('[minesweeper] ranked challenge started', {
@@ -408,6 +427,7 @@
       // so the tap is acknowledged even when the challenge answered within the same frame.
       await nextPaint();
       dig(x, y);
+      logGeneration();
       startTimer();
       // Board size is unchanged — keep the player's framed pan/zoom.
       await tick();
@@ -830,7 +850,8 @@
     if (e.pointerId === panPointerId) {
       isPanning = false;
       panPointerId = null;
-      if (e.type === 'pointerup') {
+      // Inertia is a touch affordance: a mouse drag stops where the cursor does.
+      if (e.type === 'pointerup' && e.pointerType === 'touch') {
         const { vx, vy } = releaseVelocity(panSamples, performance.now());
         startGlide(vx, vy);
       }
@@ -858,7 +879,9 @@
 >
   <div
     class="relative min-h-0 flex-1 overflow-hidden"
-    style="--ms-anim: {animationFactor(settings.animations)};"
+    style="--ms-anim: {animationFactor(
+      settings.animations
+    )}; --default-transition-duration: calc(150ms * var(--ms-anim));"
   >
     <!-- The board takes the whole screen; every control floats over it. -->
     <div

@@ -1,7 +1,12 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
-import type { MinesweeperConfig, MinesweeperMove } from './game';
+import {
+  LATEST_GENERATOR_VERSION,
+  type GeneratorVersion,
+  type MinesweeperConfig,
+  type MinesweeperMove,
+} from './game';
 
 export interface MinesweeperChallengeResponse {
   challengeId: string;
@@ -10,6 +15,11 @@ export interface MinesweeperChallengeResponse {
   startedAt: string;
   expiresAt: string;
   serverNow: string;
+  /**
+   * The mine-placement generator the server will replay this challenge with. Absent from a server
+   * that predates versions, which replays with generator 1.
+   */
+  generatorVersion?: GeneratorVersion;
 }
 
 export interface MinesweeperSubmitResponse {
@@ -106,9 +116,15 @@ function minesweeperBase(): string {
   return base ? `${base}/api/minesweeper` : '/api/minesweeper';
 }
 
-/** Starts a ranked seeded challenge (server clock begins). */
+/**
+ * Starts a ranked seeded challenge (server clock begins). Names the newest generator this build can
+ * produce; the server answers with the one it will replay with, which may be older.
+ */
 export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeResponse> {
-  const res = await apiFetch(`${minesweeperBase()}/challenges`, { method: 'POST' });
+  const res = await apiFetch(`${minesweeperBase()}/challenges`, {
+    method: 'POST',
+    body: JSON.stringify({ maxGeneratorVersion: LATEST_GENERATOR_VERSION }),
+  });
   if (res.status === 403) throw new MinesweeperBannedError();
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to start challenge');

@@ -253,6 +253,20 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal when the floor passes generator versions - a challenge issued to a client that names no generator (2026-11-13)
+
+- **What.** `chooseGeneratorVersion` (`minesweeper.service.ts`) issues generator `1` to a
+  `POST /minesweeper/challenges` that sends no `maxGeneratorVersion`, and the engine keeps generator 1 alive
+  to replay every challenge issued with it ([minesweeper](frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13)).
+- **Who.** Native apps older than the first release carrying generator 2 (they embed their own engine); the
+  web app is always current. Such a build plays generator 1 boards, ranked, and keeps working.
+- **Why a shim and not a refusal.** A build that cannot make a generator-2 board would have every honest solve
+  rejected by a server that replayed it on one. Issuing what the client can make is the only answer that
+  breaks nobody.
+- **Removal.** When `minClientVersion` passes the first stable carrying generator 2, plus the two-hour life
+  of a challenge: make `maxGeneratorVersion` required, drop the `undefined -> 1` branch, and - once no row
+  with `"generatorVersion" = 1` is open - drop generator 1 from the engine (its fingerprint test goes with it).
+
 ### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
 
 **Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`

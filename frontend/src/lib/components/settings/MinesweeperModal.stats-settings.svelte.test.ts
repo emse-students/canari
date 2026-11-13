@@ -118,6 +118,8 @@ describe('long-press delay', () => {
       );
 
   it.each([
+    [150, 100, false],
+    [150, 200, true],
     [200, 250, true],
     [600, 250, false],
     [600, 650, true],
@@ -134,5 +136,71 @@ describe('long-press delay', () => {
     flushSync();
     const hasFlag = document.querySelector(`[data-cell="${target}"] svg`) !== null;
     expect(hasFlag).toBe(flagged);
+  });
+});
+
+describe('animation speed', () => {
+  /** The element carrying the speed factor: everything animated inside the modal inherits it. */
+  const speedRoot = () => document.querySelector<HTMLElement>('[style*="--ms-anim"]');
+
+  it.each([
+    ['normal', '1'],
+    ['fast', '0.5'],
+    ['off', '0'],
+  ])(
+    '%s sets the factor to %s and scales the buttons transitions with it',
+    async (speed, factor) => {
+      localStorage.setItem(
+        'canari.minesweeper.settings',
+        JSON.stringify({ doubleTapZoom: true, longPressMs: 350, haptics: false, animations: speed })
+      );
+      await open();
+      const style = speedRoot()?.getAttribute('style') ?? '';
+      expect(style).toContain(`--ms-anim: ${factor}`);
+      // Tailwind's transition-* utilities read this variable, so every button follows the setting.
+      expect(style).toContain('--default-transition-duration: calc(150ms * var(--ms-anim))');
+    }
+  );
+});
+
+describe('pan inertia', () => {
+  /** Drags a fast flick across the board with the given pointer type; true when a glide frame was scheduled. */
+  async function flickGlides(pointerType: 'touch' | 'mouse'): Promise<boolean> {
+    localStorage.setItem('canari.minesweeper.unranked', '1');
+    await open();
+    let t = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    // happy-dom has no pointer capture; the pan calls it on the viewport.
+    Element.prototype.setPointerCapture = () => {};
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const cell = document.querySelector<HTMLElement>('[data-cell="0"]')!;
+    const fire = (type: string, x: number) =>
+      cell.dispatchEvent(
+        new PointerEvent(type, {
+          pointerType,
+          pointerId: 1,
+          clientX: x,
+          clientY: 100,
+          bubbles: true,
+          button: 0,
+        })
+      );
+    fire('pointerdown', 100);
+    for (const x of [140, 200, 280]) {
+      t += 8;
+      fire('pointermove', x);
+    }
+    t += 4;
+    const before = raf.mock.calls.length;
+    fire('pointerup', 280);
+    return raf.mock.calls.length > before;
+  }
+
+  it('glides after a touch flick', async () => {
+    expect(await flickGlides('touch')).toBe(true);
+  });
+
+  it('does not glide after a mouse drag: the board stops where the cursor does', async () => {
+    expect(await flickGlides('mouse')).toBe(false);
   });
 });
