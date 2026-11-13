@@ -14,9 +14,11 @@ bound unless its files averaged more than 90 MB.
 
 **How it works.** Every upload now records its size in the index, and the bound sums the member's
 entries of the last 24 hours plus what is reserved and not yet registered, in the same synchronous
-run that reserves the new bytes (the mechanism of the `chat-reel` budget). A refusal is a 429 whose
+run that reserves the new bytes (the mechanism of the `chat-reel` budget). A refusal is a 422 whose
 body carries `code: member-upload-over-budget`; the client reads the code, fails the message for
-good and says so in the thread. Uploads stored before the change carry no size, so the bound is
+good and says so in the thread. It is a 422 and not a 429 because an app released before the code
+reads only the status: it retries an attachment answered 429 each minute with no count, and fails
+one answered 422 for good with its generic line. Uploads stored before the change carry no size, so the bound is
 complete one day after it ships.
 
 **Owed.** One week after the stable that carries it, count the `[MEMBER_UPLOAD_BUDGET]` WARN lines

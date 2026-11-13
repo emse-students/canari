@@ -64,9 +64,14 @@ export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
  */
 const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 * 1024 * 1024);
 /**
- * The `code` of the 429 that says a member reached the daily bound on everything they upload: an
+ * The `code` of the 422 that says a member reached the daily bound on everything they upload: an
  * ANSWER, like {@link CHAT_REEL_OVER_BUDGET}. `MEMBER_UPLOAD_OVER_BUDGET` in
  * `frontend/src/lib/utils/mediaErrors.ts` is the other copy of this string.
+ *
+ * WHY 422 AND NOT 429. An app released before this code existed reads only the status. It holds an
+ * attachment answered 429 on its retry ladder with no count, sending the file again each minute; a
+ * 422 it fails for good, with its generic "refused" line. So the status is the one every released
+ * app stops on, and the code is what a current app explains.
  */
 export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
 /**
@@ -1923,7 +1928,7 @@ export class MediaService {
   }
 
   /**
-   * The member's daily bound, for every upload of any class: refuses (429,
+   * The member's daily bound, for every upload of any class: refuses (422,
    * {@link MEMBER_UPLOAD_OVER_BUDGET}) the bytes that would take `ownerId` past
    * {@link MEMBER_DAILY_UPLOAD_BYTES} in a rolling 24 hours, and RESERVES them in the same
    * synchronous run, exactly as {@link reserveChatReelBudget} does and for the same reason.
@@ -1959,11 +1964,11 @@ export class MediaService {
       // The code is the discriminator, never the message (see the chat-reel refusal below).
       throw new HttpException(
         {
-          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
           message: 'Daily upload limit reached. Try again tomorrow.',
           code: MEMBER_UPLOAD_OVER_BUDGET,
         },
-        HttpStatus.TOO_MANY_REQUESTS
+        HttpStatus.UNPROCESSABLE_ENTITY
       );
     }
     reservations.set(ownerId, (reservations.get(ownerId) ?? 0) + incomingBytes);

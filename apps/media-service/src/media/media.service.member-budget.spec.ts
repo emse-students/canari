@@ -4,7 +4,8 @@
  *
  * Pinned, each because the opposite is a plausible mistake:
  *  - every upload records its size, whatever its class - the sum is read from the index;
- *  - the refusal is a 429 carrying a CODE, and one WARN line with the member's day in it;
+ *  - the refusal is a 422 carrying a CODE (the status every released app stops on), and one WARN
+ *    line with the member's day in it;
  *  - the bytes are RESERVED in the tick that checks them, and given back when the store refuses;
  *  - a refusal by the `chat-reel` budget leaves nothing reserved against the member's bound.
  */
@@ -86,14 +87,14 @@ describe("the member's daily upload bound (2 GB)", () => {
     expect(items[unclassified].size).toBe(200);
   });
 
-  it('refuses with a 429 and its code the upload that would cross it, and stores nothing', async () => {
+  it('refuses with a 422 and its code the upload that would cross it, and stores nothing', async () => {
     const { service, put } = serviceWith({ a: stored('member', 2 * GB - MB, 'ephemeral') });
 
     const refused = service.upload(Buffer.alloc(2 * MB), 'member', 'archive');
 
     await expect(refused).rejects.toBeInstanceOf(HttpException);
     await expect(refused).rejects.toMatchObject({
-      status: HttpStatus.TOO_MANY_REQUESTS,
+      status: HttpStatus.UNPROCESSABLE_ENTITY,
       response: { code: MEMBER_UPLOAD_OVER_BUDGET },
     });
     expect(put).toEqual([]);
