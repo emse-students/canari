@@ -976,7 +976,7 @@ RELEASES on close or destroy.** No component names a rung, so no nesting needs a
   `SidePanel`, `ComposerGifPanel` (full screen), `EventFormModal`, `PayerEmailPrompt`,
   `GuideOverlay`, `FullScreenViewer`, `ReelViewer`, `CameraOverlay`, `LiveViewer`, `LiveOverlay`,
   `MessageMobileActions`, `MessageEmojiPicker`, `ComposerEmojiPicker`, `PostActionsMenu`,
-  `GlassMenuButton`, `CommunityRailMenu`, `EcosystemLauncher`, `FormExportMenu`, `ReelActionRail`.
+  `GlassMenuButton`, `CommunityRailMenu`, `EcosystemLauncher`, `ReelActionRail`.
 - **The pinned gate tier.** The surfaces that stand between the person and the app take a FIXED
   place above the whole normal stack and under the toast and the call, not an open-order one:
   `BootGate` on top, then `PinModal`, `PinRecovery` (the recovery `ChangePinModal` in
