@@ -3504,3 +3504,13 @@ Section labels, badges, table headers and profile chips were set in capitals wit
 ## The profile header holds its name (2026-11-09)
 
 Owner, on a ~1100 px desktop: the display name wrapped onto two lines and the action row was drawn over the second one. `ProfileHeader` (`lib/components/profile/ProfileHeader.svelte`) is now the header of `/profile/[id]` and `/profile` both: two siblings of a wrapping flex container, the identity (avatar, name, chips; `min-w-0`, basis 26 rem) and the action row (`shrink-0`). When both do not fit on one line the actions drop below at every width, and nothing in the header is positioned absolutely - the own profile's corner settings icon, which reserved `sm:pr-12` on the name, is now a "Parametres" button of the row. The row is 44 px targets: "Suivre"/"Abonne" (primary only while the reader does not follow, then "Message" is the one yellow button), the bell as an icon of its level (`AccountBell iconOnly`, the same Picker menu), and a "..." (`ProfileOverflowMenu`) holding report and block (block stays red). Chips are `whitespace-nowrap` and the row of chips wraps. Below `sm` the identity stays the centred column of 2026-09-14. Guards: `ProfileHeader.svelte.test.ts` (structure), `ProfileOverflowMenu.svelte.test.ts`, the icon-only case of `AccountBell.svelte.test.ts`.
+
+## The PIN gate's banner takes the header's room (2026-11-13, roadmap D063)
+
+On a 390x844 screen a refused PIN draws a three-line banner plus the recover link above the keypad,
+and the `0` key fell below the fold of the scroll region (the unlock button is in the footer, outside
+it). While a returning person's refusal is shown on the keypad, `PinModal` no longer draws the app mark
+and the lead line (`data-pin-mark`, `data-pin-lead`; the title stays), so the banner's height is paid
+by what the person no longer needs, and the keypad keeps its place. Under 700 px of height the keys
+are 52 px (above the 44 px floor). Structure is pinned by `PinModal.exits.svelte.test.ts`; the drawn
+position is owed an iPhone 12 reading with a refused PIN.

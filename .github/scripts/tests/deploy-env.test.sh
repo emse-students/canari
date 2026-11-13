@@ -393,15 +393,17 @@ else
   pass "a complete production environment renders"
 
   got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
-  # WHAT PRODUCTION IS ACTUALLY SERVING, read off the running estate on 2026-09-24 and pinned here.
+  # THE LIST PRODUCTION SERVES, stated outright: its public names and the three WebView spellings,
+  # and no loopback origin (the list read off the running estate on 2026-09-24, less the dev-server
+  # pair, which is a client of the dev and local estates only).
   # This used to compare against the value `serve-prod.yml` computed inline, which was the right
   # check while the conversion to `render-env.sh` was still ahead; that shell is gone, and a
   # renderer compared to itself asserts nothing. Every entry is a Canari client, and dropping one
   # costs that client the gateway with no server-side error to show for it, so the list is worth
   # stating outright rather than deriving.
-  want="ALLOW_ORIGIN=https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  want="ALLOW_ORIGIN=https://canari-emse.fr,https://dev.canari-emse.fr,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
   if [ "$got" = "$want" ]; then
-    pass "ALLOW_ORIGIN is byte-identical to what production serves"
+    pass "ALLOW_ORIGIN is the exact list production serves"
   else
     fail "ALLOW_ORIGIN changed"
     printf '       production: %s\n       render: %s\n' "$want" "$got"
@@ -409,14 +411,14 @@ else
 
   # AND THE LEGACY APEX MUST SURVIVE THE SECRET MOVING, which is the case the assertion above
   # cannot see: it renders with BASE_URL still naming `canari-emse.fr`, so the deduplication in
-  # `compute_allow_origin` collapses both apexes into the seven-entry list production serves today
+  # `compute_allow_origin` collapses both apexes into the five-entry list production serves today
   # and the change is invisible. The moment BASE_URL names the canonical apex, dropping the legacy
   # one would shut the gateway to every browser still on the old host - with no server-side error.
   canon_out="$TMP/allow-origin-canonical.env"
   # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
   render prod "$canon_out" $(prod_env) BASE_URL=https://canari.emse.fr >"$TMP/canon.log" 2>&1 || true
   canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | sed -n 1p)"
-  canon_want="ALLOW_ORIGIN=https://canari.emse.fr,https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  canon_want="ALLOW_ORIGIN=https://canari.emse.fr,https://canari-emse.fr,https://dev.canari-emse.fr,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
   if [ "$canon_got" = "$canon_want" ]; then
     pass "with BASE_URL on the canonical apex, BOTH public names are allowed"
   else
@@ -488,6 +490,17 @@ if [ ! -f "$out" ]; then
   cat "$TMP/dev.log"
 else
   pass "dev renders from its own secrets"
+
+  # Dev's list is its own name, the dev-server pair and the WebView spellings: the pair is listed
+  # here and on no other deployed estate, and dev never accepts production's origin.
+  dev_got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
+  dev_want="ALLOW_ORIGIN=https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  if [ "$dev_got" = "$dev_want" ]; then
+    pass "dev's ALLOW_ORIGIN names its own origin and the dev-server pair, exactly"
+  else
+    fail "dev's ALLOW_ORIGIN changed"
+    printf '       want: %s\n       got:  %s\n' "$dev_want" "$dev_got"
+  fi
 
   leaked=""
   for value in prodjwt prodpw prodcid prodcsec p1 p2 p3 p4 p5 p6 p7; do
