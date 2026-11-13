@@ -34,6 +34,7 @@ AUTHENTIK_SECRET_KEY=blueprint-test-$(date +%s)-0123456789abcdef0123456789abcdef
 MIGALLERY_AVATAR_SIGNING_KEY=blueprint-test
 MICONNECT_CAS_CONSUMER_SECRET=blueprint-test
 MICONNECT_EDITOR_TOKEN=blueprint-test-editor-token-0123456789abcdef
+MICONNECT_READER_TOKEN=blueprint-test-reader-token-0123456789abcdef
 AUTHENTIK_PUBLISH=127.0.0.1:0
 EOF
 
@@ -51,8 +52,9 @@ wait_for_default_blueprints "$worker"
 
 if [ -n "${PREVIOUS_REF:-}" ]; then
   # The UPGRADE path, which is the one production takes: build the instance from the blueprints at
-  # PREVIOUS_REF (CI passes main), then apply these over it. A fresh instance alone never runs a
-  # rename entry, since no old name exists on it.
+  # PREVIOUS_REF (CI passes the tested commit's first parent: the main it sits on, never a newer
+  # one, whose blueprints may need what this tree's compose.yml does not give the worker), then apply
+  # these over it. A fresh instance alone never runs a rename entry, since no old name exists on it.
   mkdir -p "$work/previous/blueprints"
   # From the repository ROOT: run inside a subdirectory, `git archive` prefixes even a `ref:path`
   # tree with that subdirectory and extracts nothing.
@@ -110,6 +112,16 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
   exit 1
 fi
 echo "the profile editor reads and changes users, and nothing else"
+
+# THE HANDOFF READER, USED. What core-service's mint reads (a user by uuid, the three handoff
+# applications, their bindings, the default-access flag) and nothing else: no other application, no
+# write (infrastructure/authentik/test-handoff-reader.py).
+echo "handoff reader: calling the API with its token"
+if ! run_ak_shell "$worker" <"$here/test-handoff-reader.py" 2>&1 | tee >(cat >&2) | grep -x 'HANDOFF-READER-OK' >/dev/null; then
+  echo "::error::the handoff reader's token does not behave - read the assertion above"
+  exit 1
+fi
+echo "the handoff reader reads what the mint needs, and nothing else"
 
 # PKCE, REDEEMED. Canari's sign-in sends an S256 challenge and core-service redeems the code with its
 # verifier; what makes a captured code worthless is MiConnect REFUSING it without the verifier. Only

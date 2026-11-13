@@ -163,9 +163,7 @@
       >
         <!-- Poll header. -->
         <div class="mb-5 flex items-start gap-3">
-          <div
-            class="mt-0.5 shrink-0 rounded-xl bg-amber-500/10 p-2 text-amber-600 dark:text-amber-400"
-          >
+          <div class="bg-accent/10 text-accent-text mt-0.5 shrink-0 rounded-xl p-2">
             <ChartBar size={18} strokeWidth={2.5} />
           </div>
           <div class="min-w-0 flex-1">
@@ -174,28 +172,24 @@
             </h4>
             <div class="mt-1.5 flex flex-wrap items-center gap-2">
               {#if poll.multipleChoice}
-                <span
-                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
-                >
+                <span class="text-text-muted text-2xs font-bold opacity-80">
                   {m.post_poll_multiple_choice_label()}
                 </span>
                 {#if poll.maxSelections}
                   <!-- A cap the voter cannot see is a button that stops working for no reason. -->
-                  <span
-                    class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
-                  >
+                  <span class="text-text-muted text-2xs font-bold opacity-80">
                     {m.post_poll_max_selections_badge({ count: poll.maxSelections })}
                   </span>
                 {/if}
               {/if}
               {#if poll.endsAt}
-                <span class="text-2xs font-bold text-amber-600 opacity-90 dark:text-amber-400">
+                <span class="text-2xs text-accent-text font-bold opacity-90">
                   ⏱ {over ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
                 </span>
               {/if}
               {#if poll.anonymous}
                 <span
-                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
+                  class="text-text-muted text-2xs font-bold opacity-80"
                   title={m.post_poll_anonymous_final_hint()}
                 >
                   {m.post_poll_anonymous_badge()}
@@ -227,20 +221,21 @@
                 type="button"
                 class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 {showInfo
                   ? 'pr-14'
-                  : ''} text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
-                  ? 'border-amber-500 bg-amber-500/5'
-                  : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'} {refuses
+                  : ''} focus-visible:ring-accent/30 text-left transition-all duration-300 outline-none focus-visible:ring-4 {isSelected
+                  ? 'border-accent-icon bg-accent/5'
+                  : 'bg-cn-surface hover:border-accent/40 border-black/5 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'} {refuses
                   ? 'cursor-default opacity-70 hover:border-black/5 hover:bg-transparent dark:hover:border-white/5 dark:hover:bg-transparent'
                   : ''}"
                 onclick={() => onVoteClick(poll, option.id)}
                 aria-pressed={isSelected}
+                data-poll-option
                 aria-disabled={refuses}
               >
                 <!-- Visual vote progress bar in the background. -->
                 {#if totalVotes > 0}
                   <div
                     class="absolute inset-y-0 left-0 z-0 bg-black/5 transition-all duration-1000 ease-out dark:bg-white/5 {isSelected
-                      ? 'bg-amber-500/10 dark:bg-amber-500/15'
+                      ? 'bg-accent/10'
                       : ''}"
                     style="width: {percentage}%;"
                   ></div>
@@ -252,12 +247,12 @@
                     <!-- Selection icon (single vs multiple choice). -->
                     <div
                       class="shrink-0 transition-colors {isSelected
-                        ? 'text-amber-500'
-                        : 'text-text-muted group-hover:text-amber-500'}"
+                        ? 'text-accent-text'
+                        : 'text-text-muted group-hover:text-accent-text'}"
                     >
                       {#if poll.multipleChoice}
                         {#if isSelected}
-                          <SquareCheck size={20} strokeWidth={2.5} class="text-amber-500" />
+                          <SquareCheck size={20} strokeWidth={2.5} class="text-accent-text" />
                         {:else}
                           <Square
                             size={20}
@@ -266,7 +261,7 @@
                           />
                         {/if}
                       {:else if isSelected}
-                        <CircleCheck size={20} strokeWidth={2.5} class="text-amber-500" />
+                        <CircleCheck size={20} strokeWidth={2.5} class="text-accent-text" />
                       {:else}
                         <Circle
                           size={20}
@@ -313,7 +308,7 @@
                    on a phone, and never inside the vote button. -->
                 <button
                   type="button"
-                  class="text-text-muted hover:text-text-main ui-icon-button absolute top-1/2 right-1 -translate-y-1/2 rounded-full outline-none hover:bg-black/5 focus-visible:ring-4 focus-visible:ring-amber-500/30 dark:hover:bg-white/10"
+                  class="text-text-muted hover:text-text-main ui-icon-button focus-visible:ring-accent/30 absolute top-1/2 right-1 -translate-y-1/2 rounded-full outline-none hover:bg-black/5 focus-visible:ring-4 dark:hover:bg-white/10"
                   aria-label={m.post_poll_voters_info_label({ option: option.label })}
                   aria-haspopup="dialog"
                   data-testid="poll-voters-info"
@@ -357,7 +352,7 @@
             {/if}
             <button
               type="button"
-              class="text-cn-ink rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
+              class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 rounded-xl px-5 py-2.5 text-sm font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
               disabled={selectionIn(poll).length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >
@@ -382,7 +377,7 @@
     )}px;"
     role="tooltip"
   >
-    <p class="text-2xs mb-1 font-bold tracking-wide text-white/60 uppercase">
+    <p class="text-2xs mb-1 font-bold text-white/60">
       {m.post_poll_voters_label()}
     </p>
     {#if names}

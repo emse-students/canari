@@ -6,7 +6,7 @@
   import { onPostPublished } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
-  import { registerRetapRefresh } from '$lib/navigation/scrollToTop';
+  import { registerRetapRefresh, resetPageScroll } from '$lib/navigation/scrollToTop';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -58,8 +58,19 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import FeedSuggestions from '$lib/components/suggestions/FeedSuggestions.svelte';
+  import {
+    FEED_CAROUSEL_AFTER_POSTS,
+    cardOpen,
+    ensureFeedSuggestions,
+    feedSuggestionCards,
+    feedSuggestionPlacement,
+    suggestionsFollowingCount,
+  } from '$lib/follows/suggestions.svelte';
+  import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
+  import BirthdayFeedCard from '$lib/components/posts/BirthdayFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
@@ -219,6 +230,8 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
+  /** The last next-page read failed (a 503, the network): a retry is offered, the list is not ended. */
+  let loadMoreFailed = $state(false);
 
   /**
    * THE FIRST SCREEN MOUNTS FIRST, THE REST A FRAME AT A TIME (`progressiveCount`). Mounting every
@@ -468,6 +481,25 @@
    */
   const activeFeed = $derived(data.feedParams.feed);
 
+  // FOLLOW SUGGESTIONS (engagement WP-6): read once per reader, and only once the feed that draws
+  // them is open - Pour toi alone (owner, 2026-11-10: Campus and Associations are pure lists).
+  // The SUGGESTED POSTS are in Pour toi's own rows, merged by the server (`feedSuggested`).
+  $effect(() => {
+    if (activeFeed === 'foryou') ensureFeedSuggestions();
+  });
+
+  /** Where this feed draws its suggestions for `postCount` posts: one place, or none. */
+  function suggestionPlacement(postCount: number) {
+    const followingCount = suggestionsFollowingCount();
+    if (followingCount === null) return null;
+    return feedSuggestionPlacement({
+      feed: activeFeed,
+      postCount,
+      followingCount,
+      openCards: feedSuggestionCards().filter(cardOpen).length,
+    });
+  }
+
   /**
    * PAINT THE TAB FROM WHAT IT LAST HELD, THEN REPLACE IT WITH THE ANSWER.
    *
@@ -504,6 +536,7 @@
     const painted = untrack(() => postsOverride);
     initialPostsResolved = stale;
     hasMore = cached?.hasMore ?? true;
+    loadMoreFailed = false;
     fromStore = false;
     storedRefreshFailed = false;
     firstPage = 'pending';
@@ -604,11 +637,13 @@
    * This used to re-parse `feed`, `promo` and `formation` off the URL - a third copy of `load`'s
    * parsing, complete with its own `parseInt` and its own default - so page 2 could be fetched
    * from a different feed than page 1 whenever the two disagreed. `load` publishes what it
-   * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
+   * resolved; the only thing that changes between pages is where the next one starts. The caller passes the tab's
    * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(params: FeedCacheParams, offset: number) {
-    return { limit: FEED_PAGE_SIZE, offset, ...params };
+  function buildListOptions(params: FeedCacheParams, page: ListPage & { limit: number }) {
+    // A ranked tab (Pour toi) is paged by its snapshot, after the last place served, in the shape
+    // its first page was served in (`rankedFeeds.ts`); a chronological one by the count on screen.
+    return { ...page, ...params };
   }
 
   /**
@@ -620,18 +655,24 @@
    */
   function navigateFeed(feed: PostFeed) {
     settings.setPreferredPostFeed(feed);
-    showFeed(feed);
+    void showFeed(feed);
   }
 
   /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
-  function showFeed(feed: PostFeed) {
+  async function showFeed(feed: PostFeed) {
+    // ANOTHER TAB IS ANOTHER LIST, SO IT OPENS AT ITS TOP (owner, 2026-11-10): `reset: false` below
+    // keeps the page's own state, and with it the old tab's scroll offset. Reset before the swap (no
+    // frame of the new list drawn mid-way down) and after it (the load may have moved the box).
+    const changed = feed !== activeFeed;
+    if (changed) resetPageScroll();
     const u = new URL(page.url.href);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
     // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
     u.searchParams.delete('kind');
-    void goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
+    await goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
+    if (changed) resetPageScroll();
   }
 
   async function refreshPosts() {
@@ -641,6 +682,7 @@
     loading = true;
     errorMessage = '';
     hasMore = true;
+    loadMoreFailed = false;
     const outcome = await refreshFirstPage({
       params: data.feedParams,
       // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
@@ -683,20 +725,26 @@
     const issuedFor = tabLoad;
     const params = data.feedParams;
     loadingMore = true;
+    loadMoreFailed = false;
     try {
-      const more = await listPosts(buildListOptions(params, currentPosts.length));
+      // `readNextPage`: a ranked tab whose ranking expired is ranked anew, and a row already on
+      // screen is never appended twice.
+      const next = await readNextPage({
+        shown: currentPosts,
+        limit: FEED_PAGE_SIZE,
+        read: (page) => listPosts(buildListOptions(params, page)),
+      });
       if (issuedFor !== tabLoad) {
         Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
         return;
       }
-      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
-      // Deduplicate in case new posts were inserted between page fetches.
-      const existingIds = new Set(currentPosts.map((p) => p.id));
-      const newPosts = more.filter((p) => !existingIds.has(p.id));
-      postsOverride = [...currentPosts, ...newPosts];
+      if (next.ended) hasMore = false;
+      postsOverride = next.rows;
       writeFeedCache(feedCacheKey(params), { posts: postsOverride, hasMore });
-    } catch {
-      // silent - user can scroll back up and retry
+    } catch (err) {
+      // Not the end of the list: the line under the posts says so, and offers the retry.
+      console.warn('[POSTS] the next page could not be read', err);
+      if (issuedFor === tabLoad) loadMoreFailed = true;
     } finally {
       if (issuedFor === tabLoad) loadingMore = false;
     }
@@ -712,7 +760,7 @@
     const target = feedToShowAfterPublish(activeFeed, landing);
     if (target) {
       Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
-      showFeed(target);
+      void showFeed(target);
       void loadScheduled();
       return;
     }
@@ -927,7 +975,7 @@
       value={searchQuery}
       oninput={onSearchInput}
       placeholder={m.posts_search_placeholder()}
-      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
+      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/20 w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:ring-2"
     />
     <!--
       ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
@@ -960,7 +1008,7 @@
   <div
     class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 -mt-6 pt-2 pb-3 md:mt-0'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {
@@ -985,6 +1033,10 @@
         openLive = live;
       }}
     />
+  {/if}
+  <!-- THE BIRTHDAY CARD: quiet, dismissed once for good, only while the own birthday is empty. -->
+  {#if userId && !searchQuery}
+    <BirthdayFeedCard />
   {/if}
   {#if livesShown && openLive}
     {#key openLive.id}
@@ -1132,6 +1184,7 @@
       </div>
 
       {#snippet feedList(resolvedPosts: PostEntity[])}
+        {@const placement = suggestionPlacement(resolvedPosts.length)}
         <!-- A REFRESH DOES NOT BLANK A FEED THAT IS ALREADY ON SCREEN. This was `{#if loading}`,
              so a pull-to-refresh at post #30 collapsed the list to four skeletons, shrank the
              document and lost the reader's place - for posts still held in `postsOverride`. Same
@@ -1139,6 +1192,9 @@
         {#if loading && resolvedPosts.length === 0}
           {@render skeletonCards()}
         {:else if resolvedPosts.length === 0}
+          {#if placement === 'banner'}
+            <FeedSuggestions placement="banner" />
+          {/if}
           <div
             class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
           >
@@ -1148,13 +1204,13 @@
               <p class="text-text-muted text-sm">
                 {m.posts_no_results_asso()}
               </p>
-            {:else if activeFeed === 'followed'}
+            {:else if activeFeed === 'foryou'}
               <p class="text-text-muted text-sm">
-                {m.posts_empty_followed()}
+                {m.posts_empty_foryou()}
                 <button
                   type="button"
                   class="tap-target font-medium underline"
-                  onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
+                  onclick={() => navigateFeed('all')}>{m.posts_tab_campus()}</button
                 >.
               </p>
             {:else}
@@ -1163,10 +1219,20 @@
               </p>
             {/if}
           </div>
+          {#if placement === 'page'}
+            <FeedSuggestions placement="page" />
+          {/if}
         {:else}
-          {#each resolvedPosts.slice(0, mounted.count) as post (post.id)}
-            <div class="relative" use:markPostSeen={post}>
-              {#if isNew(post)}
+          {#if placement === 'banner'}
+            <FeedSuggestions placement="banner" />
+          {/if}
+          {#each resolvedPosts.slice(0, mounted.count) as post, i (post.id)}
+            <div
+              class="relative"
+              use:markPostSeen={post}
+              data-suggested-post={post.feedSuggested ? post.id : undefined}
+            >
+              {#if !post.feedSuggested && isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
               {/if}
               {@render guardedCard(post, () => {
@@ -1179,6 +1245,9 @@
                 storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
               })}
             </div>
+            {#if placement === 'inline' && i === FEED_CAROUSEL_AFTER_POSTS - 1}
+              <FeedSuggestions placement="inline" />
+            {/if}
           {/each}
 
           <!-- Infinite-scroll sentinel - only once every card is mounted: under the third card it
@@ -1190,6 +1259,16 @@
           {#if loadingMore}
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
+            </div>
+          {:else if loadMoreFailed}
+            <div class="flex items-center justify-center gap-2 py-4" data-load-more-failed>
+              <p class="text-text-muted text-xs">{m.posts_load_more_error()}</p>
+              <Button
+                variant="secondary"
+                size="compact"
+                onclick={() => void loadMorePosts(resolvedPosts)}
+                >{m.posts_load_more_retry()}</Button
+              >
             </div>
           {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { publicSectionHref } from '$lib/associations/publicSections';
   import {
     votePoll,
@@ -57,16 +58,17 @@
   import CommentsPreview from './CommentsPreview.svelte';
   import PostCommentsSheet from './PostCommentsSheet.svelte';
   import PostActionsMenu from './PostActionsMenu.svelte';
-  import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import RepublishDialog from './RepublishDialog.svelte';
-  import { Pin, CalendarCheck } from '@lucide/svelte';
+  import { CalendarCheck } from '@lucide/svelte';
+  import { isReplay } from '$lib/live/replayTimeline';
+  import { replaysAvailable } from '$lib/live/replayAvailability';
+  import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * Props for the PostCard component.
@@ -219,6 +221,14 @@
   const canManage = $derived(localPost.canManage === true);
   // The pencil is the author's alone (2026-11-02). An absent `canEdit` is no pencil, never the bin's
   // `canManage`: a fallback there would give a moderator back the power the server refuses.
+  /**
+   * A LIVE REPLAY (owner, 2026-11-09) is edited by its caption alone, as a reel, but is neither reposted nor republished: it is the
+   * live's own three days, not a post another feed carries (the server refuses it with a typed
+   * `POST_REPLAY_NOT_REPOSTABLE`; the menu never offers what it refuses). And with the switch off a
+   * replay left in a cache is not drawn at all.
+   */
+  const replay = $derived(isReplay(localPost));
+  const replayHidden = $derived(replay && !replaysAvailable(serverLiveReplaysMode()));
   const canEdit = $derived(localPost.canEdit === true);
   const canPin = $derived(localPost.canPin === true);
   const canReport = $derived(localPost.canReport === true);
@@ -634,27 +644,26 @@
      space, its picture or video, its poll's question. Not the action bar nor the comments
      (`data-no-double-tap`), and never a link, button, poll option or field inside it. Off while the
      post is being edited and for a reader who is not signed in. -->
-<div
-  class="relative mb-6"
-  use:doubleTapLike={{
-    onDoubleTap: likeOnDoubleTap,
-    enabled: !editingPost && currentUserId.trim() !== '',
-  }}
->
-  <DoubleTapHeart bind:this={hearts} />
-  {#if localPost.pinned}
-    <PostCornerBadge label={m.post_pinned()}>
-      {#snippet icon()}<Pin size={10} strokeWidth={3} />{/snippet}
-    </PostCornerBadge>
-  {/if}
-  <!-- THE CARD STANDS OFF THE PAGE A LITTLE MORE (user, 2026-10-01, Mi 9T): `shadow-sm` at 5 %
-       black on `--cn-bg` barely drew an edge in light mode, and in dark mode a `#121212` card on
-       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light; dark mode has
-       no shadow to cast onto black, so its edge goes from 10 % to 15 %. -->
-  <Card
-    class="group/card bg-cn-surface border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/15 dark:shadow-none"
+{#if !replayHidden}
+  <div
+    class="relative mb-3"
+    use:doubleTapLike={{
+      onDoubleTap: likeOnDoubleTap,
+      enabled: !editingPost && currentUserId.trim() !== '',
+    }}
   >
-    <!--
+    <DoubleTapHeart bind:this={hearts} />
+    <!-- THE CARD STANDS OFF THE PAGE A LITTLE MORE (user, 2026-10-01, Mi 9T): `shadow-sm` at 5 %
+       black on `--cn-bg` barely drew an edge in light mode, and in dark mode a `#121212` card on
+       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light. DARK HAS NO
+       HAIRLINE ANY MORE (design audit vs Facebook, 2026-11-09): the 15 % edge of 2026-10-01 sat ON
+       TOP of an 18-point lightness step (`#121212` on true black) that already separates the two,
+       and Facebook's dark feed separates by lightness alone. The border stays as a TRANSPARENT one so
+       the box does not change size. -->
+    <Card
+      class="group/card bg-cn-card border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"
+    >
+      <!--
       THE MENU SHARES THE HEADER'S LINE; FIVE BUTTONS USED TO FLOAT OVER IT.
       This was `<div class="relative">` with the action row absolutely positioned `top-3 right-3` on
       top of `PostHeader`, whose name column is `flex-1` and therefore ran the full width of the card
@@ -668,167 +677,170 @@
       count is what was wrong, so `PostActionsMenu` collapses them into one overflow button and the
       name gets the rest - at every width, for every reader, whether they may do one thing or five.
     -->
-    <div class="flex items-start">
-      <PostHeader post={localPost} />
-      <PostActionsMenu
-        pinSpaces={localPost.pinSpaces ?? []}
-        {canManage}
-        {canEdit}
-        {canPin}
-        {canReport}
-        {canUnmaskAnonymous}
-        isLoggedIn={!!currentUserId}
-        onTogglePin={togglePin}
-        onStartEdit={startEditPost}
-        onDelete={handleDeletePost}
-        onReport={() => (reportingPost = true)}
-        onUnmaskAnonymous={unmaskAnonymous}
-        postId={localPost.id}
-        canRepublish={localPost.canRepublish === true}
-        canProposeRepublication={localPost.canProposeRepublication === true}
-        {unrepublishAs}
-        onRepublish={() => (republishMode = 'republish')}
-        onProposeRepublication={() => (republishMode = 'propose')}
-        onUnrepublish={unrepublish}
-        canRequestRepublication={localPost.canRequestRepublication === true}
-        pendingRequests={waitingRequests}
-        onRequestRepublication={() => (republishMode = 'request')}
-        onWithdrawRequest={withdrawRequest}
-        canRepost={localPost.canRepost === true}
-        repostedByMe={localPost.repostedByMe === true}
-        onRepostChange={() => void reloadAfterRepublication()}
-        repostsAllowed={localPost.repostConsent?.effective}
-        onSetRepostConsent={(allow) => void setRepostConsent(allow)}
-        reposterCount={localPost.repostCount ?? 0}
-        onShowReposters={openReposters}
-      />
-    </div>
-
-    {#if RepostersSheet}
-      <RepostersSheet
-        open={repostersOpen}
-        postId={localPost.id}
-        onClose={() => (repostersOpen = false)}
-        onRemoved={() => void reloadAfterRepublication()}
-      />
-    {/if}
-
-    {#if localPost.linkedCalendarEvent}
-      {@const ev = localPost.linkedCalendarEvent}
-      <div class="px-5 pb-3">
-        <a
-          href="{publicSectionHref(
-            '/associations',
-            ev.associationSlug,
-            'calendar'
-          )}?fromPost={encodeURIComponent(localPost.id)}"
-          class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
-        >
-          <CalendarCheck size={14} strokeWidth={2.5} />
-          <span>
-            {m.post_event_label()}
-            {ev.title}
-            ·
-            {new Date(ev.startsAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
-        </a>
-      </div>
-    {/if}
-
-    {#if editingPost}
-      <div class="px-4 pb-4 sm:px-5">
-        <EditPostForm
-          post={localPost}
-          {authToken}
-          onSaved={onPostSaved}
-          onCancel={() => (editingPost = false)}
+      <div class="flex items-start">
+        <PostHeader post={localPost} />
+        <PostActionsMenu
+          pinSpaces={localPost.pinSpaces ?? []}
+          {canManage}
+          {canEdit}
+          {canPin}
+          {canReport}
+          {canUnmaskAnonymous}
+          isLoggedIn={!!currentUserId}
+          onTogglePin={togglePin}
+          onStartEdit={startEditPost}
+          onDelete={handleDeletePost}
+          onReport={() => (reportingPost = true)}
+          onUnmaskAnonymous={unmaskAnonymous}
+          postId={localPost.id}
+          canRepublish={localPost.canRepublish === true && !replay}
+          canProposeRepublication={localPost.canProposeRepublication === true && !replay}
+          {unrepublishAs}
+          onRepublish={() => (republishMode = 'republish')}
+          onProposeRepublication={() => (republishMode = 'propose')}
+          onUnrepublish={unrepublish}
+          canRequestRepublication={localPost.canRequestRepublication === true && !replay}
+          pendingRequests={waitingRequests}
+          onRequestRepublication={() => (republishMode = 'request')}
+          onWithdrawRequest={withdrawRequest}
+          canRepost={localPost.canRepost === true && !replay}
+          repostedByMe={localPost.repostedByMe === true}
+          onRepostChange={() => void reloadAfterRepublication()}
+          repostsAllowed={replay ? undefined : localPost.repostConsent?.effective}
+          onSetRepostConsent={(allow) => void setRepostConsent(allow)}
+          reposterCount={localPost.repostCount ?? 0}
+          onShowReposters={openReposters}
         />
       </div>
-    {:else}
-      <PostContent post={localPost} {authToken} likerId={currentUserId.trim() || undefined} />
-    {/if}
 
-    <!--
+      {#if RepostersSheet}
+        <RepostersSheet
+          open={repostersOpen}
+          postId={localPost.id}
+          onClose={() => (repostersOpen = false)}
+          onRemoved={() => void reloadAfterRepublication()}
+        />
+      {/if}
+
+      {#if localPost.linkedCalendarEvent}
+        {@const ev = localPost.linkedCalendarEvent}
+        <div class="px-4 pb-3">
+          <a
+            href="{publicSectionHref(
+              '/associations',
+              ev.associationSlug,
+              'calendar'
+            )}?fromPost={encodeURIComponent(localPost.id)}"
+            class="border-accent/25 bg-accent/10 text-accent-text hover:bg-accent/20 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
+          >
+            <CalendarCheck size={14} strokeWidth={2.5} />
+            <span>
+              {m.post_event_label()}
+              {ev.title}
+              ·
+              {new Date(ev.startsAt).toLocaleString(intlLocale(), {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          </a>
+        </div>
+      {/if}
+
+      {#if editingPost}
+        <div class="px-4 pb-4">
+          <EditPostForm
+            post={localPost}
+            {authToken}
+            onSaved={onPostSaved}
+            onCancel={() => (editingPost = false)}
+          />
+        </div>
+      {:else}
+        <PostContent post={localPost} {authToken} likerId={currentUserId.trim() || undefined} />
+      {/if}
+
+      <!--
       THE TALLY SITS ON THE ACTION BAR, NOT UNDER IT. `ReactionsDisplay` used to be the next sibling
       and drew a second bordered row for it - 65 px of bar plus 49 px of tally on A1, where Facebook
       spends 44 px on both together. Passing it as a snippet keeps its five props here, where the
       post's reaction state already lives, while `PostActions` decides only where it sits.
     -->
-    <div data-no-double-tap>
-      <PostActions
-        {userReaction}
-        {showReactionPicker}
-        reactionList={REACTIONS}
-        commentCount={commentCountOf(localPost) || undefined}
-        onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
-        onReactionSelect={handleReaction}
-        onCommentClick={canSeeComments
-          ? () => openCommentsSheet({ write: comments.length === 0 })
-          : undefined}
-      >
-        {#snippet reactionSummary()}
-          <ReactionsDisplay
-            {reactionCounts}
-            reactions={localPost.reactions ?? {}}
-            showReactors={canSeeComments}
-            {userReaction}
-            reactionList={REACTIONS}
-            onReactionClick={handleReaction}
-          />
-        {/snippet}
-      </PostActions>
-    </div>
+      <div data-no-double-tap>
+        <PostActions
+          {userReaction}
+          {showReactionPicker}
+          reactionList={REACTIONS}
+          commentCount={commentCountOf(localPost) || undefined}
+          onQuickReact={() => void handleReaction(userReaction ?? DOUBLE_TAP_REACTION)}
+          onOpenReactionPicker={() => (showReactionPicker = true)}
+          onCloseReactionPicker={() => (showReactionPicker = false)}
+          onReactionSelect={handleReaction}
+          onCommentClick={canSeeComments
+            ? () => openCommentsSheet({ write: comments.length === 0 })
+            : undefined}
+        >
+          {#snippet reactionSummary()}
+            <ReactionsDisplay
+              {reactionCounts}
+              reactions={localPost.reactions ?? {}}
+              showReactors={canSeeComments}
+              {userReaction}
+              reactionList={REACTIONS}
+              onReactionClick={handleReaction}
+            />
+          {/snippet}
+        </PostActions>
+      </div>
 
-    <!--
+      <!--
       A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
       clock is sound - and stating that here is the point: the renderer no longer decides for callers
       whose deadline came from a different clock (see PostPolls.isOver).
     -->
-    <PostPolls
-      polls={localPost.polls}
-      {selectedOptions}
-      onVoteClick={handleVoteClick}
-      onSubmitVote={submitVote}
-      isOver={pollIsOver}
-      canVote={localPost.canVote !== false}
-    />
+      <PostPolls
+        polls={localPost.polls}
+        {selectedOptions}
+        onVoteClick={handleVoteClick}
+        onSubmitVote={submitVote}
+        isOver={pollIsOver}
+        canVote={localPost.canVote !== false}
+      />
 
-    {#if pendingAttachedFormIds.length > 0}
-      <div class="space-y-3 px-5 py-3" aria-hidden="true">
-        {#each pendingAttachedFormIds as formId (formId)}
-          <div
-            class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
-            style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
-          ></div>
-        {/each}
-      </div>
-    {/if}
+      {#if pendingAttachedFormIds.length > 0}
+        <div class="space-y-3 px-4 py-3" aria-hidden="true">
+          {#each pendingAttachedFormIds as formId (formId)}
+            <div
+              class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
+              style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
+            ></div>
+          {/each}
+        </div>
+      {/if}
 
-    <PostForms {formInfos} />
+      <PostForms {formInfos} />
 
-    {#if canSeeComments}
-      <div data-no-double-tap>
-        <CommentsPreview
-          {comments}
-          commentCount={commentCountOf(localPost)}
-          {currentUserId}
-          {authToken}
-          pendingCommentIds={thread.pending}
-          onLike={(id) => void thread.like(id)}
-          onOpen={openCommentsSheet}
-        />
-      </div>
-    {/if}
+      {#if canSeeComments}
+        <div data-no-double-tap>
+          <CommentsPreview
+            {comments}
+            commentCount={commentCountOf(localPost)}
+            {currentUserId}
+            {authToken}
+            pendingCommentIds={thread.pending}
+            onLike={(id) => void thread.like(id)}
+            onOpen={openCommentsSheet}
+          />
+        </div>
+      {/if}
 
-    <!-- Inline card notifications. -->
-    <PostFeedback {errorMessage} {actionMessage} />
-  </Card>
-</div>
+      <!-- Inline card notifications. -->
+      <PostFeedback {errorMessage} {actionMessage} />
+    </Card>
+  </div>
+{/if}
 
 <!--
   THE THREAD (`PostCommentsSheet`): the shared bottom drawer on a phone, a dialog above, the box pinned above the

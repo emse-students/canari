@@ -31,6 +31,11 @@ Each nightly run produces one timestamped archive (`canari-backup-YYYYMMDD-HHMMS
 
 Plus, at 04:00, `backup-objects.sh` (`canari-prod_garage_data` + `canari-prod_garage_meta` +
 `canari-prod_media_meta` into restic, its `backup` step reading as root for `node_key`, 14d/8w/6m, `restic check`, rsync mirror to the offsite server).
+Those three volumes are an ALLOWLIST: **`canari-prod_live_segments` (live segments and replays) is
+never backed up**, by owner decision D2 of 2026-11-09 - a replay promised gone after 3 days must not
+survive 6 months in a snapshot - and `.github/scripts/tests/backup-sources.test.sh` runs the script
+against a stub `docker` and fails if it mounts anything else
+([live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)).
 The object storage backend migrated from MinIO to Garage on 2026-08-14 (MinIO is no longer
 maintained upstream) - see [docker](docker.md). Snapshots taken before that date are in the old
 `infrastructure_minio_data` format; see the comment at the top of `restore.sh`.

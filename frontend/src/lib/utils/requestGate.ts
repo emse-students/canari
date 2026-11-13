@@ -13,15 +13,64 @@
  * page of history, a feed is. A cap below the connection budget is what keeps one of those from
  * queueing behind a photo.
  *
- * ABORT MEANS "NEVER START", NOT "STOP". A task still WAITING for a slot is dropped and never runs,
- * which is the whole win when a reader scrolls past thirty rows: those thirty never ask. A task
- * that has already started runs to completion on purpose - the fetch behind it is shared with every
- * other holder of the same object through `mediaBlobCache`'s in-flight map, so cancelling it would
- * cancel somebody else's.
+ * ABORT MEANS "NEVER START" HERE, AND "STOP" IS THE TASK'S OWN. A task still WAITING for a slot is
+ * dropped and never runs, which is the whole win when a reader scrolls past thirty rows: those thirty
+ * never ask. A task that has already started is the caller's to stop: the gate only frees its slot
+ * when it ends. `mediaBlobCache`'s shared loads and `mediaHeadStore`'s heads hand their `fetch` the
+ * same signal, so a load NOBODY holds any more is stopped on the wire too - the count of its holders
+ * says nobody else's request is cancelled with it (lead decision, 2026-11-11).
  */
+/**
+ * Which queue a task waits in. A `background` task is work fetched AHEAD of the reader (the reel
+ * viewer's next pages, `reels/reelAhead.ts`): it takes a slot only when no foreground task is
+ * waiting, and never the LAST free slot - so a request for what is on screen always finds one at
+ * once, however many pages are being fetched ahead.
+ */
+export type GateLane = 'foreground' | 'background';
+
+/**
+ * A task's lane that can be RAISED while the task waits - the cure for a priority inversion.
+ *
+ * Work fetched ahead waits in the background lane; when the reader reaches that page, its player
+ * JOINS that same work (a head, a picture) rather than asking again - and would then wait behind
+ * every foreground request queued after it, for bytes it is now watching. {@link promote} moves a
+ * task still QUEUED into the foreground lane, at its tail; a task already running is unaffected (it
+ * holds its slot already). Shared by the load and every joiner: the first foreground joiner raises
+ * it, for good.
+ */
+export class GateRank {
+  #lane: GateLane;
+  readonly #watchers = new Set<() => void>();
+
+  constructor(lane: GateLane) {
+    this.#lane = lane;
+  }
+
+  /** The lane a task of this rank waits in now. */
+  get lane(): GateLane {
+    return this.#lane;
+  }
+
+  /** Moves the task to the foreground lane - once; idempotent. */
+  promote(): void {
+    if (this.#lane === 'foreground') return;
+    this.#lane = 'foreground';
+    // A snapshot: a watcher may unsubscribe itself (or another) while being told, and one that
+    // subscribes while this loop runs is not told of this promotion.
+    for (const watcher of Array.from(this.#watchers)) watcher();
+  }
+
+  /** Told when the rank is promoted; returns the unsubscribe. The gate's own use. */
+  watch(onPromote: () => void): () => void {
+    this.#watchers.add(onPromote);
+    return () => this.#watchers.delete(onPromote);
+  }
+}
+
 export class RequestGate {
   private active = 0;
   private readonly waiting: (() => void)[] = [];
+  private readonly waitingBackground: (() => void)[] = [];
 
   /** @param limit How many tasks may run at once. */
   constructor(private readonly limit: number) {}
@@ -31,53 +80,107 @@ export class RequestGate {
     return this.active;
   }
 
-  /** How many are queued behind them. */
+  /** How many are queued behind them, in both lanes. */
   get queued(): number {
-    return this.waiting.length;
+    return this.waiting.length + this.waitingBackground.length;
   }
 
   /**
    * Runs `task` once a slot is free, and rejects with `signal.reason` if `signal` aborts first.
    *
+   * A slot is COUNTED at the moment it is handed over, so a task arriving between a release and
+   * the woken waiter's resumption cannot take it from under that waiter.
+   *
+   * @param lane `background` waits behind every foreground task and leaves one slot free
+   *   ({@link GateLane}); a {@link GateRank} may be promoted to the foreground while it waits.
    * @throws whatever `task` throws, or the abort reason when the wait was abandoned.
    */
-  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  async run<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+    lane: GateLane | GateRank = 'foreground'
+  ): Promise<T> {
     if (signal?.aborted) throw signal.reason;
+    const rank = typeof lane === 'string' ? null : lane;
+    const startLane = rank ? rank.lane : (lane as GateLane);
+    let queue = startLane === 'background' ? this.waitingBackground : this.waiting;
 
-    if (this.active >= this.limit) {
+    if (this.admits(startLane)) {
+      this.active++;
+    } else {
       await new Promise<void>((resolve, reject) => {
+        let unwatch = () => {};
         const release = () => {
           signal?.removeEventListener('abort', onAbort);
+          unwatch();
           resolve();
         };
         const onAbort = () => {
           // Leave the queue rather than taking a slot and doing nothing with it.
-          const i = this.waiting.indexOf(release);
-          if (i >= 0) this.waiting.splice(i, 1);
+          const i = queue.indexOf(release);
+          if (i >= 0) queue.splice(i, 1);
+          unwatch();
           reject(signal?.reason);
         };
         signal?.addEventListener('abort', onAbort, { once: true });
-        this.waiting.push(release);
+        queue.push(release);
+        if (rank && queue === this.waitingBackground) {
+          unwatch = rank.watch(() => {
+            const i = this.waitingBackground.indexOf(release);
+            if (i < 0) return;
+            this.waitingBackground.splice(i, 1);
+            queue = this.waiting;
+            this.waiting.push(release);
+            console.debug(
+              '[request-gate] a queued background task was joined by the foreground - moved to its lane'
+            );
+            this.next();
+          });
+        }
       });
-      // The signal may have fired between the slot being handed over and this line.
+      // The slot was counted when it was handed over; the signal may have fired since.
       if (signal?.aborted) {
-        this.next();
+        this.leave();
         throw signal.reason;
       }
     }
 
-    this.active++;
     try {
       return await task();
     } finally {
-      this.active--;
-      this.next();
+      this.leave();
     }
   }
 
+  /** Whether a task of `lane` may start now, with nobody of its rank queued ahead of it. */
+  private admits(lane: GateLane): boolean {
+    if (lane === 'foreground') return this.active < this.limit && this.waiting.length === 0;
+    return (
+      this.waiting.length === 0 &&
+      this.waitingBackground.length === 0 &&
+      this.active < this.limit - 1
+    );
+  }
+
+  private leave(): void {
+    this.active--;
+    this.next();
+  }
+
+  /** Hands free slots on: every foreground waiter first, then background ones, one slot kept free. */
   private next(): void {
-    if (this.active >= this.limit) return;
-    this.waiting.shift()?.();
+    while (this.active < this.limit && this.waiting.length > 0) {
+      this.active++;
+      this.waiting.shift()!();
+    }
+    while (
+      this.waiting.length === 0 &&
+      this.active < this.limit - 1 &&
+      this.waitingBackground.length > 0
+    ) {
+      this.active++;
+      this.waitingBackground.shift()!();
+    }
   }
 }
 

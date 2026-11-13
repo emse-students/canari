@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { authentikRequest } from '../platform/authentik-api';
 import { isDevEstate } from '../platform/deploy-build';
 import {
   ProfileEditNotConfiguredError,
@@ -12,8 +13,6 @@ export interface MiconnectUserRecord {
   name: string;
   attributes: Record<string, unknown>;
 }
-
-const TIMEOUT_MS = 10_000;
 
 /**
  * Reads and writes a person at the source of truth: authentik, through the service account
@@ -87,28 +86,17 @@ export class MiconnectEditorClient {
     token: string,
     body?: unknown
   ): Promise<T> {
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-    } catch (err) {
-      this.logger.error(`[PROFILE_EDIT] authentik ${method} did not answer: ${String(err)}`);
+    const answer = await authentikRequest<T>(method, url, token, body);
+    if (answer.kind === 'transport') {
+      this.logger.error(`[PROFILE_EDIT] authentik ${method} did not answer: ${answer.error}`);
       throw new ProfileEditUpstreamError(null, 'no answer');
     }
-    if (!res.ok) {
+    if (answer.kind === 'status') {
       this.logger.error(
-        `[PROFILE_EDIT] authentik ${method} ${new URL(url).pathname} answered ${res.status}`
+        `[PROFILE_EDIT] authentik ${method} ${new URL(url).pathname} answered ${answer.status}`
       );
-      throw new ProfileEditUpstreamError(res.status, `status ${res.status}`);
+      throw new ProfileEditUpstreamError(answer.status, `status ${answer.status}`);
     }
-    return (await res.json()) as T;
+    return answer.body;
   }
 }

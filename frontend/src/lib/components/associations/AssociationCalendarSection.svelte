@@ -373,7 +373,7 @@
 <div class="space-y-5">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.asso_tab_calendar()}</h2>
       <p class="text-text-muted text-sm">
         {m.asso_calendar_subtitle()}
         {#if canEdit}
@@ -510,7 +510,7 @@
 
   {#if canEdit && !agenda.loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-amber-warn text-sm font-bold tracking-wide uppercase">
+      <h3 class="text-amber-warn-text text-sm font-bold">
         {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
       </h3>
       {#each sortedPendingEvents as ev (ev.id)}
@@ -521,7 +521,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
+                class="text-amber-warn-text bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold"
               >
                 {m.asso_calendar_pending_badge()}
               </span>
@@ -564,7 +564,7 @@
 
   {#if canEdit && !agenda.loading && sortedRejectedEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-red-err text-sm font-bold tracking-wide uppercase">
+      <h3 class="text-red-err text-sm font-bold">
         {m.asso_calendar_rejected_section_title({ count: sortedRejectedEvents.length })}
       </h3>
       {#each sortedRejectedEvents as ev (ev.id)}
@@ -574,9 +574,7 @@
           <div class="min-w-0 flex-1">
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
-              <span
-                class="text-red-err bg-red-err/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
-              >
+              <span class="text-red-err bg-red-err/20 text-2xs rounded-full px-2 py-0.5 font-bold">
                 {m.asso_calendar_rejected_badge()}
               </span>
             </p>

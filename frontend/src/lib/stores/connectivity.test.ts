@@ -7,6 +7,7 @@ import {
   connectivity,
 } from './connectivity.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('connectivity store', () => {
   beforeEach(() => {
@@ -185,6 +186,35 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.isOffline).toBe(false);
     stall();
     expect(connectivity.isOffline).toBe(true);
+  });
+
+  it('a deadline that expired while other answers arrived is a slow link, never an unreachable one', async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const deadline = () => new RequestDeadlineError('read', 20000, 'GET', '/a', 0);
+      // Production 1.6.10 on 250 kbps: reads queue behind transfers and expire, yet answers keep coming.
+      for (let i = 0; i < 4; i++) {
+        const waiting = connectivity.trackRequest();
+        await vi.advanceTimersByTimeAsync(100);
+        connectivity.trackRequest().answered();
+        await vi.advanceTimersByTimeAsync(100);
+        waiting.failed(deadline());
+      }
+      expect(connectivity.isOffline).toBe(false);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('slow, not unreachable'))).toBe(
+        true
+      );
+      // A real transport failure is still evidence, whatever answered before it.
+      const waiting = connectivity.trackRequest();
+      await vi.advanceTimersByTimeAsync(100);
+      connectivity.trackRequest().answered();
+      waiting.failed(new TransportFailureError(new TypeError('Failed to fetch')));
+      expect(connectivity.isOffline).toBe(true);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Read on Android 1.5.3 (2026-10-31): "(stall 3/2)", "(stall 4/2)" - a count past its own limit.

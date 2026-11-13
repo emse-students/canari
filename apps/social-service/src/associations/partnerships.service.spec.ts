@@ -33,7 +33,11 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
       query: jest.fn(() => Promise.resolve([])),
     };
     manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
+    // A members-only save re-reads the association FOR SHARE and writes through the same manager.
+    manager.findOne = jest.fn((_entity: unknown, opts: unknown) => assoRepo.findOne(opts));
+    manager.save = jest.fn((_entity: unknown, row: unknown) => cardRepo.save(row));
     const cardRepo: any = {
+      manager,
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
       // The listings (`activeCardsVisibleTo`): answered by `find`, so each test states its rows in
@@ -361,6 +365,28 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
         membersOnly: true,
       } as any);
       expect(cardRepo.save).toHaveBeenCalled();
+    });
+
+    it('judges a members-only save under the association row FOR SHARE, in one transaction', async () => {
+      const { service, assoRepo, manager } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      await service.create('asso1', {
+        title: 'X',
+        claimMode: 'code_pool',
+        membersOnly: true,
+      } as any);
+      expect(manager.transaction).toHaveBeenCalledTimes(1);
+      expect(manager.findOne).toHaveBeenCalledWith(
+        Association,
+        expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+      );
+      expect(manager.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('CONTROL: a card that is not members-only takes no lock and no transaction', async () => {
+      const { service, manager } = makeService();
+      await service.create('asso1', { title: 'X', claimMode: 'code_pool' } as any);
+      expect(manager.transaction).not.toHaveBeenCalled();
     });
 
     it('CONTROL: the editor repeats membersOnly on every save, and renaming a card already ticked is not asked', async () => {

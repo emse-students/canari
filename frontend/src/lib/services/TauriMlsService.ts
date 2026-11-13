@@ -368,12 +368,12 @@ export class TauriMlsService extends BaseMlsService {
     if (!this._visibilityHandler && typeof document !== 'undefined') {
       this._visibilityHandler = () => {
         if (document.visibilityState === 'visible' && !this.ws) {
-          this.disconnectCallback?.();
+          this.requestReconnectUnlessPaused('visible again');
         }
       };
       this._onlineHandler = () => {
         if (!this.ws) {
-          this.disconnectCallback?.();
+          this.requestReconnectUnlessPaused('network back');
         }
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
@@ -405,9 +405,8 @@ export class TauriMlsService extends BaseMlsService {
       // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
       // coming back; the activity's own foreground event can. Same decision, honest trigger.
       this._foregroundUnsubscribe = onAppForegroundChange((foreground) => {
-        if (foreground && !this.ws) {
+        if (foreground && !this.ws && this.requestReconnectUnlessPaused('app foreground')) {
           console.log('[WS] app back in the foreground with no socket - reconnecting');
-          this.disconnectCallback?.();
         }
       });
     }
@@ -592,6 +591,34 @@ export class TauriMlsService extends BaseMlsService {
         // Best-effort - ignore if the socket is already closing
       });
     }
+  }
+
+  /**
+   * Asks the session to reconnect, UNLESS the socket is paused - then the resume sequence owns the
+   * next open and this trigger stands down.
+   *
+   * THE ORDER IS THE DEFECT THIS REPLACES (1.6.8 logs, 2026-11-09: 176 resumes, each printing
+   * `app back in the foreground with no socket - reconnecting` and then TWO `Reconnect request
+   * refused - the connection is paused`). The foreground detector, the visibility handler and the
+   * resume sequence all fire at the same edge, but the session lifts its pause only after the
+   * sequence has reloaded the MLS state and merged the shade (~0.5 s) - lifting it earlier would
+   * open a socket on a stale engine. So a trigger that ran before the lift could only be refused,
+   * and said so. The pause is the fact; reading it HERE, where the request is made, replaces three
+   * requests that were certain to be refused with the one that opens the socket.
+   *
+   * A `pagehide` pauses the socket too, with no sequence behind it: `pageshow` is the trigger for
+   * that, and it does not read the pause.
+   *
+   * @param trigger What noticed the missing socket, for the one debug line a stand-down leaves.
+   * @returns Whether the request was made.
+   */
+  private requestReconnectUnlessPaused(trigger: string): boolean {
+    if (this.isSocketPaused()) {
+      console.debug(`[WS] ${trigger} with the socket paused - the resume sequence reconnects`);
+      return false;
+    }
+    this.disconnectCallback?.();
+    return true;
   }
 
   /** Removes the page-lifecycle listeners this class registered, then the base teardown. */

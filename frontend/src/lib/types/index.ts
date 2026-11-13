@@ -238,6 +238,11 @@ export interface Conversation {
    */
   serverReadWatermarks?: ReadWatermarks;
   /**
+   * The upgrade's one-time LOCAL read point (`ConversationMeta.localReadSeed`): read by the unread
+   * count only (`countingReadPoint`), never a mark, never sent. Written by the store migration only.
+   */
+  localReadSeed?: number | null;
+  /**
    * Where the shared history of this conversation begins - below it nobody claims and nobody
    * answers. Monotone, merged as `max`, absent meaning zero. Nothing moves it today; see
    * `$lib/utils/chat/historyWindow`.

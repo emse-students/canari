@@ -14,8 +14,10 @@
  * name already RUNNING is joined, not doubled: two cards mounting at once (the large card giving way
  * to the carousel) share one fetch. A joiner whose own signal is live, left holding a load the first
  * caller aborted, starts its own. The card drops the entries of the lives no longer listed
- * ({@link forgetLivePostersExcept}), so this holds one image per live on air at most. Never logs the
- * key or the bytes, lengths only.
+ * ({@link forgetLivePostersExcept}). The covers of live replays reuse this loader under their live's
+ * id (docs/wiki/live-replays.md), and nothing lists those, so the memo is also BOUNDED
+ * ({@link LIVE_POSTER_MEMO_MAX}, least recently used first out): a feed scrolled through many replays
+ * holds at most that many images. Never logs the key or the bytes, lengths only.
  */
 import { fetchLivePoster, isLiveRefusal } from './api';
 import { LivePosterOpenError, openLivePoster } from './livePosterCrypto';
@@ -44,8 +46,22 @@ export interface LivePosterViewDeps {
 
 const DEFAULT_DEPS: LivePosterViewDeps = { fetch: fetchLivePoster, open: openLivePoster };
 
-/** The newest opened poster of each live, by live id: its name and its image. */
+/** The newest opened poster of each live, by live id: its name and its image - in use order. */
 const opened = new Map<string, { name: string; image: Blob }>();
+
+/** The most images {@link opened} holds: past it, the least recently used goes first. */
+export const LIVE_POSTER_MEMO_MAX = 24;
+
+/** Keeps `image` as the live's newest, most recently used poster, and drops the oldest past the bound. */
+function remember(liveId: string, entry: { name: string; image: Blob }): void {
+  opened.delete(liveId);
+  opened.set(liveId, entry);
+  while (opened.size > LIVE_POSTER_MEMO_MAX) {
+    const oldest = opened.keys().next().value as string;
+    opened.delete(oldest);
+    console.debug(`[LIVE] card poster ${oldest}: forgotten (memo full)`);
+  }
+}
 
 /** The load running for each live, by live id: the name it fetches and its outcome. */
 const running = new Map<string, { name: string; load: Promise<LivePosterLoad> }>();
@@ -79,6 +95,7 @@ export async function loadLivePoster(
   const kept = opened.get(live.id);
   if (kept?.name === poster.name) {
     console.debug(`[LIVE] card poster ${live.id}: ${poster.name} already opened - no fetch`);
+    remember(live.id, kept);
     return { kind: 'shown', image: kept.image };
   }
   const current = running.get(live.id);
@@ -112,7 +129,7 @@ async function fetchAndOpen(
     const plain = await deps.open(posterKey, liveId, sealed);
     console.debug(`[LIVE] card poster ${liveId}: opened, ${plain.byteLength} bytes`);
     const image = new Blob([plain], { type: 'image/jpeg' });
-    opened.set(liveId, { name: poster.name, image });
+    remember(liveId, { name: poster.name, image });
     return { kind: 'shown', image };
   } catch (e) {
     if (signal?.aborted) {

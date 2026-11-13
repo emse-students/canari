@@ -248,8 +248,12 @@ export class MinesweeperService {
    * One page of verified clears (best time per user), `offset` places down, plus the `total` number
    * of ranked players so a client knows when the last page is reached. Display names from the
    * shared `users` table.
+   *
+   * `promo` narrows the board to one entry year (owner, 2026-11-10: a ranking per promo). The promo
+   * is `users.promo` - the cursus' entry year, the one column populated in production - so only an
+   * account WITH a cursus can appear in a promo ranking; ranks are then counted inside that promo.
    */
-  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string, offset = 0) {
+  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string, offset = 0, promo?: number) {
     const capped = Math.min(Math.max(limit, 1), 50);
     const start = Math.max(Math.trunc(offset) || 0, 0);
     const rows: Array<{
@@ -269,8 +273,10 @@ export class MinesweeperService {
       FROM minesweeper_scores s
       WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
         AND ${sameSideAsSql(viewerId, 's."userId"')}
+        ${promo === undefined ? '' : 'AND EXISTS (SELECT 1 FROM users pu WHERE pu.id = s."userId" AND pu.promo = $1)'}
       ORDER BY s."userId", s."durationMs" ASC, s."verifiedAt" ASC
-      `
+      `,
+      promo === undefined ? [] : [promo]
     );
 
     rows.sort(
@@ -301,6 +307,37 @@ export class MinesweeperService {
         moveCount: r.moveCount,
         verifiedAt: new Date(r.verifiedAt).toISOString(),
       })),
+    };
+  }
+
+  /**
+   * The promos that have a ranking: each entry year with its number of ranked players (newest
+   * first), and `mine`, the caller's own promo (null without a cursus) so the page opens on it.
+   * Banned players and the other side of the review cohort are left out, as on the board itself.
+   */
+  async promos(viewerId: string) {
+    const rows: Array<{ promo: number | string; players: number | string }> =
+      await this.scores.query(
+        `
+      SELECT u.promo AS promo, COUNT(DISTINCT s."userId")::int AS players
+      FROM minesweeper_scores s
+      JOIN users u ON u.id = s."userId"
+      WHERE u.promo IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+        AND ${sameSideAsSql(viewerId, 's."userId"')}
+      GROUP BY u.promo
+      ORDER BY u.promo DESC
+      `
+      );
+    const own: Array<{ promo: number | string | null }> = await this.scores.query(
+      `SELECT promo FROM users WHERE id = $1 LIMIT 1`,
+      [viewerId]
+    );
+    const mine = own[0]?.promo == null ? null : Number(own[0].promo);
+    this.logger.log(`minesweeper promos listed user=${viewerId} count=${rows.length}`);
+    return {
+      promos: rows.map((r) => ({ promo: Number(r.promo), players: Number(r.players) })),
+      mine,
     };
   }
 

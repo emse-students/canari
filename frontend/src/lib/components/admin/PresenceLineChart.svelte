@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { SvelteSet } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { buildBuckets, type CensusHistory } from '$lib/admin/presenceMonitor';
   import {
     TOTAL_DASH,
@@ -93,7 +93,7 @@
     select(Math.min(buckets.length - 1, Math.floor(ratio * buckets.length)));
   }
 
-  const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  const locale = $derived(intlLocale());
   const longWindow = $derived(history.windowSecs > 24 * 60 * 60);
   /** A point's time: the clock for a day, the date and the clock beyond it. */
   function stamp(t: number): string {

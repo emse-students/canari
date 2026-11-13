@@ -54,6 +54,11 @@ export const FORM_FILE_NEEDS_ACCOUNT = 'FORM_FILE_NEEDS_ACCOUNT';
 export const FORM_GRID_DUPLICATE_LABEL = 'FORM_GRID_DUPLICATE_LABEL';
 export const FORM_GRID_TOO_MANY_ROWS = 'FORM_GRID_TOO_MANY_ROWS';
 export const FORM_TOO_MANY_QUESTIONS = 'FORM_TOO_MANY_QUESTIONS';
+/**
+ * A price grid splits a MULTIPLE-choice question into several groups (`answer-options.ts`): the
+ * price would depend on the groups' order. `itemId` names the question.
+ */
+export const FORM_GRID_MULTIPLE_CHOICE_SPLIT = 'FORM_GRID_MULTIPLE_CHOICE_SPLIT';
 /** A public form asks a guest for a name or an e-mail the answer does not carry (`guest-identity.ts`). */
 export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
 /** An answer carries a guest name or e-mail the form does not ask - or comes from a member. */

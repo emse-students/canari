@@ -396,7 +396,7 @@
                   aria-invalid={isDuplicate('rows', row.label) || !row.label.trim()}
                   placeholder={rowPlaceholder}
                   maxlength={100}
-                  class="text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow min-h-10 w-0 min-w-0 flex-1 resize-none overflow-hidden border-0 border-b bg-transparent px-1 py-2.5 text-sm font-semibold break-words outline-none max-sm:px-0 {isDuplicate(
+                  class="text-text-main placeholder:text-text-muted/60 focus:border-accent-icon min-h-10 w-0 min-w-0 flex-1 resize-none overflow-hidden border-0 border-b bg-transparent px-1 py-2.5 text-sm font-semibold break-words outline-none max-sm:px-0 {isDuplicate(
                     'rows',
                     row.label
                   )
@@ -450,14 +450,14 @@
           rows="4"
           bind:value={pasteText}
           placeholder={m.form_pgrid_paste_placeholder()}
-          class="border-cn-border text-text-main focus:border-cn-yellow bg-cn-surface resize-y rounded-lg border px-3 py-2.5 text-sm outline-none"
+          class="border-cn-border text-text-main focus:border-accent-icon bg-cn-surface resize-y rounded-lg border px-3 py-2.5 text-sm outline-none"
         ></textarea>
       </label>
       <div class="flex flex-col gap-2 sm:pt-6">
         <button
           type="button"
           onclick={() => pasteAs('rows')}
-          class="bg-cn-yellow text-cn-ink min-h-11 rounded-lg px-4 text-sm font-bold"
+          class="bg-accent text-on-accent min-h-11 rounded-lg px-4 text-sm font-bold"
           >{m.form_pgrid_paste_as_rows()}</button
         >
         <button

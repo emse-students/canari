@@ -241,6 +241,14 @@ describe('fitEventText', () => {
     expect(clampLines(fitEventText(Math.floor(128 / 3), 12).clampCss)).toBe(2);
   });
 
+  it('wraps at word boundaries, never in the middle of a word ("improvisatio/n")', () => {
+    const { clampCss } = fitEventText(42, 12);
+    expect(clampCss).not.toContain('word-break:break-word');
+    expect(clampCss).not.toContain('anywhere');
+    expect(clampCss).toContain('overflow-wrap:break-word');
+    expect(clampCss).toContain('hyphens:auto');
+  });
+
   it('never asks for more height than the slot has', () => {
     // The whole point of the clamp: whatever it returns must physically fit, at either floor.
     for (const minFont of [9, 12]) {

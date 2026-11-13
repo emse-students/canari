@@ -1,3 +1,3 @@
-version: 1.6.8
+version: 1.6.11
 
-Nouveau : une cloche pour suivre de près une association ou une personne, des événements « Campus » dans l'agenda, des formulaires en brouillon enregistrés au fil de la frappe, une carte des associations par campus. Corrigé : la déconnexion, l'écran qui s'éteignait pendant un appel vidéo, la page d'un lieu à réserver qui débordait, et plusieurs rognages. Les salons déjà ouverts se rouvrent plus vite.
+Les vidéos en paysage se regardent en plein écran : le téléphone tourne avec elles. Vidéos et messages vocaux jouent à un volume proche. On peut modifier la légende d'une photo ou d'une vidéo envoyée et mentionner quelqu'un par son prénom ou son nom. Les touches de volume déclenchent l'appareil photo. Sur une connexion lente, l'app s'ouvre plus vite. Corrigé : des conversations en double avec la même personne, un appel qui raccrochait en perdant le son.

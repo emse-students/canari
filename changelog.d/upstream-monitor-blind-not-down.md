@@ -1,3 +1,0 @@
-### Fixed - the upstream monitor reported three names "down" for three days while they were up
-
-Cloudflare challenged every reading from GitHub's runners (`403`, `cf-mitigated: challenge`). The monitor no longer probes those three names from a runner (one declared list, with the reason), keeps probing every other name, reports a refused reading as its own blindness rather than an outage, and a push to `main` reports a monitor that stopped reading; the loss of outside watching on those names is filed as a gap ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md#when-the-monitor-is-refused)).

@@ -1,8 +1,11 @@
 # Birthdays on profiles
 
-Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 2026-11-09. The
-queue entry and the readings still owed are in
-[backlog.d/birthdays-on-profiles.md](backlog.d/birthdays-on-profiles.md); the GDPR row is C26 of the
+Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 2026-11-09. Shipped in
+`1.6.9` (#3180). Read on `1.6.9-alpha.1` (2026-11-09, dev): the prompt card PASSED on both phones
+(shown once, "Ajouter mon anniversaire" opening the section, gone after "Passer" and a cold
+restart); the settings PARTIAL (the "counts from tomorrow" note and no ring on the day of the save
+seen, the locked state not, since a same-day correction is accepted by design). The readings still
+owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else); the GDPR row is C26 of the
 [register](compliance/register-of-processing.md), whose public face is `/legal/privacy`.
 
 ## The four decisions
@@ -93,6 +96,13 @@ and the ids of the members the viewer may see celebrating; the client holds it i
 visibility only: a tab left open in the foreground over midnight keeps yesterday's ring until it is
 next focused or shown.
 
+**Asked once per Paris day (2026-11-10).** The held answer carries the server's date; a focus or
+visibility refresh asks nothing while that date is still the Paris date (a read per focus was nine in
+five minutes on a slow link). A new day, another account, a failed ask or the reader saving or
+removing their own birthday (`invalidate`, then an immediate ask) reads again. The client only
+compares the held date with the Paris calendar day, as a key; "today" for the ring stays the server's.
+A member who enters a birthday later the same day is drawn from the next day.
+
 ## The day, and 29 February
 
 The day is the Paris calendar date read from the DATABASE, `(now() AT TIME ZONE 'Europe/Paris')::date`
@@ -134,16 +144,29 @@ notice is for followers (decision 4).
 ## The entry point and the prompt card
 
 - **Profile > Anniversaire** (`profileSections.ts`, section `birthday`; `ProfileBirthdaySection.svelte`):
-  day and month selects, the three visibility choices with their consequence, save and remove. It
-  says before the first save that a date counts from tomorrow and holds 30 days, and while the window
-  is open it locks the date and names the day it opens. The `nobody` choice says the truth: the date
-  is hidden and nobody is told, but the ring still shows on the day to everyone (decision 3).
-- **The prompt card** `prompt-birthday` (`guides/birthdayPrompt.ts`, built on the profile-photo
-  prompt's engine): ONE card on the feed for an account with no birthday, seen once per ACCOUNT
-  (`help_seen`). **Why a card**: the field is empty for every existing account, and the ring and the
-  notice exist only for a member who entered a date - a settings row nobody opens would leave the
-  feature invisible. **Why no reminder**, unlike the photo: a birthday is personal data the member may
-  simply not want to give, and asking twice is pressure; the profile section stays the way back.
+  **minimal since 2026-11-10 (owner)**: one day + month row, one "Visible par" choice (a `Select`, no
+  per-choice explanation), one effect sentence (a date counts from tomorrow and holds 30 days; while
+  the window is open, the day it opens instead), save and remove - **plus ONE always-visible
+  disclosure sentence**: on the day the festive ring is shown to everyone and followers are told
+  according to the choice (decision 3), so the privacy statement does not depend on which option is
+  open. The register (C26) and the policy already say both, so they did not change.
+- **The prompt card** `prompt-birthday` (`components/posts/BirthdayFeedCard.svelte`): since 2026-11-10 a
+  SMALL QUIET CARD at the top of the feed - "🎂 Votre anniversaire ?" (the app says "vous"), an "Ajouter" action, a cross - for
+  an account with no birthday. It replaced the self-opening modal of 1.6.9 (too insistent; its button
+  overflowed a phone). **Dismissed means gone**: the cross and "Ajouter" both record the help in the
+  account's `help_seen` (`seenHelps`, the profile-photo prompt's store), so it never returns on any
+  device - durable state, no timer. It shows only once `seenHelps.ready` and
+  `ownBirthday.hasBirthday === false`. Since 2026-11-11 both are drawn from the device at a cold
+  start and revalidated behind (`hasBirthday` is kept per account as ONE boolean about the account
+  itself, never the date - `ACCOUNT_KEY.ownBirthdayKnown`), so the card no longer waits for the
+  session refresh; today's celebrants stay in memory only. The help id `prompt-birthday` is kept (the server lists it) but
+  no guide declares it any more. **Why a card**: the field is empty for every existing account, and the
+  ring and the notice exist only for a member who entered a date. **Why no reminder**: a birthday is
+  personal data the member may not want to give; the profile section stays the way back.
+- **On a profile** (`ProfileSummaryLine.svelte`): ONE muted line under the name,
+  "ICM · Saint-Etienne · 🎂 18 juillet" (formations, posts, campus, the birthday when the visibility
+  rule lets the reader see it - no pill, no "Anniversaire le" sentence), plus the "birthday today"
+  line on the day itself.
 
 ## Erasure
 
@@ -165,6 +188,6 @@ account; the coverage spec asserts both columns. The bell rows naming the member
 - Frontend: `birthdayDate.test.ts`, `ProfileBirthdaySection.svelte.test.ts` (the note before the
   first save, the date locked while the window is open, a refusal from another device),
   `Avatar.birthday.svelte.test.ts` (the ring on initials and photo,
-  nobody else's, gone at sign-out, never invented offline), `birthdayPrompt.test.ts`,
+  nobody else's, gone at sign-out, never invented offline), `BirthdayFeedCard.svelte.test.ts`,
   `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, and the native and category
   contract tests.

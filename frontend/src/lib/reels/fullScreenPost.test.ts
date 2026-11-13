@@ -10,6 +10,8 @@ import {
   fullScreenMediaKindOf,
   fullScreenMediaListOf,
   fullScreenMediaOf,
+  isLandscapeVideo,
+  visibleMediaOf,
   fullScreenPageOf,
 } from './fullScreenPost';
 
@@ -144,5 +146,50 @@ describe('the media of a carousel page', () => {
     expect(
       fullScreenMediaKindOf({ type: 'file', mediaId: 'f', mimeType: 'x/y' } as PostMediaRef)
     ).toBeNull();
+  });
+});
+
+describe('fullScreenPageOf - a live replay', () => {
+  it('is a replay page, with no media of its own', () => {
+    expect(fullScreenPageOf(post({ kind: 'replay', media: [] }))).toBe('replay');
+  });
+  it('is a replay page whatever else the row carries', () => {
+    expect(fullScreenPageOf(post({ kind: 'replay', media: [video, video, picture] }))).toBe(
+      'replay'
+    );
+  });
+});
+
+describe('isLandscapeVideo and visibleMediaOf (the pager turns over a landscape video only)', () => {
+  const ref = (type: 'video' | 'image', width?: number, height?: number) =>
+    ({
+      type,
+      mediaId: 'm',
+      key: 'k',
+      iv: 'i',
+      mimeType: `${type}/x`,
+      size: 1,
+      width,
+      height,
+    }) as PostMediaRef;
+
+  it('is true for a video wider than tall only', () => {
+    expect(isLandscapeVideo(ref('video', 1920, 1080))).toBe(true);
+    expect(isLandscapeVideo(ref('video', 1080, 1920))).toBe(false);
+    expect(isLandscapeVideo(ref('video', 1000, 1000))).toBe(false);
+  });
+
+  it('is false for a photo, an unmeasured video and nothing', () => {
+    expect(isLandscapeVideo(ref('image', 1920, 1080))).toBe(false);
+    expect(isLandscapeVideo(ref('video'))).toBe(false);
+    expect(isLandscapeVideo(undefined)).toBe(false);
+  });
+
+  it('picks the visible media of a carousel, clamped to its ends', () => {
+    const media = [ref('image', 1, 1), ref('video', 16, 9)];
+    expect(visibleMediaOf({ media }, 1)).toBe(media[1]);
+    expect(visibleMediaOf({ media }, 9)).toBe(media[1]);
+    expect(visibleMediaOf({ media }, -1)).toBe(media[0]);
+    expect(visibleMediaOf(undefined, 0)).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { m } from '$lib/paraglide/messages';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+  import { emojiPictureSrc, type EmojiStyle } from '$lib/utils/emojiStyle';
   import { FIRST_SCREEN_EMOJI_COUNT } from '$lib/utils/emojiPreload';
   import {
     EMOJI_CATEGORIES,
@@ -21,7 +21,8 @@
   } from './emojiPickerShared';
 
   /**
-   * THE EMOJI PICKER'S BODY, DRAWN BY US, IN NOTO'S PICTURES (2026-09-25).
+   * THE EMOJI PICKER'S BODY, DRAWN BY US (2026-09-25) - in Noto's pictures under the "Canari" emoji
+   * setting, in the platform's own glyphs under "system" (the default since 2026-11-09).
    *
    * It replaced `emoji-picker-element`, which draws with a font inside its shadow root - so the
    * picker kept showing Apple's glyphs on WebKit after every message had moved to Noto's pictures.
@@ -35,9 +36,14 @@
   interface Props {
     /** Called with the picked emoji (skin tone applied) and whether Shift was held. */
     onPick: (emoji: string, shiftKey: boolean) => void;
+    /**
+     * Overrides the user's emoji setting - ONLY where the pick becomes a picture others see (the
+     * CanaReels sticker, burnt into the video as Noto's SVG), so the grid shows what will be placed.
+     */
+    emojiStyle?: EmojiStyle;
   }
 
-  let { onPick }: Props = $props();
+  let { onPick, emojiStyle }: Props = $props();
 
   const CATEGORY_LABELS: Record<EmojiCategory, () => string> = {
     'smileys-emotion': m.emoji_picker_category_smileys_emotion,
@@ -126,6 +132,7 @@
 
 {#snippet emojiButton(entry: EmojiEntry, eager: boolean)}
   {@const emoji = withSkinTone(entry, tone)}
+  {@const src = emojiPictureSrc(emoji, emojiStyle) ?? emojiPictureSrc(entry.emoji, emojiStyle)}
   <button
     type="button"
     onclick={(event) => pick(entry, event)}
@@ -138,16 +145,20 @@
          EAGER and decoded SYNCHRONOUSLY (lazy + async decode left the cells blank on the first
          frames); the alt text is transparent so a picture still on its way never shows the emoji
          as a glyph. Everything below the first screen stays lazy. -->
-    <img
-      class="size-7 text-transparent"
-      width="28"
-      height="28"
-      src={emojiSvgSrc(emoji) ?? emojiSvgSrc(entry.emoji)}
-      alt={emoji}
-      loading={eager ? 'eager' : 'lazy'}
-      decoding={eager ? 'sync' : 'async'}
-      draggable="false"
-    />
+    {#if src}
+      <img
+        class="size-7 text-transparent"
+        width="28"
+        height="28"
+        {src}
+        alt={emoji}
+        loading={eager ? 'eager' : 'lazy'}
+        decoding={eager ? 'sync' : 'async'}
+        draggable="false"
+      />
+    {:else}
+      <span class="text-xl leading-none" aria-hidden="true">{emoji}</span>
+    {/if}
   </button>
 {/snippet}
 
@@ -158,7 +169,7 @@
       bind:value={query}
       placeholder={m.emoji_picker_search_label()}
       aria-label={m.emoji_picker_search_label()}
-      class="bg-cn-bg text-text-main placeholder:text-text-muted min-w-0 flex-1 rounded-2xl border border-black/5 px-4 py-2 text-sm outline-none focus:border-amber-500/60 dark:border-white/10"
+      class="bg-cn-bg text-text-main placeholder:text-text-muted focus:border-accent/60 min-w-0 flex-1 rounded-2xl border border-black/5 px-4 py-2 text-sm outline-none dark:border-white/10"
     />
     <button
       type="button"
@@ -170,6 +181,7 @@
     >
       <EmojiText
         text={tone === 0 ? TONE_SWATCH : `${TONE_SWATCH}${String.fromCodePoint(0x1f3fa + tone)}`}
+        {emojiStyle}
       />
     </button>
   </div>
@@ -188,7 +200,7 @@
           onclick={() => chooseTone(option)}
           class="flex size-9 items-center justify-center rounded-xl text-xl hover:bg-black/5 dark:hover:bg-white/10 {option ===
           tone
-            ? 'bg-amber-500/15'
+            ? 'bg-accent/15'
             : ''}"
           aria-label={SKIN_TONE_LABELS[option]()}
           title={SKIN_TONE_LABELS[option]()}
@@ -197,6 +209,7 @@
             text={option === 0
               ? TONE_SWATCH
               : `${TONE_SWATCH}${String.fromCodePoint(0x1f3fa + option)}`}
+            {emojiStyle}
           />
         </button>
       {/each}
@@ -210,6 +223,7 @@
       aria-label={m.emoji_picker_categories_label()}
     >
       {#each sections as section (section.category)}
+        {@const tabSrc = emojiPictureSrc(section.entries[0].emoji, emojiStyle)}
         <button
           type="button"
           role="tab"
@@ -217,20 +231,24 @@
           onclick={() => jumpTo(section.category)}
           class="flex size-8 items-center justify-center rounded-lg border-b-2 text-lg transition-opacity {section.category ===
           activeCategory
-            ? 'border-amber-500 opacity-100'
+            ? 'border-accent-icon opacity-100'
             : 'border-transparent opacity-60 hover:opacity-100'}"
           aria-label={CATEGORY_LABELS[section.category]()}
           title={CATEGORY_LABELS[section.category]()}
         >
-          <img
-            class="size-5 text-transparent"
-            width="20"
-            height="20"
-            src={emojiSvgSrc(section.entries[0].emoji)}
-            alt={section.entries[0].emoji}
-            decoding="sync"
-            draggable="false"
-          />
+          {#if tabSrc}
+            <img
+              class="size-5 text-transparent"
+              width="20"
+              height="20"
+              src={tabSrc}
+              alt={section.entries[0].emoji}
+              decoding="sync"
+              draggable="false"
+            />
+          {:else}
+            <span aria-hidden="true">{section.entries[0].emoji}</span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -243,7 +261,7 @@
         <button
           type="button"
           onclick={load}
-          class="rounded-lg bg-amber-500/15 px-3 py-1 text-sm font-semibold text-amber-700 dark:text-amber-400"
+          class="bg-accent/15 text-accent-text rounded-lg px-3 py-1 text-sm font-semibold"
         >
           {m.emoji_picker_retry()}
         </button>
@@ -254,7 +272,7 @@
       {#if results.length === 0}
         <p class="text-text-muted p-4 text-center text-sm">{m.emoji_picker_no_results()}</p>
       {:else}
-        <h3 class="text-text-muted text-2xs px-1 pt-2 pb-1 font-bold tracking-widest uppercase">
+        <h3 class="text-text-muted text-2xs px-1 pt-2 pb-1 font-bold">
           {m.emoji_picker_search_results_label()}
         </h3>
         <div class="grid grid-cols-8 gap-0.5">
@@ -267,7 +285,7 @@
       {#each sections as section (section.category)}
         <section data-category={section.category}>
           <h3
-            class="bg-cn-surface text-text-muted text-2xs sticky top-0 z-10 px-1 pt-2 pb-1 font-bold tracking-widest uppercase"
+            class="bg-cn-surface text-text-muted text-2xs sticky top-0 z-10 px-1 pt-2 pb-1 font-bold"
           >
             {CATEGORY_LABELS[section.category]()}
           </h3>

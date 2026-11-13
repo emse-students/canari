@@ -38,11 +38,40 @@ describe('cors-origins', () => {
     expect(isAllowedOrigin('https://canari-emse.fr', allowed)).toBe(true);
   });
 
-  it('accepts http(s) loopback on any port, and no others', () => {
-    expect(isAllowedOrigin('http://localhost:1420', allowed)).toBe(true);
-    expect(isAllowedOrigin('https://127.0.0.1', allowed)).toBe(true);
-    expect(isAllowedOrigin('http://localhost.evil.com', allowed)).toBe(false);
-    expect(isAllowedOrigin('http://127.0.0.1.evil.com', allowed)).toBe(false);
+  it('accepts no loopback origin the estate does not name', () => {
+    // What production builds: FRONTEND_URL alone, no estate list.
+    for (const origin of [
+      'http://localhost:1420',
+      'http://127.0.0.1:1420',
+      'http://localhost',
+      'https://127.0.0.1',
+      'http://localhost:8081',
+      'http://[::1]:1420',
+      'http://localhost.evil.com',
+      'http://127.0.0.1.evil.com',
+    ]) {
+      expect([origin, isAllowedOrigin(origin, allowed)]).toEqual([origin, false]);
+    }
+  });
+
+  it('accepts the loopback origins an estate lists, exactly as listed', () => {
+    // What the local and dev estates build: their ALLOW_ORIGIN names the dev-server pair.
+    const dev = buildAllowedOrigins(
+      'https://dev.example',
+      'https://dev.example,http://localhost:1420, http://127.0.0.1:1420/,,*'
+    );
+    expect(isAllowedOrigin('http://localhost:1420', dev)).toBe(true);
+    expect(isAllowedOrigin('http://127.0.0.1:1420', dev)).toBe(true);
+    expect(isAllowedOrigin('https://dev.example', dev)).toBe(true);
+    // Another port, another scheme or no port is another origin.
+    expect(isAllowedOrigin('http://localhost:1421', dev)).toBe(false);
+    expect(isAllowedOrigin('https://localhost:1420', dev)).toBe(false);
+    expect(isAllowedOrigin('http://localhost', dev)).toBe(false);
+    // A wildcard segment is never a list.
+    expect(isAllowedOrigin('https://evil.example', dev)).toBe(false);
+    expect(dev.has('')).toBe(false);
+    expect(dev.has('*')).toBe(false);
+    expect(buildAllowedOrigins('*', ' * ').has('*')).toBe(false);
   });
 
   it('treats a missing Origin as nothing to refuse', () => {

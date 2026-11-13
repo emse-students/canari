@@ -8,6 +8,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Engine (generation, solver, play, replay) | `frontend/src/lib/minesweeper/game.ts` |
 | Server copy of the engine | `apps/social-service/src/minesweeper/engine/game.ts` |
 | Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
+| THE leaderboard (ranking, promo, Stats, moderation) | `frontend/src/routes/games/+page.svelte`, `frontend/src/lib/components/games/MinesweeperStats.svelte` |
 | View geometry (fit, bounds, zoom, flick) | `frontend/src/lib/minesweeper/view.ts` |
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
 | Player settings (per device) | `frontend/src/lib/minesweeper/settings.ts` |
@@ -24,7 +25,7 @@ over the board:
 | Control | Where | Notes |
 | --- | --- | --- |
 | Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
-| Leaderboard | top right, trophy icon only | opens a SHEET over the board; the game keeps running under it |
+| Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
 | Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
 
@@ -46,6 +47,21 @@ Nothing here touches the engine or the move log, so the server replay and the ge
 unaffected. **Verified:** the geometry (`view.test.ts`), the chrome and the moderation sheet in jsdom.
 **NOT verified: how it feels** - no gate here sees a gesture; owed ONE look on the Mi 9T and the iPhone
 (fit, flick, double-tap, the ring, the vibration).
+
+## ONE leaderboard: the Games page (owner, 2026-11-13)
+
+The game used to carry its own "Classement" sheet (ranking, Stats, admin moderation) next to the
+Games page's ranking. The sheet is DELETED; `/games` is the only leaderboard and the trophy leads
+there. The page has three tabs - overall, per promo, **Stats** - and carries over everything the
+sheet had: each ranking row shows the date of the record (`verifiedAt` through `exactDate`, so
+**no migration**: the date was already on the score row and in the leaderboard payload); the Stats
+tab (`MinesweeperStats.svelte`, loaded when opened) shows ranked games played, wins, lost or
+abandoned, win rate, rank, best, average and median time, the sparkline of the latest wins and their
+dated list, and the "ranked games only" note; a global admin gets the remove-score and ban buttons
+per row and the banned list with unban, each behind a confirmation. The settings sheet stays in the
+game (it is about input, not ranking). Pinned by `page.svelte.test.ts`, `page.moderation.svelte.test.ts`,
+`MinesweeperStats.svelte.test.ts`, `MinesweeperModal.chrome.svelte.test.ts`. The two sections below
+describe the stats and paging mechanics, now on the page (page size 25, "Voir plus").
 
 ## Stats, paging, settings and the cell diff (2026-11-04)
 
@@ -103,6 +119,29 @@ exactly one view, a second sync is a no-op), `settings.test.ts`, the stats/pagin
 the effect depend on it, and every later move reset the game - the board is read untracked there.
 **NOT measured:** a before/after Performance profile on a phone, and how the gestures and the settings
 feel - owed on the Mi 9T and the iPhone (`device-verification.md`).
+
+## The Games page and the per-promo ranking (owner, 2026-11-10)
+
+`/games` (`routes/games/+page.svelte`, a row of the dashboard's Explorer, open to every signed-in
+account; the 5 taps on the settings title still open the game) carries **"Jouer"** (opens the same
+`MinesweeperModal`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
+and **per promo**. Moderation of scores is on this page for global admins (see the one-leaderboard section above).
+
+- **Server**: `GET minesweeper/leaderboard?promo=<year>` narrows the board to one entry year, ranks
+  counted inside it (`pu.promo = $1` through `users.promo`); a value that is not a year is a 400.
+  `GET minesweeper/promos` answers `{ promos: [{ promo, players }], mine }` (newest first, `mine` = the
+  caller's promo or `null`). **Only an account with a cursus appears in a promo ranking**: `users.promo`
+  IS the cursus' entry year and the one column populated in production (`cursus->0->>'promo'` is NULL),
+  so `promo IS NOT NULL` is the rule. **No migration**: both reads are over `minesweeper_scores` joined
+  to `users`. Banned players and the other side of the review cohort stay out, as on the overall board.
+- **Client**: the promo tab opens on the reader's own promo when it has a ranking, else the newest; a
+  fresh load drops the answer of a tab or promo left behind (`generation`). The profile's
+  "Demineur #16" badge links here, the time being only its tooltip.
+- Proofs: `minesweeper.promo.integration.spec.ts` (REAL PostgreSQL, gated on `SOCIAL_IT_DATABASE_URL`:
+  ranks counted inside a promo, a player without a promo absent, `mine`, the promo list with player
+  counts, a banned player and a removed score excluded as in the global ranking), `minesweeper.promo.spec.ts`
+  (the SQL's shape and parameters), `routes/games/page.svelte.test.ts`, `ProfileMinesweeperBadge.svelte.test.ts`.
+- **Owed**: one read of the page on a phone with real scores in two promos.
 
 ## Moderation: remove a score, ban a player (2026-10-02)
 

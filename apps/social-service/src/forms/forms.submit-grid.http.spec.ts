@@ -172,19 +172,26 @@ describe('a grid answer over HTTP, through the real ValidationPipe (D1)', () => 
     };
   }
 
+  /**
+   * POSTs and READS THE BODY TO THE END. An undrained fetch response leaves its keep-alive socket
+   * in use, so the jest worker held an open socket at teardown and the run ended with "A worker
+   * process has failed to exit gracefully" (intermittently, under load).
+   */
+  const post = async (url: string, headers: Record<string, string>, answers: unknown) => {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ answers }) });
+    const text = await res.text();
+    return { status: res.status, json: () => JSON.parse(text) };
+  };
+
   const memberSubmit = (answers: unknown) =>
-    fetch(`${base}/forms/${FORM_ID}/submit`, {
-      method: 'POST',
-      headers: memberHeaders(),
-      body: JSON.stringify({ answers }),
-    });
+    post(`${base}/forms/${FORM_ID}/submit`, memberHeaders(), answers);
 
   const guestSubmit = (answers: unknown) =>
-    fetch(`${base}/public/forms/${FORM_ID}/submit`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-real-ip': '198.51.100.7' },
-      body: JSON.stringify({ answers }),
-    });
+    post(
+      `${base}/public/forms/${FORM_ID}/submit`,
+      { 'content-type': 'application/json', 'x-real-ip': '198.51.100.7' },
+      answers
+    );
 
   it('stores a member answer holding both grids', async () => {
     const res = await memberSubmit({
@@ -212,7 +219,7 @@ describe('a grid answer over HTTP, through the real ValidationPipe (D1)', () => 
   it('refuses a required grid with no answered row, with a typed code naming it', async () => {
     const res = await memberSubmit({ q_size: { Vert: '', Noir: '' } });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = res.json();
     expect(body.code).toBe(FORM_ANSWER_MISSING);
     expect(body.itemId).toBe('q_size');
     expect(saved).toHaveLength(0);
@@ -222,7 +229,7 @@ describe('a grid answer over HTTP, through the real ValidationPipe (D1)', () => 
     for (const send of [memberSubmit, guestSubmit]) {
       const res = await send({ q_size: { Vert: 'col_xl' } });
       expect(res.status).toBe(400);
-      expect((await res.json()).code).toBe(FORM_GRID_ANSWER_INVALID);
+      expect(res.json().code).toBe(FORM_GRID_ANSWER_INVALID);
     }
     expect(saved).toHaveLength(0);
   });

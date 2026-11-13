@@ -21,6 +21,7 @@
   } from '$lib/calendar/feedEvents';
   import { CalendarDays, ClipboardList, Newspaper, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -59,7 +60,7 @@
 
   function formatEventRange(ev: AssociationCalendarFeedEvent): string {
     const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat('fr-FR', {
+    const fmt = new Intl.DateTimeFormat(intlLocale(), {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
@@ -68,7 +69,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(intlLocale(), { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   /**
@@ -238,7 +239,7 @@
       {#if event.linkedFormId}
         <a
           href="/forms/{encodeURIComponent(event.linkedFormId)}"
-          class="border-cn-border bg-cn-bg text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+          class="border-cn-border bg-cn-bg text-text-main hover:border-accent/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
         >
           <ClipboardList size={14} />
           {m.calendar_event_linked_form()}
@@ -248,7 +249,7 @@
       {#if linkedPost}
         <a
           href="/posts/{encodeURIComponent(linkedPost.id)}"
-          class="border-cn-border bg-cn-bg text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+          class="border-cn-border bg-cn-bg text-text-main hover:border-accent/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
         >
           <Newspaper size={14} />
           {m.calendar_event_linked_post()}

@@ -39,6 +39,15 @@ vi.mock('$lib/utils/associationLogoCache', () => ({
   resolveAssociationLogoDisplayUrl: async () => null,
   releaseAssociationLogoDisplayUrl: () => {},
 }));
+// A campus-trend row with a picture reads its post's preview: stubbed, answered "failed", so the
+// glyph stays and the test only asserts WHETHER the post was read.
+const sharedPostPreview = vi.hoisted(() => ({
+  fetch: vi.fn(async () => ({ state: 'failed' as const })),
+}));
+vi.mock('$lib/posts/sharedPostPreview', () => ({
+  cachedSharedPostPreview: () => null,
+  fetchSharedPostPreview: sharedPostPreview.fetch,
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -327,6 +336,21 @@ describe('NotificationRow sentence', () => {
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
+  // Engagement WP-4: the ASSOCIATION opened a booking space or published an event - its logo, its
+  // own verb, the place or the title in italics, and never the comment sentence.
+  it('says an association opened bookings or published an event, with its logo', () => {
+    const opened = renderRow({ ...postRow('booking_open'), associationId: 'asso-1' });
+    expect(opened.textContent).toContain(m.notif_booking_open_text());
+    expect(opened.textContent).toContain('Scene ouverte lundi');
+    expect(opened.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    const event = renderRow({ ...postRow('event_open'), associationId: 'asso-1' });
+    expect(event.textContent).toContain(m.notif_event_open_text());
+    expect(event.textContent).not.toContain('a commenté');
+    // A link-only space: no place, the sentence alone.
+    const hidden = renderRow({ ...postRow('booking_open'), associationId: 'asso-1', text: '' });
+    expect(hidden.textContent).toContain(m.notif_booking_open_text());
+  });
+
   it('says a person asks to follow you, and that a person accepted your request', () => {
     const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });
     const asked = renderRow(follow('follow_request'));
@@ -343,6 +367,103 @@ describe('NotificationRow sentence', () => {
     const row = renderRow({ ...postRow('birthday'), postId: 'member-1', text: '' });
     expect(row.textContent).toContain(m.notif_birthday_text());
     expect(row.textContent).not.toContain('a commenté');
+  });
+
+  it("says a followed person reacted to or commented on a post, with the post's opening (WP-9)", () => {
+    const reacted = renderRow(postRow('friend_reaction'));
+    expect(reacted.textContent).toContain(m.notif_friend_reaction_text());
+    expect(reacted.textContent).toContain('Scene ouverte lundi');
+    expect(reacted.textContent).not.toContain(m.notif_comment_text());
+    const commented = renderRow(postRow('friend_comment'));
+    expect(commented.textContent).toContain(m.notif_friend_comment_text());
+    expect(commented.textContent).toContain('Scene ouverte lundi');
+    // Never the sentence of a comment on the reader's own post.
+    expect(m.notif_friend_comment_text()).not.toBe(m.notif_comment_text());
+  });
+
+  /**
+   * THE TREND ROW IS NOT A PERSON (owner, 2026-11-10): 1.6.9 drew "Quelqu'un", an initials disc and
+   * nothing after the colon for a post with no text.
+   */
+  const trendRow = (text: string, meta?: PostNotification['meta']): PostNotification => ({
+    ...postRow('campus_trend'),
+    actorId: 'system',
+    actorName: '',
+    text,
+    meta,
+  });
+
+  it('reads "Suggestion :" and the opening, naming nobody, with the trend glyph (WP-10)', () => {
+    sharedPostPreview.fetch.mockClear();
+    const row = renderRow(trendRow('Scene ouverte lundi'));
+    expect(row.textContent).toContain(m.notif_campus_trend_text());
+    expect(row.textContent).toContain('Scene ouverte lundi');
+    expect(row.textContent).not.toContain(m.notif_actor_unknown());
+    expect(row.textContent).not.toContain(m.notif_comment_text());
+    expect(row.querySelector('[aria-label^="Avatar"]')).toBeNull();
+    expect(
+      row.querySelector('[data-notif-trend-avatar]')?.getAttribute('data-notif-trend-avatar')
+    ).toBe('glyph');
+    // No attachment: the post is never read for a picture.
+    expect(sharedPostPreview.fetch).not.toHaveBeenCalled();
+  });
+
+  it('says what a post with no text shows, never a colon followed by nothing', () => {
+    for (const [meta, label] of [
+      [{ media: 'photo' }, m.notif_campus_trend_photo()],
+      [{ media: 'video' }, m.notif_campus_trend_video()],
+      [undefined, m.notif_campus_trend_untitled()],
+    ] as const) {
+      const row = renderRow(trendRow('', meta));
+      expect(row.textContent).toContain(m.notif_campus_trend_text());
+      expect(row.textContent).toContain(label);
+    }
+  });
+
+  it('names the followed account who liked it, one sentence per count form (owner, 2026-11-10)', () => {
+    for (const [others, sentence] of [
+      [0, m.notif_campus_trend_liked_by({ name: 'Léa Martin' })],
+      [1, m.notif_campus_trend_liked_by_one({ name: 'Léa Martin' })],
+      [9, m.notif_campus_trend_liked_by_many({ name: 'Léa Martin', count: 9 })],
+    ] as const) {
+      const row = renderRow(
+        trendRow('Scene ouverte lundi', { likedBy: { name: 'Léa Martin', others } })
+      );
+      expect(row.querySelector('[data-notif-trend-liked-by]')?.textContent).toContain(sentence);
+      // Still a suggestion, never a person's act: no actor name drawn in the title.
+      expect(row.textContent).toContain(m.notif_campus_trend_text());
+      expect(row.querySelector('[aria-label^="Avatar"]')).toBeNull();
+    }
+  });
+
+  it('names nobody when the row carries no likedBy', () => {
+    const row = renderRow(trendRow('Scene ouverte lundi'));
+    expect(row.querySelector('[data-notif-trend-liked-by]')).toBeNull();
+  });
+
+  it('reads the post for its picture once the row is near, when the row says it has one', () => {
+    sharedPostPreview.fetch.mockClear();
+    // Says "near" at once, as the viewport band would for a visible row.
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(readonly callback: IntersectionObserverCallback) {}
+        observe() {
+          this.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver
+          );
+        }
+        disconnect() {}
+      }
+    );
+    try {
+      renderRow(trendRow('', { media: 'photo' }));
+      flushSync();
+      expect(sharedPostPreview.fetch).toHaveBeenCalledWith('p9');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

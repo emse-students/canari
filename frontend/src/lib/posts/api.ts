@@ -6,6 +6,14 @@ import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
+import {
+  refreshAppVersionCheck,
+  serverLiveReplaysMode,
+  serverRankedFeeds,
+} from '$lib/stores/appVersionCheck.svelte';
+import { Log } from '$lib/utils/Log';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -286,6 +294,12 @@ export interface PostEntity {
    * members, whatever the path. Served to every reader, so the card says so to all of them.
    */
   studentsOnly?: boolean;
+  /**
+   * The reach an institution chose for this post (owner, 2026-11-10): its spaces and its public.
+   * Null on every other post, and on an institution post published before the reach existed.
+   * Served to every reader, so the card says so to all of them.
+   */
+  reach?: InstitutionReach | null;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -307,15 +321,54 @@ export interface PostEntity {
    * `'reel'` for a CanaReel - one vertical video that the server deletes, row and blob, at
    * `expiresAt` (C6). Absent on a server older than reels, which is a post.
    */
-  kind?: PostKind;
+  kind?: StoredPostKind;
+  /**
+   * The live a `'replay'` shows (docs/wiki/live-replays.md); `null` on every other kind. A replay
+   * carries no media: its segments come from `GET /api/lives/:id/replay`, keyed by this id.
+   */
+  liveId?: string | null;
   /** A reel's length as its author declared it (C4); `null` on a post. */
   durationMs?: number | null;
   /** When the server deletes a reel (`createdAt` + 30 days, set once); `null` on a post. */
   expiresAt?: string | null;
+  /**
+   * A REPLAY'S COVER: its live's last preview image, the one the live's card showed - opened with
+   * `posterKey` (it opens that image and nothing else). Served on a `'replay'` row only, and null
+   * when the live stored none.
+   */
+  poster?: { name: string; ageMs: number } | null;
+  /** The key of `poster`; null whenever `poster` is. */
+  posterKey?: string | null;
+  /**
+   * The server's clock when it served a `'replay'` row (the database's, the one that wrote
+   * `expiresAt`): the time left is computed from the two, never from the phone's clock.
+   */
+  serverNow?: string;
+  /**
+   * A RANKED LIST's row only (Pour toi, the ranked CanaReels list, `rankedFeeds.ts`): the snapshot it
+   * was served from, as the server spelled it - sent back as `asOf` for the next page.
+   */
+  feedAsOf?: string;
+  /** A ranked list's row only: its place in the whole list; the next page starts after the last. */
+  feedPosition?: number;
+  /**
+   * A ranked list's TAIL row only: the keyset of its place below the ranked window, sent back as
+   * `cursor` when it is the last row served (`rankedFeeds.ts`).
+   */
+  feedCursor?: string;
+  /** Pour toi only: a suggested post (engagement WP-7), drawn with the "Suggestion" badge. */
+  feedSuggested?: boolean;
 }
 
 /** What a feed row is. A reel is a post of kind `'reel'`: same feed, comments, reactions, reports. */
 export type PostKind = 'post' | 'reel';
+
+/**
+ * Every kind a served row can be: the two a client publishes, and `'replay'` - a finished live kept
+ * three days (docs/wiki/live-replays.md), which only the server creates and which comes ONLY to a
+ * client that asked for it (`withReplays`).
+ */
+export type StoredPostKind = PostKind | 'replay';
 
 /** Whether a row is a CanaReel. */
 export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
@@ -340,12 +393,20 @@ export interface ReelLimits {
    * it to what one take may carry on this client.
    */
   chatReelMaxTargets?: number;
+  /**
+   * The widest frame a reel may have, `width / height` after rotation (4:5, owner 2026-11-09: every
+   * VERTICAL video of 90 s or less is a CanaReel), served since that change and absent from an older
+   * server - read through `reelRuleOf` (`reels/reelRule.ts`), the one classifier.
+   */
+  maxAspectRatio?: number;
   retentionDays: number;
   warningWindowDays: number;
 }
 
 /**
- * The four feeds, as DATA rather than as a union spelled out at each call site.
+ * The four feeds, as DATA rather than as a union spelled out at each call site: `associations`,
+ * `foryou` ("Pour toi", ranked - it replaced "Suivis", `followed`, in 1.6.9), `all` ("Campus", "Mon
+ * espace" until 1.6.9) and the promo/formation browse `custom`.
  *
  * It was a bare union type, and the list therefore existed twice: once here and once as a literal
  * array in `routes/posts/+page.ts`, which validated the `?feed=` parameter against it. A type
@@ -353,7 +414,7 @@ export interface ReelLimits {
  * by the URL parser. It also now has a THIRD reader - the persisted preference, which is a string
  * off `localStorage` and therefore untrusted in exactly the same way a query parameter is.
  */
-export const POST_FEEDS = ['all', 'followed', 'custom', 'associations'] as const;
+export const POST_FEEDS = ['all', 'foryou', 'custom', 'associations'] as const;
 
 /** Which feed the posts page is showing. */
 export type PostFeed = (typeof POST_FEEDS)[number];
@@ -373,37 +434,51 @@ export const DEFAULT_POST_FEED: PostFeed = 'associations';
  * the posts page has two sources to try in order and needs to fall through the first.
  */
 export function parsePostFeed(value: string | null | undefined): PostFeed | null {
+  // "Suivis" became "Pour toi" (owner, 2026-11-10): a tab remembered, or a link written, before 1.6.9
+  // names the tab that took its place.
+  if (value === RETIRED_FOLLOWED_FEED) return 'foryou';
   return POST_FEEDS.includes(value as PostFeed) ? (value as PostFeed) : null;
 }
+
+/** The id of the "Suivis" tab Pour toi replaced - still a server feed, for the installed clients. */
+const RETIRED_FOLLOWED_FEED = 'followed';
 
 export interface ListPostsOptions {
   limit?: number;
   offset?: number;
-  feed?: PostFeed;
+  /** A tab, or `reels` - the CanaReels viewer's list (`reels/allReels.ts`). */
+  feed?: PostFeed | 'reels';
+  /** With `feed: 'reels'`: ranked like Pour toi rather than newest first (owner, 2026-11-10). */
+  ranked?: boolean;
+  /** A ranked list's later page: the snapshot its first page served (`rankedFeeds.ts`). */
+  asOf?: string;
+  /** A ranked list's later tail page: the `feedCursor` of the last tail row served. */
+  cursor?: string;
+  /**
+   * Whether the estate serves the ranked lists (`serverRankedFeeds`); left undefined, `listPosts`
+   * reads it. Without them Pour toi is asked as the chronological `followed` and the CanaReels list
+   * in its older shape, with neither `ranked` nor `asOf` - an older server refuses `foryou` `400`
+   * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
+   */
+  rankedFeeds?: boolean;
   promo?: number;
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
   /**
-   * With `kind: 'reel'`: the posts whose only content is ONE picture or ONE video come too - the CanaReels list
-   * (`reels/fullScreenPost.ts`). The URL carries the older switch too (`singlePhotos`): a server that
-   * does not know `singleMedia` answers the pictures with the reels, and one older than both
-   * answers the reels alone.
-   */
-  singleMedia?: boolean;
-  /**
-   * With `kind: 'reel'`: the posts of TWO TO TEN pictures and videos come too, with the single
-   * ones - the carousel pages (owner, 2026-11-06). The URL carries both older switches with it: a
-   * server that does not know `multiMedia` answers the single pictures and videos, one older still
-   * the pictures (docs/wiki/legacy-compatibility.md).
+   * With `kind: 'reel'`: the full-screen posts come too - one, or two to ten (a carousel), pictures
+   * and videos only, a link in the text allowed (`reels/fullScreenPost.ts`). ONE switch since
+   * 2026-11-11: every estate reads it, so the older `singlePhotos`, `singleMedia` and `withLinks`
+   * are no longer sent (docs/wiki/legacy-compatibility.md).
    */
   multiMedia?: boolean;
   /**
-   * With `multiMedia`: a post with a link in its text comes too, its link drawn in the caption
-   * (owner, 2026-11-06). Sent only with `multiMedia`; a server that does not know it keeps the
-   * link out, which this client reads as before.
+   * The feed and the CanaReels list carry the live replays too (`kind = 'replay'`, docs/wiki/live-replays.md).
+   * Left undefined, `listPosts` sends it exactly when the server's switch reads `on`
+   * (`serverLiveReplaysMode`): with the switch off the question is never asked, and an older server
+   * ignores it. A list that cannot draw a replay (search, a profile) passes `false`.
    */
-  withLinks?: boolean;
+  withReplays?: boolean;
 }
 
 export interface ScheduledPost {
@@ -430,6 +505,8 @@ export interface CreatePostPayload {
   anonymous?: boolean;
   /** "Entre étudiants" - offered on an association's or a list's post only (`studentsOnly.ts`). */
   studentsOnly?: boolean;
+  /** The reach of an institution's post - REQUIRED there, refused anywhere else (`institutionReach.ts`). */
+  reach?: InstitutionReach;
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
@@ -449,6 +526,8 @@ export interface UpdatePostPayload {
   scheduledAt?: string | null;
   /** "Entre étudiants", changed after publication; absent leaves it as stored. */
   studentsOnly?: boolean;
+  /** An institution post's reach, changed after publication; absent leaves it as stored. */
+  reach?: InstitutionReach;
 }
 
 /**
@@ -487,20 +566,30 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   const p = new URLSearchParams();
   if (options.limit != null) p.set('limit', String(options.limit));
   if (options.offset != null) p.set('offset', String(options.offset));
-  if (options.feed && options.feed !== 'all') p.set('feed', options.feed);
+  const feed = wireFeed(options);
+  if (feed && feed !== 'all') p.set('feed', feed);
+  if (options.rankedFeeds && feed === 'reels' && options.ranked) p.set('ranked', 'true');
+  if (options.rankedFeeds && options.asOf) p.set('asOf', options.asOf);
+  if (options.rankedFeeds && options.asOf && options.cursor) p.set('cursor', options.cursor);
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.withReplays) p.set('withReplays', 'true');
   if (options.multiMedia) p.set('multiMedia', 'true');
-  if (options.multiMedia && options.withLinks) p.set('withLinks', 'true');
-  if (options.singleMedia || options.multiMedia) {
-    p.set('singleMedia', 'true');
-    // An installed server knows only the pictures' switch and drops the unknown one: it keeps
-    // serving pictures, and the client draws no video it was not sent (docs/wiki/legacy-compatibility.md).
-    p.set('singlePhotos', 'true');
-  }
   const s = p.toString();
   return s ? `?${s}` : '';
+}
+
+/**
+ * The feed a list read names on the wire. Without the ranked lists (`rankedFeeds`), Pour toi is the
+ * chronological `followed` it replaced, and the CanaReels list the `all` + `kind=reel` shape every
+ * server reads as `reels` (`resolveListFeed`).
+ */
+function wireFeed(options: ListPostsOptions): string | undefined {
+  if (options.rankedFeeds) return options.feed;
+  if (options.feed === 'foryou') return RETIRED_FOLLOWED_FEED;
+  if (options.feed === 'reels') return 'all';
+  return options.feed;
 }
 
 export async function searchPosts(
@@ -525,7 +614,9 @@ async function readPosts<T extends PostEntity | PostEntity[]>(path: string): Pro
 }
 
 export async function getPost(postId: string): Promise<PostEntity> {
-  return readPosts<PostEntity>(`/api/posts/${postId}`);
+  // A replay opened by its link (a notification, a share) is served only to a client that says it can draw one.
+  const q = serverLiveReplaysMode() === 'on' ? '?withReplays=true' : '';
+  return readPosts<PostEntity>(`/api/posts/${postId}${q}`);
 }
 
 export async function updatePost(postId: string, payload: UpdatePostPayload): Promise<PostEntity> {
@@ -556,12 +647,50 @@ export async function withdrawPost(
 }
 
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
+/**
+ * Whether to ask a list in its ranked shape, from the estate's ANSWER, never from its absence.
+ *
+ * The capability lives in `sessionStorage`, so on every cold start it is UNKNOWN (`null`) until the
+ * root layout's `GET /api/version` answers - and the feed's first page is asked before that. Read
+ * as "no", it sent Pour toi as the old `followed` list (associations included) to a server that
+ * serves `foryou`, and that answer was drawn and stored as Pour toi (alpha.6 on both phones,
+ * 2026-11-10). So a RANKED list with the capability unknown waits for the version check (the
+ * same request the layout issued: `refreshAppVersionCheck` dedupes it) and decides on its answer.
+ * THE CHECK MAY END WITH NO ANSWER (its whole retry ladder failed, nothing cached): the capability
+ * is then still unknown, and unknown is NOT "no" - Pour toi is asked as `foryou` anyway. An older
+ * estate refuses it (400), which the feed shows as an error, never as another list's rows; only an
+ * explicit `rankedFeeds: false` falls back to `followed`. The wait is the check's own ladder: the
+ * API holds no shorter bound that shares the layout's request, and a timer here would be a
+ * clock-based fallback.
+ * Every other list, and a known capability, decides at once.
+ */
+async function rankedFeedsKnown(opts: ListPostsOptions): Promise<boolean> {
+  if (opts.feed !== 'foryou' && !opts.ranked) return serverRankedFeeds() === true;
+  if (serverRankedFeeds() === null) {
+    Log.d('POSTS', `${opts.feed}: the estate's ranked lists are not known yet - asked first`);
+    await refreshAppVersionCheck();
+    if (serverRankedFeeds() === null) {
+      Log.w(
+        'POSTS',
+        `${opts.feed}: the check left the estate unknown - asked ranked, not as followed`
+      );
+      return true;
+    }
+  }
+  return serverRankedFeeds() === true;
+}
+
 export async function listPosts(
   limitOrOptions: number | ListPostsOptions = 30
 ): Promise<PostEntity[]> {
   const opts: ListPostsOptions =
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
-  const q = buildListPostsSearchParams(opts);
+  const withReplays = opts.withReplays ?? serverLiveReplaysMode() === 'on';
+  const rankedFeeds = opts.rankedFeeds ?? (await rankedFeedsKnown(opts));
+  if (!rankedFeeds && (opts.feed === 'foryou' || opts.ranked)) {
+    Log.d('POSTS', `this estate serves no ranked list - ${opts.feed} asked in its older shape`);
+  }
+  const q = buildListPostsSearchParams({ ...opts, withReplays, rankedFeeds });
   return readPosts<PostEntity[]>(`/api/posts${q}`);
 }
 
@@ -576,6 +705,19 @@ export async function fetchFeedAudience(): Promise<{ inAudience: boolean }> {
 /** The server's reel numbers (`ReelLimits`). */
 export async function getReelLimits(): Promise<ReelLimits> {
   return request<ReelLimits>('/api/posts/reel-limits');
+}
+
+/**
+ * The spaces institution `associationId` may target with a post: those of its own audience, sorted
+ * campus then formation. 403 when the caller may not post as it; 400
+ * `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getInstitutionReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/posts/reach-options/${encodeURIComponent(associationId)}`
+  );
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {
@@ -812,6 +954,21 @@ export async function setRepostSettings(
   });
 }
 
+/** Engagement WP-9: whether the caller's reactions and comments are told to their followers. */
+export async function getActivitySettings(): Promise<{ shareActivity: boolean }> {
+  return request('/api/posts/me/activity-settings');
+}
+
+/** Engagement WP-9: sets it; turning it off stops every notice not yet sent. */
+export async function setActivitySettings(
+  shareActivity: boolean
+): Promise<{ shareActivity: boolean }> {
+  return request('/api/posts/me/activity-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ shareActivity }),
+  });
+}
+
 /** WP-F6: the author's override for one post - true, false, or null to follow the setting. */
 export async function setPostRepostConsent(
   postId: string,
@@ -864,12 +1021,24 @@ export interface PostNotification {
   text: string;
   /** Structured facts a client draws itself (a booking notice's place, slot and zone); null on older rows. */
   meta?: Record<string, unknown> | null;
+  /**
+   * The comment the row is about, for a row a comment wrote (a comment, a reply, a mention in a
+   * comment, a friend's comment); null otherwise and on rows written before migration 132.
+   */
+  commentId?: string | null;
   read: boolean;
   createdAt: string;
 }
 
+/**
+ * The reader's bell. The read NAMES THIS BUILD (`X-Canari-Client-Version`): the server serves only
+ * the types this build draws, so a type added after it never reaches it as an unknown row
+ * (social-service `notification-client-floor.ts`, owner 2026-11-10).
+ */
 export async function getPostNotifications(limit = 30): Promise<PostNotification[]> {
-  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`);
+  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`, {
+    headers: withClientVersionHeader(),
+  });
 }
 
 export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {

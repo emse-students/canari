@@ -472,7 +472,7 @@ the socket and the replay have all finished) and it should be its own package wi
 ## 11. WP-OFF-5 shipped: a deadline, a slow state, and lanes
 
 **What was built** (`utils/requestDeadline.ts`, `utils/trackedFetch.ts`, `stores/connectivity.svelte.ts`,
-`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/shared/OfflineBanner.svelte`):
+`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/navigation/Navbar.svelte` and `MobileHeader.svelte`, the connection ring):
 
 - **A response-head deadline per call class**, chosen from the method and the body, with its reason in
   the source: `read` 20 s (a GET is ~16 ms good, ~960 ms on the 2G-like profile; 20 s is twenty times
@@ -894,7 +894,7 @@ Pinned by `outbox.test.ts` ("outbox uploads run OUTSIDE the lane", WP-OFF-9): a 
 - `conformPluginFetch` wraps the plugin at BOTH places it is handed to the app: `createRoutedFetch` (the `window.fetch` override) and `TauriMlsService`'s delivery client. An aborted request rejects with the signal's `reason` (`AbortError`). Every other rejection becomes `TransportFailureError`, a `TypeError` that keeps the raw rejection in `cause`. The plugin rejects only when no HTTP answer came back; an answered request resolves, whatever its status. Two limits, both open: the plugin's deterministic refusals (a URL outside the scope, an invalid header value) are typed as transport failures too, since a string cannot tell them apart; and a BODY read (`res.json()` after the head) that loses the link or is aborted still rejects with the plugin's bare string, because only the `fetch` call is conformed.
 - `isTransportFailure` is THE predicate, and it is NARROW (2026-10-18): a `TransportFailureError` (which covers `DeliveryUnreachableError` and `UploadNetworkError`, both subclasses) or a `RequestDeadlineError`. A bare `TypeError` is NOT transport: a programming error (`cannot read properties of undefined`) inside a `try` around a request used to be retried or held as "no answer". The browser's rejection is typed where it is raised: `trackedFetch`, `conformPluginFetch` (any plugin rejection, a `TypeError` included), and `conformNativeFetch`, installed as `window.fetch` on the web (`hooks.client.ts`) and as the native branch of `createRoutedFetch` on Tauri, so every bare `fetch(...)` call is covered by one wrapper. An abort keeps the signal's reason. Limits: the engine's deterministic `TypeError` refusals (invalid URL, forbidden header) are typed as transport too (the sentence is in `cause`), and a body read cut by the link (`res.json()`) rejects with the engine's bare `TypeError`, which is not transport. It no longer matches words in the message. Its consumers: `connectivity` (`trackRequest.failed`), `auth.refresh`, the outbox's transport hold, `pendingGroupExits`, `media` complete, `publishFailure`, `isRetryableLoadError`, the salon reaction rollback, `salonOwed`, `messaging`, `postNotifStore`, `ReelsEntryButton`, `mlsDeliveryApi` and `BaseMlsService`.
 - **The listing is restarted by the reconnect, not by the browser's `online` alone.** `ChatBackgroundService` calls `retryFailedListing` on `connectivity.onReconnect`, which fires on `online` AND when the server answers again after a transport failure, and on the foreground. **Bounded** (review of #1843): a reconnect is any answer after a transport failure, so an endpoint that fails while other calls answer would cycle for ever (give up -> unreachable -> a probe answers -> reconnect -> list again, ~every 11 s). A give-up earns ONE reconnect retry; the give-up of a reconnect's own listing earns none; and a reconnect that lands while the listing's own request is on the wire (it may be that request's answer) is owed nothing. The foreground is never budgeted: it always lists again and earns a new retry. A listing that gave up `unreachable` keeps held salon sends waiting ([chat](modules/chat.md#a-salon-not-yet-loaded-holds-the-send-it-does-not-refuse-it-2026-10-13)).
-- **The banner says what is true.** `offline_banner_desc` used to promise "les nouveaux messages partiront dès le retour du réseau". That holds for DMs (outbox) and for a salon whose community is not loaded yet (held). It did not hold for a salon that IS loaded: its POST failed at once and the row was `unconfirmed`. The banner said so until WP-OFF-3 (section 16); it now says every message leaves on the reconnect and that a salon's photos, videos and polls wait for the connection. `chat_send_error_salon_listing_failed` now names the server, since only an answered failure reaches it.
+- **The banner says what is true.** `offline_banner_desc` used to promise "les nouveaux messages partiront dès le retour du réseau". That holds for DMs (outbox) and for a salon whose community is not loaded yet (held). It did not hold for a salon that IS loaded: its POST failed at once and the row was `unconfirmed`. The banner said so until WP-OFF-3 (section 16); it now says every message leaves on the reconnect and that a salon's photos, videos and polls wait for the connection. Since 2026-11-09 that sentence is NOT drawn: the strip says "Hors connexion" / "Offline" and nothing else, one 32px line ([design-reference](design-reference.md#banners-are-one-line-and-one-height-owner-2026-11-09)); the sentence (`offline_banner_desc`) stays in the strip's `title` and in a screen-reader-only span, so the live region still reads it. `chat_send_error_salon_listing_failed` now names the server, since only an answered failure reaches it.
 
 Tests: `transportFailure.test.ts`, `fetchRouting.test.ts` (the bare string from the override), `salonSendGate.test.ts` (`unreachable` keeps waiting), `useChannelWorkspaces.svelte.test.ts` (the plugin's failure is retried; a listing that reached nobody holds sends and the reconnect releases them; a reconnect during a listing is owed; an answered failure still refuses; a persistently failing listing stops after one reconnect retry; a reconnect during the listing's own request is owed nothing), `TauriMlsService.conformedFetch.test.ts` (the delivery client's fetch is conformed), `reconnectListingWiring.test.ts` (source guard on the `onReconnect` wiring). **Owed:** the Mi 9T re-reading of the offline-start sequence.
 
@@ -948,6 +948,10 @@ Tests: `channel.service.spec.ts` and `channel-message-client-id.integration.spec
 ## 17. A text the server keeps failing becomes FAILED, with a Retry (user, 2026-10-18)
 
 **Decision (user, 2026-10-18).** A text or reply whose send is answered with a 5xx `MAX_CONSECUTIVE_SERVER_ERRORS` (5, `outbox.ts`) times IN A ROW stops climbing the ladder and is shown failed ("Echec" + "Reessayer", the existing `msg_echec` / `common_retry_button` strings; no new key). A transport failure (nobody answered) keeps retrying as before and never counts.
+
+**Narrowed 2026-11-09 (R05):** `502`, `503` and `504` are no longer counted. They say "not now" (a deploy rotating a container answers them), are typed `SendUnavailableError` at the throw, are held on the plain ladder and resumed by a reconnect, and neither count nor reset the run below; only a 5xx in which the service says IT failed (`500`, `501`...) counts. The hold and the reasoning: [chat](modules/chat.md#a-deploys-not-now-is-not-a-send-failure-r05-2026-11-09).
+
+**Bounded by answers (lead decision, 2026-11-09, review of #3189; reversible).** "Not now" uncounted with no end would let a dead route - a service down for good behind a live proxy - hold a text in "En attente du serveur" for ever. So a "not now" is uncounted only while there is evidence the server is alive, and the evidence is the send's OWN `2xx` (which ends it, so nothing resets the count). A websocket reconnect proves the link, never the send route, and resets nothing. `MAX_UNAVAILABLE_ANSWERS = 12` (`retryLadder.ts`, the one constant both send paths read) "not now" in a row with no `2xx` between end the wait: a DM or group text becomes FAILED like the 5th real 5xx ("Echec" + "Reessayer"; the park writes `MAX_CONSECUTIVE_SERVER_ERRORS` into `serverErrors`, so the terminal predicate, the Retry and every tab are unchanged), a salon text becomes `unconfirmed` (Retry, Discard, Restore). **Why 12:** on the plain ladder (2, 5, 15, 30, 60, 60... s) twelve answers span about eight minutes - well beyond a rolling deploy, which ends with a success and never reaches 12 - against the old rule's five under a 60 s floor (about five minutes); a dead route reaches it and the member regains control. The end is a count of ANSWERS, never a clock. **Durable:** the DM count is `OutboxEntry.unavailableAnswers` (SQLite `unavailable_answers`, migration v19), the salon count the unsent ledger entry's `unavailableAnswers`, so a reload keeps the run. A DM Retry sets the count to the next multiple of 12 (`unavailableRunStart`), owing twelve FRESH answers before the next park and never 0: a count above 0 is also what tells a withdrawal the frame may have been stored, after a reload and in a follower tab. A salon Retry resets its count. **Not bounded:** an attachment or a control on the DM path (counted, never parked); a salon attachment's run is its page life's hold.
 
 - **The hold after a counted 5xx is the ladder's top step at least** (`serverErrorHoldMs`: `max(backoffFor, SERVER_ERROR_HOLD_MS = 60 s, Retry-After capped at MAX_RETRY_AFTER_MS = 10 min)`), so five in a row span at least four minutes (0, 60, 120, 180, 240 s). On the plain ladder they landed at about 0, 2, 7, 22, 52 s, and a container restart longer than that (the edge answers 502 meanwhile) failed every text sent during a deploy (review of #2076). Still the entry's own clock, no deadline timer. `Retry-After` is read at the throw (`parseRetryAfterMs`, seconds or an HTTP date).
 
@@ -1218,3 +1222,74 @@ while other readings hold them.
 4. **The chat engine off `/login`** (the 2026-09-16 finding, now 705 kB on a two-field form).
 5. **WP-W6, a service worker** for the repeat cold start after a release, when every changed chunk is
    fetched again.
+
+## The connection ring (owner, 2026-11-11)
+
+**Principle: discreet and informative, never verbose or useless** (owner, 2026-11-11: there is no rule
+that everything is invisible; a banner with a sentence was verbose). The connection is ONE ring around
+the header avatar, on the phone header and the desktop header alike (the avatar button of `Navbar.svelte` and `MobileHeader.svelte`,
+state and colour from `connection` / `connectionRingClass` in `stores/slowLink.svelte.ts`, one derivation shared with the announcer):
+
+| Ring | State | Source |
+| --- | --- | --- |
+| green | connected | nothing below applies |
+| amber | slow link | `connectivity.slow` (observed latency floor, never a guess) |
+| grey | offline, or reconnecting | `connectivity.isOffline`; an offline unlock not yet promoted; or a FOLLOWER tab whose leader publishes no open socket |
+
+It is a TRUE CIRCLE (`rounded-full`); the first version rode on a rounded square and read as "a
+strange square". It REPLACED three things: the "Hors connexion" `OfflineBanner` (which also shifted
+the whole page ~126 px, so a tap aimed at a tab landed elsewhere once it vanished - a ring reserves no
+layout space at all), the "Connecte" `StatusPill` of the wide layout, and the amber-only ring. The
+sentences stay for screen readers: `ConnectionAnnouncer.svelte` (rule in `connectionAnnouncement.ts`) is an always-mounted live region
+carrying the offline description, the "syncing" line, the slow line, and "connection restored" once
+when a degraded state ends.
+
+**A slow request is not an unreachable server.** `connectivity.trackRequest().failed()` counted every
+`RequestDeadlineError` as a stall, two in a row meaning unreachable. On a 250 kbps link reads queue
+behind transfers and expire while other answers keep arriving, so two expiries with answers in
+between declared "Hors connexion" (production 1.6.10 through a throttling proxy, 2026-11-11). A
+deadline that expired while ANY answer arrived after the request started is now logged as slow and
+counts for nothing; a real transport failure still marks the server unreachable.
+
+**Names are local first, and sealed.** A conversation row's peer name was resolved by a profile round
+trip at every cold start (a module Map, empty each launch): "Utilisateur inconnu" for 12 s on that link.
+`utils/users/peerNameDirectory.ts` (memory, reactive) is read by `peekUserDisplayName` /
+`getUserDisplayNameSync` before any network; `utils/users/peerNameStore.ts` keeps it in the account's own
+ENCRYPTED database, never localStorage in clear: one more slot (`peer-names`) of the store that holds the
+feed's first pages (`feedPages` on IndexedDB, `feed_pages` on SQLite, `IStorage.saveFeedPage`, sealed under
+the device key, [posts](modules/posts.md)). The profile fetch still runs and refreshes it.
+
+- **The key is not there at the first frame.** It exists once the session is up or while the account's
+  unlock prompts nobody (`feedStoreAccess`, the feed's own gate; the layout binds the directory with it).
+  Until then rows show initials and the placeholder, exactly as before; the local read that follows touches
+  no network and fills the reactive directory, so the rows already drawn update. A locked device never has
+  a name drawn from it.
+- **Its own epoch, not the feed's.** The sealed copy carries an epoch (`ACCOUNT_KEY.peerNamesEpoch`) ended
+  ONLY by a sign-out or a change of account. Riding the feed's epoch ended it for feed reasons (an audience
+  verdict, a 403: an account outside the feed audience lost its names every launch) and made the directory a
+  second writer of that epoch.
+- **Reactive end to end.** Whether the directory is open is a reactive cell like the names: a row drawn before
+  the layout bound it re-reads when the stored copy lands (a plain `let` tracked nothing).
+- **The exits, enumerated.** Sign-out and change of account: `clearUserLocally` / `saveUserLocally` call
+  `endPeerNames` (the directory's epoch ends synchronously, the memory copy closes; a copy with an ended epoch
+  is deleted unread). A deleted account (the 404 branch of `resolveUserDisplayName`) is forgotten with
+  `forgetPeerName`. PIN change: `dropStoredFeedPages` empties the whole table inside the storage hold, the
+  directory included; the in-memory names are SEALED AGAIN under the new key when the layout rebinds with it
+  (a write reads the key at the last moment and is abandoned if it changed). A failed STORE read leaves the
+  copy; only a row that cannot be opened (`FeedPageUnreadableError`) is deleted. `IStorage.clear()` and a revoked-device wipe empty the table or delete the
+  database. A copy naming another account, or that cannot be opened, is deleted. Pinned by
+  `peerNameStore.test.ts` and `user.peerNameExits.test.ts`.
+
+**The ring and the socket (lead decision, 2026-11-11).** The removed "connecte" pill was the only visible
+witness of the WebSocket. The decision: a transient socket drop that the reconnect watchdog is handling keeps
+the ring as it is - the ladder has no last rung (`scheduleReconnectImpl`), so the code holds NO durable
+"gave up" fact for a leader tab, and none was invented (no timer). The one durable socket fact that exists is
+a FOLLOWER tab whose leader EXPLICITLY reported no open socket (`leaderReportsNoSocket`; no answer yet is
+UNKNOWN and draws nothing, so a follower tab's open is neither grey nor announced): that is grey. **The limit, written down:** on a leader tab (and on every native app) the ring is green
+independently of the socket; a socket that stays down while HTTP answers shows green.
+
+**Announcements.** "Connexion retablie" is said once after an offline or reconnecting spell only; a slow link
+that clears is silent, so a flapping slow link does not talk (`announcementStep`).
+
+**Focus.** Both header avatar buttons draw a `focus-visible` accent outline (`outline-accent-icon`): the
+button's `outline: none` and a ring that is now the connection colour left it no focus indicator.

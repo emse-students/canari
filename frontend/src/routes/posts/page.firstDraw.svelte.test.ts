@@ -14,6 +14,11 @@ import { clearFeedCache } from '$lib/posts/feedCache';
 
 const listPosts = vi.hoisted(() => vi.fn());
 
+// The follow suggestions (engagement WP-6) are a read of their own: none in these feeds.
+vi.mock('$lib/follows/suggestions.svelte', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  ensureFeedSuggestions: () => {},
+}));
 vi.mock('$app/state', () => ({
   page: { params: {}, url: new URL('https://canari.test/posts?feed=all'), state: {} },
 }));

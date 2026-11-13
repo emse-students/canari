@@ -6,6 +6,7 @@ import type {
   CallsMode,
   CheckpointSkipMode,
   LivesMode,
+  LiveReplaysMode,
 } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
@@ -50,6 +51,15 @@ export type AppVersionResponse = {
     mode: CheckpointSkipMode;
   };
   /**
+   * The server's switch for live replays (`platform_config.live_replays_mode`): `on` keeps a live
+   * started now three days as a replay. ENFORCED BY SOCIAL-SERVICE at the start of a live, which
+   * fixes it on the live row; a client reads it only to word the pre-live sheet, and reads an absent
+   * or unknown value as `off`.
+   */
+  liveReplays: {
+    mode: LiveReplaysMode;
+  };
+  /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
    * `POST /api/auth/oidc/callback` to MiConnect. A client sends a `code_challenge` only to a server
    * that says so, because a core-service older than this field drops the verifier, and MiConnect
@@ -88,6 +98,15 @@ export type AppVersionResponse = {
    * editor newer than its server").
    */
   formDrafts: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: it serves the
+   * RANKED lists - Pour toi (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, paged by
+   * `asOf` (`posts/for-you-feed.ts`). An older social-service refuses `feed=foryou` `400` (`@IsIn`)
+   * and ignores `ranked`, and a store build reaches phones before production deploys: the client asks
+   * them only of an estate that says so. Always `true` from this release on
+   * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
+   */
+  rankedFeeds: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -110,10 +129,12 @@ export class VersionService {
       calls: { mode: platform.callsMode },
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
+      liveReplays: { mode: platform.liveReplaysMode },
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,
       formDrafts: true,
+      rankedFeeds: true,
     };
   }
 }

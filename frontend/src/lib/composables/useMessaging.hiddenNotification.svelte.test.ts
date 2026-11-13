@@ -39,6 +39,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
 }));
 
 const { useMessaging } = await import('./useMessaging.svelte');
+const { windowAttention } = await import('$lib/utils/windowAttention.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 
@@ -93,6 +94,8 @@ function hideTheTab(hidden: boolean) {
     get: () => (hidden ? 'hidden' : 'visible'),
   });
   vi.spyOn(document, 'hasFocus').mockReturnValue(!hidden);
+  // A tab in front is one a person is at (`windowAttention.svelte.ts`).
+  if (!hidden) windowAttention.noteGesture();
 }
 
 describe('a hidden tab is notified on both inbound paths', () => {

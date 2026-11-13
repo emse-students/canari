@@ -173,6 +173,27 @@ export function lensFlipAllowed(state: CaptureState): boolean {
 }
 
 /**
+ * A VOLUME KEY IS THE SHUTTER (owner, 2026-11-11): its press is the finger going down on the white
+ * button and its release the finger lifting, so a quick press takes a photo and a held one films
+ * until the key is let go - the same reducer, the same hold threshold, nothing of its own.
+ *
+ * `shutterEnabled` is what the on-screen shutter's `disabled` says, negated: a press the button would
+ * refuse is refused here too (it is still swallowed by native, so the system volume never moves on
+ * the camera). A release always goes through - a take started by the key must end when it is let go,
+ * and the reducer ignores a release with no press. A `cancel` is the reducer's cancelled touch.
+ */
+export function hardwareShutterEvent(
+  phase: 'down' | 'up' | 'cancel',
+  at: number,
+  shutterEnabled: boolean
+): CaptureEvent | null {
+  if (phase === 'up') return { type: 'release', at };
+  // The system took the press (iOS): no photo nobody asked for, and a take is ended and kept.
+  if (phase === 'cancel') return { type: 'cancel' };
+  return shutterEnabled ? { type: 'press', at } : null;
+}
+
+/**
  * Why the reel limits could not be read, which decides what the capture screen says.
  *
  * - `unreachable`: no status, so nobody answered (the network, or the server is down).

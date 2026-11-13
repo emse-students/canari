@@ -1,10 +1,17 @@
+import {
+  CLIENT_VERSION_HEADER,
+  clientVersionAtLeast,
+  clientVersionOf,
+} from '../common/client-version';
+
 /**
  * The header a client names its build in on every lives call. NO header carried the version before
  * this one (survey of 2026-10-31: `?clientVersion=` on `/auth/refresh` and the announcement only,
  * `deviceAppVersion` in a device-registration BODY, nothing on a request to social-service), so
- * this is the one new header, and only the lives calls send it.
+ * the lives calls were the first to send it; the notifications read sends it too since `1.6.10`
+ * (`common/client-version.ts`, the one comparison).
  */
-export const LIVE_CLIENT_VERSION_HEADER = 'x-canari-client-version';
+export const LIVE_CLIENT_VERSION_HEADER = CLIENT_VERSION_HEADER;
 
 /**
  * The first build that reads the lives answers as they are now (no `maxDurationMs`, no
@@ -13,8 +20,6 @@ export const LIVE_CLIENT_VERSION_HEADER = 'x-canari-client-version';
  * answered like a switched-off estate.
  */
 export const LIVE_MIN_CLIENT_VERSION = '1.5.4';
-
-const CORE = /^(\d+)\.(\d+)\.(\d+)$/;
 
 /**
  * Whether a lives request comes from a build that may use them: the header says `1.5.4` or more.
@@ -25,13 +30,5 @@ const CORE = /^(\d+)\.(\d+)\.(\d+)$/;
  * - A pre-release suffix is ignored: `1.5.4-alpha.2` is a `1.5.4` build.
  */
 export function liveClientVersionAllowed(header: string | string[] | undefined): boolean {
-  const raw = Array.isArray(header) ? header[0] : header;
-  const match = CORE.exec(((raw ?? '').trim().split(/[-+]/, 1)[0] ?? '').trim());
-  const floor = CORE.exec(LIVE_MIN_CLIENT_VERSION);
-  if (!match || !floor) return false;
-  for (let i = 1; i <= 3; i++) {
-    const diff = Number(match[i]) - Number(floor[i]);
-    if (diff !== 0) return diff > 0;
-  }
-  return true;
+  return clientVersionAtLeast(clientVersionOf(header), LIVE_MIN_CLIENT_VERSION) === true;
 }

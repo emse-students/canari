@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveRefusalError } from './api';
 import { LivePosterOpenError } from './livePosterCrypto';
-import { forgetLivePostersExcept, loadLivePoster } from './livePosterView';
+import { forgetLivePostersExcept, LIVE_POSTER_MEMO_MAX, loadLivePoster } from './livePosterView';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 const LIVE = { id: 'l1', poster: { name: 'p1', ageMs: 3000 }, posterKey: 'ab'.repeat(32) };
@@ -119,5 +119,19 @@ describe('loadLivePoster', () => {
       throw new DOMException('aborted', 'AbortError');
     });
     await expect(loadLivePoster(LIVE, abort.signal, aborted)).resolves.toEqual({ kind: 'aborted' });
+  });
+
+  it('holds at most LIVE_POSTER_MEMO_MAX images, the least recently used going first', async () => {
+    const d = deps(async () => new ArrayBuffer(4));
+    const live = (i: number) => ({ ...LIVE, id: `l${i}` });
+    for (let i = 0; i < LIVE_POSTER_MEMO_MAX; i++) await loadLivePoster(live(i), undefined, d);
+    // l0 is used again, so l1 is now the oldest.
+    await loadLivePoster(live(0), undefined, d);
+    await loadLivePoster(live(LIVE_POSTER_MEMO_MAX), undefined, d);
+    expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 1);
+    await loadLivePoster(live(0), undefined, d);
+    expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 1);
+    await loadLivePoster(live(1), undefined, d);
+    expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 2);
   });
 });

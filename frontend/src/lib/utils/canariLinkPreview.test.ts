@@ -4,6 +4,8 @@ import {
   postPreviewTitle,
 } from './canariLinkPreviewFormat';
 import { setLocale } from '$lib/paraglide/runtime';
+import { formatAmount } from '$lib/forms/fillAnswers';
+import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
 import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 
 vi.mock('$lib/posts/api', () => ({
@@ -161,5 +163,52 @@ describe('fetchCanariLinkPreview (post) - the small logo slot and the own-photo 
     getPostMock.mockResolvedValue(post({}));
     const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p4');
     expect(preview?.reelPost).toBeNull();
+  });
+});
+
+/**
+ * What a card says when a post has no text or no author it can name, and how a form's price and
+ * opening date read: in the language the app is read in, both of them.
+ */
+describe('the words and formats of a preview follow the app language', () => {
+  const bare = {
+    id: '1',
+    markdown: '',
+    mentions: [],
+    links: [],
+    images: [],
+    media: [],
+    polls: [],
+    createdAt: '',
+    publishedAt: '',
+    updatedAt: '',
+  } as PostEntity;
+
+  afterEach(() => setLocale('fr', { reload: false }));
+
+  it.each([
+    ['fr', 'Publication sans texte', 'Auteur'],
+    ['en', 'Post without text', 'Author'],
+  ] as const)('in %s', (locale, title, author) => {
+    setLocale(locale, { reload: false });
+
+    expect(postPreviewTitle(bare)).toBe(title);
+    expect(postAuthorDisplayName(bare)).toBe(author);
+  });
+
+  it('an amount and a date are written the way the language writes them', () => {
+    const opensAt = '2031-03-05T14:30:00.000Z';
+
+    setLocale('fr', { reload: false });
+    expect(formatAmount(1250)).toBe(
+      new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(12.5)
+    );
+    const french = formatFormOpensAt(opensAt);
+
+    setLocale('en', { reload: false });
+    expect(formatAmount(1250)).toBe('€12.50');
+    expect(formatAmount(1250, '')).toBe('€12.50');
+    expect(formatFormOpensAt(opensAt)).not.toBe(french);
+    expect(formatFormOpensAt(opensAt)).toContain('Mar');
   });
 });

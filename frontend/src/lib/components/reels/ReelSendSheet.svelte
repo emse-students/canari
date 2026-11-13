@@ -188,7 +188,7 @@
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 bind:this={heading} tabindex="-1" class="text-base font-bold outline-none">
+    <h1 bind:this={heading} tabindex="-1" class="font-body text-base font-bold outline-none">
       {m.reel_sendto_title()}
     </h1>
   </header>
@@ -204,7 +204,7 @@
       data-reel-send-feed
     >
       <span
-        class="bg-cn-yellow/20 text-text-main flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+        class="bg-accent/20 text-text-main flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
       >
         <Film size={20} strokeWidth={2.25} />
       </span>
@@ -224,7 +224,7 @@
         bind:value={query}
         placeholder={m.reel_sendto_search()}
         aria-label={m.reel_sendto_search()}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-lg border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-lg border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
         data-reel-send-search
       />
     </div>
@@ -299,7 +299,7 @@
     class="border-cn-border bg-cn-surface shrink-0 border-t px-3 pt-2 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
   >
     {#if capNotice}
-      <p role="alert" class="text-amber-warn mb-2 text-sm font-semibold" data-reel-send-cap>
+      <p role="alert" class="text-amber-warn-text mb-2 text-sm font-semibold" data-reel-send-cap>
         {m.reel_sendto_cap({ count: cap })}
       </p>
     {/if}
@@ -345,7 +345,7 @@
   <span
     class={[
       'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
-      on ? 'border-cn-yellow bg-cn-yellow text-black' : 'border-cn-border',
+      on ? 'border-accent-icon bg-accent text-on-accent' : 'border-cn-border',
     ]}
     aria-hidden="true"
   >

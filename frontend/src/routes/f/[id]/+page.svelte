@@ -289,7 +289,7 @@
   {#if loading}
     <div class="flex justify-center py-24">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if loadError || !form}
@@ -324,7 +324,7 @@
     {:else}
       {#if isNotOpenYet && form.opensAt}
         <p
-          class="mb-4 rounded-2xl border border-amber-300/60 bg-amber-50/80 px-4 py-4 text-sm font-semibold text-amber-800 dark:bg-amber-950/20 dark:text-amber-300"
+          class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
         >
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>

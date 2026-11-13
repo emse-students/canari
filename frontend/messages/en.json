@@ -2,6 +2,10 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_language_label": "Language",
   "settings_language_desc": "Interface language",
+  "settings_emoji_style_label": "Emojis",
+  "settings_emoji_style_desc": "System: your phone's own. Canari: the same drawings on every device.",
+  "settings_emoji_style_system": "System",
+  "settings_emoji_style_canari": "Canari",
   "auth_brand_subtitle": "Mines Saint-Étienne",
   "auth_redirecting": "Redirecting…",
   "auth_restore_in_progress": "Restoring your session...",
@@ -180,6 +184,8 @@
   "chat_error_main_tab_gone": "The main Canari tab closed during the operation: check its result before trying again.",
   "chat_error_main_tab_unavailable": "The main Canari tab is not ready (locked or signed out): unlock it, or do this from that tab.",
   "chat_error_main_tab_failed": "The main Canari tab could not complete the operation.",
+  "chat_error_main_tab_key_changed": "The PIN changed while sending: nothing was sent, try again.",
+  "chat_error_tab_reloading": "This tab is becoming the main Canari tab and reloads: try again in a moment.",
   "chat_modal_creation_in_progress_label": "Creating…",
   "chat_modal_community_name_label": "Community name",
   "chat_modal_community_name_placeholder": "ex: BDE 2026",
@@ -269,6 +275,7 @@
   "chat_mls_sync_in_progress": "Receiving pending messages…",
   "chat_scrollback_loading": "Looking for older messages...",
   "chat_scrollback_no_peer": "No device is online to supply older messages. Try again later.",
+  "chat_scrollback_main_tab": "To load older messages, scroll this conversation in the main Canari tab.",
   "chat_channel_read_only": "You do not have permission to post in this channel.",
   "chat_conversation_deleted_message": "This conversation has been deleted.",
   "chat_delete_locally_button": "Delete locally",
@@ -426,7 +433,16 @@
   "chat_device_revoke_session_confirm": "Remove this connection? Whoever holds it will be signed out and has to start over.",
   "chat_devices_intro": "Each row is a device linked to your account. Removing it signs it out and takes away its access to your conversations: it starts from scratch.",
   "chat_device_no_session": "No active connection",
-  "chat_device_session_count": "{count} connections",
+  "chat_device_session_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} connection",
+        "countPlural=other": "{count} connections"
+      }
+    }
+  ],
   "chat_device_session_orphan_note": "This connection never identified a device: it has not unlocked your messages. If you do not recognise it, remove it.",
   "chat_device_session_unlisted_note": "This connection names a device that is no longer in the list. If you do not recognise it, remove it.",
   "chat_device_limit_reached": "This device could not register: your account has reached the limit of {max} devices. Delete an unused device in Settings > Device management, then reopen the app.",
@@ -470,14 +486,14 @@
   "chat_channel_join_as_admin_done": "You joined #{name}",
   "chat_channel_join_as_admin_failed": "Could not join #{name}",
   "chat_channel_private_description": "Only authorized members can access",
-  "chat_channel_public_label": "Public channel",
   "chat_channel_public_description": "All community members can access",
   "chat_channel_visibility_label": "Visibility",
   "chat_channel_visibility_public": "Public",
   "chat_channel_visibility_private": "Private",
   "chat_channel_visibility_public_note": "Every member can see and join this channel.",
   "chat_channel_visibility_private_note": "Only invited members can access this channel.",
-  "chat_toggle_private_channel_label": "Make channel private",
+  "chat_channel_access_option_public": "Public",
+  "chat_channel_access_option_restricted": "Restricted",
   "chat_allowed_members_label": "Authorized members",
   "chat_no_allowed_members_warning": "No authorized members - channel will be inaccessible.",
   "chat_add_member_label": "Add member",
@@ -511,6 +527,10 @@
   "chat_invite_role_not_grantable_error": "You cannot grant this role through an invitation.",
   "chat_community_departure_retry_error": "The departure could not be completed this time. Nothing changed: try again.",
   "chat_community_gone_error": "This community no longer exists.",
+  "chat_community_name_invalid_error": "This name cannot be saved: 80 characters at most, no control characters.",
+  "chat_community_slug_invalid_error": "This name needs at least one letter or digit.",
+  "chat_community_creation_rate_error": "You created many communities in a short time. Try again in an hour.",
+  "chat_community_owned_limit_error": "You have reached the number of communities one account can create. Delete one to create a new one.",
   "chat_invite_user_has_no_device_error": "This person has not installed Canari yet. They need to open the app at least once before they can be invited.",
   "chat_key_distribution_unavailable_error": "Cannot check right now: the key service is not answering. Try again in a moment.",
   "common_generating_label": "Generating…",
@@ -579,6 +599,7 @@
   "call_mic_suspended_peer": "{name}'s phone turned their microphone off: you cannot hear them",
   "call_mic_suspended_peer_unnamed": "The other person's phone turned their microphone off: you cannot hear them",
   "call_mic_was_suspended": "Your phone turned your microphone off for {seconds} s: the other person could not hear you",
+  "call_focus_still_taken": "Another app is holding the sound: your microphone stays off. Try again once it stops.",
   "call_tap_to_hear": "Tap to hear",
   "call_mute_short_label": "Mute",
   "call_camera_short_label": "Camera",
@@ -604,6 +625,8 @@
   "msg_restored_unverified": "unverified",
   "msg_restored_unverified_hint": "This message was restored from another member's history, and nothing proves who wrote it: its author may have used an older version of Canari.",
   "msg_en_attente": "Pending…",
+  "msg_waiting_for_network": "Waiting for the network…",
+  "msg_waiting_for_server": "Waiting for the server…",
   "msg_echec": "Failed",
   "msg_non_confirme": "Not confirmed",
   "msg_remettre_dans_le_champ": "Put back in the composer",
@@ -673,7 +696,16 @@
   "msg_max_reactions_label": "Maximum of {max} different reactions on this message.",
   "msg_recent_reactions_label": "Recent",
   "msg_reactions_label": "Message reactions",
-  "msg_reactions_show_more": "Show {count} more reactions",
+  "msg_reactions_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show {count} more reaction",
+        "countPlural=other": "Show {count} more reactions"
+      }
+    }
+  ],
   "msg_reaction_aria_label": "{emoji} ({count} people)",
   "msg_reaction_aria_label_one": "{emoji} (1 person)",
   "msg_audio_format_unsupported_label": "Format not supported",
@@ -703,6 +735,7 @@
   "post_anonymous_removed": "Anonymity removed, the author is visible again.",
   "post_unable_to_unmask": "Could not remove anonymity",
   "post_reacter": "Add reaction",
+  "post_react_hold_hint": "Tap to like, hold to choose a reaction",
   "post_already_reported": "You already reported this post.",
   "post_unable_to_vote": "Could not vote",
   "post_action_not_allowed": "Action not allowed",
@@ -720,6 +753,7 @@
   "report_user_dialog_title": "Report this person",
   "profile_report_btn": "Report",
   "profile_block_btn": "Block",
+  "profile_more_actions": "More actions on this profile",
   "profile_unblock_btn": "Unblock",
   "profile_block_confirm": "Block {name}? You will no longer find each other in search, and neither of you will be able to start a conversation with the other or invite them to a group or a salon. Your existing conversations, groups and communities are unchanged. They are not told about it.",
   "profile_block_done": "Person blocked.",
@@ -785,7 +819,16 @@
   "post_report_label": "Report",
   "post_report_comment_label": "Report this comment",
   "post_like_label": "Like",
-  "post_likes_count_label": "{count} Likes",
+  "post_likes_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} Like",
+        "countPlural=other": "{count} Likes"
+      }
+    }
+  ],
   "post_reply_label": "Reply",
   "post_show_comments_label": "Show {count} comments",
   "post_hide_comments_label": "Hide",
@@ -841,6 +884,7 @@
   "post_comments_sheet_title": "Comments",
   "post_comment_load_older_label": "View older comments",
   "post_comment_as_association_caption": "Comment on behalf of {name}",
+  "post_comment_add_image_label": "Add an image",
   "post_comment_media_error": "Could not attach that media to the comment.",
   "post_media_expired_label": "Media expired.",
   "post_image_alt": "Post image",
@@ -863,6 +907,8 @@
   "post_media_video_label": "Video",
   "post_fullscreen_label": "Full screen",
   "video_sound_label": "Video sound",
+  "video_volume_label": "Volume",
+  "video_volume_valuetext": "{percent}%",
   "video_player_label": "Video player",
   "video_play_label": "Play",
   "video_loading_label": "Loading the video",
@@ -872,6 +918,9 @@
   "video_fullscreen_label": "Full screen",
   "video_exit_fullscreen_label": "Exit full screen",
   "video_unplayable": "This video cannot be played on this device.",
+  "video_expand_label": "Open in full screen",
+  "video_sound_on_announce": "Sound on",
+  "video_sound_off_announce": "Sound off",
   "post_download_label": "Download",
   "post_poll_multiple_choice_label": "Multiple choices allowed",
   "post_poll_days_remaining": [
@@ -986,15 +1035,15 @@
   "post_create_form_required": "Please select a form.",
   "post_create_form_none_available": "You have no form to attach. Create one, or remove the form from the post.",
   "post_create_publish_error": "Could not publish the post",
-  "publish_queue_queued": "Post waiting to be sent",
-  "publish_queue_preparing": "Preparing media {current} of {count}",
-  "publish_queue_preparing_percent": "Preparing media {current} of {count} - {percent}%",
-  "publish_queue_uploading": "Posting - media {current} of {count} - {percent}%",
-  "publish_queue_publishing": "Posting...",
-  "publish_queue_waiting": "Post paused - it will resume as soon as the connection is back",
-  "publish_queue_failed": "The post could not be published: {reason}",
-  "publish_queue_paused": "Post paused",
-  "publish_queue_withdrawing": "Deleting the post...",
+  "publish_queue_queued": "Post queued",
+  "publish_queue_preparing": "Preparing {current}/{count}",
+  "publish_queue_preparing_percent": "Preparing {current}/{count} · {percent}%",
+  "publish_queue_uploading": "Sending {current}/{count} · {percent}%",
+  "publish_queue_publishing": "Posting…",
+  "publish_queue_waiting": "Waiting for network",
+  "publish_queue_failed": "Failed: {reason}",
+  "publish_queue_paused": "Paused",
+  "publish_queue_withdrawing": "Deleting…",
   "publish_queue_pause": "Pause",
   "publish_queue_resume": "Resume",
   "publish_queue_gone": "This post was deleted: it can no longer be published",
@@ -1061,7 +1110,16 @@
   "post_create_publish_button_label": "Publish",
   "post_form_section_remove_label": "Remove form",
   "post_form_choose_label": "- Choose a form -",
-  "post_form_questions_label": "{count} questions",
+  "post_form_questions_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "post_form_opens_suffix_label": "opens {date}",
   "post_form_opens_planned_label": "Scheduled to open on {date}",
   "post_form_none_yet_label": "No form yet.",
@@ -1146,29 +1204,131 @@
   "admin_storage_disk_used": "{used} / {total} used ({percent}%)",
   "admin_storage_postgres_label": "Database",
   "admin_storage_garage_label": "Media objects (Garage)",
-  "admin_storage_garage_object_count": "{count} objects",
+  "admin_storage_garage_object_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object",
+        "countPlural=other": "{count} objects"
+      }
+    }
+  ],
   "admin_storage_redis_label": "Cache (Redis)",
   "admin_storage_unavailable": "Measurement unavailable.",
   "admin_storage_media_growth_title": "What was written",
   "admin_storage_media_week_range": "{from}-{to} d",
   "admin_storage_media_week_current": "Last 7 days",
   "admin_storage_media_older": "Beyond {days} d: {size}. Retention erases part of it, so this is not a growth measurement.",
-  "admin_storage_media_undated": "{count} objects carry no write date and are absent from the bars above.",
+  "admin_storage_media_undated": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object carries no write date and is absent from the bars above.",
+        "countPlural=other": "{count} objects carry no write date and are absent from the bars above."
+      }
+    }
+  ],
   "admin_storage_media_retention_title": "Retention",
   "admin_storage_media_retention_healthy": "No object beyond the {days}-day window. Swept every {hours} h.",
-  "admin_storage_media_retention_pending": "{count} objects ({size}) are past the {days}-day window and are waiting for the next sweep.",
-  "admin_storage_media_retention_stalled": "{count} objects ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take them.",
+  "admin_storage_media_retention_pending": [
+    {
+      "declarations": [
+        "input count",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is past the {days}-day window and is waiting for the next sweep.",
+        "countPlural=other": "{count} objects ({size}) are past the {days}-day window and are waiting for the next sweep."
+      }
+    }
+  ],
+  "admin_storage_media_retention_stalled": [
+    {
+      "declarations": [
+        "input count",
+        "input age",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take it.",
+        "countPlural=other": "{count} objects ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take them."
+      }
+    }
+  ],
   "admin_storage_media_unreachable_title": "Out of the sweep's reach",
   "admin_storage_media_unreachable_none": "None. Every object in the bucket has its metadata entry.",
-  "admin_storage_media_unreachable_some": "{count} objects ({size}) no sweep can ever reach.",
+  "admin_storage_media_unreachable_some": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) no sweep can ever reach.",
+        "countPlural=other": "{count} objects ({size}) no sweep can ever reach."
+      }
+    }
+  ],
   "admin_storage_media_untracked": "{count} ({size}) with no metadata entry: the sweep iterates the metadata and never sees them.",
   "admin_storage_media_tombstoned": "{count} ({size}) marked deleted yet still in the bucket: a delete that failed.",
-  "admin_storage_media_public": "{count} objects ({size}) are public assets, exempt from retention.",
-  "admin_storage_media_archive": "{count} objects ({size}) are feed media (posts, comments, avatars), kept indefinitely.",
-  "admin_storage_media_association": "{count} objects ({size}) are association documents, kept indefinitely, even after the uploader's account is deleted.",
-  "admin_storage_media_reel": "{count} objects ({size}) are CanaReels videos, deleted with their reel one month after publication.",
+  "admin_storage_media_public": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is a public asset, exempt from retention.",
+        "countPlural=other": "{count} objects ({size}) are public assets, exempt from retention."
+      }
+    }
+  ],
+  "admin_storage_media_archive": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is feed media (posts, comments, avatars), kept indefinitely.",
+        "countPlural=other": "{count} objects ({size}) are feed media (posts, comments, avatars), kept indefinitely."
+      }
+    }
+  ],
+  "admin_storage_media_association": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is an association document, kept indefinitely, even after the uploader's account is deleted.",
+        "countPlural=other": "{count} objects ({size}) are association documents, kept indefinitely, even after the uploader's account is deleted."
+      }
+    }
+  ],
+  "admin_storage_media_reel": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is a CanaReels video, deleted with its reel one month after publication.",
+        "countPlural=other": "{count} objects ({size}) are CanaReels videos, deleted with their reel one month after publication."
+      }
+    }
+  ],
   "admin_storage_reels": "{live} reels alive, {overdue} overdue for deletion (an overdue reel is still there after its month: the hourly worker has not removed it).",
-  "admin_storage_media_unclassified": "{count} objects ({size}) carry no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches them.",
+  "admin_storage_replays": "{live} live replays showing ({size}); {evictions} deleted before their 3 days by the total cap in 30 days (a non-zero count means the LIVE_REPLAY_TOTAL_MAX_GB cap is too small).",
+  "admin_storage_media_unclassified": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) carries no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches it.",
+        "countPlural=other": "{count} objects ({size}) carry no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches them."
+      }
+    }
+  ],
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "What the database and the cache above are made of. Numbers only: nothing here warns, classifies or acts.",
   "admin_storage_mls_tables_title": "Tables",
@@ -1177,13 +1337,36 @@
   "admin_storage_mls_table_live": "~{size} of data",
   "admin_storage_mls_queue_title": "Undelivered queue",
   "admin_storage_mls_queue_summary": "{rows} messages waiting for {devices} devices.",
-  "admin_storage_mls_queue_deepest": "Deepest single device queue: {count} messages.",
+  "admin_storage_mls_queue_deepest": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Deepest single device queue: {count} message.",
+        "countPlural=other": "Deepest single device queue: {count} messages."
+      }
+    }
+  ],
   "admin_storage_mls_queue_oldest": "Oldest message waiting: {days} days.",
   "admin_storage_mls_queue_empty": "Nothing waiting.",
   "admin_storage_mls_queue_growth": "Messages queued per week",
   "admin_storage_mls_ghosts_title": "Devices without a key package",
   "admin_storage_mls_ghosts_none": "None. All {devices} devices holding memberships have published a key package.",
-  "admin_storage_mls_ghosts_some": "{count} of {devices} devices hold memberships ({memberships}) and have published no key package: they can be added to nothing and can receive no Welcome.",
+  "admin_storage_mls_ghosts_some": [
+    {
+      "declarations": [
+        "input count",
+        "input devices",
+        "input memberships",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} of {devices} devices holds memberships ({memberships}) and has published no key package: it can be added to nothing and can receive no Welcome.",
+        "countPlural=other": "{count} of {devices} devices hold memberships ({memberships}) and have published no key package: they can be added to nothing and can receive no Welcome."
+      }
+    }
+  ],
   "admin_storage_mls_redis_title": "Cache keys",
   "admin_storage_mls_redis_summary": "{keys} keys. The breakdown below is a sample of {sampled}.",
   "admin_storage_mls_redis_prefix": "{prefix}: {keys}",
@@ -1298,7 +1481,16 @@
   "admin_legacy_status_already_held": "Already a member - row closed, nothing changed",
   "admin_legacy_collision_hint": "Several rows share the same last name, first name and promo for one association. Nothing can decide on its own which belongs to whom: the first person to sign in takes the membership and the other rows stay stuck.",
   "admin_legacy_empty": "No rows.",
-  "admin_legacy_total_label": "{count} rows",
+  "admin_legacy_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} row",
+        "countPlural=other": "{count} rows"
+      }
+    }
+  ],
   "admin_payments_connect_hint": "Online payments are configured on each association: public page → Edit → Payments tab.",
   "admin_agenda_title": "Pending events",
   "admin_agenda_subtitle": "Validate an event to make it visible on the public agenda and the global calendar.",
@@ -1366,6 +1558,10 @@
   "admin_platform_checkpoint_skip_mode_off": "After every reception",
   "admin_platform_checkpoint_skip_mode_on": "Deferred (up to 100 messages)",
   "admin_platform_checkpoint_skip_mode_hint": "Phones only. Applies to a running app at its next check of this server, which happens when it regains focus, comes back online or becomes visible again - there is no periodic check. Deferred: a phone that only receives messages saves its encryption state at its next send, when it goes to the background, or every 100 received messages, instead of after each reception. Turn it on only once the readings listed in device-verification have passed on dev.",
+  "admin_platform_live_replays_mode_label": "Live replays",
+  "admin_platform_live_replays_mode_off": "Off (deleted at the end)",
+  "admin_platform_live_replays_mode_on": "Kept 3 days",
+  "admin_platform_live_replays_mode_hint": "Applies to lives started after saving: a live keeps at most its last 3 hours and becomes a replay seen for 3 days by the same audience. Switching back off does not delete replays already published. Turn it on only once the texts (terms, privacy) are updated and the readings of the live-replays page have passed on dev.",
   "admin_platform_push_mode_hint": "Takes effect as soon as you save, for conversation messages: in wake-up only, Google and Apple receive just an opaque id, and the phone fetches the rest from here. Only app versions that can do this receive it; the others stay on full. Turn it on only once the iOS notification extension has been verified on an iPhone.",
   "admin_spaces_label": "Spaces",
   "admin_spaces_title": "Spaces & audiences",
@@ -1501,6 +1697,7 @@
   "admin_cercle_amount_hint": "The buyer picks the amount; these bounds frame it. A top-up can be bought any number of times and can never run out.",
   "admin_cercle_members_only_label": "Reserved to cotisants",
   "admin_cercle_members_only_hint": "Ticked, only the association's cotisants (any active tier) can top up. Unticked, anyone signed in can top up.",
+  "admin_cotisation_mode_in_use": "The cotisation cannot be turned off while products or partnership cards are still reserved to cotisants. Untick \"reserved to cotisants\" on them first, then try again.",
   "admin_members_only_without_cotisation": "Enable the association's cotisation first: without it nobody can be a cotisant, so nothing can be reserved to cotisants.",
   "admin_cercle_webhook_secret_set": "A secret is stored. Leave empty to keep it, or type a new value to replace it.",
   "admin_cercle_saved": "Saved",
@@ -1946,8 +2143,6 @@
   "carte_card_desc": "Generate the poster of associations grouped by theme.",
   "carte_title": "Association Life Map",
   "carte_subtitle": "The association life maps of the spaces your BDE is in charge of.",
-  "carte_category_move_up": "Move up",
-  "carte_category_move_down": "Move down",
   "carte_projects_heading": "Posters",
   "carte_projects_subtitle": "Saved poster projects, re-openable and editable.",
   "carte_project_name_placeholder": "Poster name",
@@ -1968,7 +2163,6 @@
   "carte_assos_search": "Search an association",
   "carte_assos_empty": "No association in this space.",
   "carte_asso_new_badge": "New",
-  "carte_asso_toggle": "Show {name} on the map",
   "carte_asso_zone": "Zone of {name}",
   "carte_new_assos_title": [
     {
@@ -2000,8 +2194,6 @@
   "carte_zone_uncategorized": "No zone",
   "carte_settings_heading": "Settings",
   "carte_generated_note": "Bubbles are generated automatically from up-to-date data (logos, presidents, members).",
-  "carte_fullpage_enter": "Full page",
-  "carte_fullpage_exit": "Exit full page",
   "carte_background_label": "Background image",
   "carte_background_upload": "Choose an image",
   "carte_background_clear": "Remove",
@@ -2010,7 +2202,6 @@
   "carte_saving_label": "Saving...",
   "carte_saved_label": "Saved",
   "carte_export_button": "Export to PDF",
-  "carte_exporting_label": "Exporting...",
   "carte_publish_button": "Publish",
   "carte_unpublish_button": "Take offline",
   "carte_publishing_label": "Working...",
@@ -2019,8 +2210,23 @@
   "carte_published_since": "Live since {date}",
   "carte_unpublish_confirm": "Take this map off the student portal? The portal will show no map at all until you publish another one.",
   "carte_unsaved_label": "Unsaved changes",
-  "carte_publish_update_button": "Update the live version",
+  "carte_publish_update_button": "Update the publication",
   "carte_publish_update_hint": "The live map no longer matches what is saved: replace it with the current version.",
+  "carte_back_to_list": "Back to the maps",
+  "carte_view_label": "Editor view",
+  "carte_tab_map": "Map",
+  "carte_tab_directory": "Directory",
+  "carte_more_actions": "More actions",
+  "carte_panel_collapse": "Collapse the panel",
+  "carte_panel_expand": "Expand the panel",
+  "carte_directory_hidden_title": "The directory is not shown on the map",
+  "carte_directory_hidden_body": "Show it to see it here and publish it with the map.",
+  "carte_directory_show": "Show the directory",
+  "carte_asso_shown": "Show {name} on the map",
+  "carte_zone_drag": "Move the zone {label}: drag it, or use the up and down arrows",
+  "carte_zone_drop_here": "Drop an association here",
+  "carte_zone_moved": "Zone {label}: position {position} of {total}",
+  "carte_assos_drag_hint": "Drag an association onto a zone to file it there.",
   "carte_overlaps_title": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -2063,7 +2269,6 @@
   "carte_panel_front": "Bring to front",
   "carte_panel_back": "Send to back",
   "carte_panel_reset": "Reset position",
-  "carte_elements_heading": "Elements",
   "carte_add_text": "Add text",
   "carte_text_placeholder": "Your text",
   "carte_deco_heading": "Selected element",
@@ -2932,8 +3137,16 @@
   "form_cash_expiry_placeholder": "Never (leave empty)",
   "form_cash_expiry_hint": "On-site payments not validated after this delay automatically expire. Leave empty to never expire.",
   "form_cash_expiry_required_public": "Required on a public form: an unpaid on-site answer keeps its seat until this delay ends.",
-  "form_questions_count": "{count} questions",
-  "form_questions_count_one": "1 question",
+  "form_questions_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "form_add_question_button": "Add a question",
   "form_error_title_required": "The form title is required.",
   "form_error_association_required": "Please select a recipient association for a paid form.",
@@ -3190,11 +3403,27 @@
   "nav_calendar_desc": "Events and calendar",
   "nav_forms_label": "Forms",
   "nav_forms_desc": "Registrations and surveys",
+  "nav_games_label": "Games",
+  "nav_games_desc": "Minesweeper and rankings",
+  "games_page_title": "Games",
+  "games_page_subtitle": "Play Minesweeper and compare your times.",
+  "games_play": "Play",
+  "games_tab_general": "Overall",
+  "games_tab_promo": "By class",
+  "games_tabs_label": "Minesweeper ranking",
+  "games_promo_label": "Class",
+  "games_promo_option": "Class of {promo} ({players})",
+  "games_promo_none": "No class has a ranking yet.",
+  "games_promo_empty": "No verified time in this class.",
+  "games_best_value": "Your record: {time} · rank #{rank}",
+  "games_best_none": "No ranked time yet: start a ranked game.",
+  "games_load_error": "The ranking could not be loaded.",
   "nav_shop_label": "Shop",
   "nav_shop_desc": "Products and memberships",
   "nav_dashboard_label": "Dashboard",
   "nav_settings_desc": "Preferences, security, devices",
   "nav_dashboard_desc": "Application overview",
+  "error_not_found_message": "This page could not be found.",
   "error_unexpected_message": "An unexpected error occurred.",
   "error_back_home": "Back to home",
   "auth_callback_authenticating": "Authenticating…",
@@ -3219,6 +3448,8 @@
   "profile_promo_value": "Class of {year}",
   "profile_promo_unknown": "Not set",
   "profile_member_since_label": "Member since",
+  "profile_info_schooling_label": "Programme and campus",
+  "profile_info_schooling_unknown": "Not provided",
   "profile_notepad_heading": "Personal notepad",
   "profile_notepad_private": "Private · only visible to you",
   "profile_notepad_load_error": "Failed to load notepad.",
@@ -3331,7 +3562,6 @@
   "profile_bio_save_error_fallback": "Save failed",
   "settings_page_title": "Settings",
   "settings_page_subtitle": "Preferences, security and account management",
-  "settings_device_id_label": "device: {id}",
   "settings_storage_heading": "Storage",
   "settings_storage_desc": "Space used by Canari on this device: messages, media cache and encryption state.",
   "settings_storage_measuring": "Measuring...",
@@ -3366,7 +3596,6 @@
   "minesweeper_submit_ok": "Time saved: {time}",
   "minesweeper_submit_fail": "Score rejected (verification failed).",
   "minesweeper_submit_action": "Sending the score",
-  "minesweeper_personal_best": "Personal best: {time}",
   "minesweeper_empty_leaderboard": "No verified times yet.",
   "minesweeper_banned": "You are banned from the leaderboard: this game will not be ranked.",
   "minesweeper_admin_remove_score": "Remove this score",
@@ -3382,9 +3611,8 @@
   "minesweeper_rank": "Rank #{rank}",
   "minesweeper_rank_up": "Rank #{rank} · +{gained}",
   "minesweeper_rank_pending": "Ranking…",
-  "minesweeper_profile_badge": "Minesweeper · #{rank} · {time}",
-  "minesweeper_profile_badge_title": "Minesweeper ranking",
-  "minesweeper_tab_ranking": "Ranking",
+  "minesweeper_profile_badge": "🏆 Minesweeper #{rank}",
+  "minesweeper_profile_badge_title": "Minesweeper ranking · {time}",
   "minesweeper_tab_stats": "Stats",
   "minesweeper_load_more": "Show more",
   "minesweeper_stats_played": "Ranked games",
@@ -3481,8 +3709,11 @@
   "calendar_moderate_open": "Open the queue",
   "calendar_prev_month": "Previous month",
   "calendar_next_month": "Next month",
-  "calendar_filter_label": "Association",
-  "calendar_filter_all": "All associations",
+  "calendar_space_filter_label": "Space",
+  "calendar_space_filter_all": "All spaces",
+  "calendar_space_filter_campuses": "Campus",
+  "calendar_space_filter_formations": "Programmes",
+  "calendar_association_filter_active": "One organisation is selected: show everything",
   "calendar_export_pdf": "Export as PDF",
   "calendar_subscribe": "Subscribe to calendar",
   "calendar_subscribe_intro": "To add every association's events to your personal calendar:",
@@ -3542,8 +3773,6 @@
   "calendar_export_preview_label": "Preview",
   "calendar_export_preview_title": "Calendar preview",
   "events_heading": "Events",
-  "events_empty_title": "No events yet",
-  "events_empty_desc": "Upcoming events will appear here.",
   "common_creating_label": "Creating…",
   "assoc_new_back": "Back to associations",
   "assoc_new_heading": "Create an association",
@@ -3809,11 +4038,8 @@
   "profile_public_sponsorship_adoption": "adoption",
   "profile_public_sponsorship_empty": "No sponsorship links.",
   "profile_public_info_heading": "Information",
-  "status_pill_connected": "Connected",
-  "status_pill_offline": "Offline",
-  "admin_maintenance_banner_text": "Maintenance mode active - only administrators have access.",
+  "admin_maintenance_banner_text": "Maintenance: admins only",
   "env_banner_test_label": "Test environment",
-  "env_banner_test_detail": "The people and associations here are fictional. Nothing you do here reaches the real app.",
   "md_toolbar_aria_label": "Formatting",
   "md_toolbar_bold": "Bold",
   "md_toolbar_italic": "Italic",
@@ -3874,10 +4100,10 @@
   "calendar_event_fallback_title": "Event",
   "calendar_event_linked_form": "Linked form",
   "calendar_event_linked_post": "Linked post",
-  "mls_error_oom_text": "Insufficient memory - reload the app to receive new messages.",
-  "mls_error_private_mode_text": "Private browsing mode - messages will not be saved after closing.",
-  "mls_error_keystore_lost_text": "Push notifications degraded - log in again to reactivate them.",
-  "mls_error_restore_shortfall_text": "Some conversations could not be restored on this device and are waiting to be re-synced.",
+  "mls_error_oom_text": "Not enough memory",
+  "mls_error_private_mode_text": "Private browsing: messages not kept",
+  "mls_error_keystore_lost_text": "Push notifications degraded: log in again",
+  "mls_error_restore_shortfall_text": "Conversations to re-sync",
   "mls_error_reload_action": "Reload",
   "mls_error_dismiss_action": "Got it",
   "media_lightbox_default_aria": "Media preview",
@@ -3905,6 +4131,8 @@
   "settings_about_log_button": "Save the log",
   "settings_about_log_busy": "Preparing the log…",
   "settings_about_log_failed": "The log could not be read.",
+  "settings_principles_label": "Nos principes",
+  "settings_principles_aria": "Read our principles (in French)",
   "platform_gate_version_prefix": "This version of Canari (",
   "platform_gate_version_middle": ") is no longer supported. Install at least version",
   "platform_gate_version_suffix": "to continue.",
@@ -4024,15 +4252,15 @@
   "posts_publish_button": "Post",
   "posts_search_placeholder": "Search posts…",
   "common_clear_aria": "Clear",
-  "posts_tab_associations": "Associations",
-  "posts_tab_followed": "Following",
-  "posts_tab_all": "My space",
-  "posts_tabs_info_associations_title": "Associations",
-  "posts_tabs_info_associations_body": "What the associations you can see publish, and what they republish.",
-  "posts_tabs_info_followed_title": "Following",
-  "posts_tabs_info_followed_body": "Posts from the accounts you follow: associations, and people who accepted your request. Following a person means sending them a request: they choose whether to accept.",
-  "posts_tabs_info_all_title": "My space",
-  "posts_tabs_info_all_body": "Posts from your spaces, your campus and your programme. Personal posts from people you follow are in Following.",
+  "posts_tab_associations": "Organisations",
+  "posts_tab_foryou": "For you",
+  "posts_tab_campus": "Campus",
+  "posts_tabs_info_associations_title": "Organisations",
+  "posts_tabs_info_associations_body": "What the organisations (associations, lists, institutions) you can see publish, and what they republish: pinned posts first, then the rest in the order they publish it.",
+  "posts_tabs_info_foryou_title": "For you",
+  "posts_tabs_info_foryou_body": "First what the people you follow posted or reposted in the last two days, then popular posts from your campus, marked \"Suggestion\", then the rest. Within each part, the newest and most popular come first. Following a person means sending them a request: they choose whether to accept.",
+  "posts_tabs_info_campus_title": "Campus",
+  "posts_tabs_info_campus_body": "Everything your spaces, your campus and your programme publish: pinned posts first, then the rest in the order it is published.",
   "posts_reels_open": "Open CanaReels",
   "posts_reels_open_error": "CanaReels could not be loaded.",
   "posts_reels_empty_title": "No CanaReels yet",
@@ -4040,9 +4268,12 @@
   "posts_reels_empty_camera": "Open the camera",
   "posts_new_post_title": "New post",
   "posts_empty_title": "No posts",
-  "posts_empty_followed": "Follow associations or people to see their posts here, or switch to",
+  "posts_empty_foryou": "Follow people to see their posts here, or switch to",
   "posts_badge_new": "New",
+  "suggestion_post_badge": "Suggested",
   "posts_all_loaded": "You are all caught up!",
+  "posts_load_more_error": "The next posts could not be loaded.",
+  "posts_load_more_retry": "Retry",
   "posts_card_render_failed": "This post could not be displayed.",
   "posts_stored_refreshing": "Feed saved on this device, updating…",
   "posts_stored_not_refreshed": "Feed saved on this device: the server did not answer.",
@@ -4108,9 +4339,17 @@
   "chat_system_call_busy": "Contact busy",
   "chat_system_call_duration_under_minute": "less than a minute",
   "chat_system_call_duration_one_minute": "1 minute",
-  "chat_system_call_duration_minutes": "{count} minutes",
+  "chat_system_call_duration_minutes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} minute",
+        "countPlural=other": "{count} minutes"
+      }
+    }
+  ],
   "chat_preview_media": "[Media]",
-  "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Poll]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Link]",
@@ -4174,6 +4413,11 @@
   "chat_channel_write_everyone": "Everyone",
   "chat_channel_write_admins_mods": "Admins and moderators only",
   "chat_channel_write_admins": "Admins only",
+  "chat_channel_write_only_admins": "Only admins can post in this channel.",
+  "chat_channel_write_only_admins_mods": "Only admins and moderators can post in this channel.",
+  "chat_channel_write_roles_qualifying": "Roles that can post: {roles}",
+  "chat_channel_write_no_moderator_role_warning": "No role other than administrators can moderate: only admins can post here. Give a role \"{permission}\" in the community roles.",
+  "chat_community_roles_load_error": "Could not load the roles and their permissions.",
   "chat_channel_admins_join_hint": "An administrator sees that a private channel exists and can join it; their name then appears in its member list.",
   "chat_channel_who_can_write": "Who can post?",
   "chat_channel_add_user_label": "Add a user",
@@ -4195,6 +4439,7 @@
   "auth_pin_reset_failed": "The PIN reset did not complete. Try again in a moment.",
   "auth_device_revoked_reset": "This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.",
   "auth_state_written_by_another_tab": "Canari is open in another tab, which has just saved this device's data. Close the other tabs, then sign in again.",
+  "auth_state_owned_by_another_tab": "Canari is open in another tab, which holds this device's data. Use that tab, or close it and sign in again here.",
   "mls_page_ended_other_tab_writing": "Canari is open in another tab that keeps saving this device's data, so this page can no longer save anything. Close the other tabs, then reload this page.",
   "auth_local_state_unopenable": "The messages saved on this device could not be opened. If you changed your PIN on another device, enter the old PIN below. Otherwise the local data is damaged: no old PIN will help, and a reset is what gets you back into your conversations.",
   "auth_local_state_unreadable_now": "The messages saved on this device could not be read right now. Nothing was lost or changed. Close Canari's other tabs and other heavy tabs or apps, then restart your browser and sign in again. If it still fails, you can use Canari meanwhile from the app or another browser: this device's messages stay intact here. Contact support before any reset, which would erase them.",
@@ -4242,7 +4487,16 @@
   "pdf_open_document_label": "Open the document",
   "post_file_ready_to_save": "Ready - tap to save",
   "pdf_viewer_page_alt": "Page {page} of {total}",
-  "pdf_viewer_page_count": "{count} pages",
+  "pdf_viewer_page_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} page",
+        "countPlural=other": "{count} pages"
+      }
+    }
+  ],
   "pdf_viewer_zoom_in": "Zoom in",
   "pdf_viewer_zoom_out": "Zoom out",
   "pdf_viewer_error": "This document cannot be displayed.",
@@ -4255,9 +4509,9 @@
   "open_in_app_banner_install": "Don't have the app yet? Get it",
   "open_in_app_banner_open": "Open in the app",
   "open_in_app_banner_dismiss": "Stay in this browser",
-  "offline_banner_title": "Offline.",
   "offline_banner_desc": "You can read your conversations. Your messages will be sent once the connection is back; in a channel, photos, videos and polls wait for the connection.",
-  "offline_banner_reconnecting": "Connection restored, syncing your messages...",
+  "offline_banner_reconnecting": "Syncing…",
+  "connection_back_label": "Connection restored.",
   "slow_indicator_label": "Slow connection. Your messages are still sent; loading may take longer than usual.",
   "link_label_home": "Home",
   "link_label_chat": "Conversation",
@@ -4274,6 +4528,14 @@
   "link_label_generic": "Link",
   "link_preview_open_in_canari": "Open in Canari",
   "link_preview_unavailable": "Content unavailable or access restricted",
+  "shared_post_unavailable_title": "Post unavailable",
+  "shared_post_unavailable_hint": "It was deleted, has expired or is not visible to you.",
+  "shared_post_reel_chip": "CanaReel",
+  "shared_post_open_label": "Open the post by {author}",
+  "shared_post_open_reel_label": "Open the CanaReel by {author}",
+  "shared_post_failed_hint": "Preview not loaded. Tap to open the post.",
+  "shared_post_no_text": "Post without text",
+  "post_author_fallback": "Author",
   "link_preview_profile_member": "Canari member",
   "link_preview_join_community": "Join the community",
   "link_preview_join_conversation": "Join the conversation",
@@ -4407,13 +4669,24 @@
   "form_criterion_group_remove": "Remove this group",
   "form_criterion_others": "Everyone else",
   "form_criterion_others_hint": "added automatically: nobody is left without a price",
+  "form_criterion_multiple_choice_one_group": "Multiple choice: one group only",
+  "form_refusal_grid_multiple_choice_split": "The price grid splits a multiple-choice question into several groups: someone could tick options from two groups. Keep one group for that question, or make it single-choice.",
   "form_criterion_any_tier": "Any membership tier",
   "form_criterion_no_formations": "No track is known yet.",
   "form_criterion_no_options": "Choose a question first.",
   "form_criterion_question_label": "Question",
   "form_criterion_question_placeholder": "Choose a question...",
   "form_criterion_untitled_question": "Untitled question",
-  "form_criterion_formation_count": "{count} people",
+  "form_criterion_formation_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person",
+        "countPlural=other": "{count} people"
+      }
+    }
+  ],
   "form_builder_priced_by_grid": "Prices for this question are set in the pricing grid, not here.",
   "form_view_not_open_to_you_title": "This form is not meant for you",
   "form_view_not_open_to_you_desc": "Access is limited to certain class years, tracks or members.",
@@ -4494,6 +4767,8 @@
   "reels_camera_retry": "Try again",
   "reels_camera_close": "Close the camera",
   "reels_camera_switch": "Switch camera",
+  "screen_rotate_landscape": "Rotate to landscape",
+  "screen_rotate_portrait": "Back to portrait",
   "reels_camera_torch_on": "Turn the flash on",
   "reels_camera_torch_off": "Turn the flash off",
   "reels_shutter_capture": "Photo (tap) or video (hold)",
@@ -4504,6 +4779,7 @@
   "reels_capture_photo_error": "The photo failed. Try again.",
   "reels_capture_not_a_video": "This file is not a video.",
   "reels_capture_too_long": "A CanaReel lasts {seconds} seconds at most.",
+  "reels_capture_not_vertical": "A CanaReel is a vertical video. Publish it as a post, from \"New post\".",
   "reels_capture_take_refused": "This take could not be kept. Try again.",
   "reels_capture_pick_before_limits": "The longest a CanaReel may be has not been read yet. Try again in a moment.",
   "reels_capture_limits_error": "Canari cannot be reached - tap to try again",
@@ -4534,7 +4810,23 @@
   "reel_sendto_failed_in_unnamed": "A video could not be sent to one of the conversations you chose: open it to see why.",
   "reel_sendto_failed_in_many": "The video could not be sent to {count} conversations: open them to see why.",
   "reel_sendto_failed_in_chosen": "The video could not be sent to the conversations you chose: open them to see why.",
-  "reel_sendto_delete_everywhere_skipped": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it.",
+  "reel_sendto_delete_everywhere_skipped": [
+    {
+      "declarations": [
+        "input done",
+        "input skipped",
+        "local donePlural = done: plural",
+        "local skippedPlural = skipped: plural"
+      ],
+      "selectors": ["donePlural", "skippedPlural"],
+      "match": {
+        "donePlural=one skippedPlural=one": "Deleted in {done} conversation; {skipped} is no longer on this device and keeps it.",
+        "donePlural=one skippedPlural=other": "Deleted in {done} conversation; {skipped} are no longer on this device and keep it.",
+        "donePlural=other skippedPlural=one": "Deleted in {done} conversations; {skipped} is no longer on this device and keeps it.",
+        "donePlural=other skippedPlural=other": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it."
+      }
+    }
+  ],
   "reel_sendto_everywhere_running": "This video is already being deleted.",
   "reel_sendto_same_as_post": "The conversations will receive the published video itself.",
   "reel_sendto_cancel_all": "Cancel everywhere",
@@ -4606,9 +4898,28 @@
   "reels_publish_uploading": "Uploading...",
   "reels_publish_done": "CanaReel published",
   "reels_publish_error": "The CanaReel could not be published. Try again.",
-  "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then.",
-  "reels_publish_from_composer_notice": "CanaReel: deleted after {days} days. To keep the video, keep it as a post.",
-  "reels_publish_keep_as_post": "Keep as a post",
+  "reels_publish_expiry_note": "Visible for {lifetime}, then deleted automatically. You can save it to your gallery before then.",
+  "reels_lifetime_years": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} year",
+        "countPlural=other": "{count} years"
+      }
+    }
+  ],
+  "reels_lifetime_days": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} day",
+        "countPlural=other": "{count} days"
+      }
+    }
+  ],
+  "reels_publish_from_composer_notice": "A vertical video of {seconds} seconds or less is a CanaReel: deleted after {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Close CanaReels",
   "reels_viewer_prev": "Previous CanaReel",
@@ -4617,6 +4928,7 @@
   "reels_carousel_next": "Next photo or video",
   "reels_carousel_position": "{index} of {total}",
   "reels_viewer_load_error": "The next CanaReels could not be loaded.",
+  "reels_viewer_crashed": "CanaReels ran into an error and were closed.",
   "reels_rail_label": "CanaReel actions",
   "reels_rail_drawer_label": "Pick a reaction",
   "reels_rail_like": [
@@ -4714,6 +5026,32 @@
   "post_students_only_chip": "Students only",
   "post_students_only_chip_title": "Reserved for students and the members of the association that published it",
   "post_students_only_not_offered": "Only an association or a list can reserve a post for students.",
+  "post_reach_title": "Reach",
+  "post_reach_spaces_label": "Target spaces",
+  "post_reach_whole_campus": "The whole {campus} campus",
+  "post_reach_whole_formation": "All of {formation}",
+  "post_reach_formation_row": "A whole programme",
+  "post_reach_public_label": "Audience",
+  "post_reach_public_all": "Everyone",
+  "post_reach_public_students": "Students",
+  "post_reach_public_staff": "Staff",
+  "post_reach_hint_all": "Students of the ticked spaces, the named readers of those spaces and the members of {name} will see it.",
+  "post_reach_hint_students": "Only students of the ticked spaces and the members of {name} will see it.",
+  "post_reach_hint_staff": "Only the members of {name} and the named readers of the ticked spaces who have no programme will see it: staff have no space.",
+  "post_reach_missing_both": "Choose at least one space and an audience to publish.",
+  "post_reach_missing_spaces": "Choose at least one space to publish.",
+  "post_reach_missing_public": "Choose an audience to publish.",
+  "post_reach_loading": "Loading spaces...",
+  "post_reach_load_error": "Could not load the spaces of {name}.",
+  "post_reach_no_space": "{name} has no space in its audience: ask the platform administration.",
+  "post_reach_unknown_campus": "This version of the app cannot draw the spaces of {name}: update it.",
+  "post_reach_chip_spaces": "{count} spaces",
+  "post_reach_chip_label": "{public} - {where}",
+  "post_reach_chip_title": "Visible to: {public} - {spaces}",
+  "post_reach_required": "Choose the reach of the post: at least one space and an audience.",
+  "post_reach_not_offered": "Only an institution chooses the reach of a post.",
+  "post_reach_invalid": "This reach is not valid: choose at least one space and an audience.",
+  "post_reach_outside_audience": "A ticked space is outside the institution's audience: reload and choose again.",
   "post_request_pending": "Request sent on behalf of {names}",
   "post_request_withdraw_action": "Cancel {name}'s request",
   "post_request_withdrawn": "Request cancelled",
@@ -5250,8 +5588,8 @@
   "bookings_detail_organiser_cancel_note_notified": "If you cancel it, its people are notified.",
   "bookings_stranded_hint_notified": "Cancel the ones that must go, then save again. The people concerned are notified.",
   "bookings_stranded_cancel_confirm_notified": "Cancel the booking of {when}? Its holder is notified.",
-  "bookings_space_notification_note": "Notified of a cancellation, of being added, and before each slot.",
-  "bookings_mine_notification_note": "Notified of a cancellation, of being added, and before each slot.",
+  "bookings_space_notification_note": "Notifications: you are notified of a cancellation, of being added, and before each slot.",
+  "bookings_mine_notification_note": "Notifications: you are notified of a cancellation, of being added, and before each slot.",
   "bookings_tab_new_button": "Create a space",
   "bookings_spaces_search_placeholder": "Search a space",
   "bookings_row_resources": "{count} resources",
@@ -5268,6 +5606,8 @@
   "bookings_cell_free": "Free",
   "bookings_cell_booked": "Taken",
   "bookings_cell_mine": "My booking",
+  "bookings_cell_invited": "Invited",
+  "bookings_legend_mine": "My booking / Invited",
   "bookings_cell_blocked": "Unavailable",
   "bookings_cell_closed": "Not bookable",
   "bookings_cell_label": "{resource}, {time}: {state}",
@@ -5386,8 +5726,6 @@
   "live_association_unknown": "An association",
   "live_viewer_label": "{name}'s live",
   "live_viewer_close": "Close the live",
-  "live_viewer_mute": "Mute",
-  "live_viewer_unmute": "Unmute",
   "live_viewer_elapsed": "Live for {time}",
   "live_viewer_connecting": "Joining the live...",
   "live_viewer_reconnecting": "Reconnecting...",
@@ -5622,6 +5960,8 @@
   "notif_booking_cancelled_text": "cancelled a booking",
   "notif_booking_withdrawn_text": "left your booking",
   "notif_booking_added_text": "added you to a booking",
+  "notif_booking_open_text": "opened bookings:",
+  "notif_event_open_text": "published an event:",
   "notif_booking_changed_text": "changed your booking",
   "notif_booking_removed_text": "removed you from a booking",
   "notif_booking_reminder_text": "Reminder: your booking starts soon",
@@ -5633,6 +5973,8 @@
   "follow_requests_accept": "Accept",
   "follow_requests_refuse": "Refuse",
   "follow_requests_accepted": "Request accepted",
+  "follow_back_btn": "Follow back",
+  "follow_back_named": "Follow {name} back",
   "follow_requests_refused": "Request refused",
   "follow_requests_gone": "This request was already answered or withdrawn.",
   "follow_requests_answer_error": "Could not save the answer. Try again.",
@@ -5701,6 +6043,18 @@
   "settings_allow_reposts_hint": "Your followers will be able to repost your posts to their own followers. You can change this post by post from a post's menu. Anonymous posts are never reposted.",
   "settings_allow_reposts_error": "The setting could not be saved.",
   "notif_member_repost_text": "reposted:",
+  "notif_friend_reaction_text": "reacted to a post:",
+  "notif_friend_comment_text": "commented on a post:",
+  "notif_campus_trend_text": "Suggestion:",
+  "notif_campus_trend_photo": "a photo",
+  "notif_campus_trend_video": "a video",
+  "notif_campus_trend_untitled": "a post",
+  "notif_campus_trend_liked_by": "liked by {name}",
+  "notif_campus_trend_liked_by_one": "liked by {name} and 1 other",
+  "notif_campus_trend_liked_by_many": "liked by {name} and {count} others",
+  "settings_share_activity": "Share my activity",
+  "settings_share_activity_hint": "Off by default. On, when a post you liked is suggested to the people who follow you, the suggestion may say you liked it. Nothing is shown about a post they cannot see.",
+  "settings_share_activity_error": "The setting could not be saved.",
   "bookings_owner_label": "Create as",
   "bookings_owner_personal": "Me",
   "bookings_owner_current": "This association",
@@ -5753,7 +6107,7 @@
   "guide_hint_post_as_body": "At the top of the publishing form, \"Post as\" lets you choose who publishes: you, or one of your associations.",
   "guide_hint_asso_manage_title": "Manage the association",
   "guide_hint_asso_manage_body": "This button opens the management area: members, rights, forms, shop and settings.",
-  "guide_hint_asso_agenda_title": "The association's agenda",
+  "guide_hint_asso_agenda_title": "The association's calendar",
   "guide_hint_asso_agenda_body": "This is where you add the association's events and follow their approval.",
   "guide_hint_asso_hub_members_title": "Members and rights",
   "guide_hint_asso_hub_members_body": "Manage the list of members and what each one is allowed to do.",
@@ -5768,7 +6122,7 @@
   "guide_hint_booking_column_title": "One column per resource",
   "guide_hint_booking_column_body": "This space has several columns, one per room or resource. Pick the one you want to book: the number of free slots is shown.",
   "guide_hint_booking_week_title": "Book a slot",
-  "guide_hint_booking_week_body_phone": "Pick the day, then a free slot in the list, or use the + button. A sheet lets you adjust the length and add people before you confirm.",
+  "guide_hint_booking_week_body_phone": "Use this + button to book, or pick the day and a free slot in the list. A sheet lets you adjust the length and add people before you confirm.",
   "guide_hint_booking_week_body_desktop": "Pick a free slot in the grid, or drag over several to book for longer. A sheet lets you adjust the length and add people before you confirm.",
   "boot_connecting": "Connecting to Canari...",
   "boot_unreachable_title": "Cannot reach Canari from this network",
@@ -5859,43 +6213,84 @@
   "chat_nicknames_error_superseded": "A more recent change already wins. Try again in a moment.",
   "chat_nicknames_set_before_you": "Set before you joined",
   "profile_birthday_heading": "Birthday",
-  "profile_birthday_intro": "Day and month only: the year is never asked, and no age is ever shown.",
   "profile_birthday_day_label": "Day",
   "profile_birthday_month_label": "Month",
-  "profile_birthday_visibility_label": "Who sees the date",
+  "profile_birthday_visibility_label": "Visible to",
   "profile_birthday_visibility_school": "Everyone at the school",
-  "profile_birthday_visibility_school_hint": "Anyone at the school who opens your profile. Your followers are told on the morning of the day.",
   "profile_birthday_visibility_followers": "My followers",
-  "profile_birthday_visibility_followers_hint": "Only the people whose request you accepted. They are told on the morning of the day.",
   "profile_birthday_visibility_nobody": "Nobody",
-  "profile_birthday_visibility_nobody_hint": "The date is hidden on your profile and nobody is told. On the day, the festive ring around your photo is still shown to everyone.",
-  "profile_birthday_ring_note": "On your birthday, a festive ring surrounds your photo everywhere in the app, for everyone, whatever you choose here.",
   "profile_birthday_save": "Save",
   "profile_birthday_remove": "Remove my birthday",
   "profile_birthday_saved": "Birthday saved.",
   "profile_birthday_removed": "Birthday removed.",
   "profile_birthday_save_error": "Your birthday could not be saved. Try again.",
   "profile_birthday_load_error": "Your birthday could not be loaded.",
-  "profile_birthday_on": "Birthday on {date}",
+  "birthday_card_title": "🎂 Your birthday?",
+  "birthday_card_action": "Add",
   "profile_birthday_today": "It's their birthday today 🎉",
+  "profile_birthday_chip": "🎂 {date}",
   "profile_birthday_today_self": "Happy birthday! 🎉",
   "notif_birthday_text": "is celebrating their birthday today. Wish them a happy one!",
   "settings_notif_birthdays_label": "Birthdays",
   "settings_notif_birthdays_desc": "On the morning of the birthday of someone you follow.",
-  "guide_birthday_title": "Add your birthday",
-  "guide_birthday_body": "On the day, a festive ring surrounds your photo and your followers are told. Only the day and the month are asked, and you choose who sees the date.",
-  "guide_birthday_action": "Add my birthday",
+  "settings_notif_suggestions_label": "Suggestions in the app",
+  "settings_notif_suggestions_desc": "Accounts to follow, suggested posts in For you and posts your space is reacting to in your notifications. On by default; turning it off also stops their push notifications.",
+  "settings_notif_suggestions_push_label": "Suggestion push notifications",
+  "settings_notif_suggestions_push_desc": "A post your space is reacting to, on your phone, once a day at most. Off by default.",
   "profile_public_default_name": "Canari member",
-  "profile_birthday_takes_effect": "A saved date counts from tomorrow, and cannot be changed again for 30 days (removing it and adding it back counts as a change).",
-  "profile_birthday_change_opens": "You can change the date from {date}. You can always change who sees it, or remove it.",
+  "profile_birthday_takes_effect": "Only the day and month count. A saved date cannot change for 30 days.",
+  "profile_birthday_ring_note": "On the day, a festive ring surrounds your photo for everyone; your followers are told according to your choice.",
+  "profile_birthday_change_opens": "You can change the date from {date}.",
   "profile_birthday_change_too_soon": "The date was already changed less than 30 days ago.",
   "follow_chip_follow_named": "Follow {name}",
+  "follow_toast_requested_named": "Follow request sent to {name}",
+  "follow_toast_following_named": "You follow {name}",
   "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
   "follow_chip_withdraw": "Request sent - withdraw the follow request",
+  "suggestions_title": "Suggested for you",
+  "suggestions_common_count": "{count} in common",
+  "suggestions_dismiss_named": "Hide the suggestion {name}",
+  "suggestions_dismiss_failed": "The suggestion could not be hidden.",
+  "suggestions_also_title": "You might also follow...",
+  "suggestions_onboarding_title": "Follow accounts to fill your feed",
+  "suggestions_onboarding_hint": "People you may know.",
+  "suggestions_empty_foryou_hint": "Follow people to see their posts here.",
   "chat_role_names_title": "Role names",
   "chat_role_names_description": "Give each role the name your community uses. Only the name changes: what each role may do stays the same. Leave it empty to use the default name.",
   "chat_role_name_input_label": "Name of the {role} role",
   "chat_role_name_reset_button": "Default name",
   "chat_role_name_invalid_error": "This name cannot be saved: 40 characters at most, no control characters.",
-  "chat_role_name_forbidden_error": "Only administrators can rename roles."
+  "chat_role_name_forbidden_error": "Only administrators can rename roles.",
+  "replay_badge": "Replay",
+  "replay_time_left_days": "{count} d left",
+  "replay_time_left_hours": "{count} h left",
+  "replay_time_left_minutes": "{count} min left",
+  "replay_loading": "Loading the replay",
+  "replay_reconnecting": "Reconnecting…",
+  "replay_gone": "This replay is no longer available.",
+  "replay_unavailable": "This replay cannot be played on this device.",
+  "replay_retry": "Try again",
+  "replay_card_open": "Watch the replay",
+  "replay_card_default_title": "Replay of {name}'s live",
+  "replay_card_duration_label": "Replay length",
+  "replay_cover_alt": "Picture from {name}'s live",
+  "replay_save_confirm": "Save the replay? About {megabytes} MB will be written to this device.",
+  "replay_save_confirm_button": "Save",
+  "replay_save_cancel_button": "Cancel",
+  "replay_save_done_parts": "Replay saved as {parts} files: the camera changed during the live.",
+  "replay_save_gone": "The replay has expired and can no longer be saved.",
+  "live_rule_audience_member_replay": "Visible like a post: to the members who share a space with you, while it is on air, then as a replay for 3 days (a live under 30 seconds leaves none). The chat is not kept.",
+  "live_rule_audience_association_replay": "Visible like the association's post: to the members it reaches, while it is on air, then as a replay for 3 days (a live under 30 seconds leaves none). The chat is not kept.",
+  "live_ended_broadcaster_replay": "You ended the live. Its replay will be visible for 3 days.",
+  "live_end_confirm_replay": "End the live? It stops for every viewer; its replay stays visible for 3 days.",
+  "reels_order_label": "CanaReels order",
+  "reels_order_for_you": "For you",
+  "reels_order_recent": "Recent",
+  "settings_infinite_reels_label": "Endless CanaReels",
+  "settings_infinite_reels_hint": "A video opened from the feed goes on to other CanaReels. Off, it stops at the post you opened. The CanaReels tab is not affected.",
+  "settings_video_autoplay_label": "Autoplay videos",
+  "settings_video_autoplay_desc": "Feed videos start by themselves when they come into view. Otherwise, a still frame and a play button.",
+  "settings_video_autoplay_always": "Always",
+  "settings_video_autoplay_wifi": "Wi-Fi",
+  "settings_video_autoplay_never": "Never"
 }

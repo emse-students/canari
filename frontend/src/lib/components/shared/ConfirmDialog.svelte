@@ -21,14 +21,14 @@
 </script>
 
 <!--
-  `critical`, and the rung is the whole reason this one is not `modal`: a confirmation is nearly
-  always raised FROM a modal (delete this document, leave this community), so it has to cover one.
+  A confirmation is nearly
+  always raised FROM a modal (delete this document, leave this community), and it covers it because
+  it opens later (`utils/overlayStack.ts`).
 -->
 <ModalOverlay
   open={!!pending}
   onClose={() => resolveConfirm(false)}
   label={pending?.message ?? ''}
-  layer="critical"
   role="alertdialog"
   panelClass="border-cn-border w-full max-w-sm space-y-5 rounded-2xl border bg-(--cn-surface) p-6 shadow-2xl"
 >

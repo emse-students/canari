@@ -25,6 +25,8 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import { getBellLevel, type BellLevel } from '$lib/follows/bell';
+  import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import {
     followAssociationLedgered,
     readAssociationFollowed,
@@ -143,6 +145,14 @@
   );
 
   let following = $state(false);
+  /** The bell's level, asked with the sub-reads and handed to the bell that mounts after them. */
+  let bellLevel: Promise<BellLevel> | undefined;
+  /** Hands the bell its head-start read ONCE and forgets it (a remount asks for itself). */
+  function takeBellLevel(): Promise<BellLevel> | undefined {
+    const read = bellLevel;
+    bellLevel = undefined;
+    return read;
+  }
   let followLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
@@ -291,6 +301,19 @@
       // behind a label.
       const uid = currentUserId();
       let followStatus: { following: boolean };
+      // THE BELL'S LEVEL LEAVES WITH THEM TOO: the bell mounts when this batch has ended, and used
+      // to ask only then - one more round trip behind a control.
+      // Only for a signed-in reader: the bell is not drawn for a guest, who must not ask.
+      if (uid) {
+        const bellRead = getBellLevel('association', asso.id);
+        // The bell reports its own failure (a disabled control) when it takes this read.
+        bellRead.catch((e: unknown) =>
+          Log.d('AssociationDetailView: bell head start refused, the bell reports it', e)
+        );
+        bellLevel = bellRead;
+      } else {
+        bellLevel = undefined;
+      }
       [members, products, partnerships, followStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
@@ -331,6 +354,9 @@
     }
   }
 
+  /** The association followed on THIS visit: "Suivez aussi..." follows it (engagement WP-6). */
+  let followedHereId = $state<string | null>(null);
+
   async function toggleFollow() {
     if (!asso || !userId) return;
     // Same rule as the profile's follow button: the state is local, so it moves on the tap and
@@ -340,7 +366,10 @@
     followLoading = true;
     try {
       if (wasFollowing) await unfollowAssociationLedgered(asso.id);
-      else await followAssociationLedgered(asso.id);
+      else {
+        await followAssociationLedgered(asso.id);
+        followedHereId = asso.id;
+      }
     } catch (err) {
       Log.d('AssociationDetailView.toggleFollow failed', err);
       following = wasFollowing;
@@ -398,7 +427,7 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !asso}
@@ -425,7 +454,7 @@
         <div class="flex flex-wrap items-start gap-4">
           <AssociationAvatar id={asso.id} name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           <div class="min-w-0 flex-1 basis-64">
-            <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
+            <h1 class="text-text-main text-xl font-bold [overflow-wrap:anywhere]">
               {asso.name}
             </h1>
             <!--
@@ -466,15 +495,14 @@
             {/if}
             {#if kind === 'list' && asso.promo}
               <span
-                class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+                class="text-cn-dark bg-accent/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
               >
                 {m.list_campaigns_heading({ year: asso.promo })}
               </span>
             {/if}
           </div>
-          <div
-            class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
-          >
+          <!-- ONE ROW OF ACTIONS under the name, wrapping only when it must (design audit M7, 2026-11-09): they stacked as full-width bars on a phone, three of them taller than the identity above. -->
+          <div class="flex w-full shrink-0 flex-row flex-wrap items-center gap-2 sm:w-auto">
             {#if userId}
               <Button variant="secondary" onclick={() => toggleFollow()} disabled={followLoading}>
                 {#if following}
@@ -490,7 +518,7 @@
                 it is offered followed or not, since an association's posts reach its whole
                 audience (L7).
               -->
-              <AccountBell kind="association" targetId={asso.id} />
+              <AccountBell kind="association" targetId={asso.id} takeInitial={takeBellLevel} />
             {/if}
             {#if myMembership}
               <Button
@@ -507,7 +535,7 @@
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
                 use:guideAnchor={'asso.manage'}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+                class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />
                 {wordingFor(asso.type).manageButton()}
@@ -516,6 +544,11 @@
           </div>
         </div>
       </div>
+    {/if}
+
+    <!-- "Suivez aussi..." (engagement WP-6, L15): the READER's own suggestions, after a follow made here. -->
+    {#if asso && followedHereId === asso.id && following}
+      <FollowAlsoSuggestions exclude={asso.id} />
     {/if}
 
     {#if error}
@@ -528,7 +561,7 @@
     {:else if activeSection === null}
       <SectionHub rows={hubRows} label={m.asso_sections_nav_label()} />
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.asso_tab_about()}</h2>
         <!--
           THE PROSE KEEPS THE READING MEASURE THE PAGE GAVE UP. Widening the column to `tool` is
           right for the walls and wrong for a paragraph: 1024px less the card's padding is about 150
@@ -559,7 +592,7 @@
     {:else if activeSection === 'calendar'}
       <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h1 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h1>
+          <h1 class="font-body text-text-main text-lg font-bold">{m.asso_tab_calendar()}</h1>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-cn-dark text-xs font-semibold hover:underline"
@@ -578,7 +611,7 @@
     {:else if activeSection === 'members'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h1 class="text-text-main text-lg font-bold tracking-tight">
+          <h1 class="font-body text-text-main text-lg font-bold">
             {m.common_members_label()}
           </h1>
           {#if members.length > 0}
@@ -611,7 +644,7 @@
     {:else if activeSection === 'shop'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h1 class="font-body text-text-main flex items-center gap-2 text-lg font-bold">
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
           </h1>
@@ -644,7 +677,7 @@
       </div>
     {:else if activeSection === 'partnerships'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h1 class="font-body text-text-main flex items-center gap-2 text-lg font-bold">
           <Handshake size={20} />
           {m.asso_tab_partnerships()}
         </h1>

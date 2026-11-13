@@ -123,7 +123,7 @@
 <div class="border-cn-border bg-cn-surface space-y-6 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <Handshake size={20} />
         {m.asso_partnership_title()}
       </h2>
@@ -134,7 +134,7 @@
     <button
       type="button"
       onclick={() => (editing = editing === 'new' ? null : 'new')}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_partnership_new_button()}
@@ -163,7 +163,7 @@
   {#if cardsLoading}
     <div class="flex justify-center py-6">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if cards.length === 0}
@@ -193,7 +193,7 @@
                   </span>
                   {#if card.membersOnly}
                     <span
-                      class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                      class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       {m.asso_partnership_members_only_label()}
                     </span>

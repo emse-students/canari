@@ -269,6 +269,25 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
   });
 
   /**
+   * A MODERATOR WHOSE ROLE LOSES ITS LAST MODERATION GRANT MAY NO LONGER WRITE in an "admins and
+   * moderators" salon - and must be told so then, or their composer stays open until a reload and
+   * every post comes back 403 (production, 2026-11-10).
+   */
+  it('carries the write verdict per policy to the holders', async () => {
+    const { service, redis } = makeService();
+
+    await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_MESSAGES, false);
+
+    const standing = redis.publishChannelEvent.mock.calls.find(
+      ([type]: [string]) => type === 'workspace.role.changed'
+    );
+    expect(standing?.[1]).toMatchObject({
+      canModerate: false,
+      canWriteByPolicy: { everyone: true, admins_moderators: false, admins: false },
+    });
+  });
+
+  /**
    * A key the server cannot name is a client asking for a capability that does not exist - and it is
    * refused BEFORE the transaction, so a bad request never takes a lock on the row.
    */

@@ -164,7 +164,7 @@
 {#snippet card(live: LiveListItem, large: boolean)}
   <button
     type="button"
-    class="bg-cn-scrim relative block w-full touch-manipulation overflow-hidden rounded-2xl text-left text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {large
+    class="bg-cn-scrim focus-visible:ring-accent-icon relative block w-full touch-manipulation overflow-hidden rounded-2xl text-left text-white outline-none focus-visible:ring-2 {large
       ? 'aspect-[4/5]'
       : 'aspect-[3/4]'}"
     aria-label={label(live)}
@@ -181,7 +181,7 @@
     </span>
     <span class="absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
       <span
-        class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-wide"
+        class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold"
         data-live-badge
       >
         <span class="size-1.5 rounded-full bg-white motion-safe:animate-pulse" aria-hidden="true"

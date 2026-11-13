@@ -103,3 +103,15 @@ describe('publishFailureMessage - the attachment cap', () => {
     expect(publishFailureMessage(other, FALLBACK)).toBe(FALLBACK);
   });
 });
+
+describe('publishFailureMessage - the reach of an institution post (owner, 2026-11-10)', () => {
+  it.each([
+    ['institution_reach_required', () => m.post_reach_required()],
+    ['institution_reach_not_offered', () => m.post_reach_not_offered()],
+    ['institution_reach_invalid', () => m.post_reach_invalid()],
+    ['institution_reach_outside_audience', () => m.post_reach_outside_audience()],
+  ])('words the typed %s refusal in the reader language', (code, sentence) => {
+    const refusal = new ApiRefusalError(400, code, 'server prose');
+    expect(publishFailureMessage(refusal, FALLBACK)).toBe(sentence());
+  });
+});

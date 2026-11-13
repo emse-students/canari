@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { onMount } from 'svelte';
   import {
     listAssociationForms,
@@ -16,7 +17,6 @@
   import { ClipboardList, TriangleAlert, Pencil, Trash2, Plus } from '@lucide/svelte';
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { submitterName } from '$lib/forms/submissionTable';
   import { isDraftForm } from '$lib/forms/publish';
 
@@ -137,7 +137,7 @@
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <ClipboardList size={20} />
         {m.asso_forms_title()}
       </h2>
@@ -149,7 +149,7 @@
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
         editSectionHref(asso.slug, 'formulaires', asso.type === 'list' ? '/lists' : '/associations')
       )}"
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_forms_new_form_button()}
@@ -158,7 +158,7 @@
 
   {#if hasPaidForms && !onlinePaymentsReady}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
@@ -192,7 +192,7 @@
   {#if formsLoading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if forms.length === 0}
@@ -231,7 +231,7 @@
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !onlinePaymentsReady}
                   <span
-                    class="text-amber-warn inline-flex items-center gap-1 font-medium"
+                    class="text-amber-warn-text inline-flex items-center gap-1 font-medium"
                     title={m.asso_forms_payments_not_configured_title()}
                   >
                     <TriangleAlert size={11} />
@@ -246,13 +246,13 @@
             >
               <a
                 href="/forms/{form.id}"
-                class="text-cn-yellow text-xs font-semibold hover:underline"
+                class="text-accent-text text-xs font-semibold hover:underline"
                 target="_blank"
                 rel="noopener noreferrer">{m.asso_forms_view_link()}</a
               >
               <a
                 href="/forms/{form.id}/edit"
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+                class="border-cn-border text-text-main hover:border-accent/40 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
               >
                 <Pencil size={12} />
                 {m.asso_forms_edit_action()}
@@ -271,7 +271,7 @@
 
           {#if pendingCash[form.id]?.length}
             <div class="border-cn-border/50 space-y-2 border-t pt-3">
-              <p class="text-amber-warn flex items-center gap-1.5 text-xs font-bold">
+              <p class="text-amber-warn-text flex items-center gap-1.5 text-xs font-bold">
                 <TriangleAlert size={13} />
                 {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
@@ -287,7 +287,7 @@
                       <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
                           sub.createdAt
-                        ).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
+                        ).toLocaleDateString(intlLocale())}
                       </p>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">
