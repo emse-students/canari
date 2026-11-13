@@ -5,7 +5,7 @@
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { pollPaymentReturn } from '$lib/forms/paymentReturnPoll';
-  import { SocialApiError } from '$lib/associations/api';
+  import { isConfirmThrottled } from '$lib/forms/checkoutReturn';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
@@ -55,7 +55,7 @@
         (submission) => (formId = submission.formId)
       );
     } catch (err) {
-      if (err instanceof SocialApiError && err.status === 429) {
+      if (isConfirmThrottled(err)) {
         // The server's per-answer limit on asking Lydia (a reload after a full poll): an answer,
         // not a failure - the callback still decides, and the page says it is awaited.
         console.info('[forms/success] confirmation limit reached, waiting on the callback');

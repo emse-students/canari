@@ -2,6 +2,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
 import { appDeepLink } from '$lib/mobile/appSiteAssociation';
+import { Log } from '$lib/utils/Log';
 
 /**
  * True on Tauri Android / iOS - a checkout must return via app deep link.
@@ -29,14 +30,28 @@ function webUrl(path: string): string {
   return publicAppUrl(path.startsWith('/') ? path : `/${path}`);
 }
 
-/** Checkout callbacks for paid form submissions. */
+/**
+ * Checkout callbacks for paid form submissions.
+ *
+ * ANDROID RETURNS ON AN HTTPS APP LINK, NOT ON THE CUSTOM SCHEME (2026-11-13). A payer who paid on
+ * Lydia's page in the phone's browser was never brought back by `fr.emse.canari://payment/success`
+ * (production, Android 1.6.10, the payment confirmed 43 s later by the callback). Lydia's redirect to
+ * an https return WAS measured (sandbox, 2026-10-21, `lydia-api.md` section 4); one to a custom scheme
+ * never was, and a browser may refuse an external scheme reached by a redirect with no gesture.
+ * `/forms/success` is under the `/forms/` App Link prefix (`MOBILE_UNIVERSAL_LINK_PATHS`), so a
+ * verified link opens the app on it, and a browser that keeps it lands on the web return page. iOS
+ * keeps the scheme until a reading says otherwise. Either way the form page reads the answer when
+ * the payer comes back by hand (`checkoutReturn.ts`), which no return URL replaces.
+ */
 export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string } {
-  if (isMobileTauri()) {
+  if (isMobileTauri() && detectRuntimeDeviceOs('desktop') === 'ios') {
+    Log.d('checkout', 'form return on the app scheme (iOS)');
     return {
       successUrl: checkoutDeepLink('success', 'session_id={CHECKOUT_SESSION_ID}'),
       cancelUrl: checkoutDeepLink('cancel', 'session_id={CHECKOUT_SESSION_ID}'),
     };
   }
+  Log.d('checkout', 'form return on the https return page (an App Link on Android)');
   return {
     successUrl: webUrl('/forms/success?session_id={CHECKOUT_SESSION_ID}'),
     cancelUrl: webUrl('/forms/cancel?session_id={CHECKOUT_SESSION_ID}'),
