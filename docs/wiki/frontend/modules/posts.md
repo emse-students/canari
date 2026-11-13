@@ -2121,19 +2121,39 @@ the Mi 9T and the iPhone 12:** [device-verification](../../device-verification.m
 
 ## Scheduled posts: where they show, and the event picker order (2026-10-06)
 
-A scheduled post is visible to its AUTHOR only, in `ScheduledPostsPanel` above the feed of `/posts`
-(`GET /api/posts/my-scheduled`); no feed shows it to anyone else until it is due
-(`landingFeed.ts`). Each row now reads as "not final" in the agenda's own vocabulary: dimmed
-(`opacity-50`) with a dashed ring from `pendingRingStyle()` (`calendar/feedEvents.ts`), the one
-spelling shared with the agenda lists for proposed events ([calendar](calendar.md)). The "published
-on <date>" line is the non-visual cue.
+**Owner, 2026-11-13: a scheduled post no longer just disappears until its time.** It is drawn as a REAL
+`PostCard` at the very top of `/posts`, above the first post, **on EVERY feed tab (Associations,
+Pour toi, Campus) - never filtered by tab** - and hidden only while a search replaces the feed. It is
+shown ONLY to those who may edit it; nobody else sees the post before its time, and the feed's audience
+predicate is unchanged (`landingFeed.ts`, `postVisibleToViewerSql`).
+
+- **Who.** `GET /api/posts/scheduled-to-edit` (`PostsService.getScheduledPostsIMayEdit`) narrows in SQL
+  to candidates (`posts/scheduled-edit.ts`: the caller's own personal posts and every association post)
+  and lets `isPublisherOf` decide - the very predicate `assertMayEdit`/`updatePost` applies: the author
+  of a personal post, or whoever holds `POST_AS_ASSO` in the association a post speaks for (authorship
+  grants an officer nothing there, so a co-editor gets the post it did not write and a former officer
+  loses the one it did). One implementation of the right, asked once per association; at most 20,
+  soonest first, each served as the whole feed card (`serveToReader`). The old
+  `GET /api/posts/my-scheduled` answers the same list for older builds
+  ([legacy-compatibility](../../legacy-compatibility.md)). Proven by `scheduled-edit.spec.ts` and
+  `scheduled-edit.integration.spec.ts` (a non-editor gets nothing, a co-editor gets the post).
+- **The card** (`PostCard` with `scheduled`): the agenda's "not final" vocabulary - a dashed ring from
+  `pendingRingStyle()` (`calendar/feedEvents.ts`) and a dimmed card, the one spelling shared with the
+  agenda lists for proposed events ([calendar](calendar.md)) - and a "Publication prévue le <date>" line.
+  **Hidden, not disabled** (nobody can react to, read or share a post before it exists): the reaction
+  bar, the double-tap like, the comment button and preview, poll voting, and the menu's pin, report,
+  republish and repost entries. The menu keeps "Modifier" (`EditPostForm`, which can change or remove the
+  schedule) and "Supprimer" (the existing confirm).
+- **The list follows the edits.** `PostCard.onEdited` hands the saved post to `applyScheduledEdit`
+  (`posts/scheduledDue.ts`): a post moved to another future date takes its new place at once; one the
+  edit published now (or un-scheduled) leaves the strip and the feed is re-read. A deleted card leaves
+  by its own `onDelete`. `ScheduledPostsPanel` (a preview with a delete button only) is gone.
 
 The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
 and the editor) lists the furthest future event first and the furthest past last; the server answers
 ascending, so the sort lives in that one function.
 
 **The strip leaves at the scheduled time (2026-10-08).** It used to stay stale until the tab was left
-and re-entered (read on the Mi 9T, 2026-10-07: still listed a minute after the server published).
 `/posts` arms ONE `setTimeout` on the earliest `scheduledAt` the strip holds
 (`msUntilNextDue`, `posts/scheduledDue.ts`; nothing polls). When it fires the due posts leave the
 strip (`stillScheduled`) and the feed is re-read so they appear where the server now publishes them;
