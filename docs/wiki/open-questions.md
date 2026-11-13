@@ -576,6 +576,22 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
+## A group call holds one device per user (decided 2026-11-13, reversible)
+
+*The question (review of #3489): group-call media keys are per USER (`deriveSenderKey`,
+`<callId>|<userId>`), so two devices of one person in the same group call would seal under one key
+- one nonce space, and no receiver could tell the two apart.*
+
+**Recommended and taken (reversible): one device per user in a group call - the second device's
+join REPLACES the first.** call-service already evicts a seated user's sibling device in p2p mode
+(`PeerLeft` to the replaced one, a new `PeerReady` to the others), so the server half holds today;
+the group client treats the replaced device as gone. The alternative - keys per DEVICE
+(`<callId>|<userId>|<deviceId>`) - changes the derivation and every receiver's key map, and buys a
+case (one person, two devices, one call) nobody asked for. Recorded in
+[calls](frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13); the check that it holds end
+to end is [a backlog entry](backlog.d/group-calls-one-device-per-user.md). Reopen only if two devices
+of one user in one group call becomes a wanted case.
+
 ## Which account a SECOND phone would carry, the day one is attached again
 
 **Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
