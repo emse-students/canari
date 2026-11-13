@@ -30,6 +30,7 @@ import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { Submission } from '../forms/entities/submission.entity';
 import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -37,7 +38,10 @@ import { UserTagService } from '../users/user-tag.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { SECRET_BOX_ENV } from '../common/secret-box';
 import { AssociationsService } from './associations.service';
-import { LYDIA_BUSINESS_PENDING_VALIDATION } from './lydia-account-bridge';
+import {
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
+} from './lydia-account-bridge';
 import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
 
@@ -115,6 +119,7 @@ maybe(
       await admin.query(`SET search_path TO ${schema},public`);
       const entities = [
         PurchaseRecord,
+        Submission,
         AssociationProduct,
         UserTag,
         Association,
@@ -268,6 +273,8 @@ maybe(
     });
 
     it('an enrolment while the historical account collects: the new Business is PENDING, the historical one still collects', async () => {
+      // The historical account's key is not the managers' to see, even as a flag.
+      await expect(associations.isLydiaBusinessKeySet(BDE)).resolves.toBe(false);
       await associations.claimLydiaEnrolment(BDE);
       await associations.recordLydiaEnrolmentVendorToken(BDE, ENROLLED);
       await associations.setLydiaAccountId(
@@ -278,6 +285,7 @@ maybe(
       );
       expect(await active()).toEqual({ token: HISTORICAL, ready: true });
       expect(await bridge()).toMatchObject({ state: 'historical', enrolled: ENROLLED });
+      await expect(associations.isLydiaBusinessKeySet(BDE)).resolves.toBe(true);
 
       // The managers see the new Business only, not validated; the historical one is invisible.
       const managers = await associations.getPayoutAccount(BDE);
@@ -330,11 +338,8 @@ maybe(
         switchCount: 1,
         switchBackCount: 0,
       });
-      // ONE notice to the managers; the delegate's collecting did not stop, so it is told nothing.
-      expect(tell).toHaveBeenCalledTimes(1);
-      expect(tell).toHaveBeenCalledWith(expect.objectContaining({ id: BDE }), 'active', [
-        'manager-1',
-      ]);
+      // No notice yet: an unsigned VALIDATED is not a proof. The delegate's collecting did not stop.
+      expect(tell).not.toHaveBeenCalled();
       expect(tellDelegation).not.toHaveBeenCalled();
       await expect(
         products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
@@ -346,6 +351,11 @@ maybe(
       await buy(BDE, own.id);
       await buy(LIST, delegated.id);
       expect(core.calls).toEqual([ENROLLED, ENROLLED]);
+      // The first request Lydia issued on it is the proof: the managers are told "active" ONCE.
+      expect(tell.mock.calls.map(([asso, kind]) => [asso.id, kind])).toEqual([[BDE, 'active']]);
+      expect(
+        (await ds.query(`SELECT "enrolledProvenAt" FROM lydia_account_bridges`))[0].enrolledProvenAt
+      ).not.toBeNull();
       // The historical key still opens by its token, to refund what that account took.
       await expect(associations.lydiaCallbackKey(HISTORICAL)).resolves.toBe(HISTORICAL_KEY);
       await expect(associations.lydiaBusinessOfVendorToken(HISTORICAL)).resolves.toMatchObject({
@@ -383,8 +393,8 @@ maybe(
         switchBackCount: 1,
         reissueCount: 1,
       });
-      // The global admins' bell row, marked as a switch back; payments did not stop, so the managers
-      // and the delegate are told nothing.
+      // The global admins' bell row, marked as a switch back; payments did not stop, so the delegate
+      // is told nothing - the managers, told "active" once it proved itself, get the counter-notice.
       expect(
         await ds.query(`SELECT "recipientId", type, meta FROM post_notifications WHERE type = $1`, [
           LYDIA_PAYMENTS_PAUSED_TYPE,
@@ -396,7 +406,7 @@ maybe(
           meta: expect.objectContaining({ cause: 'request-refused', bridge: 'switched-back' }),
         },
       ]);
-      expect(tell).not.toHaveBeenCalled();
+      expect(tell.mock.calls.map(([asso, kind]) => [asso.id, kind])).toEqual([[BDE, 'paused']]);
       expect(tellDelegation).not.toHaveBeenCalled();
       // The managers see their Business waiting for Lydia again.
       expect(await associations.getPayoutAccount(BDE)).toMatchObject({
@@ -404,10 +414,14 @@ maybe(
         lydiaOnboardingComplete: false,
       });
 
-      // A later VALIDATED switches again (the pending Business stayed pending).
+      // Lydia refused it: a later UNSIGNED VALIDATED is held, only a global admin switches again.
       core.refusing.clear();
       await expect(
         products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'held-by-lydia', previousCause: 'request-refused' });
+      expect(await bridge()).toMatchObject({ state: 'historical', switchCount: 1 });
+      await expect(
+        products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' })
       ).resolves.toMatchObject({ kind: 'transitioned', bridgeSwitched: true });
       expect(await bridge()).toMatchObject({ state: 'switched', switchCount: 2 });
     });
@@ -419,6 +433,62 @@ maybe(
       await buy(BDE, (await product(BDE, name)).id);
       core.refusing.clear();
     };
+
+    it('a STREAM of forged VALIDATED during purchases: held after the first switch back, every purchase issued on the historical account', async () => {
+      // The switch above was never proven: its switch back tells the managers nothing.
+      tell.mockClear();
+      await switchBack('stream-back');
+      expect(tell).not.toHaveBeenCalled();
+      const before = await bridge();
+      expect(before).toMatchObject({
+        state: 'historical',
+        standbyReadinessCause: 'request-refused',
+      });
+      core.calls = [];
+      core.issued = [];
+      const items = await Promise.all(
+        [BDE, LIST, BDE, LIST].map((id, i) => product(id, `stream-${i}`))
+      );
+      const forged = Array.from({ length: 10 }, () =>
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      );
+      const [outcomes] = await Promise.all([
+        Promise.all(forged),
+        Promise.all(items.map((item) => buy(item.associationId, item.id))),
+      ]);
+      expect(new Set(outcomes.map((o) => o.kind))).toEqual(new Set(['held-by-lydia']));
+      // Not one purchase failed, met the enrolled Business, or was re-issued.
+      expect(core.calls).toEqual([HISTORICAL, HISTORICAL, HISTORICAL, HISTORICAL]);
+      expect(core.issued).toHaveLength(4);
+      expect(await bridge()).toEqual(before);
+      expect(tell).not.toHaveBeenCalled();
+    });
+
+    it('a Business Lydia BLOCKED is never switched onto by an unsigned VALIDATED', async () => {
+      expect((await bridge()).state).toBe('historical');
+      // A 2701 naming the pending Business is recorded on it.
+      await associations.revertLydiaReadinessAfterRefusal(ENROLLED, 'request-blocked', {
+        path: 'shop',
+        id: 'late-2701',
+      });
+      expect((await bridge()).standbyReadinessCause).toBe('request-blocked');
+      await expect(
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'held-by-lydia', previousCause: 'request-blocked' });
+      expect(await active()).toEqual({ token: HISTORICAL, ready: true });
+    });
+
+    it('the enrolled Business that took payments cannot be unlinked: its key stays for their callbacks and refunds', async () => {
+      expect((await bridge()).state).toBe('historical');
+      // It collected while switched (the proof above): those checkouts name it.
+      const refusal = await associations.clearLydiaAccount(BDE).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: LYDIA_BUSINESS_HOLDS_PAYMENTS,
+      });
+      expect(await bridge()).toMatchObject({ enrolled: ENROLLED });
+      await expect(associations.lydiaCallbackKey(ENROLLED)).resolves.toBe(ENROLLED_KEY);
+    });
 
     it('a switch committed while a purchase is prepared: the typed ROUTING_CHANGED under the lock, NO request', async () => {
       for (const [associationId, name] of [
@@ -435,7 +505,7 @@ maybe(
           .mockImplementationOnce(async (...args: unknown[]) => {
             const prepared = await prepare(...args);
             // The VALIDATED commits between the purchase's preparation and its decision.
-            await products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' });
+            await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
             return prepared;
           });
         const refusal = await buy(associationId, item.id).catch((e: unknown) => e);
@@ -463,7 +533,7 @@ maybe(
           [BDE, LIST, BDE, LIST].map((id, i) => product(id, `race-${round}-${i}`))
         );
         const settled = await Promise.allSettled([
-          products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' }),
+          products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' }),
           ...items.map((item) => buy(item.associationId, item.id)),
         ]);
         // A purchase refused by the race is refused with the routing code, and nothing else.
@@ -487,7 +557,7 @@ maybe(
 
     it('three purchases meeting error 5 at once: ONE switch back, each purchase issued ONCE on the historical account', async () => {
       if ((await bridge()).state !== 'switched') {
-        await products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' });
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
       }
       const before = await bridge();
       core.refusing.add(ENROLLED);
@@ -519,7 +589,7 @@ maybe(
 
     it('a 2701 on the switched-to Business is the ordinary pause, never a switch back', async () => {
       if ((await bridge()).state !== 'switched') {
-        await products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' });
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
       }
       const switchBacks = (await bridge()).switchBackCount;
       await expect(

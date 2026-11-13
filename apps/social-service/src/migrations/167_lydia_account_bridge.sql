@@ -21,6 +21,10 @@
 -- `lydia-business-key/v1`, context `<associationId>:<vendorToken>`), so a switch moves a ciphertext
 -- between the two places unchanged and it still opens.
 --
+-- `enrolledProvenAt`: the first request Lydia ISSUED on the enrolled Business since it was switched
+-- in - the proof the unsigned VALIDATED was true; the managers are told "active" then, not at the
+-- switch. Cleared by every swap.
+--
 -- Counters, for the population read: `switchCount` (switches to the enrolled Business),
 -- `switchBackCount` (switches back after error 5 on it) and `reissueCount` (payments re-issued on
 -- the historical account after such an error 5).
@@ -49,6 +53,7 @@ CREATE TABLE IF NOT EXISTS lydia_account_bridges (
   "standbyReadinessAt" timestamptz NULL,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "switchedAt" timestamptz NULL,
+  "enrolledProvenAt" timestamptz NULL,
   "switchCount" integer NOT NULL DEFAULT 0,
   "switchBackCount" integer NOT NULL DEFAULT 0,
   "reissueCount" integer NOT NULL DEFAULT 0,

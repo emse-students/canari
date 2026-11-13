@@ -29,6 +29,19 @@ export const LYDIA_ONBOARDING_REFUSAL = {
   PENDING_VALIDATION: 'LYDIA_BUSINESS_PENDING_VALIDATION',
 } as const;
 
+/**
+ * 409 of the unlink (a global admin's): the enrolled Business of a historical-account bridge took
+ * payments that may still be confirmed or refunded, so its key stays and it is not unlinked.
+ */
+export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
+
+/** The sentence for a failed unlink: the typed refusal's own, else the generic one. */
+export function lydiaDisconnectErrorText(err: unknown): string {
+  return err instanceof SocialApiError && err.code === LYDIA_BUSINESS_HOLDS_PAYMENTS
+    ? m.asso_lydia_disconnect_holds_payments_error()
+    : m.asso_lydia_disconnect_error();
+}
+
 export type LydiaOnboardingRefusalCode =
   (typeof LYDIA_ONBOARDING_REFUSAL)[keyof typeof LYDIA_ONBOARDING_REFUSAL];
 

@@ -320,6 +320,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
       revertLydiaReadinessAfterRefusal: jest.fn(async () => undefined),
+      noteLydiaRequestIssued: jest.fn(async () => undefined),
     };
     // A fake core-service: every call is recorded with what the ROWS looked like when it was made,
     // and the cancel route answers what the test sets (core reads Lydia's error 2 as

@@ -3,7 +3,11 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import * as delegation from './payment-delegation.util';
-import { LYDIA_BRIDGE_LOG_TAG, LYDIA_BUSINESS_PENDING_VALIDATION } from './lydia-account-bridge';
+import {
+  LYDIA_BRIDGE_LOG_TAG,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
+} from './lydia-account-bridge';
 import {
   AssociationsService,
   LYDIA_ACCOUNT_ALREADY_LINKED,
@@ -1163,6 +1167,7 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierNumberChanged: LYDIA_CASHIER_NUMBER_CHANGED,
       cashierConfirmedRequired: LYDIA_CASHIER_CONFIRMED_REQUIRED,
       businessPendingValidation: LYDIA_BUSINESS_PENDING_VALIDATION,
+      businessHoldsPayments: LYDIA_BUSINESS_HOLDS_PAYMENTS,
     }).toEqual({
       responsableAlreadySet: contract.social.responsableAlreadySet,
       responsablePhoneLocked: contract.social.responsablePhoneLocked,
@@ -1173,6 +1178,7 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierNumberChanged: contract.social.cashierNumberChanged,
       cashierConfirmedRequired: contract.social.cashierConfirmedRequired,
       businessPendingValidation: contract.social.businessPendingValidation,
+      businessHoldsPayments: contract.social.businessHoldsPayments,
     });
   });
 });

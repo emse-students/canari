@@ -87,6 +87,7 @@ import {
 import {
   HELD_BUSINESSES_SQL,
   LYDIA_BRIDGE_LOG_TAG,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
   LYDIA_BUSINESS_PENDING_VALIDATION,
   bridgeJoinSql,
   bridgeOfEnrolled,
@@ -540,6 +541,11 @@ interface BridgeSwitchBack {
   historicalReady: boolean;
   /** `switchBackCount` after this one. */
   switchBackCount: number;
+  /**
+   * Whether the enrolled Business had PROVEN itself (`enrolledProvenAt`, a request/do Lydia issued
+   * on it) - its managers were then told "active", and are owed the counter-notice.
+   */
+  wasProven: boolean;
   withheld: number;
   admins: number;
   delegates: string[];
@@ -5194,6 +5200,12 @@ ${rejectionReason}`
       | { kind: 'none'; inFlight: boolean }
       | { kind: 'held'; holder: Holder }
       | { kind: 'standby-refused'; associationId: string }
+      | {
+          kind: 'standby-held';
+          associationId: string;
+          cause: LydiaReadinessCause;
+          at: Date | string | null;
+        }
       | ({ kind: 'switched-back'; holder: Holder } & BridgeSwitchBack)
       | {
           kind: 'done';
@@ -5232,6 +5244,13 @@ ${rejectionReason}`
           holders = await selectHolders();
         } else if (standby.kind === 'refused') {
           return { kind: 'standby-refused', associationId: standby.associationId };
+        } else if (standby.kind === 'held') {
+          return {
+            kind: 'standby-held',
+            associationId: standby.associationId,
+            cause: standby.cause,
+            at: standby.at,
+          };
         }
       }
       if (holders.length !== 1) {
@@ -5334,6 +5353,22 @@ ${rejectionReason}`
     if (step.kind === 'none') {
       return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
     }
+    if (step.kind === 'standby-held') {
+      // Lydia's own refusal of the enrolled Business is on record: an UNSIGNED VALIDATED does not
+      // clear it (the held-by-lydia rule, applied to the standby). A global admin switches by hand.
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(step.associationId)}: an unsigned ` +
+          `BUSINESS_VALIDATED does not switch onto its enrolled Business, which Lydia itself ` +
+          `refused (${step.cause}) - nothing written (${where}); a global admin re-checks and ` +
+          `validates by hand`
+      );
+      return {
+        kind: 'held-by-lydia',
+        associationId: step.associationId,
+        previousCause: step.cause,
+        previousAt: step.at ? new Date(step.at) : null,
+      };
+    }
     if (step.kind === 'standby-refused') {
       // A request decided while the enrolled Business was active, answered after a concurrent
       // error 5 switched the bridge back: the historical account collects, the payment goes there.
@@ -5404,7 +5439,17 @@ ${rejectionReason}`
       );
     }
     await this.invalidatePostListCaches();
-    await this.tellPayoutManagers(holder, ready ? 'active' : 'paused');
+    if (switched) {
+      // A switch is believed on an UNSIGNED webhook: the managers are told "active" once the
+      // enrolled Business has PROVEN itself - the first request/do Lydia issues on it
+      // (`noteLydiaRequestIssued`) - never on the switch, which a forged VALIDATED can make.
+      this.logger.debug(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)}: managers told "active" ` +
+          `at the first request Lydia issues on the switched-to Business`
+      );
+    } else {
+      await this.tellPayoutManagers(holder, ready ? 'active' : 'paused');
+    }
     // Those who collect THROUGH this holder stop collecting with it (owner, 2026-11-02), products
     // or none - their paid forms pause too.
     if (!ready) {
@@ -5460,6 +5505,7 @@ ${rejectionReason}`
     | { kind: 'none' }
     | { kind: 'now-active' }
     | { kind: 'refused'; associationId: string }
+    | { kind: 'held'; associationId: string; cause: LydiaReadinessCause; at: Date | string | null }
     | { kind: 'switched'; historicalWasReady: boolean; switchCount: number }
   > {
     const associationId = await bridgeOfEnrolled(manager, vendorToken);
@@ -5496,6 +5542,21 @@ ${rejectionReason}`
           `re-issued on the historical account`
       );
       return { kind: 'refused', associationId };
+    }
+    const lydiaRefusedIt =
+      bridge.standbyReadinessCause === 'request-refused' ||
+      bridge.standbyReadinessCause === 'request-blocked';
+    if (lydiaRefusedIt && cause !== 'admin') {
+      // Lydia itself answered error 5 or 2701 for this Business (a switch back, or a block recorded
+      // on it since): an unsigned VALIDATED does not overrule Lydia - otherwise a stream of forged
+      // ones re-switches after every switch back. Only a global admin, who re-checked with Lydia,
+      // switches it (the same rule `held-by-lydia` applies to an active Business).
+      return {
+        kind: 'held',
+        associationId,
+        cause: bridge.standbyReadinessCause as LydiaReadinessCause,
+        at: bridge.standbyReadinessAt,
+      };
     }
     await swapBridge(manager, bridge, 'switched', {
       ready: active.ready,
@@ -5536,6 +5597,7 @@ ${rejectionReason}`
     });
     await this.countBridgeReissue(manager, holder.id);
     const historicalReady = bridge.standbyReady;
+    const wasProven = bridge.enrolledProvenAt != null;
     const delegates = await approvedDelegateIds(manager, holder.id);
     let delegatesWithheld = new Map<string, number>();
     let withheld = 0;
@@ -5554,6 +5616,7 @@ ${rejectionReason}`
     return {
       historicalReady,
       switchBackCount: bridge.switchBackCount + 1,
+      wasProven,
       withheld,
       admins,
       delegates,
@@ -5589,8 +5652,12 @@ ${rejectionReason}`
         `${back.admins} global admin(s) told`
     );
     await this.invalidatePostListCaches();
-    if (!back.historicalReady) {
+    // The managers manage the ENROLLED Business: told "active" once it proved itself, they are owed
+    // the counter-notice now that it waits for Lydia again; and when nothing collects at all.
+    if (back.wasProven || !back.historicalReady) {
       await this.tellPayoutManagers(holder, 'paused');
+    }
+    if (!back.historicalReady) {
       await this.tellDelegates(
         back.delegates,
         'receiver-not-ready',
@@ -5688,6 +5755,44 @@ ${rejectionReason}`
       );
     if (!row) throw new NotFoundException('Association not found');
     return row.managed?.trim() || row.active?.trim() || null;
+  }
+
+  /**
+   * Called after Lydia ISSUED a request on `vendorToken` (a `request/do` answered with a request):
+   * the proof that a Business a bridge switch made active really is validated
+   * (lydia-account-bridge.ts). The FIRST such request after a switch stamps `enrolledProvenAt` -
+   * one statement, so the stamp is the idempotence - and tells the payout managers "active", the
+   * notice the switch itself withheld because an unsigned VALIDATED can be forged. Any other
+   * token matches no row. Never throws: the payer's request is issued, and a failure here is an
+   * ERROR line, not a second answer.
+   */
+  async noteLydiaRequestIssued(vendorToken: string): Promise<void> {
+    try {
+      const updated: unknown[] = await this.assoRepo.query(
+        `UPDATE lydia_account_bridges b SET "enrolledProvenAt" = now()
+           FROM associations a
+          WHERE b."enrolledVendorToken" = $1 AND b.state = 'switched'
+            AND b."enrolledProvenAt" IS NULL AND a.id = b."associationId"
+          RETURNING a.id, a.name`,
+        [vendorToken]
+      );
+      const rows = (Array.isArray(updated[0]) ? updated[0] : updated) as Array<{
+        id: string;
+        name: string;
+      }>;
+      if (rows.length === 0) return;
+      const [holder] = rows;
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)}: its switched-to Business ` +
+          `PROVED itself (Lydia issued a request on it) - the payout managers are told "active"`
+      );
+      await this.tellPayoutManagers(holder, 'active');
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_BRIDGE_LOG_TAG} the proof of an issued request could not be recorded: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**
@@ -6349,6 +6454,21 @@ ${rejectionReason}`
         const bridge = await lockBridge(manager, id);
         if (!bridge || bridge.state !== 'historical') return false;
         if (!bridge.enrolledVendorToken) return null;
+        // A Business that TOOK payments (collecting between a switch and a switch back) keeps its
+        // key while a payment it took can still be confirmed or refunded: the unlink is refused,
+        // typed, rather than leaving those rows with no key (lydia-account-bridge.ts).
+        const [taken]: Array<{ n: number }> = await manager.query(
+          `SELECT ((SELECT count(*) FROM product_checkouts
+                     WHERE "vendorToken" = $1 AND status NOT IN ('cancelled', 'expired', 'declined'))
+                 + (SELECT count(*) FROM submissions WHERE "lydiaVendorToken" = $1))::int AS n`,
+          [bridge.enrolledVendorToken]
+        );
+        if (taken.n > 0) {
+          throw new ConflictException({
+            code: LYDIA_BUSINESS_HOLDS_PAYMENTS,
+            message: 'This Lydia Business took payments that may still be confirmed or refunded',
+          });
+        }
         await manager.query(
           `UPDATE lydia_account_bridges
               SET "enrolledVendorToken" = NULL, "standbyKeyCiphertext" = NULL,
@@ -6389,8 +6509,12 @@ ${rejectionReason}`
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
   async isLydiaBusinessKeySet(id: string): Promise<boolean> {
+    // The MANAGED Business's key: on a bridge whose historical account collects, the enrolled
+    // one's - the historical account is invisible to the managers, even as a flag.
     const rows: Array<{ set: boolean }> = await this.assoRepo.query(
-      `SELECT ("lydiaBusinessKeyCiphertext" IS NOT NULL) AS "set" FROM associations WHERE id = $1`,
+      `SELECT (CASE WHEN b.state = 'historical' THEN b."standbyKeyCiphertext"
+                    ELSE a."lydiaBusinessKeyCiphertext" END IS NOT NULL) AS "set"
+         FROM associations a ${bridgeJoinSql()} WHERE a.id = $1`,
       [id]
     );
     if (rows.length === 0) throw new NotFoundException('Association not found');

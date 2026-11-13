@@ -2903,9 +2903,12 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
     { method: 'POST' }
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    const body = (await res.json().catch(() => ({}))) as { message?: string; code?: unknown };
+    // Typed, so the screen can say WHY (LYDIA_BUSINESS_HOLDS_PAYMENTS) and never reads the prose.
+    throw new SocialApiError(
+      body?.message || `Lydia disconnect failed (${res.status})`,
+      typeof body?.code === 'string' ? body.code : null,
+      res.status
     );
   }
 }

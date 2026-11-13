@@ -76,7 +76,7 @@ function makeService(rows: Row[]) {
         byId(params[0])!.sealed = null;
         return [];
       }
-      if (sql.startsWith('SELECT ("lydiaBusinessKeyCiphertext" IS NOT NULL)')) {
+      if (sql.includes('IS NOT NULL) AS "set"')) {
         const row = byId(params[0]);
         return row ? [{ set: row.sealed !== null }] : [];
       }

@@ -1426,17 +1426,29 @@ every readiness write, cashier claim and purchase decision already takes - the a
   managed Business) for the PENDING Business swaps the two (`swapBridge`): the enrolled Business's
   token, sealed key, URL and readiness go into the association's columns, the historical account's
   into the bridge. The ordinary ready transition then runs on it - the withheld products of the
-  association and its approved delegates released, the managers told "active" ONCE, a replay a
-  replay. The delegates are told "resumed" only if the historical account was NOT collecting (their
+  association and its approved delegates released, a replay a replay. The managers are NOT told
+  "active" at the switch, which an unsigned VALIDATED can make: they are told ONCE, when the enrolled
+  Business PROVES itself - the first `request/do` Lydia issues on it (`noteLydiaRequestIssued`,
+  products and forms, stamping `enrolledProvenAt`, which every swap clears). The delegates are told "resumed" only if the historical account was NOT collecting (their
   collecting did not change otherwise). N concurrent VALIDATED: the losers find the Business active
   and are replays. Logged WARN `[LYDIA-BRIDGE] ... SWITCHED`.
 - **A forged VALIDATED costs nothing.** The webhook is unsigned (accepted 2026-10-30). If a switched
   Business answers a real `request/do` with **error 5**, the same transaction SWITCHES BACK
   (`switchBackOnRefusal`): the historical account returns with the readiness it had, the enrolled
   Business goes back to PENDING (`request-refused`), every global admin gets the bell row
-  `lydia_payments_paused` with `meta.bridge = 'switched-back'` (worded as a switch back), and the
-  managers and delegates are told nothing unless the historical account was not ready. A later
-  VALIDATED switches again.
+  `lydia_payments_paused` with `meta.bridge = 'switched-back'` (worded as a switch back); the
+  delegates are told nothing unless the historical account was not ready, the managers "paused" if
+  the Business had proven itself (the counter-notice to their "active") or the historical account was
+  not ready.
+- **Lydia's refusal is not overruled by an unsigned VALIDATED** (review of #3470). Lydia has no read
+  of a Business's validation state ([lydia-api](../../lydia-api.md)), so a VALIDATED cannot be
+  verified. Once Lydia itself answered error 5 (a switch back) or 2701 for the standby Business
+  (`standbyReadinessCause` `request-refused` / `request-blocked`), a webhook VALIDATED for it is
+  HELD - the outcome `held-by-lydia`, a WARN, nothing written - so a stream of forged ones cannot
+  flap the routing, and the bridge never switches onto a blocked Business. Only a global admin's
+  "Valider l'onboarding" (who re-checked with Lydia) switches it: the same rule `held-by-lydia`
+  applies to an active Business. A Business enrolled anew starts with no cause, so its first real
+  VALIDATED switches.
 - **The re-issue is the OWNER'S EXPLICIT DECISION (2026-11-13), scoped to error 5 on a just-switched
   Business. It is NOT a general fallback.** The SAME payment is re-issued at once, ONCE, on the
   historical account: the shop re-opens the purchase from the start (`openCheckoutAttempt(...,
@@ -1452,7 +1464,7 @@ every readiness write, cashier claim and purchase decision already takes - the a
   three concurrent purchases included.
 - **2701** on a switched Business is the ordinary revert (a pause), never a switch back: routing
   around Lydia's block onto another account is not the bridge's to decide. A 2701 naming a PENDING
-  Business (after a switch back) is recorded on it, nothing re-issued.
+  Business (after a switch back) is recorded on it, nothing re-issued, and holds it (above).
 - **`BUSINESS_UNVALIDATED`** for a pending Business changes nothing and logs a WARN naming its role
   (core-service `webhook.controller.ts`), as for any Business.
 - **A switch racing a purchase.** The purchase decision re-reads the routing under a SHARE lock on the
@@ -1463,6 +1475,11 @@ every readiness write, cashier claim and purchase decision already takes - the a
 **After the switch** the historical account's tokens are KEPT, sealed, ONLY to refund the payments
 taken on it and to verify their callbacks: a refund resolves the key by the ROW's vendor token
 (`vendorTokensHeldBy`, `lydiaCallbackKey`). No new payment goes to it, except the error-5 re-issue.
+The same holds the other way: an enrolled Business that collected between a switch and a switch back
+cannot be UNLINKED while a checkout it took (not `cancelled`, `expired` or `declined`) or a form
+answer names it - the typed 409 `LYDIA_BUSINESS_HOLDS_PAYMENTS`, passed through core-service's
+disconnect route and worded on the admin's screen. Refusing, rather than keeping the key in a
+"retired" role, because the bridge has ONE standby slot: a new enrolment would need it.
 
 **Who sees what.** The managers see ONLY the new Business and its enrolment: while it is pending, the
 payout account shows it not validated (no readiness change), the historical account nowhere. A global

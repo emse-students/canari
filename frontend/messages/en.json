@@ -2701,6 +2701,7 @@
   "asso_lydia_validate_error": "Could not validate the Lydia onboarding.",
   "asso_lydia_already_linked_error": "A Lydia Business is already linked to this space. Disconnect it first to create another one.",
   "asso_lydia_pending_validation_error": "The Lydia Business created by the previous enrolment is still waiting for Lydia's validation. Nothing was created.",
+  "asso_lydia_disconnect_holds_payments_error": "This Lydia Business took payments that may still be confirmed or refunded: it is not disconnected, its key stays for them.",
   "asso_lydia_bridge_title": "Historical Lydia account (visible to admins only)",
   "asso_lydia_bridge_state_historical": "The historical Lydia account collects until Lydia validates the new Business.",
   "asso_lydia_bridge_state_switched": "The new Business has collected since {date}; the historical account is kept to refund the payments it took.",

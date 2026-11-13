@@ -107,6 +107,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,
+        noteLydiaRequestIssued: async () => undefined,
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),

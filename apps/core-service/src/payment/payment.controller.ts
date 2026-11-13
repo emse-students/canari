@@ -89,6 +89,12 @@ export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
  */
 export const LYDIA_BUSINESS_PENDING_VALIDATION = 'LYDIA_BUSINESS_PENDING_VALIDATION';
 
+/**
+ * social-service's `code` (409) refusing to unlink a bridge's enrolled Business that took payments
+ * still to be confirmed or refunded - its key must stay. Passed through to the admin's screen.
+ */
+export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
+
 /** social-service's `code` (409) of a cashier operation while another one is in flight (lot 3). */
 export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 
@@ -803,7 +809,16 @@ export class PaymentController {
         internalSocialRequestConfig()
       );
     } catch (err: unknown) {
-      const error = err as Error & { response?: { data?: unknown } };
+      const error = err as Error & { response?: { status?: number; data?: unknown } };
+      const data = error.response?.data as { code?: unknown } | undefined;
+      if (error.response?.status === 409 && data?.code === LYDIA_BUSINESS_HOLDS_PAYMENTS) {
+        // An ANSWER, typed: the Business took payments whose key must stay. Said, not a failure.
+        this.logger.warn(
+          `Lydia Business of ${associationId} not unlinked: it took payments still to be ` +
+            `confirmed or refunded (${LYDIA_BUSINESS_HOLDS_PAYMENTS})`
+        );
+        throw new HttpException(data as Record<string, unknown>, 409);
+      }
       this.logger.error('Failed to disconnect Lydia account', describeHttpError(error));
       throw new BadRequestException('Could not disconnect the Lydia account');
     }

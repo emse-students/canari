@@ -2845,6 +2845,11 @@ export class FormsService {
           });
         }
 
+        // Lydia issued a request on this Business: the proof a bridge switch waits for before
+        // telling its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+        if (connectAccountId) {
+          await this.associationsService.noteLydiaRequestIssued(connectAccountId);
+        }
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: unknown) {
         // No request was issued, so nothing is payable: the row stops holding a seat for it.

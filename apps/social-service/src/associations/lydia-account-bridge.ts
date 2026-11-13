@@ -38,6 +38,12 @@ export const LYDIA_BRIDGE_LOG_TAG = '[LYDIA-BRIDGE]';
  */
 export const LYDIA_BUSINESS_PENDING_VALIDATION = 'LYDIA_BUSINESS_PENDING_VALIDATION';
 
+/**
+ * The `code` of the 409 refusing to unlink a bridge's enrolled Business while a payment it took can
+ * still be confirmed or refunded - its key must stay. Mirrored in `libs/contracts/lydia-refusal-codes.json`.
+ */
+export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
+
 /** Which Business of a bridge collects: the historical account, or the enrolled one. */
 export type LydiaBridgeState = 'historical' | 'switched';
 
@@ -53,6 +59,8 @@ export interface LydiaBridgeRow {
   standbyReadinessCause: LydiaReadinessCause | null;
   standbyReadinessAt: Date | string | null;
   switchedAt: Date | string | null;
+  /** The first request Lydia issued on the enrolled Business since it was switched in. */
+  enrolledProvenAt: Date | string | null;
   switchCount: number;
   switchBackCount: number;
   reissueCount: number;
@@ -210,6 +218,7 @@ export async function swapBridge(
             "standbyReady" = $5, "standbyReadinessCause" = $6,
             "standbyReadinessAt" = COALESCE($7::timestamptz, now()),
             "switchedAt" = CASE WHEN $2::varchar = 'switched' THEN now() ELSE "switchedAt" END,
+            "enrolledProvenAt" = NULL,
             "switchCount" = "switchCount" + CASE WHEN $2::varchar = 'switched' THEN 1 ELSE 0 END,
             "switchBackCount" = "switchBackCount" + CASE WHEN $2::varchar = 'historical' THEN 1 ELSE 0 END
       WHERE "associationId" = $1`,

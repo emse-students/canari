@@ -17,6 +17,7 @@
     lydiaOnboardingErrorText,
     lydiaOnboardingOutcomeUnknown,
     lydiaOnboardingRefusalCode,
+    lydiaDisconnectErrorText,
   } from '$lib/associations/lydiaOnboardingRefusal';
   import {
     lydiaEnrolmentView,
@@ -109,7 +110,7 @@
       await loadAccount();
     } catch (err) {
       console.error('[Lydia] Disconnect failed:', err);
-      error = m.asso_lydia_disconnect_error();
+      error = lydiaDisconnectErrorText(err);
     } finally {
       disconnecting = false;
     }

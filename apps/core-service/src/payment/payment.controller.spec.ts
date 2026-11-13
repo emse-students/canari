@@ -21,6 +21,7 @@ import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
   LYDIA_BUSINESS_CHANGED,
   LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
   LYDIA_BUSINESS_PENDING_VALIDATION,
   LYDIA_NO_BUSINESS,
   LYDIA_RESPONSABLE_ALREADY_SET,
@@ -427,6 +428,27 @@ describe('PaymentController - every money route is guarded', () => {
 
   it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
     expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('passes social-service`s typed 409 HOLDS_PAYMENTS through, any other failure stays a 400', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = new PaymentController({} as unknown as PaymentService);
+    const asso = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('409'), {
+        response: { status: 409, data: { code: LYDIA_BUSINESS_HOLDS_PAYMENTS } },
+      })
+    );
+    await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_BUSINESS_HOLDS_PAYMENTS },
+    });
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('500'), { response: { status: 500, data: {} } })
+    );
+    await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({ status: 400 });
+    mockedAxios.post.mockReset();
   });
 
   it('disconnectLydiaAccount is for a global admin only, behind NginxAuthGuard', () => {
@@ -1171,6 +1193,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
     expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
     expect(LYDIA_BUSINESS_PENDING_VALIDATION).toBe(contract.social.businessPendingValidation);
+    expect(LYDIA_BUSINESS_HOLDS_PAYMENTS).toBe(contract.social.businessHoldsPayments);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
     expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);

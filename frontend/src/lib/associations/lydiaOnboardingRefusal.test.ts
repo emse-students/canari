@@ -6,6 +6,7 @@ import {
   lydiaOnboardingOutcomeUnknown,
   lydiaOnboardingRefusalCode,
   lydiaOnboardingRefusalText,
+  lydiaDisconnectErrorText,
 } from './lydiaOnboardingRefusal';
 import { m } from '$lib/paraglide/messages';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -82,6 +83,17 @@ describe('Lydia onboarding refusals are classified by code, never by message', (
       new Error('x'),
     ]) {
       expect(lydiaOnboardingOutcomeUnknown(err)).toBe(false);
+    }
+  });
+});
+
+describe('a failed unlink says why when the server typed it', () => {
+  it('the HOLDS_PAYMENTS 409 has its own sentence; anything else the generic one', () => {
+    expect(
+      lydiaDisconnectErrorText(new SocialApiError('x', 'LYDIA_BUSINESS_HOLDS_PAYMENTS', 409))
+    ).toBe(m.asso_lydia_disconnect_holds_payments_error());
+    for (const err of [new SocialApiError('x', null, 400), new Error('prose'), undefined]) {
+      expect(lydiaDisconnectErrorText(err)).toBe(m.asso_lydia_disconnect_error());
     }
   });
 });

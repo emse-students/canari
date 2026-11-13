@@ -269,6 +269,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
       revertLydiaReadinessAfterRefusal: jest.fn(() => Promise.resolve()),
+      noteLydiaRequestIssued: jest.fn(() => Promise.resolve()),
     };
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {

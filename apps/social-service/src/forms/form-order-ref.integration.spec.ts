@@ -66,6 +66,7 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       getPaymentAccountId: async () => payee,
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
+      noteLydiaRequestIssued: async () => undefined,
     };
     service = new FormsService(
       ds.getRepository(Form),

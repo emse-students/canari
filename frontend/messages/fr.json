@@ -2733,6 +2733,7 @@
   "asso_lydia_validate_error": "Impossible de valider l'onboarding Lydia.",
   "asso_lydia_already_linked_error": "Un compte Lydia Business est déjà relié. Déconnectez-le d'abord pour en créer un autre.",
   "asso_lydia_pending_validation_error": "Le compte Lydia Business créé lors de la précédente inscription attend encore la validation de Lydia. Rien n'a été créé.",
+  "asso_lydia_disconnect_holds_payments_error": "Ce compte Lydia Business a reçu des paiements qui peuvent encore être confirmés ou remboursés : il n'est pas déconnecté, sa clé reste pour eux.",
   "asso_lydia_bridge_title": "Ancien compte Lydia (visible des admins seulement)",
   "asso_lydia_bridge_state_historical": "L'ancien compte Lydia encaisse jusqu'à ce que Lydia valide le nouveau compte Business.",
   "asso_lydia_bridge_state_switched": "Le nouveau compte Business encaisse depuis le {date} ; l'ancien compte est gardé pour rembourser les paiements qu'il a reçus.",

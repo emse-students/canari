@@ -2443,6 +2443,9 @@ export class ProductsService {
 
     // Named columns: the request ids are the only thing this write may change.
     await this.checkoutRepo.update({ id: checkout.id }, { requestUuid, requestId });
+    // Lydia issued a request on this Business: the proof a bridge switch waits for before telling
+    // its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+    await this.associationsService.noteLydiaRequestIssued(vendorToken);
     this.logger.log(
       `[SHOP] checkout ${checkout.id.slice(0, 8)} issued: request ${requestId ?? 'without a numeric id'} ` +
         `product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`

@@ -18,6 +18,7 @@ const BRIDGE: LydiaBridgeRow = {
   standbyReadinessCause: null,
   standbyReadinessAt: null,
   switchedAt: null,
+  enrolledProvenAt: null,
   switchCount: 0,
   switchBackCount: 0,
   reissueCount: 0,
