@@ -560,7 +560,9 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 164)
       // The edit is WAITING on that lock - observed in PostgreSQL, not assumed from a delay. An edit
       // that settles first never waited, and the assertion below `settled` says so.
       while (!settled) {
-        const [{ n }] = await admin.query(
+        const {
+          rows: [{ n }],
+        } = await admin.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM pg_stat_activity
             WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM "submissions"%FOR UPDATE%'`
         );
