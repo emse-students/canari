@@ -799,11 +799,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/posts/ScheduledPostsPanel.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/pricing/CriterionEditor.svelte": {
     "button": 6,
     "select": 0,
