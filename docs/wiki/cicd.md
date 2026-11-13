@@ -2366,7 +2366,7 @@ interceptors, mDNS off, `RTCIceTransportPolicy::Relay`), and asserts that every 
 ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an opus RTP packet arrives
 (SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
 which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
-SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
+SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly; since the webrtc 0.21 port `src/forward.rs` is linked into a second test there), a browser peer,
 renegotiation, and any TURN provider but the library's own. **Those three are covered since
 2026-11-01 by `test-call-service-e2e`** (D3): the real binary, two Chromes, coturn, encrypted audio
 both ways ([call-service](services/call-service.md#the-end-to-end-call-in-ci)); video through the SFU
@@ -3016,11 +3016,11 @@ directory holding no `audit.toml`, against the database the audit step just fetc
 `RUSTSEC-2026-0387` (crypto-bigint 0.5.5, constant-time operations that may branch on secrets; fix
 only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
 change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
-newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
+newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0; webrtc 0.17.2's dtls until the 0.21 port). It is
 unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
 **reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
-placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
+placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-021-port-built-2026-10-27)) REMOVED that edge on 2026-10-27; jsonwebtoken keeps the id.
 
 `RUSTSEC-2026-0441` (pin-utils, an "unmaintained" status warning only, 2026-11-09) is ignored in call-service on the same webrtc 0.17 edge (webrtc-util -> nix 0.26.4 -> pin-utils): no lockfile bump drops it, the webrtc 0.21 port does; re-examine by then or 2027-01-31.
 
