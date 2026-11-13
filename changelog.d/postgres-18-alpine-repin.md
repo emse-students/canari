@@ -1,0 +1,3 @@
+### Security - Canari's PostgreSQL moves to upstream's newest 18-alpine build (18.7)
+
+The `postgres:18-alpine` digest moves in the three compose files and CI, a minor release on the same cluster and volume; the identity provider's pin moves by hand in its own window ([databases](docs/wiki/infrastructure/databases.md), [backlog](docs/wiki/backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)).
