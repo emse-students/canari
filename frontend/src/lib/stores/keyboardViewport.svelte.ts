@@ -194,6 +194,39 @@ export function keyboardSafeAreaBottomOverride(isOpen: boolean, os: string): str
 }
 
 /**
+ * The viewport height a keyboard-free page would have, while a keyboard has taken it from the LAYOUT
+ * viewport - or null when nothing has (the CSS then keeps its own `100svh`).
+ *
+ * WHY IT EXISTS: `--media-max-height` is `60svh`, meant to be stable, and in a phone BROWSER it is -
+ * the keyboard shrinks only the visual viewport there. In the app it is not: Android pads the
+ * WebView by the IME inset (`MainActivity.applyKeyboardInsets`) and iOS shrinks the WebView's frame
+ * (`CanariApplyKeyboardLayout`), so the layout viewport itself shrinks and EVERY viewport unit
+ * (`svh`, `lvh`, `dvh`, `vh`) shrinks with it. Measured on the Mi 9T (`1.6.11-alpha.5`, LatinIME):
+ * `60svh` and `60lvh` both 567.3 px closed, 352.7 px open (innerHeight 945 -> 588) - a 1080x2340
+ * screenshot in a 290 px bubble showed 90% of itself, then 56%, cropped top AND bottom
+ * (`object-cover object-center`). No CSS unit names "the screen without the keyboard"; this store
+ * is the one place that knows it (`baselineHeight`), so it writes it.
+ *
+ * Only while `isOpen` AND the layout viewport gave room (`winH < baseline`): a phone browser keeps
+ * `svh` itself, and a closed keyboard means the current viewport IS the keyboard-free one - so a
+ * desktop window resize and a rotation are still followed by plain CSS.
+ *
+ * @param baselineHeight the tallest the layout viewport has been with no keyboard.
+ */
+export function keyboardFreeViewportHeight(
+  isOpen: boolean,
+  winH: number,
+  baselineHeight: number
+): number | null {
+  if (!isOpen) return null;
+  if (baselineHeight - winH < SAME_HEIGHT_ROUNDING_PX) return null;
+  return Math.round(baselineHeight);
+}
+
+/** The CSS property `--media-max-height` reads its viewport from while a keyboard holds the layout. */
+const KEYBOARD_FREE_HEIGHT_PROPERTY = '--keyboard-free-viewport-height';
+
+/**
  * Whether this OS can have an on-screen keyboard at all. A desktop window has none, so a window
  * made shorter than its tallest size is a RESIZE, never a keyboard: it used to read as one past
  * 160px and hid the top bar and the bottom bar while the fixed rail kept its offset, leaving a gap
@@ -224,8 +257,7 @@ function measureViewport(): ViewportMeasurement {
 /** Tallest the layout viewport has been with no keyboard - owned by `initKeyboardViewport`. */
 let baselineHeight = 0;
 
-function readSnapshot(): KeyboardViewportSnapshot {
-  const m = measureViewport();
+function readSnapshot(m: ViewportMeasurement): KeyboardViewportSnapshot {
   return computeSnapshot(
     m,
     hasVirtualKeyboard(detectRuntimeDeviceOs()) ? baselineHeight : m.winH,
@@ -261,7 +293,11 @@ export function pinSafeAreaBottom(root: CSSStyleDeclaration, value: string | nul
   }
 }
 
-function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number): void {
+function applyCssVars(
+  snapshot: KeyboardViewportSnapshot,
+  m: ViewportMeasurement,
+  baselineHeight: number
+): void {
   const root = document.documentElement.style;
   // Fix 2: only pin the shell height (in px) while the keyboard is actually open. Otherwise
   // remove the override so the shell falls back to the stable `100dvh` from `:root` - a bare
@@ -278,6 +314,18 @@ function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number
   root.setProperty('--keyboard-layout-inset-bottom', `${snapshot.layoutInsetBottom}px`);
   root.setProperty('--visual-viewport-offset-top', `${snapshot.offsetTop}px`);
   root.setProperty('--keyboard-baseline-height', `${baselineHeight}px`);
+  const keyboardFree = keyboardFreeViewportHeight(snapshot.isOpen, m.winH, baselineHeight);
+  if (keyboardFree !== null) {
+    if (root.getPropertyValue(KEYBOARD_FREE_HEIGHT_PROPERTY) !== `${keyboardFree}px`) {
+      Log.d(
+        'keyboardViewport',
+        `media held at the keyboard-free height ${keyboardFree} (layout ${m.winH})`
+      );
+    }
+    root.setProperty(KEYBOARD_FREE_HEIGHT_PROPERTY, `${keyboardFree}px`);
+  } else {
+    root.removeProperty(KEYBOARD_FREE_HEIGHT_PROPERTY);
+  }
 }
 
 let snapshot = $state<KeyboardViewportSnapshot>({
@@ -370,10 +418,11 @@ export function initKeyboardViewport(): () => void {
   let keyboardWasOpen = false;
 
   const update = () => {
-    const next = readSnapshot();
+    const m = measureViewport();
+    const next = readSnapshot(m);
     const openedNow = next.isOpen && !keyboardWasOpen;
     snapshot = next;
-    applyCssVars(next, baselineHeight);
+    applyCssVars(next, m, baselineHeight);
     if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
 
     if (next.isOpen && (openedNow || document.activeElement instanceof HTMLElement)) {
@@ -439,5 +488,6 @@ export function initKeyboardViewport(): () => void {
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
     document.documentElement.style.removeProperty('--visual-viewport-offset-top');
     document.documentElement.style.removeProperty('--keyboard-baseline-height');
+    document.documentElement.style.removeProperty(KEYBOARD_FREE_HEIGHT_PROPERTY);
   };
 }

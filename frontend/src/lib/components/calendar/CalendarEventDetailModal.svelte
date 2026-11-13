@@ -221,7 +221,7 @@
           src={associationLogoSrc(event.imageUrl) ?? ''}
           alt={m.calendar_event_poster_alt()}
           class="border-cn-border/40 rounded-xl border"
-          imgClass="max-h-[60svh]"
+          imgClass="max-h-(--media-max-height)"
         />
       {/if}
 

@@ -3,6 +3,7 @@ import {
   computeSnapshot,
   hasVirtualKeyboard,
   isDoubleReport,
+  keyboardFreeViewportHeight,
   keyboardInsetBottom,
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
@@ -393,5 +394,58 @@ describe('keyboardInsetBottom', () => {
 
   it('is zero when pinch-zoomed, which shrinks the visual viewport with no keyboard', () => {
     expect(keyboardInsetBottom(m(945, 400, 0, 2), 945)).toBe(0);
+  });
+});
+
+describe('keyboardFreeViewportHeight - a picture does not shrink because someone started typing (Mi 9T, 2026-11-13)', () => {
+  const m = (winH: number, vvHeight: number): ViewportMeasurement => ({
+    winH,
+    vvHeight,
+    offsetTop: 0,
+    scale: 1,
+  });
+  const ANDROID_THRESHOLD = 160;
+
+  /**
+   * The height `60svh` resolves to in the app, where the WebView itself is resized: the layout
+   * viewport's. `--media-max-height` is 0.6 x the held height when one is written, else that.
+   */
+  function mediaCeiling(frame: ViewportMeasurement, baseline: number): number {
+    const snap = computeSnapshot(frame, baseline, ANDROID_THRESHOLD);
+    const held = keyboardFreeViewportHeight(snap.isOpen, frame.winH, baseline);
+    return Math.round((held ?? frame.winH) * 0.6 * 10) / 10;
+  }
+
+  it('holds the ceiling at 567 px through the whole LatinIME rise and fall the bench measured', () => {
+    // Measured: 60svh read 567.3 closed and 352.7 open (innerHeight 945 -> 588). Every frame of the
+    // rise, double report included, and the fall must leave the ceiling where it was.
+    const rise = [m(945, 945), m(945, 588), m(588, 230.3), m(588, 587.9), m(945, 945)];
+    expect(rise.map((f) => mediaCeiling(f, 945))).toEqual([567, 567, 567, 567, 567]);
+  });
+
+  it('without the held height the same frames give the 353 px the owner saw cropped', () => {
+    expect(Math.round(588 * 0.6)).toBe(353);
+  });
+
+  it('writes nothing while the keyboard is closed: a desktop resize and a rotation stay CSS', () => {
+    expect(keyboardFreeViewportHeight(false, 700, 945)).toBeNull();
+  });
+
+  it('writes nothing in a phone browser, whose keyboard leaves the layout viewport (and svh) alone', () => {
+    const frame = m(945, 588);
+    const snap = computeSnapshot(frame, 945, ANDROID_THRESHOLD);
+    expect(snap.isOpen).toBe(true);
+    expect(keyboardFreeViewportHeight(snap.isOpen, frame.winH, 945)).toBeNull();
+  });
+
+  it('holds the baseline once the layout viewport has given the keyboard its room', () => {
+    expect(keyboardFreeViewportHeight(true, 588, 945)).toBe(945);
+  });
+
+  it('is what app.css reads, with plain svh when nothing is written', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+    expect(css).toContain(
+      '--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6);'
+    );
   });
 });

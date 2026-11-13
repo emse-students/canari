@@ -33,7 +33,7 @@
   THE BOX'S HEIGHT COMES FROM ONE OF TWO PLACES, AND THE CALLER SAYS WHICH. Either the caller
   reserves the shape and the picture fills it (`imgClass="h-full"`, what a feed does so the layout
   does not jump while the bytes arrive), or the caller states only a ceiling and the CONTAINED
-  picture sets the height itself (`imgClass="max-h-[60svh]"`, what a modal does, having no
+  picture sets the height itself (`imgClass="max-h-(--media-max-height)"`, what a modal does, having no
   dimensions to reserve from). The `<img>` stays in flow for exactly that reason - an absolutely
   positioned one would collapse the second case to nothing.
 -->

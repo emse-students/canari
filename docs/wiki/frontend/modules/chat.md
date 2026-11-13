@@ -4740,6 +4740,51 @@ follows the bottom.
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
 portrait photo near its end.**
 
+### A picture keeps its height when the keyboard opens (2026-11-13)
+
+Reported by the owner on Android `1.6.11` (a DM ending on a tall screenshot): with the keyboard up
+the picture showed LESS of itself, cut top and bottom, and the end of the thread looked out of reach.
+**Not a scroll defect: the frame itself shrank.** A chat photo is a `MediaFrame` `fill` box,
+`max-height: var(--media-max-height)`, its `<img>` `object-cover object-center`, and the ceiling was
+`60svh` - chosen as "the stable unit" (`app.css`). It is stable in a phone browser, where the
+keyboard shrinks only the visual viewport. **In the app it is not: Android pads the WebView by the IME
+inset (`MainActivity.applyKeyboardInsets`) and iOS shrinks its frame (`CanariApplyKeyboardLayout`),
+so the LAYOUT viewport shrinks and every viewport unit with it - `svh`, `lvh`, `dvh` and `vh` alike.**
+`lvh` is therefore no answer.
+
+Measured on the Mi 9T (`1.6.11-alpha.5` release build on dev, over the WebView's DevTools socket,
+a probe element sized in each unit):
+
+| keyboard | `innerHeight` | `60svh` = `60lvh` = `60dvh` = `60vh` | a 1080x2340 screenshot in a 290 px frame |
+| --- | --- | --- | --- |
+| closed | 945 | 567.3 px | 567 px tall, 90% of the picture shown |
+| LatinIME (357 px) | 588 | 352.7 px | 353 px tall, 56% shown, cropped top and bottom |
+| ADB keyboard (90 px) | 855 | 513.5 px | - |
+
+The 214 px is the same number the [2026-10-30 anchor fix](#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30)
+measured as the photo's loss - that fix kept the reader at the bottom, but the picture still shrank.
+
+**The fix:** no CSS unit names "the screen without the keyboard", and `keyboardViewport.svelte.ts` is
+the one place that knows it (`baselineHeight`). `keyboardFreeViewportHeight` returns the baseline
+while a keyboard is open AND the layout viewport gave it room, null otherwise; the store writes it as
+`--keyboard-free-viewport-height` and removes it when null, and `app.css` reads
+`--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6)`. Absent, it is exactly
+the old `60svh`, so a phone browser, a desktop resize and a rotation are unchanged. The resize event
+that writes it runs in the same rendering step as the layout it corrects, so no frame draws the short
+ceiling. Every `fill` medium reads that ceiling - a chat photo or video, a reel tile, a feed or comment
+attachment (`mediaAspectStyle`); the event modal and `LetterboxedImage`'s documented ceiling now
+read it too instead of a second `60svh`. A GIF (`--media-inline-max-height: 16rem`) never depended on
+the viewport.
+
+Proved on the phone by applying the new rule over CDP with the keyboard up: the screenshot frame
+353 px without the held height, 567 px with it, 567 px both ways once closed. The unit test
+(`keyboardViewport.test.ts`) replays the bench's LatinIME rise (945/945, 945/588, the 588/230.3 double
+report, 588/587.9, back to 945) and holds the ceiling at 567 on every frame. **Limit:** below the
+keyboard-open threshold (160 px on Android) no keyboard is "open", so a 90 px keyboard still takes
+54 px off the ceiling - the same threshold as [the P3 note](../../backlog.d/p3-a-90-px-keyboard-leaves-the-composer-12-px-low-for-24-ms.md).
+**Owed: one reading of the built change on the Mi 9T** - a DM ending on a tall screenshot, the
+keyboard raised: the frame's height equal with the keyboard up and down.
+
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
 It used to be a strip inside `ChatComposer`, above the input. It appeared and disappeared UNDER the
