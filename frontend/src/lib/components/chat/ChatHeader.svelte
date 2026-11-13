@@ -203,6 +203,12 @@
     return items;
   });
 
+  let searchToggleEl = $state<HTMLButtonElement | null>(null);
+  /** Hands the keyboard focus back to the magnifier when the search bar closes. */
+  export function focusSearchToggle() {
+    searchToggleEl?.focus();
+  }
+
   let isOnline = $derived($presenceMap[contactName] || false);
   /**
    * A DM is titled with its peer's name - the ONE resolver's, read with this conversation's scope so a
@@ -247,9 +253,8 @@
   2026-09-30) - back, the conversation in a centre pill, and a menu that grows into the actions. It
   draws no bar of its own: `ChatArea` floats it over the messages and reserves its height, so the
   thread scrolls under the glass. The website keeps the header below, at every width.
-  THE TITLE PILL TAKES ALL THE FREE WIDTH (`w-full`): its rect is where the native pill is drawn, and
-  a pill that hugged the WEB text was too narrow for the native (wider) system font, so "Canari Test
-  Alpha" was cut at 186 pt with 70 pt of the bar empty (design audit M5, 2026-11-09).
+  THE TITLE PILL FITS ITS CONTENT, centred (owner, 2026-11-10: the full-width pill of 1.6.9 was
+  reverted); a long name is truncated by `min-w-0` + `max-w-full`.
 -->
 {#if glass}
   <div class="chat-header-phone flex items-center gap-2 px-3 py-2 md:hidden">
@@ -283,7 +288,7 @@
           avatar: true,
           onClick: openPill,
         }}
-        class="glass-chrome focus-visible:ring-accent-icon flex w-full max-w-full min-w-0 items-center justify-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 active:scale-[0.98]"
+        class="glass-chrome focus-visible:ring-accent-icon flex max-w-full min-w-0 items-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 active:scale-[0.98]"
       >
         {#if isChannel}
           <span
@@ -464,6 +469,7 @@
 
     {#if onToggleSearch}
       <button
+        bind:this={searchToggleEl}
         onclick={onToggleSearch}
         aria-label={m.chat_search_in_conversation_label()}
         title={m.chat_search_title()}

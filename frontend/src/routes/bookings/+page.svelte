@@ -1,12 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Bell, ChevronDown } from '@lucide/svelte';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import SpaceList from '$lib/components/bookings/booker/SpaceList.svelte';
   import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
   import MyBookingRow from '$lib/components/bookings/booker/MyBookingRow.svelte';
-  import { listSpaces, myBookings, type ListedSpace, type MyBooking } from '$lib/bookings/api';
+  import {
+    listManagedSpaces,
+    listSpaces,
+    myBookings,
+    type ListedSpace,
+    type ManagedSpaceRow,
+    type MyBooking,
+  } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { m } from '$lib/paraglide/messages';
@@ -26,6 +34,11 @@
   let bookingsError = $state('');
   let spacesError = $state('');
   let nowMs = $state(Date.now());
+  /**
+   * The reader's personal spaces, asked with the page's other two reads (they need nothing from each
+   * other) and handed to the tab that draws them once those have ended.
+   */
+  let managed = $state<Promise<ManagedSpaceRow[]> | undefined>();
 
   /** Live and not yet over, soonest first. */
   const coming = $derived(
@@ -45,6 +58,12 @@
   async function load() {
     Log.d('BOOKINGS', 'reservations page load');
     loading = true;
+    const managedRead = listManagedSpaces(null);
+    // The tab awaits it later; until then a refusal must not surface as an unhandled rejection.
+    managedRead.catch((e: unknown) =>
+      Log.d('BOOKINGS', `personal spaces read refused, the tab reports it: ${String(e)}`)
+    );
+    managed = managedRead;
     await Promise.all([readBookings(), readSpaces()]);
     loading = false;
   }
@@ -109,10 +128,15 @@
           </ul>
         {/if}
         {#if history.length}
-          <details class="group">
+          <details class="group/history">
             <summary
-              class="text-text-main cursor-pointer py-2 text-sm font-semibold select-none hover:underline"
+              class="text-text-main flex cursor-pointer list-none items-center gap-2 py-2 text-sm font-semibold select-none hover:underline [&::-webkit-details-marker]:hidden"
             >
+              <ChevronDown
+                size={16}
+                class="text-text-muted transition-transform group-not-open/history:-rotate-90"
+                aria-hidden="true"
+              />
               {m.bookings_history_heading({ count: history.length })}
             </summary>
             <ul
@@ -146,9 +170,12 @@
         {/if}
       </section>
 
-      <EditBookingsTab associationId={null} />
+      <EditBookingsTab associationId={null} {managed} />
 
-      <p class="text-text-muted text-center text-xs">
+      <p
+        class="border-cn-border bg-cn-surface text-text-muted flex items-start gap-2 rounded-2xl border p-4 text-xs"
+      >
+        <Bell size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
         {BOOKING_NOTIFICATIONS_LIVE
           ? m.bookings_mine_notification_note()
           : m.bookings_mine_no_notification_note()}

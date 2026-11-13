@@ -205,7 +205,12 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     flushSync();
     expect(cameraOverlayStub.last).toEqual({
       destination: 'post',
-      composerStart: { caption: 'a caption written first', identity: '', studentsOnly: false },
+      composerStart: {
+        caption: 'a caption written first',
+        identity: '',
+        studentsOnly: false,
+        reach: { spaces: [], public: null },
+      },
     });
 
     document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();

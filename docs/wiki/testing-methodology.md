@@ -996,6 +996,13 @@ being asserted, and end early on the event that would refute it:
 Two delays are legitimate and must say so where they sit: one that **is** the behaviour under test
 (`longPressBubble` holds 700 ms against the app's own 420 ms threshold), and one that paces a poll.
 
+**A unit test's `setTimeout(0)` is a delay too.** `channelSeal.followerTab.test.ts` waited one
+macrotask for the executor to reach the salon gate, but the executor first opens the payload with
+WebCrypto, whose resolution no number of ticks bounds. On a loaded CI runner (2026-11-12, shard 3/4)
+the gate was not reached yet, and the executor left running reached it inside the NEXT test, after
+that test's `vi.clearAllMocks()` - one race, two failures. The test now awaits the gate mock's own
+call. A slowed `crypto.subtle.decrypt` reproduces the pair on every run of the old test.
+
 ---
 
 **A WAIT THAT CAN END TWO WAYS MUST ASSERT THE STATE BETWEEN THEM - and the SETUP that reaches it is part of the check**

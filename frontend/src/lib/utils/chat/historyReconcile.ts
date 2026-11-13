@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
+import { forEachBounded, NETWORK_READ_CONCURRENCY } from '$lib/utils/boundedConcurrency';
 import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { coverageFallsShort } from '$lib/utils/chat/historyWindow';
@@ -938,17 +939,6 @@ export function statedCoverage(groupId: string): Array<[string, number]> {
 }
 
 /**
- * How many groups may have an election in flight at once.
- *
- * A LIMIT RATHER THAN `Promise.all`, because the number of groups is not bounded by anything the
- * user controls: a device in fifty conversations would otherwise open fifty simultaneous requests on
- * a phone radio at the exact moment it reconnects, which is the shape of a self-inflicted thundering
- * herd. Six collapses the round-trip chain almost entirely - the pass is then bounded by the slowest
- * election rather than by their sum - while keeping the burst the size of a normal page load.
- */
-const ELECTION_CONCURRENCY = 6;
-
-/**
  * Reconciles every group this device holds locally. The connection path: run it once the mailbox
  * has drained, never before - a comparison made mid-drain reports a difference the device is in the
  * middle of closing by itself.
@@ -982,8 +972,7 @@ export async function reconcileAllGroups(
   groupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<string[]> {
-  // A SNAPSHOT the workers shift from, so each group is taken exactly once: `shift` runs to
-  // completion between awaits, which is what makes the hand-out safe without a lock.
+  // A SNAPSHOT handed out in order, each group exactly once (`forEachBounded`).
   const queue = [...groupIds];
   const total = queue.length;
   // THE GROUPS AN ASK ACTUALLY LEFT FOR, not the ones the pass was handed. The audit discharges
@@ -997,22 +986,33 @@ export async function reconcileAllGroups(
   // repair that was announced and did not happen.
   let coalesced = 0;
 
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const groupId = queue.shift();
-      if (groupId === undefined) return;
+  const started = Date.now();
+  // At most `NETWORK_READ_CONCURRENCY` elections in flight: the pass is bounded by the slowest
+  // election rather than by their sum, and the burst stays the size of a page load.
+  const failures = await forEachBounded(
+    queue,
+    NETWORK_READ_CONCURRENCY,
+    async (groupId) => {
       if (recentlyAsked(groupId, Date.now())) {
         // The same fresh-walk reset `reconcileGroup` performs before it reaches the window check.
         chased.delete(groupId);
         coalesced++;
-        continue;
+        return;
       }
       if (await reconcileGroup(mlsService, groupId, log)) askedGroups.push(groupId);
-    }
-  };
-
-  const started = Date.now();
-  await Promise.all(Array.from({ length: Math.min(ELECTION_CONCURRENCY, total) }, () => worker()));
+    },
+    (groupId) => groupId.slice(0, 8)
+  );
+  // A GROUP WHOSE ELECTION THREW WAS NOT ASKED, so it is absent from `askedGroups` and the audit
+  // owes it again on the next connection - nothing is lost. Said once per pass, at warn: an election
+  // that throws (rather than answering) is a path that should not be taken.
+  if (failures.length > 0) {
+    log(
+      `[HISTORY_RECONCILE] ${failures.length} election(s) threw and are owed again: ${failures
+        .map((f) => `${f.item.slice(0, 8)}… ${String(f.error)}`)
+        .join('; ')}`
+    );
+  }
   const swallowed =
     coalesced > 0
       ? `, ${coalesced} already asked within ${PROBE_COALESCE_MS / 1000}s and not asked again`
@@ -1056,6 +1056,20 @@ export async function retryDeferredReconciliations(
     }
     await reconcileGroup(mlsService, groupId, log);
   }
+}
+
+/**
+ * How many groups wait for a PEER to come back (`no-peer-online`) - the only deferral a presence edge
+ * can lift. A `no-probe-sender` group is lifted by the sender's installation, never by presence.
+ *
+ * The presence edge asks this first: a flap with nothing owed re-runs nothing and says nothing
+ * (owner's console export, 2026-11-10: the retry line fired every 30-60 s on a slow link while
+ * `deferred` was empty, so each pass sent nothing and only logged).
+ */
+export function groupsAwaitingAPeer(): number {
+  let count = 0;
+  for (const reason of deferred.values()) if (reason === 'no-peer-online') count += 1;
+  return count;
 }
 
 /** Groups whose reconciliation could not be attempted, and why. Exposed for tests and diagnostics. */

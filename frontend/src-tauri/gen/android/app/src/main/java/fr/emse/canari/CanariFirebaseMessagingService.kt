@@ -43,12 +43,15 @@ import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.ConversationShape
+import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
 import fr.emse.canari.push.WakeAnswer
@@ -57,8 +60,10 @@ import fr.emse.canari.push.FixedNotifIds
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -736,6 +741,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setContentIntent(existing.contentIntent)
                     .setGroup(GROUP_KEY_MESSAGES)
                     .setOnlyAlertOnce(true)
+                    // The SAME conversation shortcut: without it the re-post drops to the legacy layout,
+                    // losing the header face and - for a DM - the one-name shape ([ConversationShape]).
+                    .apply { if (android.os.Build.VERSION.SDK_INT >= 26) existing.shortcutId?.let { setShortcutId(it) } }
                 if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                     builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
                     builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
@@ -1834,18 +1842,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                    if (code != 200 && code != 201) return null
                     // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
-                    // app orders this message by it (messageOrder.ts). An answer without it (an older
-                    // server, an unreadable body) still counts as sent, undated: 0.
-                    val receivedAt = try {
-                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
-                        0L
+                    // app orders this message by it (messageOrder.ts). Only a JSON 2xx counts as sent;
+                    // a non-JSON body and a body the transport lost are both kept (QueuedSendAnswer),
+                    // and each is logged as what it is.
+                    val outcome = QueuedSendAnswer.classify(code) {
+                        try {
+                            val text = conn.inputStream.bufferedReader().use { it.readText() }
+                            try {
+                                QueuedSendAnswer.BodyRead.Json(JSONObject(text).optLong("receivedAt", 0L))
+                            } catch (e: JSONException) {
+                                QueuedSendAnswer.BodyRead.NotJson
+                            }
+                        } catch (e: IOException) {
+                            QueuedSendAnswer.BodyRead.TransportFailed(e.message)
+                        }
                     }
-                    if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
-                    receivedAt.coerceAtLeast(0L)
+                    when (outcome) {
+                        is QueuedSendAnswer.Outcome.Sent -> {
+                            if (outcome.receivedAt == 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
+                            outcome.receivedAt
+                        }
+                        is QueuedSendAnswer.Outcome.Kept -> {
+                            when (outcome.cause) {
+                                QueuedSendAnswer.KeptCause.NOT_ACCEPTED_STATUS -> Unit
+                                QueuedSendAnswer.KeptCause.BODY_NOT_JSON ->
+                                    Log.w(TAG, "sendQueuedMessagePush: HTTP $code with a body that is not JSON - no answer from the server, kept msg=${messageId.take(8)}")
+                                QueuedSendAnswer.KeptCause.BODY_READ_FAILED ->
+                                    Log.w(TAG, "sendQueuedMessagePush: HTTP $code and the body was lost in transport - the server may have taken it, kept for a deduplicated retry msg=${messageId.take(8)}: ${outcome.detail}")
+                            }
+                            null
+                        }
+                    }
                 } finally {
                     conn.disconnect()
                 }
@@ -2155,6 +2183,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param authorProven whether the WebView's open PROVED the author - a salon row under a
          *   Graine v2 session (`openChannelMessageProving`). Read for a salon only, through the same
          *   rule the push applies to its own open ([ChannelBannerAuthor.of]).
+         * @param isGroup whether the conversation is a group or a salon, from the WebView's
+         *   conversation type - the fact the push carries as `isGroup`, so both triggers draw an
+         *   unnamed group as a group ([ConversationShape.isGroup]). Null when the row has no type:
+         *   not said, and the name rule decides.
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2168,13 +2200,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             serverAt: Long,
             covers: Int,
             authorProven: Boolean,
+            isGroup: Boolean?,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
                 try {
                     // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
@@ -2227,6 +2260,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             supersedes = generics.firstOrNull() ?: 0L,
                             alsoSupersedes = generics.drop(1).toSet(),
                             namesEachSender = true,
+                            declaredGroup = isGroup,
                         )
                     }
                 } catch (e: Exception) {
@@ -2617,16 +2651,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * its author's name - the other person's above theirs, [R.string.notif_sender_self]
              * above ours - as a group already did.
              *
-             * TRUE from the two MESSAGE triggers only. A direct message used to be posted in
-             * Android's one-to-one shape, which names nobody above the other person's text (their
-             * name is the title) and names US above our own reply: the user read that asymmetry as
-             * a defect (2026-10-01). FALSE - the old shape, unchanged - for a reaction, whose line is
-             * a sentence about the actor and not a message by them, and for a BLIND salon banner,
-             * whose "sender" is the salon's own title: naming either above its line would print the
-             * title twice. A salon banner that proved its author passes the salon as [groupName]
-             * and the author as [senderName] instead, which is the group shape (2026-11-01).
+             * TRUE from the MESSAGE triggers: the MLS push, the WebSocket frame, and every salon
+             * banner (the salon push passes the salon as [groupName] and the speaker - or
+             * "Quelqu'un" - as [senderName], blind or not, since 2026-11-01). FALSE - the old shape -
+             * for a reaction only, whose line is a sentence about the actor and not a message by
+             * them. A direct message drawn as a conversation is nonetheless one-to-one on API 30+,
+             * where the shortcut's header already names the person ([ConversationShape], 2026-11-11).
              */
             namesEachSender: Boolean = false,
+            /**
+             * Whether the conversation is a GROUP, as its source knows it: the push payload's
+             * `isGroup`, or the WebView's conversation type. Null when the source did not say (an
+             * older server, a row it could not read, a reaction), and the name rule decides
+             * ([ConversationShape.isGroup]). Load-bearing for an UNNAMED group - a third of them
+             * in production - which the name rule reads as a direct message with its first speaker.
+             */
+            declaredGroup: Boolean? = null,
             /**
              * Whether [body] IS the message, rather than a generic "nouveau message" line standing
              * in for one this device could not open. A salon offers "Marquer comme lu" only when it
@@ -2660,7 +2700,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CanariApplication.ensureChannels(this, manager)
             val res = appLocaleContext(this)
 
-            val isGroup = groupName.isNotEmpty() && groupName != senderName
+            val isGroup = ConversationShape.isGroup(groupName, senderName, declaredGroup)
+            // An unnamed group is titled "Conversation de groupe", never with its first speaker.
+            val groupTitle = ConversationShape.groupTitle(groupName, res.getString(R.string.notif_unnamed_group))
 
             // Stable ID per conversation: notify() with the same ID updates the existing notification.
             // A reaction takes its own namespace so it updates the previous REACTION rather than the
@@ -2703,16 +2745,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 null
             }
 
+            // Its title and group flag are set below, once the shortcut is known: [ConversationShape].
             val style = NotificationCompat.MessagingStyle(selfPerson)
-            // THE GROUP SHAPE IS WHAT NAMES EVERY MESSAGE. From API 28 the platform decides
-            // one-to-one from `isGroupConversation` alone, and a one-to-one thread hides the other
-            // person's name above their lines. A direct message therefore takes the group shape
-            // too - and NO title: titled with the person, the collapsed line read
-            // "Name : Name : text" and the expanded one put the name twice on top of each other
-            // (both read on the Mi 9T, 2026-10-01). Untitled, the name sits once, above the line.
-            val conversationTitle = if (isGroup) groupName else null
-            if (conversationTitle != null) style.conversationTitle = conversationTitle
-            if (isGroup || namesEachSender) style.isGroupConversation = true
             // Re-inject the previous (bounded) messages, then add the new one.
             // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
             existingNotif
@@ -2809,9 +2843,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // icon instead - the speaker's face or initials.
             val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
                 publishConversationShortcut(
-                    this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
+                    this, groupId, if (isGroup) groupTitle else senderName, largeIcon, senderPerson, tapIntent
                 )
             } else null
+
+            // ONE NAME ON A DIRECT MESSAGE. On API 30+ SystemUI titles a shortcut-backed post with the
+            // shortcut's label, so a DM in the group shape read its sender twice: in the header,
+            // then above the line (owner, 2026-11-11). [ConversationShape] decides title and shape.
+            val shape = ConversationShape.of(
+                isGroup = isGroup,
+                groupName = groupTitle,
+                namesEachSender = namesEachSender,
+                hasShortcut = conversationShortcutId != null,
+                sdkInt = android.os.Build.VERSION.SDK_INT,
+            )
+            shape.title?.let { style.conversationTitle = it }
+            style.isGroupConversation = shape.groupConversation
+            Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${groupId.take(8)})")
 
             val notifBuilder = NotificationCompat.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -2829,7 +2877,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // is the header circle, with the app's small icon as the corner badge. Without one the
                 // header circle was the app's bird while the sender's face sat beside the line, two
                 // round pictures one above the other (user, 2026-10-05). The large icon is therefore
-                // set only where the old, shortcut-less shape is kept (reaction, blind salon banner).
+                // set only on a post with no shortcut (a reaction, a salon, or a refused shortcut).
                 .apply {
                     if (conversationShortcutId != null) {
                         setShortcutId(conversationShortcutId)
@@ -3729,7 +3777,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                     enqueueRefusedFrameWorker()
                 }
-                buildFallbackText(appLocaleContext(this), senderName)
+                buildFallbackText(appLocaleContext(this), senderName, groupName, isGroup)
                     .also { Log.w(TAG, "Fallback notification: $it") }
             }
 
@@ -3776,6 +3824,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
                     channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
                     namesEachSender = true,
+                    // The payload's own discriminator: an unnamed group is still a group.
+                    declaredGroup = isGroup,
                 )
                 if (refusedForGood && stamp != 0L) {
                     GENERIC_BANNERS.genericPosted(groupId, stamp)
@@ -5719,6 +5769,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val res = appLocaleContext(this).resources
         val actor = data["actorName"] ?: ""
         val arg = data["contentArg"] ?: ""
+        // A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named
+        // in `actorName`, and how many others reacted in `contentCount` - one sentence per count
+        // form, so the plural is exact; the fixed sentence when the server names nobody.
+        fun trendBody(fallback: Int): String {
+            if (actor.isEmpty()) return res.getString(fallback)
+            val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            return when (others) {
+                0 -> res.getString(R.string.notif_social_campus_trend_liked_by, actor)
+                1 -> res.getString(R.string.notif_social_campus_trend_liked_by_one, actor)
+                else -> res.getString(R.string.notif_social_campus_trend_liked_by_many, actor, others)
+            }
+        }
         return when (key) {
             "social_mention" -> Pair(
                 res.getString(R.string.notif_social_mention_title, actor),
@@ -5756,6 +5818,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_member_repost" -> Pair(
                 res.getString(R.string.notif_social_member_repost_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_member_repost_body) }
+            )
+            "social_friend_reaction" -> Pair(
+                res.getString(R.string.notif_social_friend_reaction_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_reaction_body) }
+            )
+            "social_friend_comment" -> Pair(
+                res.getString(R.string.notif_social_friend_comment_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_comment_body) }
             )
             "social_repost_proposed" -> Pair(
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
@@ -5857,6 +5927,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_booking_removed" -> Pair(
                 res.getString(R.string.notif_social_booking_removed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
+            )
+            // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): the title
+            // is "Suggestion : " and the post's opening - "une publication" when the server sends
+            // none - and the body names a followed account who liked it ("Aimée par Léa et 9
+            // autres"), or a fixed sentence when there is none. A post with no text but a picture
+            // or a video has its own key, so a colon is never followed by nothing.
+            "social_campus_trend" -> Pair(
+                if (arg.isEmpty()) res.getString(R.string.notif_social_campus_trend_untitled)
+                else res.getString(R.string.notif_social_campus_trend_title, arg),
+                trendBody(R.string.notif_social_campus_trend_body)
+            )
+            "social_campus_trend_photo" -> Pair(
+                res.getString(R.string.notif_social_campus_trend_photo_title),
+                trendBody(R.string.notif_social_campus_trend_photo_body)
+            )
+            "social_campus_trend_video" -> Pair(
+                res.getString(R.string.notif_social_campus_trend_video_title),
+                trendBody(R.string.notif_social_campus_trend_video_body)
             )
             // The reminder: nobody acted, a fixed title; the body is the place and the time.
             "social_booking_reminder" -> Pair(
@@ -6552,6 +6640,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // The group shape even for a speaker whose name happens to equal the salon's title, which
             // `isGroup` alone (`groupName != senderName`) would read as a one-to-one thread.
             namesEachSender = true,
+            // And titled with the salon in that case too: a salon is a group by definition.
+            declaredGroup = true,
         )
         // COUNTED, NOT ONLY LOGGED, and only once it is up: a foregrounded app or a line already
         // read posts nothing (0) and is no fallback anybody saw.
@@ -6827,10 +6917,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)
 
-    /** Fallback text used when MLS decryption fails (group not yet initialized). */
-    private fun buildFallbackText(res: Context, senderName: String): String =
-        if (senderName.isNotEmpty()) res.getString(R.string.notif_new_message_from, senderName)
-        else res.getString(R.string.notif_new_message_generic)
+    /**
+     * Fallback text used when MLS decryption fails (group not yet initialized). A direct message
+     * does not repeat the sender its title already names - see [FallbackLine].
+     */
+    private fun buildFallbackText(res: Context, senderName: String, groupName: String, declaredGroup: Boolean?): String =
+        when (FallbackLine.of(senderName, groupName, declaredGroup)) {
+            FallbackLine.Kind.FROM_SENDER -> res.getString(R.string.notif_new_message_from, senderName)
+            FallbackLine.Kind.NEW_MESSAGE -> res.getString(R.string.notif_new_message)
+            FallbackLine.Kind.ENCRYPTED -> res.getString(R.string.notif_new_message_generic)
+        }
 
     private fun ensureNotificationChannels(manager: NotificationManager) =
         CanariApplication.ensureChannels(this, manager)

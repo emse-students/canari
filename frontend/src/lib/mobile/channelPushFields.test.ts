@@ -306,8 +306,8 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
     expect(kotlinSource).not.toContain('ofSocketFrame');
     // The proof comes from the WebView's own open, through the Rust command, unchanged.
-    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,/);
-    expect(rustCommand).toContain('ZJJIZ)Z');
+    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,\s*is_group: Option<bool>,/);
+    expect(rustCommand).toContain('ZJJIZLjava/lang/Boolean;)Z');
     expect(channelHandler).toContain('authorProven = opening.authorProven;');
     expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
     // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT (review of #2888, LOW-1): the socket
@@ -355,7 +355,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     // The salon caller decided the mention, so the shared builder must not re-derive it by scanning
     // a body whose blind form carries the server's salon name (the last `NO`).
     expect(objcHandler).toMatch(
-      /CanariShowMessageNotification\(speaker \?: displayName, speaker != nil \? displayName : @"", body,\s*conversationId, speakerId, nil, shownMentionsMe,\s*initialsName, YES, NO, names\);/
+      /CanariShowMessageNotification\(speaker \?: displayName, speaker != nil \? displayName : @"", body,\s*conversationId, speakerId, nil, shownMentionsMe,\s*initialsName, YES, NO, names, nil\);/
     );
     expect(objcSource).toContain(
       'if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {'

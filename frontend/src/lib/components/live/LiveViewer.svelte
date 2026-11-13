@@ -19,6 +19,10 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
+  import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import VideoFeedbackGlyph, {
@@ -52,6 +56,7 @@
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     live: LiveListItem;
@@ -65,6 +70,17 @@
   }
 
   let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'LiveViewer');
+
+  /**
+   * THE VIEWER TURNS WITH THE PHONE for its whole mount (owner, 2026-11-09; screen-orientation.md): a
+   * landscape live is watched in landscape, and the rotate button forces it under the rotation lock.
+   * The broadcaster's orientation is the live's own - the `<video>` is `object-contain`, so a viewer
+   * in the other orientation sees the whole picture with bars. Released at unmount.
+   */
+  const orientation = useScreenOrientation('live-viewer');
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -260,8 +276,7 @@
   let feedbackCount = 0;
 
   /**
-   * The sound, from the speaker or a tap on the picture (owner, 2026-11-09: the tap is the sound on
-   * every video). A live has no hold: its player resumes a paused element at the next delivery.
+   * The sound, from the speaker or a tap on a muted picture (`onPictureTap`). A live has no hold: its player resumes a paused element at the next delivery.
    */
   function toggleSound() {
     videoSound.toggle();
@@ -272,6 +287,17 @@
       void video.play().catch((e: unknown) => {
         console.warn(`[LIVE] viewer: play() after the sound toggle refused (${String(e)})`);
       });
+  }
+
+  // The app's one volume level, on the live's element too (the slider of the speaker moves it).
+  $effect(() => {
+    const level = videoSound.level;
+    if (video) applyVideoLevel(video, level);
+  });
+
+  /** A tap on the picture only turns the sound ON, never off (owner, 2026-11-10); the speaker mutes. */
+  function onPictureTap() {
+    if (videoSound.muted) toggleSound();
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -298,7 +324,8 @@
   <div
     use:coversScreen
     use:focusTrap
-    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
+    style:z-index={layer.z}
+    class="fixed inset-0 overflow-hidden bg-black text-white"
     role="dialog"
     aria-modal="true"
     aria-label={m.live_viewer_label({ name })}
@@ -309,7 +336,7 @@
     <video
       bind:this={video}
       use:followVideoSound
-      use:videoGestures={{ onTap: toggleSound, enabled: !terminal }}
+      use:videoGestures={{ onTap: onPictureTap, enabled: !terminal }}
       class="absolute inset-0 h-full w-full object-contain [-webkit-touch-callout:none]"
       class:opacity-40={terminal}
       playsinline
@@ -330,6 +357,7 @@
 
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+      style={sideSafePadding('0.75rem')}
     >
       <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
            close X at the right. -->
@@ -355,7 +383,15 @@
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
-      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
+      <VideoSoundButton
+        muted={videoSound.muted}
+        onToggle={toggleSound}
+        onLevel={(v) => videoSound.setVolume(v)}
+        data-live-sound
+      />
+      {#if orientation.canRotate && !terminal}
+        <RotateButton onrotate={orientation.rotate} />
+      {/if}
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button
@@ -410,8 +446,9 @@
     {#if !terminal}
       <div
         class="from-cn-scrim/60 via-cn-scrim/30 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pt-24 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+        style={sideSafePadding('0.75rem')}
       >
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 landscape:max-w-md">
           {#if chatOpen && !chatWithheld}
             <LiveChatPanel
               lines={chatLines}

@@ -18,6 +18,7 @@ import {
   reconcileAllGroups,
   retryDeferredReconciliations,
   deferredReconciliations,
+  groupsAwaitingAPeer,
   forgetGroupReconciliation,
   noteCoverageShortfall,
   statedCoverage,
@@ -254,6 +255,18 @@ describe('reconcileGroup', () => {
 
     expect(probe).toHaveBeenCalledWith(GROUP);
     expect(deferredGroups()).toEqual([]);
+  });
+
+  it('counts only the groups a returning PEER can lift (the presence edge asks this first)', async () => {
+    expect(groupsAwaitingAPeer()).toBe(0);
+
+    setHistoryProbeSender(null);
+    await reconcileGroup(service(), GROUP, log);
+    expect(groupsAwaitingAPeer()).toBe(0); // waiting for a sender, which presence cannot install
+
+    setHistoryProbeSender(probe);
+    await reconcileGroup(service({ noPeerOnline: true }), 'other-group', log);
+    expect(groupsAwaitingAPeer()).toBe(1);
   });
 
   it('stays deferred while the sender is still missing, so a later edge still finds it', async () => {

@@ -37,7 +37,11 @@
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
+  import BlurredBackdrop from '$lib/components/shared/BlurredBackdrop.svelte';
+  import { reelPosterUrl } from '$lib/reels/reelPosters.svelte';
+  import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import { m } from '$lib/paraglide/messages';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
     /** Encrypted media descriptor containing the download reference and decryption keys. */
@@ -54,7 +58,17 @@
       caption?: string;
       /** How the blob is sealed - see `MediaRef.encoding`. Absent: the single block. */
       encoding?: string;
+      /** The publisher's ThumbHash of the first frame (`MediaRef.placeholder`). */
+      placeholder?: string;
+      /** A video's sound as the publisher's device measured it (`MediaRef.loudness`). */
+      loudness?: MediaLoudness;
     };
+    /**
+     * The video's length as its publisher DECLARED it (a reel's `post.durationMs`), in ms. A stream
+     * sets it on its source before the first byte, so a file whose header declares none can still be
+     * sought in (`segmentedMediaStream`, owner 2026-11-10).
+     */
+    durationMs?: number | null;
     /** Non-empty once the session is authenticated; the download resolves its own live token. */
     authToken: string;
     /** When set, clicking the image calls this instead of opening its own lightbox. */
@@ -155,7 +169,26 @@
     onFailure,
     compact = false,
     announceLoading = true,
+    durationMs = null,
   }: Props = $props();
+
+  /**
+   * WHAT A FEED VIDEO SHOWS BEFORE ITS FIRST FRAME (owner, 2026-11-10: "pourquoi du noir alors
+   * qu'on pourrait afficher la premiere image figee"): the sharp first frame this device decoded
+   * (`reelPosters`), else the publisher's ThumbHash of it, drawn with its blurred bands from the first
+   * paint and handed to the player, which keeps it until its own frame is in. A video published
+   * before posts carried a ThumbHash and never decoded here has neither: Canari's poster.
+   */
+  const feedPoster = $derived(
+    reelPosterUrl(media.mediaId) ?? placeholderDataUrl(media.placeholder)
+  );
+  /**
+   * How the poster sits in its box: EXACTLY as the video will (`videoClass` below), so a grid cell's
+   * cropped frame replaces a cropped poster and nothing changes stage (review of #3311).
+   */
+  const posterFit = $derived<'contain' | 'cover'>(
+    letterbox && videoFit === 'cover' ? 'cover' : 'contain'
+  );
 
   // A failed download is decided: the caller stops waiting on this media.
   $effect(() => {
@@ -232,6 +265,7 @@
       width: media.width,
       height: media.height,
       ...(media.encoding ? { encoding: media.encoding } : {}),
+      ...(durationMs && durationMs > 0 ? { durationMs } : {}),
     };
   }
 
@@ -555,6 +589,8 @@
         streamed={streamUrl !== null}
         onVideo={attachStream}
         class="h-full w-full"
+        positionKey={media.mediaId}
+        loudness={media.loudness}
         variant={minimalPlayer ? 'reel' : 'lightbox'}
         safeBottom={playerSafeBottom}
         {poster}
@@ -588,7 +624,25 @@
           ? 'h-full w-full'
           : 'aspect-video w-full max-w-md rounded-3xl'}"
       >
-        <VideoPoster />
+        {#if feedPoster}
+          <!-- The first frame, frozen, with its bands: the same two layers the player keeps until
+               its own frame is in, so nothing changes stage when it mounts. -->
+          {#if letterbox && videoFit === 'contain'}
+            <BlurredBackdrop src={feedPoster} />
+          {/if}
+          <img
+            src={feedPoster}
+            alt=""
+            aria-hidden="true"
+            class="pointer-events-none absolute inset-0 h-full w-full select-none {posterFit ===
+            'cover'
+              ? 'object-cover'
+              : 'object-contain'}"
+            data-video-first-frame-poster
+          />
+        {:else}
+          <VideoPoster />
+        {/if}
       </div>
     {:else if mediaType === 'audio'}
       <div
@@ -683,6 +737,10 @@
         onVideo={attachStream}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
+        positionKey={media.mediaId}
+        loudness={media.loudness}
+        poster={feedPoster}
+        {posterFit}
         backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
           ? videoFit === 'contain'
@@ -752,13 +810,20 @@
         {#if viewerStream}
           <VideoPlayer
             src={viewerStream.url}
+            positionKey={media.mediaId}
+            loudness={media.loudness}
             streamed
             disableRemotePlayback={streamManaged}
             onVideo={attachViewer}
             class="h-full w-full"
           />
         {:else if blobUrl}
-          <VideoPlayer src={blobUrl} class="h-full w-full" />
+          <VideoPlayer
+            src={blobUrl}
+            positionKey={media.mediaId}
+            loudness={media.loudness}
+            class="h-full w-full"
+          />
         {:else}
           <div class="relative h-full w-full"><VideoPoster /></div>
         {/if}

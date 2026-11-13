@@ -9,6 +9,10 @@ import {
   reviewCohortAuthorFilterSql,
 } from '../spaces/reader-spaces';
 import { engagedAccountsSql } from './engagement-sql';
+import { Logger } from '@nestjs/common';
+import { suggestionsOn } from '../push/notification-category';
+
+const logger = new Logger('SuggestedPosts');
 
 /**
  * SUGGESTED POSTS (engagement WP-7, decision 8): popular posts the viewer ALREADY sees by the SPACE
@@ -47,6 +51,8 @@ export function suggestedPostIdsSql(opts: {
   viewerId: string;
   blocked: boolean;
   promoCutoff: boolean;
+  /** Pour toi (owner, 2026-11-10): a person's post only, never an entity's. */
+  peopleOnly?: boolean;
 }): string {
   const blockedParam = opts.blocked ? 3 : null;
   const promoParam = opts.blocked ? 4 : 3;
@@ -61,6 +67,7 @@ export function suggestedPostIdsSql(opts: {
        AND NOT COALESCE(posts."hiddenByModeration", false)
        AND NOT COALESCE(posts.anonymous, false)
        AND posts."authorId" <> $1::varchar
+       ${opts.peopleOnly ? 'AND posts."associationId" IS NULL' : ''}
        ${reviewCohortAuthorFilterSql(opts.isAdmin, opts.viewerId)}
        ${blockedAuthorSql(blockedParam)}
        ${opts.promoCutoff ? `AND posts."publishedAt" >= $${promoParam}::timestamptz` : ''}
@@ -84,9 +91,16 @@ export async function suggestedPostIds(
   manager: EntityManager,
   viewerId: string | undefined,
   isAdmin: boolean,
-  limit = SUGGESTED_POSTS_MAX
+  limit = SUGGESTED_POSTS_MAX,
+  opts: { peopleOnly?: boolean } = {}
 ): Promise<string[]> {
   if (!viewerId) return [];
+  // ONE SWITCH, "Suggestions dans l'app", on by default (owner, "Deux niveaux", 2026-11-11): Pour
+  // toi merges none and the older clients' route serves none for a reader who switched it off.
+  if (!(await suggestionsOn(manager, viewerId))) {
+    logger.debug(`[SUGGESTED_POSTS] ${viewerId.slice(0, 8)}: Suggestions off - none`);
+    return [];
+  }
   const [blocked, promoCutoff] = await Promise.all([
     blockedUserIdsFor(manager, viewerId),
     promoCutoffFor(manager, viewerId, isAdmin),
@@ -100,6 +114,7 @@ export async function suggestedPostIds(
       viewerId,
       blocked: blocked.length > 0,
       promoCutoff: promoCutoff !== null,
+      peopleOnly: opts.peopleOnly === true,
     }),
     params
   );

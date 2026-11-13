@@ -160,6 +160,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ),
     };
     manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
+    // A members-only save writes through its own transaction (`lockAndAssertMembersOnlyGateable`).
+    manager.save = jest.fn((_entity: unknown, row: unknown) => productRepo.save(row));
     // The release writes through its transaction (`releaseWithheldFor`, the holder share-locked).
     manager.update = jest.fn((entity: unknown, where: unknown, patch: unknown) =>
       entity === AssociationProduct
@@ -1145,6 +1147,22 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         const saved = await service.update('asso1', 'prod1', { membersOnly: true }, true);
         expect(saved.membersOnly).toBe(true);
+      });
+
+      it('judges the tick under the association row FOR SHARE and writes in the same transaction', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso());
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        const manager = productRepo.manager as any;
+        await service.update('asso1', 'prod1', { membersOnly: true }, true);
+        expect(manager.transaction).toHaveBeenCalledTimes(1);
+        expect(manager.findOne).toHaveBeenCalledWith(
+          Association,
+          expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+        );
+        expect(manager.save).toHaveBeenCalledTimes(1);
       });
 
       it('CONTROL: requiredTags take precedence, so a tag-gated product needs no mode', async () => {

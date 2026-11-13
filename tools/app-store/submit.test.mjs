@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import {
   chooseVersionSlot,
   classifyBuildState,
+  classifyAssetStates,
   classifyVersionState,
   versionIsAlreadySubmissionItem,
   rejectedItemsOfVersion,
@@ -74,6 +75,46 @@ try {
     ok('the refusal names the state it saw');
   } else {
     no('the refusal names the state it saw', classifyBuildState('INVALID').why);
+  }
+
+  process.stdout.write('\nthe store media is used, waited for, or refused\n');
+  const asset = (state) => ({ name: 'fr-FR/1.png', state });
+  eq('no media at all is used', classifyAssetStates([]).action, 'use');
+  eq(
+    'all COMPLETE is used',
+    classifyAssetStates([asset('COMPLETE'), asset('COMPLETE')]).action,
+    'use'
+  );
+  eq(
+    'one UPLOAD_COMPLETE holds the set',
+    classifyAssetStates([asset('COMPLETE'), asset('UPLOAD_COMPLETE')]).action,
+    'wait'
+  );
+  eq(
+    'a preview video still PROCESSING holds the set',
+    classifyAssetStates([asset('PROCESSING')]).action,
+    'wait'
+  );
+  eq(
+    'FAILED is refused',
+    classifyAssetStates([asset('UPLOAD_COMPLETE'), asset('FAILED')]).action,
+    'fail'
+  );
+  eq(
+    'AWAITING_UPLOAD is refused, it never completes',
+    classifyAssetStates([asset('AWAITING_UPLOAD')]).action,
+    'fail'
+  );
+  eq(
+    'an unknown state is refused, not polled',
+    classifyAssetStates([asset('SOMETHING_NEW')]).action,
+    'fail'
+  );
+  eq('an absent state is refused', classifyAssetStates([asset(undefined)]).action, 'fail');
+  if (classifyAssetStates([asset('FAILED')]).why.includes('fr-FR/1.png')) {
+    ok('the refusal names the asset');
+  } else {
+    no('the refusal names the asset', classifyAssetStates([asset('FAILED')]).why);
   }
 
   process.stdout.write('\na version is edited, already done, or refused\n');

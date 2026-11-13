@@ -37,6 +37,11 @@ describe('the handoff registry', () => {
       expect(new URL(site.origin).protocol).toBe('https:');
       expect(new URL(site.origin).origin).toBe(site.origin);
       expect([site.id, site.miconnect || !site.handoff]).toEqual([site.id, true]);
+      // The mint's access check reads the application of every MiConnect site, and of no other.
+      expect([site.id, site.miconnect === (site.miconnectApplication !== null)]).toEqual([
+        site.id,
+        true,
+      ]);
     }
   });
 

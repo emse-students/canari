@@ -24,8 +24,10 @@
     Undo2,
     CirclePause,
     Store,
+    TrendingUp,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import CampusTrendThumb from './CampusTrendThumb.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { reactionTypeToEmoji } from '$lib/posts/reactions';
   import { formatRelative } from '$lib/utils/time';
@@ -197,10 +199,52 @@
    */
   const isMemberRepostNotif = $derived(notif.type === 'member_repost');
   /**
+   * FRIENDS' ACTIVITY (engagement WP-9), named for the same reason: a PERSON the reader follows
+   * reacted to or commented on a post the reader sees, so it draws that person's avatar, and the
+   * body is the POST's opening - never the comment, never the reaction.
+   */
+  const isFriendNotif = $derived(
+    notif.type === 'friend_reaction' || notif.type === 'friend_comment'
+  );
+  /**
    * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
    * and the body is the event's title.
    */
   const isCoorganiseNotif = $derived(notif.type === 'coorganise_proposed');
+  /**
+   * A CAMPUS TREND (engagement WP-10), named for the same reason - and NOT A PERSON (owner,
+   * 2026-11-10): nobody acted, so the row draws no actor name ("Quelqu'un") and no initials disc.
+   * It reads "Suggestion :" and the post's opening; a post with no text says what it shows
+   * (`meta.media`, written by the server from its first attachment) rather than a colon followed
+   * by nothing, and the avatar is that picture or the trend glyph (`CampusTrendThumb`).
+   */
+  const isCampusTrend = $derived(notif.type === 'campus_trend');
+  const trendMedia = $derived.by<'photo' | 'video' | null>(() => {
+    const media = notif.meta?.media;
+    return media === 'photo' || media === 'video' ? media : null;
+  });
+  const trendOpening = $derived(
+    bodyText ||
+      (trendMedia === 'photo'
+        ? m.notif_campus_trend_photo()
+        : trendMedia === 'video'
+          ? m.notif_campus_trend_video()
+          : m.notif_campus_trend_untitled())
+  );
+  /**
+   * WHO THE READER FOLLOWS THAT LIKED IT (owner, 2026-11-10: friends' activity is no longer a
+   * notification - the trend names them instead): `meta.likedBy`, written per reader by the server,
+   * is one followed account's name and how many others reacted; drawn after the opening as
+   * " - aimée par Léa et 9 autres", one sentence per count form. Null when the row names nobody.
+   */
+  const trendLikedBy = $derived.by<string | null>(() => {
+    const likedBy = notif.meta?.likedBy as { name?: unknown; others?: unknown } | undefined;
+    if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
+    const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
+    if (others === 0) return m.notif_campus_trend_liked_by({ name: likedBy.name });
+    if (others === 1) return m.notif_campus_trend_liked_by_one({ name: likedBy.name });
+    return m.notif_campus_trend_liked_by_many({ name: likedBy.name, count: others });
+  });
   /**
    * THE THREE REQUESTS TO AN AUTHOR (D38b), named for the same reason. A request is asked BY an
    * association, so it draws the association's avatar; its answer is given by the AUTHOR, a person,
@@ -344,7 +388,11 @@
                   ? 'bg-accent text-on-accent'
                   : isEventNotif || isCoorganiseNotif || isOpeningNotif
                     ? 'bg-sky-600 text-white'
-                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                    : isPostNotif ||
+                        isRepostNotif ||
+                        isPersonalRepostNotif ||
+                        isFriendNotif ||
+                        isCampusTrend
                       ? 'bg-indigo-500 text-white'
                       : isFollowNotif || notif.type === 'birthday'
                         ? 'bg-accent text-on-accent'
@@ -389,6 +437,8 @@
       >
         <VideoOff size={24} />
       </span>
+    {:else if isCampusTrend}
+      <CampusTrendThumb postId={notif.postId} media={trendMedia} />
     {:else if actorIsAssociation}
       <AssociationAvatar
         id={notif.associationId ?? notif.actorId}
@@ -457,6 +507,8 @@
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
+      {:else if isCampusTrend}
+        <TrendingUp size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif || isPersonalRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
       {:else if isCoorganiseNotif || isOpeningNotif}
@@ -491,12 +543,14 @@
         <span class="font-semibold"
           ><EmojiText text={m.notif_lydia_refund_issued_text({ name: notif.text })} /></span
         >
+      {:else if isCampusTrend}
+        <span class="font-semibold">{m.notif_campus_trend_text()}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif}
+      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif || isCampusTrend}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -552,6 +606,17 @@
       {:else if isMemberRepostNotif}
         {m.notif_member_repost_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isFriendNotif}
+        {notif.type === 'friend_reaction'
+          ? m.notif_friend_reaction_text()
+          : m.notif_friend_comment_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isCampusTrend}
+        <!-- Engagement WP-10: nobody acted; "Suggestion :" is drawn above, here the post's opening. -->
+        <span class="italic"><EmojiText text={trendOpening} /></span>
+        {#if trendLikedBy}
+          <span data-notif-trend-liked-by> - <EmojiText text={trendLikedBy} /></span>
+        {/if}
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()

@@ -266,6 +266,28 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
     holds: (r) => r.studentsOnly !== true || given(r.associationId),
   },
+  // `reachPublic` and `reachSpaces` default to NULL since migration 162; the seed writes no reach.
+  CHK_posts_reach_public: {
+    sql: `"reachPublic" IS NULL OR "reachPublic" IN ('all', 'students', 'staff')`,
+    holds: oneOf('reachPublic', ['all', 'students', 'staff'], true),
+  },
+  CHK_posts_reach_together: {
+    sql: `("reachPublic" IS NULL) = ("reachSpaces" IS NULL)
+    AND ("reachPublic" IS NULL OR "associationId" IS NOT NULL)`,
+    holds: (r) =>
+      given(r.reachPublic) === given(r.reachSpaces) &&
+      (!given(r.reachPublic) || given(r.associationId)),
+  },
+  CHK_posts_reach_spaces_shape: {
+    sql: `"reachSpaces" IS NULL
+    OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
+         THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
+    holds: (r) => {
+      if (!given(r.reachSpaces)) return true;
+      const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
+      return Array.isArray(v) && v.length > 0;
+    },
+  },
   // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
   association_calendar_events_presentation_check: {
     sql: "presentation IN ('association', 'neutral')",

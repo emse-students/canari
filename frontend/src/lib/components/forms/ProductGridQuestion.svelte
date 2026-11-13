@@ -284,14 +284,17 @@
     <img
       src={item.imageUrl}
       alt=""
-      class="bg-cn-border/40 h-40 w-full object-cover sm:h-52"
+      class="bg-cn-bg h-auto max-h-96 w-full object-contain"
       loading="lazy"
     />
   {/if}
   <div class="flex flex-col gap-3 p-4 sm:px-6 sm:py-5">
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <!-- No asterisk: a grid is never required on its own, the ORDER is (`firstMissingAnswer`). -->
-      <h2 id={headingId} class="text-text-main flex-1 text-sm font-bold sm:text-base">
+      <h2
+        id={headingId}
+        class="text-text-main flex-1 text-sm font-bold whitespace-pre-line sm:text-base"
+      >
         {item.label}
       </h2>
       {#if headerPrice}
@@ -301,7 +304,9 @@
       {/if}
     </div>
     {#if item.description}
-      <p class="text-text-muted -mt-2 text-xs italic sm:text-sm">{item.description}</p>
+      <p class="text-text-muted -mt-2 text-xs whitespace-pre-line italic sm:text-sm">
+        {item.description}
+      </p>
     {/if}
 
     <!-- From 640px: a table. Scrolls sideways only past what the column holds (15 sizes). -->

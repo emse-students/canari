@@ -3,7 +3,7 @@
 **Backend**: `apps/social-service/` (associations, user tags, products)
 **Frontend**: `frontend/src/lib/components/associations/edit/`, `frontend/src/routes/shop/`,
 `frontend/src/routes/admin/cercle/`
-**Payments**: routed through `core-service` (Stripe Connect)
+**Payments**: Lydia only, shown as "Paiement Canari", or cash where the association allows it; Stripe left the product on 2026-10-07 ([payments](frontend/modules/payments.md), [stripe-archive](stripe-archive.md)). The Stripe passages further down this page describe the removed flow.
 
 Cotisation is how an association records that a user has paid their membership dues. Canari does not
 store this as a boolean on the user or the association: it is modelled as a (possibly time-bounded)
@@ -775,9 +775,22 @@ still be renamed, withdrawn - or put back on sale, where every buyer is refused.
 (on create, and on an update that changes the box from unticked to ticked) - ONE implementation,
 `members-only-gate.ts`. Both product editors
 (`EditBoutiqueTab.svelte`, `/admin/cercle`) and the card editor (`PartnershipEditor.svelte`) word it
-from the code (`membersOnlySaveRefusalMessage`). The reverse order - a mode cleared while such rows
-exist - is NOT covered and is owed a decision
-([backlog](backlog.d/members-only-rows-outlive-a-cleared-cotisation-mode.md)).
+from the code (`membersOnlySaveRefusalMessage`). **The reverse order is refused too** (2026-11-13, decided by the lead on 2026-11-12 under the
+owner's absence rule): clearing the mode (`cotisationMode: null`) while a members-only
+product (no `requiredTags`) or card exists, ACTIVE OR NOT (reactivating a row already ticked passes no gate, so an inactive one would be the stuck state again; lead, 2026-11-13) answers `409 COTISATION_MODE_IN_USE`, naming the rows in
+the body, and writes nothing (`assertCotisationModeClearable`; `EditCotisationsTab.svelte` words it
+through `cotisationModeInUseMessage`, though no screen sends a clear today). **Why refuse rather than
+untick the rows in the same commit:** unticking silently changes what buyers see without the
+association saying so, and keeping the old behaviour leaves rows nobody can buy; a refusal is
+reversible and leaves the choice to the association. **The lock order is the point:** the clear takes
+the association row `FOR UPDATE`, counts the rows UNDER that lock and only asks when the mode really
+goes from set to null; every save that turns the gate on (product create/update, card create/update,
+`lockAndAssertMembersOnlyGateable`) re-judges the gate under the same row `FOR SHARE` and writes in
+that same transaction, so a clear and a members-only save cannot both pass. Not covered: a
+members-only membership tier created through `saveTierWithDerivedKey` (its own transaction; a tier
+needs a mode to exist and a members-only tier is meaningless). Specs:
+`associations.service.cotisation-mode-clear.spec.ts` (refusal, nothing written, controls) and the lock
+mode pinned in the products and partnerships specs.
 
 **An ARCHIVED association sells nothing** (409 `ASSOCIATION_ARCHIVED`, `assertNotArchived`,
 2026-11-01): buying by the page's link is open, and an archived page stays reachable with whatever

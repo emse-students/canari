@@ -156,7 +156,7 @@ it('never draws an ink label on the glass: not before the pill is measured, not 
   // A new selection slides the pill: the leaving label goes muted, the arriving one waits.
   left.mockReturnValue(0);
   width.mockReturnValue(100);
-  props.feed = 'all' === props.feed ? 'followed' : 'all';
+  props.feed = 'all' === props.feed ? 'foryou' : 'all';
   flushSync();
   const arriving = label(props.feed);
   expect(label('all').classList.contains('text-on-accent')).toBe(false);
@@ -168,4 +168,17 @@ it('never draws an ink label on the glass: not before the pill is measured, not 
   pill.dispatchEvent(end);
   flushSync();
   expect(arriving.classList.contains('text-on-accent')).toBe(true);
+});
+
+it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down under 24rem', () => {
+  mounted = mount(FeedTabRow, {
+    target: document.body,
+    props: { feed: 'all', onFeed: () => {}, authToken: 't' },
+  });
+  flushSync();
+  const tab = document.querySelector<HTMLElement>('[data-feed-tab="all"]')!;
+  expect(tab.className).toContain('px-2.5');
+  expect(tab.className).not.toContain('px-3.5');
+  expect(tab.className).toContain('max-[24rem]:text-xs');
+  expect(tab.className).toContain('whitespace-nowrap');
 });

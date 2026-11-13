@@ -277,7 +277,7 @@
                  buttons keep their own box beside the name. `relative` anchors the export menu to the
                  row on a phone, where a menu hanging from its own button would leave the screen. -->
             <div
-              class="relative flex w-full items-stretch gap-1.5 sm:w-auto sm:shrink-0 sm:gap-2 [&_.ui-icon-button]:w-full sm:[&_.ui-icon-button]:w-auto [&>*]:min-w-0 [&>*]:flex-1 sm:[&>*]:flex-none"
+              class="relative flex w-full items-stretch gap-1.5 sm:w-auto sm:shrink-0 sm:gap-2 [&_.ui-icon-button]:w-full sm:[&_.ui-icon-button]:w-[revert-layer] [&>*]:min-w-0 [&>*]:flex-1 sm:[&>*]:flex-none"
             >
               <a
                 href="/forms/{form.id}/edit"

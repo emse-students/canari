@@ -17,9 +17,10 @@ element's `readyState` / `networkState` ([reels](../frontend/modules/reels.md#on
 1. **A media request that never answers holds its slot for ever.** Every media byte goes through
    `mediaRequestGate` (three at once, FIFO, `utils/requestGate.ts`). The API layer gives up on a
    request silent for 10 s with no response head (`StalledRequestError`); a media GET has no such
-   watch - neither the whole read (`fetchMediaObject`, whose `fetch` takes no signal) nor a stream's
-   ranges (`httpRangeSource`). A started load stays joinable on purpose (`mediaBlobCache.ts`,
-   `SharedLoad`), so a reel re-opened JOINS the dead request. Three dead requests (feed cards,
+   watch - neither the whole read (`fetchMediaObject`, whose `fetch` is aborted only when nobody holds it) nor a stream's
+   ranges (`httpRangeSource`). A started load stays joinable while anyone holds it (`mediaBlobCache.ts`,
+   `SharedLoad`; since 2026-11-11 one nobody holds is aborted), so a reel re-opened while it is
+   still held JOINS the dead request. Three dead requests (feed cards,
    avatars, chat media) stop every media byte in the app. Shows as `stopped at: downloading the
    whole file` or `waiting for the file header` with `media gate 3 running`, across several reels.
 2. **The reel on screen queues behind the feed under the viewer.** The gate has no priority: feed

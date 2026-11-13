@@ -1,19 +1,22 @@
-## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
+## P3 - A new-device alert outlives the device it announces (Mi 9T, 2026-10-28)
 
-On the Mi 9T's bench account, a reinstall surfaced a queue of "Nouvel appareil sur votre compte"
-alerts, one per enrolment of that account's other clients (dated 25 Oct 12:15, 12:20, 17:47,
-23:13, ...). Read from `NewDeviceBanner.svelte` and `deviceNotices.svelte.ts`, three things, and
-none of them is bench-only:
+Read on the Mi 9T's bench account after a reinstall: a queue of "Nouvel appareil sur votre compte"
+alerts, one per enrolment of the account's other clients. Three findings were filed. Two are moot
+since #2770 (2026-10-30, the owner's decision to have no banner for device notices): the alert is a
+row of `/notifications` (`DeviceNoticeRow.svelte`), so it neither queues one at a time (the list
+shows every row, and opening it reads them all, `markDeviceNoticesRead`) nor covers the CanaReels
+camera (`NewDeviceBanner.svelte` is deleted).
 
-- **One at a time.** The banner draws `pendingDeviceNotices()[0]`, and "Compris" and "Voir mes appareils"
-  dismiss that one alone, so N devices added while this one was away cost N taps. "Voir mes appareils"
-  opens the list that shows them all, yet it dismisses one.
-- **Nothing prunes an alert whose device has since left the account.** A pending alert is
-  removed by a dismissal or by "Ce n'est pas moi", never by the device's revocation elsewhere. That
-  is unread: whether the queued devices here are still enrolled.
-- **The banners sit above the full-screen CanaReels camera and the reel composer.** They take the top
-  third of the screen, and the camera's own controls start under them.
+**What is left: nothing removes a pending alert whose device has since left the account.** A row
+goes on "Compris", on "Ce n'est pas moi" (`revokeNoticedDevice`) or on the devices link, never on
+the device's revocation elsewhere, so a reinstall can list devices that no longer exist.
 
-Owed: one alert per batch (or "Voir mes appareils" dismisses every pending alert), an alert dropped
-when its device is no longer on the account, and the banner hidden or deferred on a full-screen
-capture surface. Read on the Mi 9T against the rig build `5c362c0e1`.
+**Plan (batch 16, 2026-11-12), one small PR, no agent needed.** The drop needs a FACT that the
+device left, never an age: (1) the account's device list, the answer `/settings/security` already
+reads (`DeviceManagementPanel.svelte`): a successful answer that does not name a notice's `deviceId`
+drops that notice, logged `[DEVICE_NOTICE] alert dropped: <id> is no longer on the account`; a
+failed read drops nothing (a transport failure is not an answer). (2) Call it where the list is read
+and when `/notifications` opens. Tests in `deviceNotices.svelte.test.ts`: an answer without the
+device drops its notice and only it; a failed read keeps every notice; this device's own id is never
+read as gone. Then one Mi 9T reading: revoke a device from another client, open the list, the row is
+gone.

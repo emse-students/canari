@@ -17,6 +17,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { createPost, getReelLimits, withdrawPost } from '$lib/posts/api';
 import { reelRuleOf } from '$lib/reels/reelRule';
+import { preparedMediaPlaceholder } from '$lib/reels/reelFirstFrame';
 import { MediaService, preparePostMedia } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
@@ -121,8 +122,20 @@ export function startPublishQueue(userId: string): void {
   const queue = new PublishQueue({
     store,
     prepare: async (file, onProgress, signal) => {
-      const limits = file.type.startsWith('video/') ? await media.uploadLimits() : null;
-      return preparePostMedia(file, { maxBytes: limits?.maxPlaintextBytes, onProgress, signal });
+      const isVideo = file.type.startsWith('video/');
+      const limits = isVideo ? await media.uploadLimits() : null;
+      const prepared = await preparePostMedia(file, {
+        maxBytes: limits?.maxPlaintextBytes,
+        onProgress,
+        signal,
+      });
+      // THE PICTURE TRAVELS WITH THE MEDIA (owner, 2026-11-10 for a video, 2026-11-11 for a photo: a
+      // CanaReels photo page was black until its file came): a ThumbHash a reader draws before a
+      // byte arrives - the server holds ciphertext and can make none. Made from the PREPARED file,
+      // the one readers get. Missing, it is said.
+      // A picture or video that gets none is said by `preparedMediaPlaceholder` itself.
+      const placeholder = await preparedMediaPlaceholder(prepared.file);
+      return placeholder ? { ...prepared, placeholder } : prepared;
     },
     reelRule: async () => reelRuleOf(await getReelLimits()),
     encodingFor: (mimeType) =>

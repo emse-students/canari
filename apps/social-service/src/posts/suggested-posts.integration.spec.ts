@@ -14,6 +14,10 @@ import { join } from 'path';
 import { Client } from 'pg';
 import type { EntityManager } from 'typeorm';
 import { SUGGESTED_POST_MIN_ENGAGED, suggestedPostIds } from './suggested-posts';
+import {
+  createNotificationPreferenceTable,
+  turnSuggestionsOffInApp,
+} from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -96,7 +100,7 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid,
-        anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false,
+        anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         kind varchar NOT NULL DEFAULT 'post', reactions jsonb NOT NULL DEFAULT '{}',
         comments jsonb NOT NULL DEFAULT '[]', "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL DEFAULT now(), "scheduledAt" timestamptz);
@@ -125,6 +129,9 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
       await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, SE, ICM]);
     }
     await q(`INSERT INTO users (id, campus, cursus) VALUES ('g', $1, $2)`, [GA, ISMIN]);
+    // "Suggestions dans l'app" is on by default (owner, "Deux niveaux", 2026-11-11): m switched it off.
+    await createNotificationPreferenceTable((sql) => q(sql));
+    await turnSuggestionsOffInApp(q, ['m']);
     await follow('v', 'fol');
     await follow('v', 'pend', 'pending');
     await follow('v', 'g');
@@ -177,6 +184,10 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
   afterAll(async () => {
     await q(`DROP SCHEMA ${schema} CASCADE`);
     await admin.end();
+  });
+
+  it('suggests nothing to a reader who switched Suggestions off in the app', async () => {
+    expect(await suggested('m')).toEqual([]);
   });
 
   it("suggests popular posts of the viewer's space, the most engaged first", async () => {

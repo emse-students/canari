@@ -1,0 +1,70 @@
+# The READ-ONLY account Canari asks, at every sign-in handoff it mints, whether MiConnect would let
+# the person into the target site (F3-bound, decided 2026-11-11 by the lead under the owner's
+# delegation: docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md,
+# section 9). A SERVICE ACCOUNT that may READ and do nothing else - not the editor of 80-profile-editor.yaml.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md.
+#
+# WHY THESE FOUR PERMISSIONS, AND WHY NOT `check_access?for_user`. authentik 2026.8 honours
+# `for_user` on `check_access` for a SUPERUSER only and silently answers for the caller otherwise, so
+# Canari reads the INPUTS of that answer instead: the user (`view_user`, global - a person is looked
+# up by uuid), the application (`view_application`, granted on the three handoff applications ONLY,
+# by the `permissions:` of their entries in 60-applications.yaml - which is why this file sorts
+# BEFORE it), its policy bindings (`view_policybinding`, GLOBAL on purpose: a binding is its own
+# object, so a grant scoped to today's bindings would not see tomorrow's, and an unseen binding
+# would read as "none" - a fail-OPEN), and the tenant flag `core_default_app_access`
+# (`view_system_settings`, read-only). And the FLOWS an OIDC sign-in to the site walks through, whose
+# policies a handoff would otherwise skip: the provider's authentication and authorization flows
+# (`view_flow`) and their stage bindings (`view_flowstagebinding`), both GLOBAL for the same reason -
+# a provider switched to another flow tomorrow must still be readable, and a flow's configuration is
+# no secret. Canari mints only when the user is active, nothing is bound on the application, on
+# either flow or on a stage of them, the authorization flow asks no more than an authenticated user,
+# and the flag is true - and refuses otherwise.
+#
+# THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
+# environment (`MICONNECT_READER_TOKEN`, declared with `:?` in compose.yml), and the same value is the
+# GitHub secret of that name that core-service reads. The applier refuses a missing value before it
+# commits, so a release cannot blank the token.
+version: 1
+metadata:
+  name: miconnect-handoff-reader
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_rbac.role
+    identifiers:
+      name: "miconnect-handoff-reader"
+    attrs:
+      permissions:
+        - authentik_core.view_user
+        - authentik_policies.view_policybinding
+        - authentik_rbac.view_system_settings
+        - authentik_flows.view_flow
+        - authentik_flows.view_flowstagebinding
+  - model: authentik_core.group
+    identifiers:
+      name: "miconnect-handoff-readers"
+    attrs:
+      is_superuser: false
+      roles:
+        - !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
+  - model: authentik_core.user
+    identifiers:
+      username: "miconnect-canari-handoff-reader"
+    attrs:
+      name: "Canari - handoff reader"
+      type: "service_account"
+      is_active: true
+      path: "goauthentik.io/service-accounts"
+      groups:
+        - !Find [authentik_core.group, [name, "miconnect-handoff-readers"]]
+  - model: authentik_core.token
+    identifiers:
+      identifier: "miconnect-canari-handoff-reader"
+    attrs:
+      user: !Find [authentik_core.user, [username, "miconnect-canari-handoff-reader"]]
+      intent: "api"
+      expiring: false
+      description: "Canari core-service - reads whether a person may enter a handoff site (F3-bound)"
+      key: !Env MICONNECT_READER_TOKEN

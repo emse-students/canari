@@ -32,7 +32,9 @@
   import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
   import { commitSalonRevoke, committingDeviceId } from '$lib/utils/graine/commitRemoval';
-  import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+  import { untrack } from 'svelte';
+  import { appendLog, globalChannels } from '$lib/stores/globalChatSingleton.svelte';
+  import { summarizeWriterRoles } from '$lib/utils/chat/channelWritePolicy';
 
   interface ChannelSidebarItem {
     id: string;
@@ -130,6 +132,41 @@
   let addingUserId = $state('');
   let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
+  /** The server's lists of roles each restricted policy admits (by what they grant), from the read. */
+  let writerRoles = $state<ChannelAccessState['writerRoles']>(undefined);
+  /** Which roles the selected policy currently admits, and whether that is the admins alone. */
+  const writerSummary = $derived(summarizeWriterRoles(writePolicy, writerRoles));
+
+  /*
+   * A ROLE EDIT WHILE THIS TAB IS OPEN RE-READS WHO QUALIFIES. `workspace.role.permissions` reaches
+   * every member and lands in `globalChannels.rolePermissions` (a new object per event), so an admin
+   * ticking "Modérer les messages" in the roles grid sees the warning here clear without reopening
+   * the panel. Only the lists are re-read and applied: the access on screen is left alone, so this
+   * never races an access write.
+   */
+  let seenRolePermissions = globalChannels.rolePermissions;
+  $effect(() => {
+    const current = globalChannels.rolePermissions;
+    if (current === seenRolePermissions) return;
+    seenRolePermissions = current;
+    untrack(() => {
+      if (activeTab === 'access' && accessLoadedFor === selectedChannelId) {
+        void refreshWriterRoles(selectedChannelId);
+      }
+    });
+  });
+
+  /** Re-reads the roles each policy admits after a role edit; anything else on screen is kept. */
+  async function refreshWriterRoles(channelId: string) {
+    try {
+      const state = await channelService.getChannelAccess(channelId);
+      if (channelId !== selectedChannelId || !state.writerRoles) return;
+      writerRoles = state.writerRoles;
+      appendLog(`[CHANNEL] writer roles re-read after a role edit ${channelId.slice(0, 8)}`);
+    } catch (e) {
+      Log.i('channelSettings.refreshWriterRoles failed - the previous lists stay on screen', e);
+    }
+  }
   /**
    * The server's revision of the access on screen, sent as the BASE of every write here. The list
    * this panel holds is the one it read; a grant made since by someone else is absent from it, and
@@ -240,6 +277,9 @@
     accessIsPrivate = state.isPrivate;
     accessAllowedUserIds = state.allowedUsers ?? [];
     writePolicy = state.writePolicy ?? 'everyone';
+    // Only the READ carries the lists; a write's answer leaves the ones on screen, which a write to
+    // this salon's access does not change.
+    if (state.writerRoles) writerRoles = state.writerRoles;
     accessRevision = state.accessRevision;
   }
 
@@ -315,9 +355,8 @@
    * `accessIsPrivate` is not flipped until the write succeeds, so it stays the server's truth at
    * every moment nothing is in flight - there is no separate "pending" toggle state to track.
    */
-  async function handleTogglePrivacy() {
-    if (privacySaving) return;
-    const next = !accessIsPrivate;
+  async function handleSetPrivacy(next: boolean) {
+    if (privacySaving || next === accessIsPrivate) return;
     const confirmed = await showConfirm(
       next ? m.chat_channel_make_private_confirm() : m.chat_channel_make_public_confirm(),
       { danger: !next }
@@ -338,7 +377,7 @@
       // The answer, not `next`: going private also grants whoever flipped it (server-side).
       await afterAccessWrite(channelId, base, answer);
     } catch (e) {
-      Log.d('channelSettings.handleTogglePrivacy failed', e);
+      Log.d('channelSettings.handleSetPrivacy failed', e);
       saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
@@ -696,59 +735,53 @@
               </div>
             {/if}
 
-            <!-- ═══ Visibility toggle ═══ -->
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-3">
-                {#if accessIsPrivate}
-                  <div class="text-amber-warn-text bg-amber-warn/10 rounded-xl p-2">
-                    <Lock size={18} strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <p class="text-text-main text-sm font-bold">
-                      {m.chat_channel_private_label()}
-                    </p>
-                    <p class="text-text-muted text-xs">
-                      {m.chat_channel_private_description()}
-                    </p>
-                  </div>
-                {:else}
-                  <div class="text-green-ok rounded-xl bg-emerald-500/10 p-2">
-                    <Globe size={18} strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <p class="text-text-main text-sm font-bold">
-                      {m.chat_channel_public_label()}
-                    </p>
-                    <p class="text-text-muted text-xs">
-                      {m.chat_channel_public_description()}
-                    </p>
-                  </div>
-                {/if}
-              </div>
+            <!-- ═══ Visibility: a CHOICE between two states, never an on/off switch (2026-11-10) ═══
+                 A switch drew "Canal public" with the track OFF, which read as "public is disabled". -->
+            <div class="space-y-3" aria-busy={privacySaving}>
               {#if canManage}
-                <button
-                  type="button"
-                  onclick={() => void handleTogglePrivacy()}
-                  disabled={privacySaving}
-                  class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
-                    ? 'bg-accent'
-                    : 'bg-black/10 dark:bg-white/20'}"
-                  role="switch"
-                  aria-checked={accessIsPrivate}
-                  aria-busy={privacySaving}
-                >
-                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
-                  {#if privacySaving}
-                    <Loader size={12} class="absolute inset-0 m-auto animate-spin text-white" />
-                  {:else}
-                    <span
-                      class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
-                        ? 'translate-x-6'
-                        : 'translate-x-1'}"
-                    ></span>
-                  {/if}
-                </button>
+                <SegmentedControl
+                  label={m.chat_channel_access_title()}
+                  items={[
+                    { key: 'public', label: m.chat_channel_access_option_public(), icon: Globe },
+                    {
+                      key: 'restricted',
+                      label: m.chat_channel_access_option_restricted(),
+                      icon: Lock,
+                    },
+                  ]}
+                  value={accessIsPrivate ? 'restricted' : 'public'}
+                  activation="manual"
+                  onSelect={(key) => void handleSetPrivacy(key === 'restricted')}
+                  class={privacySaving ? 'pointer-events-none opacity-50' : ''}
+                />
               {/if}
+              <ul class="space-y-2" data-testid="channel-access-options">
+                {#each [{ isPrivate: false, label: m.chat_channel_access_option_public(), description: m.chat_channel_public_description(), icon: Globe }, { isPrivate: true, label: m.chat_channel_access_option_restricted(), description: m.chat_channel_private_description(), icon: Lock }] as option (option.isPrivate)}
+                  {@const current = option.isPrivate === accessIsPrivate}
+                  {@const Icon = option.icon}
+                  <li
+                    class="flex items-start gap-3 {current ? 'text-text-main' : 'text-text-muted'}"
+                    aria-current={current ? 'true' : undefined}
+                  >
+                    <div
+                      class="rounded-xl p-2 {current
+                        ? 'bg-accent/15 text-accent-icon'
+                        : 'bg-black/5 dark:bg-white/5'}"
+                    >
+                      <Icon size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <p class="text-sm font-bold">
+                        {option.label}
+                        {#if privacySaving && current}
+                          <Loader size={12} class="inline animate-spin" />
+                        {/if}
+                      </p>
+                      <p class="text-text-muted text-xs">{option.description}</p>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
             </div>
 
             <!-- ═══ Qui peut écrire ? ═══ -->
@@ -772,6 +805,20 @@
                   <Loader size={16} class="text-text-muted animate-spin" />
                 {/if}
               </div>
+              <!-- WHO THE POLICY ADMITS, BY ROLE: decided by what each role grants, never by its
+                   name - "Admins and moderators" read as if a role called Moderateur counted. -->
+              {#if writerSummary}
+                <p class="text-text-muted text-xs">
+                  {m.chat_channel_write_roles_qualifying({ roles: writerSummary.names.join(', ') })}
+                </p>
+                {#if writerSummary.onlyAdmins}
+                  <p class="text-red-err text-xs font-medium" role="alert">
+                    {m.chat_channel_write_no_moderator_role_warning({
+                      permission: m.chat_permission_moderate_label(),
+                    })}
+                  </p>
+                {/if}
+              {/if}
             </div>
 
             <!-- ═══ Member allowlist (only once the SERVER holds the salon private) ═══ -->

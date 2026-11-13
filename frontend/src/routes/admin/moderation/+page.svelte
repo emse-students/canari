@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
@@ -55,7 +56,6 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   const TABS = ['reports', 'hidden', 'muted'] as const;
   type Tab = (typeof TABS)[number];
@@ -336,7 +336,7 @@
   }
 
   function formatDate(iso: string): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
+    const locale = intlLocale();
     return new Date(iso).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
   }
 

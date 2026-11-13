@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { MediaIntent } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
@@ -57,6 +58,19 @@ export interface ConversationMeta {
    * or the ask expired). Absent on rows written before it existed, which reads as `false`.
    */
   awaitingAdmission?: boolean;
+  /**
+   * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock: the newest server-dated message
+   * THIS conversation held when the store migration that added the field ran (SQLite v20, IndexedDB
+   * 14) - inside the migration, so before this build could store anything. Max'ed with any saved
+   * read mark, on THIS device only - never a read mark, never a receipt, never
+   * in a bundle (`countingReadPoint`).
+   *
+   * Written by the migration and nowhere else: `0` when the conversation held nothing dated (and for
+   * a row this build creates, `saveConversation`), the newest time otherwise. A save that does not
+   * state it keeps the stored value. `null` / absent - a row a downgraded build re-created - covers
+   * nothing.
+   */
+  localReadSeed?: number | null;
 }
 
 /**
@@ -147,6 +161,22 @@ export interface PageKey {
   id: string;
   provisional: boolean;
 }
+
+/** What {@link IStorage.mergeMessages} is told about its call. */
+export interface MergeMessagesOptions {
+  /** The caller handles a row of another conversation itself: left alone, and not said at warn. */
+  foreignExpected?: boolean;
+}
+
+/**
+ * Where ONE message row stands, whatever its conversation - the answer of
+ * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
+ * under another key, or damaged): it stands, and nothing this device does can ever be written onto it.
+ */
+export type MessageRowStanding =
+  | { kind: 'absent' }
+  | { kind: 'unreadable'; conversationId: string }
+  | { kind: 'readable'; conversationId: string };
 
 /** The answer of {@link IStorage.getMessagesByIds}. */
 export interface StoredRowsById {
@@ -294,6 +324,8 @@ export interface OutboxAdoptedUpload extends OutboxMediaUploadedRef {
   height?: number;
   /** The declared duration of the published reel (whole ms). */
   durationMs?: number;
+  /** The published file's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
 }
 
 /** Sensitive media descriptor for a queued media message. */
@@ -314,6 +346,8 @@ export interface OutboxMediaPayload {
   intent?: MediaIntent;
   durationMs?: number;
   expiresAtMs?: number;
+  /** A prepared video's measured sound - see `MediaRef.loudness`. */
+  loudness?: MediaLoudness;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.
@@ -811,12 +845,17 @@ export interface IStorage {
    * in between is read again and merged again; each retry means another writer COMMITTED, so the
    * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
    * ids written.
+   *
+   * A row of another conversation is said at warn, unless `opts.foreignExpected`: a caller that
+   * handles that case itself (a row still moving onto the conversation it shows) is not told at warn
+   * what it is about to look at.
    */
   mergeMessages(
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    opts?: MergeMessagesOptions
   ): Promise<Set<string>>;
   /**
    * Remove one message row outright. No-op when the row is absent.
@@ -842,6 +881,13 @@ export interface IStorage {
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  /**
+   * Where the row of `id` stands, in ANY conversation, and whether this device opens it - the one
+   * read that tells an absent row from one this key cannot open, which `getMessage` (null for both)
+   * and the scoped reads (a row of another conversation read as absent, said at warn) cannot. Says
+   * nothing itself: the caller knows what the answer means.
+   */
+  getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding>;
   /**
    * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
    * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
@@ -901,6 +947,13 @@ export interface IStorage {
     deviceKeyB64: string
   ): Promise<PendingMutationRead>;
   /**
+   * EVERY entry kept under `conversationId`, whatever message it waits for - what a move of the
+   * conversation's rows onto another conversation carries with them (`moveDirectConversationRows`).
+   * Found by conversation and not by this key's tags, an entry that does not open may be under another
+   * key (a reseal in flight): it is left as it is, never removed nor returned.
+   */
+  getPendingMutationsOf(conversationId: string, deviceKeyB64: string): Promise<PendingMutationRead>;
+  /**
    * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
    * later frame raised meanwhile is a different version and stays.
    */
@@ -952,15 +1005,16 @@ export interface IStorage {
     before?: PageKey
   ): Promise<StoredMessage[]>;
 
-  // Garbage collection - delete messages older than the given threshold.
+  // Garbage collection - delete messages older than this device's retention window.
 
   /**
-   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
-   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
-   * upper bound on its target's, so the message such an entry waits for is older still, and would
-   * be collected the moment it arrived.
+   * Delete messages older than `maxAgeMs` milliseconds - by default this device's window,
+   * `deviceWindowMs()` (5 years on a phone or desktop app, 90 days in a browser; owner, 2026-11-11)
+   * - and return the count of deleted rows. The pending mutations whose FRAME is older than the
+   * same cutoff go with them: a frame's time is an upper bound on its target's, so the message such
+   * an entry waits for is older still, and would be collected the moment it arrived.
    */
-  deleteOldMessages(maxAgeMs: number): Promise<number>;
+  deleteOldMessages(maxAgeMs?: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same device key.
@@ -1154,8 +1208,14 @@ export interface IStorage {
    * caller can tell "nothing stored" from "something stored that must go" and delete it.
    */
   getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
-  /** Delete every stored feed page, returning how many went. Needs no key. */
-  deleteFeedPages(): Promise<number>;
+  /**
+   * Delete every stored page, or only those whose key starts with `keyPrefix`, returning how many
+   * went. Needs no key. The feed passes `feed:` so its churn leaves the device copies (`copy:`, the
+   * peer names) alone; a key change passes nothing and drops them all.
+   */
+  deleteFeedPages(keyPrefix?: string): Promise<number>;
+  /** Delete the one stored feed page `key`, returning how many went (0 or 1). Needs no key. */
+  deleteFeedPage(key: string): Promise<number>;
 
   /**
    * Wipe all conversations, messages, outbox entries, Graine sessions and stored feed pages (tests /

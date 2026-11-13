@@ -72,18 +72,41 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
   flushSync();
   const root = target.querySelector<HTMLElement>('[data-video-player]')!;
   const video = target.querySelector('video')!;
+  // A FEED CARD HAS NO EXPAND BUTTON (owner, 2026-11-10): its keyboard twin is Enter on the card.
+  // The chat keeps its chip.
   const openButton = () =>
-    target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
+    variant === 'feed'
+      ? {
+          click: () =>
+            root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+        }
+      : target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
   const soundButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_sound_label()}"]`);
   const playButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_play_label()}"]`);
+  /** The video is playing: a feed card draws its speaker only then. */
+  const startPlaying = () => {
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    video.dispatchEvent(new Event('play'));
+    flushSync();
+  };
   /** The first frame is in. */
   const frameIn = () => {
     video.dispatchEvent(new Event('loadeddata'));
     flushSync();
   };
-  return { target, root, video, onOpen, openButton, soundButton, playButton, frameIn };
+  return {
+    target,
+    root,
+    video,
+    onOpen,
+    openButton,
+    soundButton,
+    playButton,
+    frameIn,
+    startPlaying,
+  };
 }
 
 // ------------------------------------------------------------------------------------- the feed
@@ -91,6 +114,7 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
 it('feed: starts at the app answer, and its speaker answers for every video', () => {
   const first = mountVariant('feed');
   const second = mountVariant('feed');
+  first.startPlaying();
   expect(first.video.muted).toBe(true);
   // Without it the Android WebView draws its own grey play button until the first frame.
   expect(first.video.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
@@ -103,26 +127,165 @@ it('feed: starts at the app answer, and its speaker answers for every video', ()
   expect(first.soundButton()!.getAttribute('aria-pressed')).toBe('true');
 });
 
-it('feed: a tap on the picture is the sound too, with its glyph, and opens nothing', () => {
-  const { root, target, onOpen } = mountVariant('feed');
+/**
+ * A TAP ON A FEED VIDEO OPENS FULL SCREEN (owner, 2026-11-10, reverting 1.6.9's tap = sound): the
+ * CanaReels viewer, on that video, at the time it had reached. The sound stays the speaker's.
+ */
+it('feed: a tap on the picture opens full screen where it is, and leaves the sound alone', () => {
+  const { root, onOpen, video } = mountVariant('feed', { positionKey: 'media-1' });
+  video.currentTime = 7;
+  tap(root);
+  flushSync();
+  expect(onOpen).toHaveBeenCalledOnce();
+  expect(videoSound.muted).toBe(true);
+  expect(takeVideoPosition('media-1')).toBe(7);
+});
+
+it('feed with no viewer to open: the tap is the sound, with its glyph', () => {
+  const { root, target } = mountVariant('feed', { onOpen: undefined });
   tap(root);
   flushSync();
   expect(videoSound.muted).toBe(false);
   expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
     'sound-on'
   );
-  expect(onOpen).not.toHaveBeenCalled();
 });
 
-it("feed: the speaker is the kit's glass chip, yellow only when the sound is on", () => {
-  const { soundButton, target } = mountVariant('feed');
-  expect(soundButton()!.querySelector('.glass-video')).not.toBeNull();
+/**
+ * LEAVING FULL SCREEN NEVER RESTARTS THE FEED VIDEO (owner, 2026-11-10): the viewer's player, as it
+ * leaves, hands back where it got to, and the feed video that opened it seeks there.
+ */
+it('feed: the viewer it opened hands back its time as it closes, and the feed video seeks there', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-1' });
+  feed.video.currentTime = 4;
+  feed.openButton().click();
+  flushSync();
+
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const viewer = mount(VideoPlayer, {
+    target,
+    props: { src: 'blob:stream-of-the-viewer', variant: 'reel', positionKey: 'media-1' },
+  });
+  flushSync();
+  const viewerVideo = target.querySelector('video')!;
+  Object.defineProperty(viewerVideo, 'duration', { configurable: true, get: () => 40 });
+  viewerVideo.dispatchEvent(new Event('loadedmetadata'));
+  expect(viewerVideo.currentTime, 'the viewer entered at the feed time').toBe(4);
+  viewerVideo.currentTime = 19;
+  viewerVideo.dispatchEvent(new Event('timeupdate'));
+  flushSync();
+  unmount(viewer);
+
+  expect(feed.video.currentTime).toBe(19);
+});
+
+/**
+ * A STREAMED CARD TAKES THE VIEWER'S TIME ONLY IF IT HOLDS IT (review of #3311): sought outside its
+ * buffer it would fetch every segment up to there - a third copy of the clip - or stall behind a cut.
+ */
+it('feed: a STREAMED card takes the handed-back time only inside what it buffers', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-s', src: 'blob:card', streamed: true });
+  let ranges: Array<[number, number]> = [[0, 12]];
+  Object.defineProperty(feed.video, 'buffered', {
+    configurable: true,
+    get: () => ({
+      length: ranges.length,
+      start: (i: number) => ranges[i][0],
+      end: (i: number) => ranges[i][1],
+    }),
+  });
+  feed.video.currentTime = 2;
+  const openAndHandBack = (seconds: number) => {
+    feed.openButton().click();
+    flushSync();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const viewer = mount(VideoPlayer, {
+      target,
+      props: { src: 'blob:viewer', variant: 'reel', positionKey: 'media-s' },
+    });
+    flushSync();
+    const viewerVideo = target.querySelector('video')!;
+    Object.defineProperty(viewerVideo, 'duration', { configurable: true, get: () => 40 });
+    viewerVideo.dispatchEvent(new Event('loadedmetadata'));
+    viewerVideo.currentTime = seconds;
+    viewerVideo.dispatchEvent(new Event('timeupdate'));
+    flushSync();
+    unmount(viewer);
+  };
+
+  openAndHandBack(30);
+  expect(feed.video.currentTime, '30 s is not buffered here: the card stays').toBe(2);
+
+  ranges = [[0, 35]];
+  openAndHandBack(30);
+  expect(feed.video.currentTime, 'now held: taken').toBe(30);
+});
+
+it('a viewer that was opened from nowhere hands back into nothing', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-2' });
+  feed.video.currentTime = 3;
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const viewer = mount(VideoPlayer, {
+    target,
+    props: { src: 'blob:x', variant: 'reel', positionKey: 'media-2' },
+  });
+  flushSync();
+  unmount(viewer);
+  expect(feed.video.currentTime, 'nobody opened it from the feed').toBe(3);
+});
+
+/**
+ * THE FIRST FRAME, FROZEN, AND ITS BANDS COME IN TOGETHER (owner, 2026-11-10: a dark box, then the
+ * frame with white bands, then the blur - three stages): with a first-frame picture, the blurred
+ * bands are drawn from it at once, the element stays invisible until its own frame, and no second
+ * capture swaps the bands.
+ */
+it('feed: draws the first-frame picture and its blurred bands before the video has a frame', () => {
+  const { target, video, frameIn } = mountVariant('feed', {
+    backdrop: true,
+    poster: 'data:image/png;base64,poster',
+  });
+  expect(target.querySelector('[data-video-first-frame-poster]')).not.toBeNull();
+  expect(target.querySelector('[style*="data:image/png;base64,poster"]')).not.toBeNull();
+  expect(video.className).toContain('opacity-0');
+  frameIn();
+  expect(video.className).not.toContain('opacity-0');
+  expect(captureVideoFrame).not.toHaveBeenCalled();
+  expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
+});
+
+it('feed: a cropped grid cell crops its poster as it will crop its frame', () => {
+  const contained = mountVariant('feed', { poster: 'data:image/png;base64,p' });
+  expect(
+    contained.target.querySelector('[data-video-first-frame-poster]')!.getAttribute('class')
+  ).toContain('object-contain');
+  const cell = mountVariant('feed', { poster: 'data:image/png;base64,p', posterFit: 'cover' });
+  const poster = cell.target.querySelector('[data-video-first-frame-poster]')!;
+  expect(poster.getAttribute('class')).toContain('object-cover');
+  expect(poster.getAttribute('class')).not.toContain('object-contain');
+});
+
+it('feed: the speaker is a bare white glyph, drawn only while it plays', () => {
+  const { soundButton, target, startPlaying } = mountVariant('feed');
+  expect(soundButton(), 'nothing on a poster that is not playing').toBeNull();
+  expect(target.querySelector('[data-video-expand]')).toBeNull();
+  startPlaying();
+  expect(soundButton()!.querySelector('.glass-video'), 'no chip').toBeNull();
   expect(target.querySelector('[data-video-sound="off"]')).not.toBeNull();
   soundButton()!.click();
   flushSync();
-  expect(target.querySelector('[data-video-sound="on"]')!.getAttribute('class')).toContain(
+  expect(target.querySelector('[data-video-sound="on"]')!.getAttribute('class')).not.toContain(
     'text-accent'
   );
+});
+
+it('feed: the card carries the open label and has no expand button', () => {
+  const { root, target } = mountVariant('feed');
+  expect(root.getAttribute('aria-label')).toBe('Plein ecran');
+  expect(target.querySelector('button[aria-label="Plein ecran"]')).toBeNull();
 });
 
 it('seeks a decrypted file to its first frame, and hands a stream its URL untouched', () => {
@@ -167,8 +330,9 @@ it('feed: plays while it is on screen and pauses when it leaves', () => {
   expect(pause).toHaveBeenCalledOnce();
 });
 
-it('feed: the expand chip opens the viewer, and the speaker does not', () => {
-  const { openButton, soundButton, onOpen } = mountVariant('feed');
+it('feed: Enter on the card opens the viewer, and the speaker does not', () => {
+  const { openButton, soundButton, onOpen, startPlaying } = mountVariant('feed');
+  startPlaying();
   soundButton()!.click();
   expect(onOpen).not.toHaveBeenCalled();
   openButton().click();
@@ -419,8 +583,8 @@ describe('feed: the reader pauses, and the feed does not undo it', () => {
   });
 });
 
-it('feed: a tap on a video on screen but paused (an autoplay refused) gives the sound and plays it', () => {
-  const { root, video } = mountVariant('feed');
+it('feed with no viewer: a tap on a video on screen but paused gives the sound and plays it', () => {
+  const { root, video } = mountVariant('feed', { onOpen: undefined });
   const { play } = liveElement(video);
   tap(root);
   flushSync();

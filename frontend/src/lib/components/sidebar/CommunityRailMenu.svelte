@@ -4,6 +4,7 @@
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { m } from '$lib/paraglide/messages';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * The menu a community icon of the rail opens: a long press under a finger, a right click with a
@@ -28,6 +29,9 @@
   }
 
   let { anchor, communityName, hasUnread, onMarkRead, onClose }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'CommunityRailMenu');
 
   let menuEl: HTMLDivElement | null = $state(null);
 
@@ -54,7 +58,8 @@
   tabindex="-1"
   aria-label={m.sidebar_community_menu_label({ name: communityName })}
   data-community-menu
-  class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
+  style:z-index={layer.z}
+  class="glass-chrome border-cn-border fixed flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
   onkeydown={(e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();

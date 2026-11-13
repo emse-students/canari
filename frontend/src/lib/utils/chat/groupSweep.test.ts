@@ -1,14 +1,21 @@
 import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 import type { IMlsService } from '$lib/mlsService';
 import { withoutAnyComments } from '$lib/styles/markupSources';
-import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from './groupSweep';
+import {
+  forgetGroupsAbsentFromServer,
+  keptVerdictLatch,
+  readGroupSweepSnapshot,
+} from './groupSweep';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { NETWORK_READ_CONCURRENCY } from '$lib/utils/boundedConcurrency';
 
 /**
  * Minimal service stub. `getGroupServerStatus` answers with a LIVE row naming no distribution
  * scope, which `decideAbsentLocalGroupFate` reduces to `forget` - the destructive branch, so a test
  * that expects nothing forgotten is measuring the guard rather than a stub that had nothing to do.
  */
+beforeEach(() => keptVerdictLatch.reset());
+
 function makeMls(overrides: Partial<Record<string, unknown>> = {}): IMlsService {
   const built: Record<string, unknown> = {
     getUserGroups: vi.fn().mockResolvedValue([]),
@@ -156,6 +163,92 @@ describe('forgetGroupsAbsentFromServer', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('dm_groups row alive'));
   });
 
+  it('asks about every absent group together, and forgets them one by one in order (dev, 2026-11-10)', async () => {
+    // Four key groups read one after another cost four round trips at every connection (2.6 s at
+    // 500 ms RTT). The reads are released BY HAND, so nothing here measures a clock: what is asserted
+    // is that all four were on the wire before the first was answered, and that nothing was forgotten
+    // until every answer was in.
+    const keys = ['k1', 'k2', 'k3', 'k4'];
+    const pending: Array<() => void> = [];
+    const getGroupServerStatus = vi.fn(
+      (groupId: string) =>
+        new Promise((resolve) => pending.push(() => resolve({ groupId, deletedAt: null })))
+    );
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(keys),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'listed', name: 'l' }]),
+      getGroupServerStatus,
+    });
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+
+    const pass = forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn());
+    await vi.waitFor(() => expect(getGroupServerStatus).toHaveBeenCalledTimes(4));
+    expect(mlsService.forgetGroup).not.toHaveBeenCalled();
+    // Answered in REVERSE: the forgets still follow the snapshot's order.
+    for (const release of [...pending].reverse()) release();
+
+    expect(await pass).toBe(true);
+    const forgotten = vi.mocked(mlsService.forgetGroup).mock.calls.map((c) => c[0]);
+    expect(forgotten).toEqual(keys);
+  });
+
+  it('never has more than the shared bound of status reads on the wire, after any release', async () => {
+    const keys = Array.from({ length: 9 }, (_, i) => `k${String(i)}`);
+    const pending: Array<() => void> = [];
+    let inFlight = 0;
+    const getGroupServerStatus = vi.fn((groupId: string) => {
+      inFlight++;
+      return new Promise((resolve) =>
+        pending.push(() => {
+          inFlight--;
+          resolve({ groupId, deletedAt: null });
+        })
+      );
+    });
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(keys),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'listed', name: 'l' }]),
+      getGroupServerStatus,
+    });
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+
+    const pass = forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn());
+    await vi.waitFor(() =>
+      expect(getGroupServerStatus).toHaveBeenCalledTimes(NETWORK_READ_CONCURRENCY)
+    );
+    expect(inFlight).toBe(NETWORK_READ_CONCURRENCY);
+    while (pending.length > 0) {
+      pending.shift()?.();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(inFlight).toBeLessThanOrEqual(NETWORK_READ_CONCURRENCY);
+    }
+    await pass;
+    expect(getGroupServerStatus).toHaveBeenCalledTimes(9);
+  });
+
+  it('keeps a group whose read threw, and still reads and forgets the ones after it', async () => {
+    const keys = ['k1', 'k2', 'k3', 'k4', 'k5'];
+    const getGroupServerStatus = vi.fn(async (groupId: string) => {
+      if (groupId === 'k2') throw new Error('read threw');
+      return { groupId, deletedAt: null };
+    });
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(keys),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'listed', name: 'l' }]),
+      getGroupServerStatus,
+    });
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+    const log = vi.fn();
+
+    expect(await forgetGroupsAbsentFromServer(mlsService, snapshot, log)).toBe(true);
+    expect(getGroupServerStatus).toHaveBeenCalledTimes(5);
+    const forgotten = vi.mocked(mlsService.forgetGroup).mock.calls.map((c) => c[0]);
+    expect(forgotten).toEqual(['k1', 'k3', 'k4', 'k5']);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('kept 1 absent group(s) whose read threw')
+    );
+  });
+
   it('spares a group the decision keeps, without asking WASM to forget it', async () => {
     const mlsService = makeMls({
       getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
@@ -200,6 +293,28 @@ describe('forgetGroupsAbsentFromServer', () => {
     const lines = log.mock.calls.map((c) => String(c[0]));
     expect(lines.filter((l) => l.includes('WASM kept'))).toHaveLength(1);
     expect(lines.filter((l) => l.includes('not asked again'))).toHaveLength(1);
+  });
+
+  it('says a kept group ONCE across connections', async () => {
+    // 1.6.8 log: 11 `WASM kept` lines per connection, the same verdict for the same groups.
+    const status: Record<string, unknown> = {
+      groupId: 'seed-carrier',
+      deletedAt: null,
+      distributionWorkspaceId: 'w',
+    };
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus: vi.fn(async () => status),
+    });
+    const log = vi.fn();
+    const kept = () => log.mock.calls.filter((c) => String(c[0]).includes('WASM kept')).length;
+
+    for (let connection = 0; connection < 3; connection++) {
+      const snapshot = await readGroupSweepSnapshot(mlsService, 'u', log);
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, log);
+    }
+    expect(kept()).toBe(1);
   });
 
   it('asks again on a new pass, and forgets a group that stopped being a key group in between', async () => {

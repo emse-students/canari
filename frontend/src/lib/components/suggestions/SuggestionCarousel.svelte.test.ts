@@ -56,6 +56,8 @@ import SuggestionCarousel from './SuggestionCarousel.svelte';
 import FollowAlsoSuggestions from './FollowAlsoSuggestions.svelte';
 import { interleaveCards } from '$lib/follows/suggestions.svelte';
 import { forgetReaderCaches } from '$lib/utils/sharedCache';
+import { FOLLOW_BLOCKED } from '$lib/follows/api';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { m } from '$lib/paraglide/messages';
 
 const ENTITY = '5e000000-0000-4000-8000-000000000001';
@@ -90,6 +92,13 @@ const cardIds = () =>
   );
 
 beforeEach(() => {
+  // Reduced motion: the carousel then plays no transition, so a leaving card is gone at once (the
+  // outro is a visual, and happy-dom cannot play one).
+  vi.stubGlobal('matchMedia', () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   forgetReaderCaches();
   vi.clearAllMocks();
   faces.avatars.length = 0;
@@ -100,6 +109,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (component) unmount(component);
   component = null;
   document.body.innerHTML = '';
@@ -121,6 +131,67 @@ describe('SuggestionCarousel', () => {
     expect(document.querySelectorAll('[data-follow-chip]')).toHaveLength(3);
     // ann's photo and her three faces, bob's photo: no face for a card with no shared link.
     expect(faces.avatars).toEqual(['ann', 'f1', 'f2', 'f3', 'bob']);
+  });
+
+  it('a card that leaves while a finger is down waits for the touch to end, then lands', async () => {
+    renderRow();
+    await settle();
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    row.dispatchEvent(new Event('touchstart'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    await settle();
+    // The server side has the dismissal, but the row under the finger is untouched.
+    expect(api.dismissFollowSuggestion).toHaveBeenCalledWith('user', 'bob');
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    row.dispatchEvent(new Event('touchend'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('with scrollend, a card waits for the momentum after the release, not only for the touch', async () => {
+    vi.stubGlobal('onscrollend', null);
+    renderRow();
+    await settle();
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    row.dispatchEvent(new Event('touchstart'));
+    row.dispatchEvent(new Event('scroll'));
+    row.dispatchEvent(new Event('touchend'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    row.dispatchEvent(new Event('scrollend'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('a cancelled touch (a scroll took it) also frees the row', async () => {
+    renderRow();
+    await settle();
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    row.dispatchEvent(new Event('touchstart'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    row.dispatchEvent(new Event('touchcancel'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('a card keeps its identity while the list is filtered again', async () => {
+    const { feedSuggestionCards, ensureFeedSuggestions, dismissSuggestion } =
+      await import('$lib/follows/suggestions.svelte');
+    api.getFollowSuggestions.mockResolvedValue({ ...DATA, followingCount: 9 });
+    ensureFeedSuggestions();
+    await settle();
+    const before = feedSuggestionCards();
+    await dismissSuggestion('user', 'bob');
+    const after = feedSuggestionCards();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toBe(before[0]);
   });
 
   it('the X dismisses for good: the card leaves at once and the server is told', async () => {
@@ -148,25 +219,49 @@ describe('SuggestionCarousel', () => {
     expect(toast.showToast).toHaveBeenCalledWith(m.suggestions_dismiss_failed(), 'error');
   });
 
-  it('a request keeps its card ("Demande envoyee"); a followed entity leaves; then the row hides', async () => {
-    api.askToFollow.mockResolvedValue('pending');
-    asso.followAssociation.mockResolvedValue(undefined);
+  it('a card stays drawn while the follow is out, and a refusal brings the button back without the card ever leaving', async () => {
+    let refuse!: (e: unknown) => void;
+    api.askToFollow.mockReturnValue(new Promise((_, rej) => (refuse = rej)));
     renderRow();
     await settle();
     (
       document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]') as HTMLElement
     ).click();
     await settle();
-    expect(
-      document
-        .querySelector('[data-suggestion-id="ann"] [data-follow-chip]')
-        ?.getAttribute('data-follow-chip-state')
-    ).toBe('pending');
+    // Out, not answered: the optimistic flip hid the button but the card is still there, in place.
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    expect(document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]')).toBeNull();
+    refuse(new ApiRefusalError(403, FOLLOW_BLOCKED, 'x'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    expect(document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]')).not.toBeNull();
+    expect(toast.showToast).toHaveBeenCalledTimes(1);
+    expect(toast.showToast).toHaveBeenCalledWith(m.refusal_follow_blocked());
+  });
+
+  it('a follow removes its card, soft button and all; a followed entity leaves too; then the row hides', async () => {
+    api.askToFollow.mockResolvedValue('pending');
+    asso.followAssociation.mockResolvedValue(undefined);
+    renderRow();
+    await settle();
+    const soft = document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]')!;
+    expect(soft.getAttribute('data-follow-chip-variant')).toBe('soft');
+    (soft as HTMLElement).click();
+    await settle();
+    expect(cardIds()).toEqual([ENTITY, 'bob']);
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_requested_named({ name: 'Name ann' }),
+      'info'
+    );
     (
       document.querySelector(`[data-suggestion-id="${ENTITY}"] [data-follow-chip]`) as HTMLElement
     ).click();
     await settle();
-    expect(cardIds()).toEqual(['ann', 'bob']);
+    expect(cardIds()).toEqual(['bob']);
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_following_named({ name: 'BDE' }),
+      'info'
+    );
     // The last open card dismissed: nothing is left to act on, so the whole row goes.
     (
       document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement

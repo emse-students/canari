@@ -21,6 +21,7 @@
  */
 import type { CreatePostPayload, PostFeed, PostMediaRef } from '$lib/posts/api';
 import type { OutboxResumableUpload } from '$lib/db/types';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
 import { appendLog } from '$lib/utils/sessionLog';
 
@@ -54,6 +55,13 @@ export interface QueuedMedia {
     height?: number;
     /** A video's prepared length in whole ms: with the frame, what makes the post a CanaReel. */
     durationMs?: number;
+    /**
+     * A video's first frame as a ThumbHash (`MediaRef.placeholder`), made from the PREPARED file:
+     * what a reader's feed draws before a byte of the video arrives (owner, 2026-11-10).
+     */
+    placeholder?: string;
+    /** A video's measured sound (`MediaRef.loudness`), measured with its preparation. */
+    loudness?: MediaLoudness;
   };
   /** The resumable session of this media's upload, written before its first part leaves. */
   upload?: OutboxResumableUpload;
@@ -66,6 +74,11 @@ export interface QueuedPostFailure {
   stage: 'moderation' | 'mediaPrepare' | 'mediaUpload' | 'createPost' | 'withdraw';
   /** The sentence shown, in the member's language at the time it failed. */
   message: string;
+  /**
+   * A refusal a Retry cannot cure (`retryCannotCure`): the queued payload is fixed, so it would be
+   * refused again, word for word. Only Delete is offered - never an endless Retry.
+   */
+  final?: true;
 }
 
 /** One post waiting to be published. */

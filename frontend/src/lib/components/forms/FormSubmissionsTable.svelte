@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { ChevronDown, ChevronRight, Download, X } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -25,7 +26,6 @@
     submitterName,
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * ONE FORM'S RESPONSES, AND THE ANSWERS IN THEM.
@@ -168,7 +168,7 @@
   /** Formats cents as a currency string, or "-" for zero. */
   function formatAmount(cents: number): string {
     if (!cents) return '-';
-    return (cents / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    return (cents / 100).toLocaleString(intlLocale(), {
       style: 'currency',
       currency: 'eur',
     });
@@ -260,7 +260,7 @@
       {#each answered as { item, text } (item.id)}
         {@const file = liveFile(sub, item)}
         <div class={text.length > 80 ? 'sm:col-span-2' : ''}>
-          <dt class="text-text-muted text-2xs font-semibold">
+          <dt class="text-text-muted text-2xs font-semibold whitespace-pre-line">
             {item.label}
           </dt>
           {#if file}

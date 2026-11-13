@@ -34,8 +34,15 @@
   import { ownProfilePhoto } from '$lib/guidance/ownProfilePhoto.svelte';
   import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
-  import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
+  import {
+    placeBubble,
+    ringRadius,
+    usableBand,
+    type BubblePosition,
+  } from '$lib/guidance/guidePlacement';
+  import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   /**
    * THE ONE RENDERER OF EVERY GUIDED TOUR AND FIRST-TIME HINT (docs/wiki/frontend/guided-help.md):
@@ -95,6 +102,7 @@
   const view = $derived(guideEngine.view);
   /** On screen: a step to draw and a quiet app. Hidden otherwise - suspended, never ended. */
   const visible = $derived(view !== null && blocker === null);
+  const layer = useOverlayLayer(() => visible, 'GuideOverlay');
   // A modal step's backdrop is on screen: the iOS native tab bar, drawn above the WebView, must
   // take no touch meanwhile (`modalWebLayer`, read by `NativeTabBar`).
   $effect(() => {
@@ -227,6 +235,26 @@
     );
   }
 
+  /**
+   * The boxes of the bars fixed at the viewport's edges, as drawn NOW: every element marked
+   * `data-guide-chrome` (the phone header, the web bottom bar, the desktop top bar) and, in the iOS
+   * app where the bar is native, the regions its tabs register. A hidden bar has no box and is
+   * skipped by `usableBand`.
+   */
+  function chromeBars(): GuideRect[] {
+    const bars: GuideRect[] = [];
+    for (const node of document.querySelectorAll<HTMLElement>('[data-guide-chrome]')) {
+      const r = node.getBoundingClientRect();
+      bars.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+    }
+    for (const place of MOBILE_NAV_PLACES) {
+      const region = resolveGuideAnchor(`nav.${place.id}`);
+      const r = region && !region.element ? region.rect() : null;
+      if (r) bars.push(r);
+    }
+    return bars;
+  }
+
   /** Re-reads the target's box and places the bubble. Called on every event that can move either. */
   function measure(): void {
     const current = guideEngine.view;
@@ -255,7 +283,8 @@
       { width: window.innerWidth, height: window.innerHeight },
       current.placement,
       0.75 * rem(),
-      rem()
+      rem(),
+      usableBand(window.innerHeight, chromeBars())
     );
   }
 
@@ -391,7 +420,8 @@
   {@const Icon = view.step.icon}
   <div
     use:portal
-    class="fixed inset-0 z-(--z-guide) {view.modal ? '' : 'pointer-events-none'}"
+    style:z-index={layer.z}
+    class="fixed inset-0 {view.modal ? '' : 'pointer-events-none'}"
     data-guide-overlay={view.guide.id}
     data-guide-step={view.step.id}
     data-motion={reducedMotion ? 'reduced' : 'full'}

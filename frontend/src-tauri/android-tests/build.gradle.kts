@@ -39,6 +39,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/share")
         // The orientation modes the video and camera screens request (screen-orientation.md), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/orientation")
+        // The camera's volume shutter and angle filter (screen-orientation.md), same rule.
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/camera")
     }
 }
 

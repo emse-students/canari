@@ -98,6 +98,15 @@ export type AppVersionResponse = {
    * editor newer than its server").
    */
   formDrafts: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: it serves the
+   * RANKED lists - Pour toi (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, paged by
+   * `asOf` (`posts/for-you-feed.ts`). An older social-service refuses `feed=foryou` `400` (`@IsIn`)
+   * and ignores `ranked`, and a store build reaches phones before production deploys: the client asks
+   * them only of an estate that says so. Always `true` from this release on
+   * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
+   */
+  rankedFeeds: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -125,6 +134,7 @@ export class VersionService {
       presencePost: true,
       publishQueue: true,
       formDrafts: true,
+      rankedFeeds: true,
     };
   }
 }

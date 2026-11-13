@@ -212,7 +212,7 @@ a same request is one a cache answers.
 
 | Where | What it does |
 | --- | --- |
-| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
+| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from the live segment store (the `live_segments` volume, NOT Garage since live replays WP-R3: never backed up, [live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)); no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
 | nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
 | nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>\z"` (lower case, and `\z`, never `$`: see below) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
 
@@ -549,11 +549,25 @@ Client: [live](../frontend/modules/live.md#the-chat-readable-over-the-video-and-
 
 ## Titles and the preview image (owner, 2026-11-07)
 
-**The decisions** ([backlog](../backlog.d/live-titles-and-a-preview-on-the-feed-card.md)): a live
+**The decisions** (owner, 2026-11-07): a live
 carries an optional title (at most 80 characters, entered before the start, editable on air; none
 reads "X est en live"); the feed shows a refreshed still of the stream, sealed under a key derived from the live key,
 with the EN DIRECT badge, the viewer count and the title, as ONE large card or a carousel of cards;
 the preview takes no viewer seat and adds no per-viewer poll; the follower push carries the title.
+
+**Decided by the lead, all reversible:** JPEG only (WebKit has no WebP encoder); the card badge
+reads "EN DIRECT" where the viewer keeps "LIVE"; the title is the push's BODY (the notification's
+title stays "X est en live"); at most 256 KiB per preview; a preview shares the ingest concurrency
+bound with segments; a muted account cannot edit a title; an account erasure clears the title.
+
+**Decided at the review of #3135 (coordinator, 2026-11-07, all reversible):** the list serves a
+POSTER key, `HKDF-SHA256(live key, salt = live id, info = "canari-live-poster-v1")`, only with a
+poster - never the live key, which leaves only through the seated `GET /api/lives/:id`; ONE preview
+period, 16 s, served as `previewPeriodMs`: the broadcaster sends one every 8 segments, a card on
+screen re-reads the list once per period, the server refuses a second preview under 8 s; a poster
+is fetched once per name; the poster has its own nginx path and zones, 8 Mb/s per address; the list
+is `no-store`; a key that does not open logs once per outage; the title is edited by the
+broadcaster ONLY, an association's live included.
 
 **The title.** `lives."title"` (`varchar(80)`, NULL for none). `parseLiveTitle` is the one rule:
 absent or `null` is none; a non-string is `400 LIVE_TITLE_INVALID`; the string is trimmed, blank is
@@ -840,9 +854,12 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
 **Live replays (2026-11-09) change this for a live started while `live_replays_mode` is `on`**: its
-`lives."keepsReplay"` is fixed at the start (migration 156) and its end will publish a three-day
-replay instead of purging - [live-replays](../live-replays.md), the one design. Until WP-R2 ships,
-and for every live with `keepsReplay = false`, what follows holds unchanged. Every `[LIVE]` end
+`lives."keepsReplay"` is fixed at the start (migration 156); it keeps its last 3 hours instead of
+the trim's window, and once drained it publishes a three-day `kind = 'replay'` post instead of being
+purged, the purge then waiting for that post's deletion; a cut ends the replay at once, and a total
+cap ends the oldest early - [live-replays](../live-replays.md#wp-r2-as-built), the one design (WP-R2).
+For every live with `keepsReplay = false` - every live while the switch is off - what follows holds
+unchanged. Every `[LIVE]` end
 line (`ended by its broadcaster`, `ended by the sweep`) carries `duration=`, `segments=`, `stored=`
 and `replay=`, the only record of a past live's length (WP-R1).
 
@@ -883,7 +900,7 @@ The steps of a sweep:
    returned. A refusal keeps the row, invisible (410), for the next run; a `try` per live. A live
    with a segment still storing is kept too (above), and an OPEN live is never purged by this path;
 3. **the orphan reaper**: media-service lists the `live/` folders (`POST /media/internal/live-list`,
-   a delimiter listing, one entry per folder) and every folder with NO live row behind it is purged
+   one entry per folder of the live segment store; a folder goes with its last segment) and every folder with NO live row behind it is purged
    and proven empty the same way. A ROW-STATE RULE, NOT A CLOCK: a folder is written only under a
    reservation, which needs the row, and a row is deleted only once its prefix proved empty with no
    reservation in flight - so a folder with no row was written after its purge, by a store that

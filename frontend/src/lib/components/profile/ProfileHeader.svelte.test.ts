@@ -6,13 +6,14 @@
  * happy-dom has no layout, so what is asserted is the STRUCTURE that makes an overlap impossible:
  * the name and the action row are never nested, the container wraps, the identity may shrink
  * (`min-w-0`) and the action row keeps its width, nothing in the header is positioned absolutely,
- * and a chip never wraps inside its pill. The measured rendering at 360, 768 and 1100 px is in
+ * and the formation, campus and birthday are ONE muted line, no pills. The measured rendering at 360, 768 and 1100 px is in
  * docs/wiki/frontend/design-reference.md.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import ProfileHeader from './ProfileHeader.svelte';
-import ProfileChips from './ProfileChips.svelte';
+import ProfileSummaryLine from './ProfileSummaryLine.svelte';
+import { readFileSync } from 'node:fs';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
@@ -89,13 +90,14 @@ describe('ProfileHeader', () => {
   });
 });
 
-describe('ProfileChips', () => {
-  it('never wraps a chip inside its pill, and lets the row of chips wrap instead', () => {
+describe('ProfileSummaryLine', () => {
+  it('draws formation and campus as ONE muted text line, with no pill', () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
-    const app = mount(ProfileChips, {
+    const app = mount(ProfileSummaryLine, {
       target,
       props: {
+        userId: 'u1',
         profile: {
           cursus: [{ formation: 'ICM', promo: 2027 }],
           posts: [],
@@ -105,13 +107,32 @@ describe('ProfileChips', () => {
     });
     mounted.push(() => void unmount(app));
     flushSync();
-    const row = target.querySelector('[data-profile-chips]')!;
-    expect(row.className).toContain('flex-wrap');
-    const chips = Array.from(row.children);
-    expect(chips).toHaveLength(2);
-    for (const chip of chips) {
-      expect(chip.className).toContain('whitespace-nowrap');
-      expect(chip.className).not.toContain('uppercase');
-    }
+    const line = target.querySelector('[data-profile-summary]')!;
+    expect(line.tagName).toBe('P');
+    expect(line.textContent?.trim()).toMatch(/^ICM · /);
+    expect(line.className).toContain('text-text-muted');
+    expect(target.querySelector('.rounded-full')).toBeNull();
+  });
+
+  it('isolates the avatar box so an avatar badge stacks above the story ring', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ProfileHeader, {
+      target,
+      props: { userId: 'u1', name: 'A', avatarBadge: snippet('<button data-badge>x</button>') },
+    });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    const box = target.querySelector('[data-badge]')!.parentElement!;
+    expect(box.classList.contains('isolate')).toBe(true);
+    expect(box.classList.contains('relative')).toBe(true);
+  });
+
+  it('stacks the own-profile camera badge above the ring (z-10)', () => {
+    const page = readFileSync('src/routes/profile/(me)/+page.svelte', 'utf8');
+    const button = page.slice(page.indexOf('onclick={changeProfilePhoto}'));
+    expect(button.slice(0, button.indexOf('>')).replace(/\s+/g, ' ')).toMatch(
+      /absolute right-0 bottom-0 z-10 /
+    );
   });
 });

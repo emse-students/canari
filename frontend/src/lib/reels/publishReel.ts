@@ -12,6 +12,7 @@
  * error as its cause - typed at the throw, so the screen names where it stopped without reading a
  * message (`publishFailureMessage` reads the cause).
  */
+import type { InstitutionReach } from '$lib/posts/institutionReach';
 import {
   MediaService,
   preparePostMedia,
@@ -106,6 +107,8 @@ export interface PublishReelInput {
   identity: string;
   /** "Entre étudiants" (owner, 2026-11-04): set by the step only where it is offered. */
   studentsOnly?: boolean;
+  /** The reach of an institution's post (owner, 2026-11-10): set by the step only where offered. */
+  reach?: InstitutionReach;
   /** The server's cap (`GET /api/posts/reel-limits`). */
   maxDurationMs: number;
   /**
@@ -140,6 +143,8 @@ export interface PublishPhotoInput {
   identity: string;
   /** "Entre étudiants", as on a reel. */
   studentsOnly?: boolean;
+  /** The reach of an institution's post, as on a reel. */
+  reach?: InstitutionReach;
   onStage?: (stage: PublishStage) => void;
 }
 
@@ -235,9 +240,10 @@ export async function publishReel(
       enter('createPost');
       const post = await deps.createPost({
         markdown: caption,
-        media: [ref],
+        media: [prepared.loudness ? { ...ref, loudness: prepared.loudness } : ref],
         ...postIdentityFields(identity),
         ...(input.studentsOnly ? { studentsOnly: true } : {}),
+        ...(input.reach ? { reach: input.reach } : {}),
       });
       console.debug(`[reel-publish] published ${post.id} as a post`);
       return post;
@@ -254,7 +260,12 @@ export async function publishReel(
       { width: prepared.width, height: prepared.height },
       FEED_REEL_UPLOAD_CLASS
     );
-    const ref: MediaRef = placeholder ? { ...uploaded, placeholder } : uploaded;
+    // The measured sound rides on the ref, so the post's media AND the chats adopting it carry it.
+    const ref: MediaRef = {
+      ...uploaded,
+      ...(placeholder ? { placeholder } : {}),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
+    };
     const durationMs = declaredReelDurationMs(prepared.durationSeconds, maxDurationMs);
     // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the
     // post's fate, the conversations of the same take have their file.
@@ -275,6 +286,7 @@ export async function publishReel(
       media: [ref],
       ...postIdentityFields(identity),
       ...(input.studentsOnly ? { studentsOnly: true } : {}),
+      ...(input.reach ? { reach: input.reach } : {}),
     });
     console.debug(`[reel-publish] published ${post.id}`);
     return post;
@@ -312,6 +324,7 @@ export async function publishCameraPhoto(
       media: [ref],
       ...postIdentityFields(identity),
       ...(input.studentsOnly ? { studentsOnly: true } : {}),
+      ...(input.reach ? { reach: input.reach } : {}),
     });
   } catch (err) {
     throw new ReelPublishError(stage, { cause: err });

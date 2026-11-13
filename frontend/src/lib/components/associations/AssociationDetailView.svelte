@@ -25,6 +25,7 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import { getBellLevel, type BellLevel } from '$lib/follows/bell';
   import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import {
     followAssociationLedgered,
@@ -144,6 +145,14 @@
   );
 
   let following = $state(false);
+  /** The bell's level, asked with the sub-reads and handed to the bell that mounts after them. */
+  let bellLevel: Promise<BellLevel> | undefined;
+  /** Hands the bell its head-start read ONCE and forgets it (a remount asks for itself). */
+  function takeBellLevel(): Promise<BellLevel> | undefined {
+    const read = bellLevel;
+    bellLevel = undefined;
+    return read;
+  }
   let followLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
@@ -292,6 +301,19 @@
       // behind a label.
       const uid = currentUserId();
       let followStatus: { following: boolean };
+      // THE BELL'S LEVEL LEAVES WITH THEM TOO: the bell mounts when this batch has ended, and used
+      // to ask only then - one more round trip behind a control.
+      // Only for a signed-in reader: the bell is not drawn for a guest, who must not ask.
+      if (uid) {
+        const bellRead = getBellLevel('association', asso.id);
+        // The bell reports its own failure (a disabled control) when it takes this read.
+        bellRead.catch((e: unknown) =>
+          Log.d('AssociationDetailView: bell head start refused, the bell reports it', e)
+        );
+        bellLevel = bellRead;
+      } else {
+        bellLevel = undefined;
+      }
       [members, products, partnerships, followStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
@@ -496,7 +518,7 @@
                 it is offered followed or not, since an association's posts reach its whole
                 audience (L7).
               -->
-              <AccountBell kind="association" targetId={asso.id} />
+              <AccountBell kind="association" targetId={asso.id} takeInitial={takeBellLevel} />
             {/if}
             {#if myMembership}
               <Button

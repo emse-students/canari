@@ -38,6 +38,14 @@ export function liveMentionRoster(
 }
 
 /**
+ * Whether the last audience read failed. ONE WARNING PER OUTAGE, not one per key typed while the
+ * audience cannot be read, re-armed by the next answer (review of #3402). Module-wide on purpose:
+ * the live panel rebuilds its filter on every chat line, and a flag inside the closure was reset
+ * with it.
+ */
+let audienceFailing = false;
+
+/**
  * The picker's filter for a NAME SEARCH: the accounts the directory found, narrowed to those the live
  * lets a mention reach (`audienceOf` is the server's `mention-audience`). A failed ask offers
  * NOBODY from the directory - never an unfiltered list - and says so; the roster rows stay.
@@ -51,9 +59,13 @@ export function liveAudienceFilter(
       const allowed = new Set(
         (await audienceOf(users.map((u) => u.id))).map((id) => id.toLowerCase())
       );
+      audienceFailing = false;
       return users.filter((u) => allowed.has(u.id.toLowerCase()));
     } catch (e) {
-      console.warn('[LIVE_CHAT] the audience of a mention search could not be read', e);
+      if (!audienceFailing) {
+        console.warn('[LIVE_CHAT] the audience of a mention search could not be read', e);
+      } else console.debug('[LIVE_CHAT] the audience of a mention search still cannot be read');
+      audienceFailing = true;
       return [];
     }
   };

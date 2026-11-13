@@ -77,7 +77,8 @@ export async function memberRepostContext(
               (NOT COALESCE(posts.anonymous, false)
                 AND NOT COALESCE(posts."hiddenByModeration", false)
                 AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
-                AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
+                AND (posts."expiresAt" IS NULL OR posts."expiresAt" > now())
+                AND posts.kind <> 'replay'
                 AND NOT (posts."associationId" IS NULL AND posts."authorId" = $2)
                 AND ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)}
                 AND ${memberRepostablePostSql('posts')}

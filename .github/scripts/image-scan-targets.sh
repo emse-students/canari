@@ -4,11 +4,17 @@
 # A hand list is the failure mode `lib/ceiling.sh` already paid for: an image added to a compose file
 # and not to the list is an image nothing scans, and the symptom is an absence.
 #
-# Two sources, one image reference per line, sorted and unique:
+# Two sources, one image reference (or `dockerfile:<path>`, below) per line, sorted and unique:
 #
 #   1. THE RUNTIME BASE of every `infrastructure/local/Dockerfile.*` - the LAST `FROM`, the stage that
 #      ships. A builder stage (`rust:slim-bookworm`, the bun builder) never reaches an estate, so a
 #      CVE in it is not one an estate carries.
+#      EXCEPT A SHIPPED STAGE THAT UPGRADES ITS BASE'S PACKAGES (`apk upgrade`, `apt-get upgrade`):
+#      its base is precisely what it does not run, and scanning that reference would report what the
+#      upgrade fixed. Such a Dockerfile is listed as `dockerfile:<path from the root>`, and
+#      `image-scan.sh` builds it and scans the result (the patched adminer, owner 2026-11-13). The
+#      rule reads the file, so the next one is covered on the day it is written. (A shipped stage that
+#      only ADDS packages keeps its base reference: what it adds is not scanned - a known boundary.)
 #   2. EVERY THIRD-PARTY `image:` of the compose files an estate runs - production's, dev's and the
 #      identity provider's. `${VAR:-default}` is read as its default, which is what the file runs
 #      when the host sets nothing. This repository's OWN images (`ghcr.io/emse-students/canari/*`)
@@ -36,8 +42,13 @@ done
 
 list="$(
   for f in "${dockerfiles[@]}"; do
-    # The last FROM is the shipped stage; `--platform=...` and `AS name` are not the reference.
-    awk 'toupper($1) == "FROM" { for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break } } END { print ref }' "$f"
+    # The last FROM is the shipped stage; `--platform=...` and `AS name` are not the reference. A
+    # package upgrade after it (comments aside) makes the built image, not the base, the target.
+    awk -v path="${f#"$root"/}" '
+      toupper($1) == "FROM" { for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break }; upgrades = 0; next }
+      $1 !~ /^#/ && /(^|[^A-Za-z0-9_-])(apk|apt-get|apt)[[:space:]]([^#]*[[:space:]])?(upgrade|dist-upgrade)([[:space:]]|$)/ { upgrades = 1 }
+      END { if (upgrades) print "dockerfile:" path; else print ref }
+    ' "$f"
   done
   for f in "${composes[@]}"; do
     awk '$1 == "image:" { print $2 }' "$f" |

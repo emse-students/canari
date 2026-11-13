@@ -6,6 +6,7 @@
   import { getRecentEmojis, persistRecentEmoji } from '$lib/components/messages/emojiPickerShared';
   import EmojiGrid from '$lib/components/messages/EmojiGrid.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     open: boolean;
@@ -19,6 +20,7 @@
   }
 
   let { open, anchor, onSelect }: Props = $props();
+  const layer = useOverlayLayer(() => open, 'ComposerEmojiPicker');
 
   let panelEl = $state<HTMLElement | null>(null);
   let unbindPosition: (() => void) | null = null;
@@ -67,7 +69,8 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 200, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-[min(92vw,22rem)] flex-col overflow-hidden rounded-2xl"
+    style:z-index={layer.z}
+    class="glass-chrome border-cn-border fixed flex w-[min(92vw,22rem)] flex-col overflow-hidden rounded-2xl"
   >
     {#if recentEmojis.length > 0}
       <div

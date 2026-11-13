@@ -37,11 +37,25 @@ describe('dismissGroup / undismissGroup', () => {
 });
 
 describe('getDismissedGroups', () => {
-  it('returns [] and SAYS so when the read fails - never purge on a doubt', async () => {
+  it('returns the list it was answered', async () => {
+    const api = makeApi(async () => Response.json(['g1', 7, 'g2']));
+    expect(await api.getDismissedGroups()).toEqual({ kind: 'listed', groupIds: ['g1', 'g2'] });
+  });
+
+  /**
+   * The read is started alongside the group list and consulted only when that list may be
+   * believed, so it must not speak for itself: a dead-link boot would warn about a list nothing
+   * reads. It CLASSIFIES, and discovery says the failure where it uses the list.
+   */
+  it('classifies a refusal and a transport failure, and logs neither itself', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const api = makeApi(async () => new Response('boom', { status: 500 }));
-    expect(await api.getDismissedGroups()).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('500'));
+    const refusing = makeApi(async () => new Response('boom', { status: 500 }));
+    expect(await refusing.getDismissedGroups()).toEqual({ kind: 'refused', status: 500 });
+    const unreachable = makeApi(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    expect(await unreachable.getDismissedGroups()).toMatchObject({ kind: 'failed' });
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });

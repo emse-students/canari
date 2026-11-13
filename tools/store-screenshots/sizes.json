@@ -1,0 +1,36 @@
+{
+  "_doc": "Output sizes per store, from docs/wiki/store-listings.md section 3 and Apple's page read 2026-11-09: the ONLY mandatory iPhone class is Dynamic Island (medium), 1206x2622 (or 1179x2556); the 6.9in and 6.5in sets are optional and not produced (owner: only the mandatory ones). No alpha channel anywhere: lib.mjs flattens.",
+  "sizes": [
+    {
+      "id": "apple-6.3",
+      "store": "apple",
+      "width": 1206,
+      "height": 2622,
+      "kind": "phone"
+    },
+    {
+      "id": "play-phone",
+      "store": "play",
+      "width": 1080,
+      "height": 1920,
+      "kind": "phone"
+    },
+    {
+      "id": "play-feature",
+      "store": "play",
+      "width": 1024,
+      "height": 500,
+      "kind": "feature"
+    }
+  ],
+  "capture": {
+    "cssWidth": 390,
+    "cssHeight": 1000,
+    "deviceScaleFactor": 3
+  },
+  "look": {
+    "field": "#f6c232",
+    "ink": "#151b2c",
+    "font": "Fredoka"
+  }
+}

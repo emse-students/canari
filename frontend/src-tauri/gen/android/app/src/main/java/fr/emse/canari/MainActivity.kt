@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
+import android.view.KeyEvent
+import android.view.OrientationEventListener
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -23,6 +25,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import fr.emse.canari.camera.CameraKeyAction
+import fr.emse.canari.camera.angleWorthSending
+import fr.emse.canari.camera.cameraKeyAction
 import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
@@ -217,6 +222,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(BackBridge(), "canariBack")
         webView.addJavascriptInterface(AudioBridge(), "canariAudio")
         webView.addJavascriptInterface(OrientationBridge(), "canariOrientation")
+        webView.addJavascriptInterface(CameraBridge(), "canariCamera")
         // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
         // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
@@ -290,6 +296,117 @@ class MainActivity : TauriActivity() {
             val name = if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape" else "portrait"
             Log.i("MainActivity", "configuration changed in place: $name (activity not recreated)")
         }
+    }
+
+    /**
+     * Whether the page's camera is live and in front (`cameraHardware.svelte.ts`): the volume keys are
+     * its shutter and the sensor reports the phone's angle. Set by [CameraBridge], cleared by it and by
+     * `onPause` - never by a timer. Read on the UI thread by `dispatchKeyEvent`.
+     */
+    @Volatile private var cameraArmed = false
+
+    /**
+     * The volume keys whose `down` the camera took and whose `up` has not come: their repeats and
+     * their `up` stay the camera's even after a disarm ([cameraKeyAction]). UI thread only.
+     */
+    private val cameraKeysHeld = mutableSetOf<Int>()
+
+    /** The angle last sent to the page, null until the first reading of this arming. */
+    private var cameraAngleSent: Int? = null
+
+    /**
+     * The phone's angle while the camera is armed: `OrientationEventListener` reads the accelerometer
+     * whatever the rotation lock says, as a camera must (the screen itself stays portrait). Created on
+     * the first arming, enabled only while armed.
+     */
+    private var cameraAngleListener: OrientationEventListener? = null
+
+    /**
+     * `window.canariCamera`: `on` while the page's camera preview is live and in front, `off` at its
+     * teardown and at every page load (screen-orientation.md, "The camera keeps its layout"). Anything
+     * else is logged and ignored.
+     */
+    private inner class CameraBridge {
+        @JavascriptInterface
+        fun set(state: String) {
+            val on = when (state) {
+                "on" -> true
+                "off" -> false
+                else -> {
+                    Log.w("MainActivity", "canariCamera: unknown state '$state' ignored")
+                    return
+                }
+            }
+            runOnUiThread { applyCameraArmed(on, "the page") }
+        }
+    }
+
+    /** Arms or disarms the volume shutter and the angle sensor together; one line per change. */
+    private fun applyCameraArmed(on: Boolean, why: String) {
+        if (on == cameraArmed) return
+        cameraArmed = on
+        Log.i("MainActivity", "camera ${if (on) "armed" else "disarmed"} by $why: volume keys ${if (on) "are the shutter" else "back to the system"}")
+        if (on) {
+            cameraAngleSent = null
+            val listener = cameraAngleListener ?: object : OrientationEventListener(this) {
+                override fun onOrientationChanged(orientation: Int) {
+                    if (!cameraArmed || !angleWorthSending(cameraAngleSent, orientation)) return
+                    cameraAngleSent = orientation
+                    pushCameraEvent("canari:device-angle", "{degrees:$orientation}")
+                }
+            }.also { cameraAngleListener = it }
+            if (listener.canDetectOrientation()) {
+                listener.enable()
+            } else {
+                Log.w("MainActivity", "camera armed with no orientation sensor: the glyphs stay upright")
+            }
+        } else {
+            cameraAngleListener?.disable()
+        }
+    }
+
+    /** One camera event to the page (`cameraHardware.svelte.ts`); `detail` is a JS object literal of numbers or quoted words. */
+    private fun pushCameraEvent(name: String, detail: String) {
+        val webView = liveWebView ?: run {
+            Log.w("MainActivity", "$name with no WebView - dropped")
+            return
+        }
+        try {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('$name',{detail:$detail}));", null)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "$name not delivered to the page: ${e.message}")
+        }
+    }
+
+    /**
+     * A VOLUME KEY IS THE CAMERA'S SHUTTER WHILE IT IS ARMED, and the system volume does not move:
+     * the activity sees every key before the WebView and the system, so the press and the release are
+     * consumed here and sent to the page; a held key's repeats are swallowed. Everywhere else, and for
+     * every other key, the platform's own path runs.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val held = event.keyCode in cameraKeysHeld
+        val action = cameraKeyAction(cameraArmed, held, event.keyCode, event.action, event.repeatCount)
+        if (event.action == KeyEvent.ACTION_UP) cameraKeysHeld.remove(event.keyCode)
+        when (action) {
+            CameraKeyAction.PASS -> return super.dispatchKeyEvent(event)
+            CameraKeyAction.SWALLOW -> {
+                if (!cameraArmed && event.action == KeyEvent.ACTION_UP) {
+                    Log.d("MainActivity", "volume key ${event.keyCode} up after a disarm: swallowed, the page cancelled the hold")
+                }
+                return true
+            }
+            CameraKeyAction.PRESS -> {
+                cameraKeysHeld.add(event.keyCode)
+                Log.d("MainActivity", "volume key ${event.keyCode} down: the camera's shutter press")
+                pushCameraEvent("canari:camera-key", "{phase:'down'}")
+            }
+            CameraKeyAction.RELEASE -> {
+                Log.d("MainActivity", "volume key ${event.keyCode} up: the camera's shutter release")
+                pushCameraEvent("canari:camera-key", "{phase:'up'}")
+            }
+        }
+        return true
     }
 
     /**
@@ -568,6 +685,9 @@ class MainActivity : TauriActivity() {
     override fun onPause() {
         super.onPause()
         isInForeground = false
+        // No stale camera flag survives the app leaving the screen: the page re-arms it on its return
+        // if its camera is still live (`cameraHardware.svelte.ts`).
+        applyCameraArmed(false, "onPause")
         pushForeground(false)
         CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")

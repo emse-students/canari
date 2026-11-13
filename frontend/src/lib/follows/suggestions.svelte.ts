@@ -25,7 +25,7 @@ import {
   type SuggestedPerson,
   type SuggestionKind,
 } from './api';
-import { associationChipState, personChipState } from './followState.svelte';
+import { associationChipState, isTapSettling, personChipState } from './followState.svelte';
 
 /**
  * L12: "follows almost nobody" is fewer than this many follows in total (accepted person follows
@@ -44,8 +44,11 @@ export type SuggestionCard =
   | { kind: 'user'; id: string; person: SuggestedPerson }
   | { kind: 'association'; id: string; entity: SuggestedEntity };
 
-/** The feeds the carousel belongs to: Mon espace and Suivis (`POST_FEEDS` 'all' and 'followed'). */
-const CAROUSEL_FEEDS: readonly string[] = ['all', 'followed'];
+/**
+ * The feed the carousel belongs to: Pour toi alone (owner, 2026-11-10 - Campus and Associations are
+ * pure lists, nothing inserted between their posts).
+ */
+const CAROUSEL_FEEDS: readonly string[] = ['foryou'];
 
 /**
  * People and entities interleaved, a person first, at most `max` cards: neither source buries the
@@ -78,8 +81,8 @@ export type SuggestionPlacement = 'banner' | 'page' | 'inline';
 
 /**
  * THE ONE RULE OF WHERE (decision 3 and 7, the table "Where suggestions appear"):
- * - only in Mon espace and Suivis, and only while a card is left to act on;
- * - an EMPTY Suivis feed: the carousel is the page body;
+ * - only in Pour toi, and only while a card is left to act on;
+ * - an EMPTY Pour toi: the carousel is the page body;
  * - a reader who follows fewer than {@link ONBOARDING_FOLLOWS_BELOW} accounts: a banner at the top;
  * - otherwise once, after the {@link FEED_CAROUSEL_AFTER_POSTS}rd post.
  * One placement at a time: a reader never sees the same cards twice on one screen.
@@ -91,7 +94,7 @@ export function feedSuggestionPlacement(input: {
   openCards: number;
 }): SuggestionPlacement | null {
   if (!CAROUSEL_FEEDS.includes(input.feed) || input.openCards === 0) return null;
-  if (input.feed === 'followed' && input.postCount === 0) return 'page';
+  if (input.feed === 'foryou' && input.postCount === 0) return 'page';
   if (input.followingCount < ONBOARDING_FOLLOWS_BELOW) return 'banner';
   if (input.postCount >= FEED_CAROUSEL_AFTER_POSTS) return 'inline';
   return null;
@@ -103,6 +106,12 @@ const read = $state<{ data: FollowSuggestions | null; failed: boolean }>({
 });
 /** Cards dismissed in this session, `kind:id` - reactive, every carousel drops them at once. */
 const dismissed = new SvelteSet<string>();
+/**
+ * The card objects of the read in hand, built ONCE per read: a card keeps its identity while the
+ * list is filtered again, so a row's cards are not handed a new `card` prop (and their effects do
+ * not re-run) every time an unrelated ledger answer recomputes the list.
+ */
+let cardsOf: { people: SuggestedPerson[]; cards: SuggestionCard[] } | null = null;
 let epoch = 0;
 let asked = false;
 
@@ -114,6 +123,7 @@ export function resetSuggestions(): void {
   asked = false;
   read.data = null;
   read.failed = false;
+  cardsOf = null;
   dismissed.clear();
 }
 registerPerReaderCache(resetSuggestions);
@@ -140,10 +150,20 @@ export function suggestionsFollowingCount(): number | null {
   return read.data ? read.data.followingCount : null;
 }
 
-/** The feed's cards, the dismissed ones gone. Empty until read. */
+/**
+ * The feed's cards, the dismissed ones gone. Empty until read. PEOPLE ONLY (lead's decision,
+ * 2026-11-10, reversible - docs/wiki/engagement.md, WP-6): the carousel lives in Pour toi, which is
+ * people's posts only, so an entity card there would offer what the tab never shows. The read still
+ * carries the entities (`me/suggestions` is unchanged for the installed clients); they are left here.
+ */
 export function feedSuggestionCards(): SuggestionCard[] {
   if (!read.data) return [];
-  return interleaveCards(read.data).filter((c) => !dismissed.has(key(c.kind, c.id)));
+  const people = read.data.people;
+  if (cardsOf?.people !== people)
+    cardsOf = { people, cards: interleaveCards({ people, entities: [] }, Infinity) };
+  // Filtered BEFORE the cap: a card that leaves (followed, requested, dismissed) lets the next one the
+  // server sent slide in at the end of the row (owner, 2026-11-10) - the read carries up to 20 people.
+  return cardsOf!.cards.filter(cardDrawn).slice(0, CAROUSEL_CARDS_MAX);
 }
 
 /** Whether a card was dismissed in this session (the "Suivez aussi..." row reads it too). */
@@ -153,26 +173,28 @@ export function isSuggestionDismissed(kind: SuggestionKind, id: string): boolean
 
 /**
  * Whether a card is still drawn: not dismissed, and its "Suivre" still means something - a person
- * not followed (a request sent stays drawn, showing "Demande envoyee"), an entity not followed. An
+ * not followed or requested (a request removes the card, owner 2026-11-10), an entity not followed. An
  * answer not read yet keeps it drawn; a chip the ledger hides (a block, a membership) hides it.
  */
 export function cardDrawn(card: SuggestionCard): boolean {
   if (dismissed.has(key(card.kind, card.id))) return false;
+  // A follow still out keeps its card: it leaves only once the server said yes, so a refusal never
+  // makes it vanish and come back over the card that slid into its place.
+  if (isTapSettling(card.id)) return true;
   if (card.kind === 'user') {
     const s = personChipState(card.id);
-    return s === undefined || s === null || s === 'pending';
+    return s === undefined || s === null;
   }
   const s = associationChipState(card.id);
   return s === undefined || s === false;
 }
 
 /**
- * Whether a card is still OPEN - something left to do on it: drawn, and not a request already sent.
- * A carousel whose every card is followed or dismissed is hidden (the design's table).
+ * Whether a card is still OPEN - something left to do on it. Since a request removes its card (owner,
+ * 2026-11-10) that is exactly "drawn"; the name stays for the callers that ask the question.
  */
 export function cardOpen(card: SuggestionCard): boolean {
-  if (!cardDrawn(card)) return false;
-  return card.kind !== 'user' || personChipState(card.id) !== 'pending';
+  return cardDrawn(card);
 }
 
 /** The X: the card leaves every carousel at once; a refusal brings it back with a toast. */

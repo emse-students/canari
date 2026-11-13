@@ -70,7 +70,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
-import * as crypto from 'crypto';
+import { pipeline } from 'stream';
 import {
   MediaService,
   boundedSharp,
@@ -95,6 +95,7 @@ import {
   type LiveTrimResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
+import { subjectOfAccessToken } from './access-token';
 import { fetchLivesMode } from './lives-mode';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -197,52 +198,33 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // Auth helper - validates the shared HS256 JWT (same secret as chat-gateway)
+  // Auth helper - reads the account of an ACCESS token (`subjectOfAccessToken`: the signature, an
+  // expiry that is there and ahead, the type, the subject - the checks chat-gateway makes)
   // ---------------------------------------------------------------------------
+  //
+  // EVERY REFUSAL IS LOGGED HERE, with the check that refused. Nest logs no HttpException and this
+  // service has no exception filter, so without this line a 401 leaves nothing on the server. The
+  // token itself is never written.
   private verifyToken(req: Request): string {
-    const header = req.headers['authorization'] ?? '';
-    if (!header.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing Bearer token');
+    try {
+      const header = req.headers['authorization'] ?? '';
+      if (!header.startsWith('Bearer ')) {
+        throw new UnauthorizedException('Missing Bearer token');
+      }
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        // THIS service's misconfiguration, never the caller's: a 500, not a 401 a client would read
+        // as its session ending (the same as every guard on an unset secret, 2026-11-12).
+        this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
+        throw new InternalServerErrorException('JWT_SECRET is not configured');
+      }
+      return subjectOfAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
+    } catch (err) {
+      if (err instanceof UnauthorizedException) {
+        this.logger.warn(`[auth] request refused, 401: ${err.message}`);
+      }
+      throw err;
     }
-    const token = header.slice(7);
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      throw new UnauthorizedException('JWT_SECRET not configured');
-    }
-
-    const parts = token.split('.');
-    if (parts.length !== 3) throw new UnauthorizedException('Malformed JWT');
-
-    const [headerB64, payloadB64, sigB64] = parts;
-    const toSign = `${headerB64}.${payloadB64}`;
-
-    const hmac = crypto.createHmac('sha256', secret);
-    hmac.update(toSign);
-    const expected = hmac
-      .digest('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-
-    // CONSTANT TIME, because `!==` on an HMAC tells its caller how much of a guess was right.
-    // `timingSafeEqual` THROWS on a length mismatch rather than answering false, and a signature of
-    // the wrong length is a refusal either way - so the length is checked first and the buffers are
-    // built from the same encoding.
-    const expectedBuf = Buffer.from(expected, 'utf8');
-    const actualBuf = Buffer.from(sigB64, 'utf8');
-    if (
-      expectedBuf.length !== actualBuf.length ||
-      !crypto.timingSafeEqual(expectedBuf, actualBuf)
-    ) {
-      throw new UnauthorizedException('Invalid JWT signature');
-    }
-
-    const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-      throw new UnauthorizedException('JWT expired');
-    }
-
-    return payload.sub as string;
   }
 
   // ---------------------------------------------------------------------------
@@ -563,7 +545,7 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
-    return this.mediaService.getStorageStats();
+    return this.mediaService.getStorageStats(await this.liveSegments.listSegments());
   }
 
   // ---------------------------------------------------------------------------
@@ -1218,11 +1200,18 @@ export class MediaController {
     this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', size);
-    stream.on('error', (err) => {
+    // `pipeline`, not `pipe`: the segment is an OPEN FILE since WP-R3 (`LiveSegmentStore.get`), and
+    // `pipe` leaves its source open when the edge drops the connection - one descriptor held per
+    // aborted read until a garbage collection closes it. `pipeline` destroys both ends either way.
+    pipeline(stream, res, (err) => {
+      if (!err) return;
+      // The reader hung up (`ERR_STREAM_PREMATURE_CLOSE`): its answer, not a store failure.
+      if ((err as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        this.logger.debug(`[LIVE] segment ${liveId}/${name}: the reader closed before the end`);
+        return;
+      }
       this.logger.warn(`[LIVE] segment ${liveId}/${name} stream failed: ${String(err)}`);
-      res.destroy(err);
     });
-    stream.pipe(res);
   }
 
   // ---------------------------------------------------------------------------  // GET /media/:id

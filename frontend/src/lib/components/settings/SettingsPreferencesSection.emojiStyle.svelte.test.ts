@@ -10,6 +10,9 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/posts/api', () => ({
   getRepostSettings: vi.fn().mockResolvedValue({ allowReposts: true }),
   setRepostSettings: vi.fn(),
+  // Engagement WP-9: the section draws "Partager mon activite" too.
+  getActivitySettings: vi.fn().mockResolvedValue({ shareActivity: true }),
+  setActivitySettings: vi.fn(),
 }));
 
 import SettingsPreferencesSection from './SettingsPreferencesSection.svelte';

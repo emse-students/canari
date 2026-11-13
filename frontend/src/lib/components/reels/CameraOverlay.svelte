@@ -48,6 +48,7 @@
   } from '$lib/utils/historyOverlayStack';
   import { swipeBack } from '$lib/actions/swipeBack';
   import type { CameraSession } from '$lib/reels/cameraSession.svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** The composer asking: decides what the camera may take and where the take goes. */
@@ -75,6 +76,9 @@
     onpublished,
     chatFilms = false,
   }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => true, 'CameraOverlay');
 
   /**
    * Where the overlay stack holds entries (`isMobileOverlayLayout`) - the one predicate the swipe and
@@ -121,7 +125,8 @@
     onArm: () => (gestureArm = armHistoryOverlayGesture()),
     enabled: narrow,
   }}
-  class="fixed inset-0 z-(--z-viewer) bg-black text-white"
+  style:z-index={layer.z}
+  class="fixed inset-0 bg-black text-white"
   role="dialog"
   aria-modal="true"
   aria-label={m.chat_attach_menu_camera()}

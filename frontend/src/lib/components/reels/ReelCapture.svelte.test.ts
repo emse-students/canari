@@ -1100,7 +1100,12 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       oncapture,
       onpublished,
       onclose,
-      composerStart: { caption: 'hello', identity: '', studentsOnly: false },
+      composerStart: {
+        caption: 'hello',
+        identity: '',
+        studentsOnly: false,
+        reach: { spaces: [], public: null },
+      },
     });
 
     expect(tab.sheet).not.toBeNull();

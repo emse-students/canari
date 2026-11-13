@@ -107,7 +107,6 @@
 
   <ReportReasonDialog
     {open}
-    layer="critical"
     title={m.live_report_dialog_title()}
     {submitting}
     onSubmit={submit}

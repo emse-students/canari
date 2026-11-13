@@ -4,10 +4,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
-  import ProfileCorrectionRequest from '$lib/components/profile/ProfileCorrectionRequest.svelte';
+  import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
-  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import { useMyProfile } from '$lib/profile/myProfileModel.svelte';
   import { profileHubRows } from '$lib/profile/profileSections';
   import { m } from '$lib/paraglide/messages';
@@ -49,7 +47,7 @@
         onclick={changeProfilePhoto}
         title={m.profile_photo_change_label()}
         aria-label={m.profile_photo_change_label()}
-        class="tap-target bg-accent hover:bg-accent-hover text-on-accent shadow-accent/30 absolute right-0 bottom-0 flex h-8
+        class="tap-target bg-accent hover:bg-accent-hover text-on-accent shadow-accent/30 absolute right-0 bottom-0 z-10 flex h-8
  w-8 items-center justify-center
  rounded-full shadow-md ring-2 ring-white transition-all
  active:scale-95 dark:ring-(--cn-bg)"
@@ -58,10 +56,8 @@
       </button>
     {/snippet}
     {#snippet details()}
+      <ProfileSummaryLine userId={profile!.id} {profile} self />
       <ProfileMinesweeperBadge userId={profile!.id} />
-      <ProfileChips {profile} />
-      <ProfileBirthdayLine userId={profile!.id} self />
-      <ProfileCorrectionRequest />
     {/snippet}
     {#snippet actions()}
       <Button variant="secondary" href={resolve('/settings')} class="min-h-11 flex-1 sm:flex-none">

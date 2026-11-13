@@ -29,7 +29,11 @@ all `missing=seed`, Android `held=true`, iOS `held=false`.
   both being built in another pull request, are the evidence that names the branch. Read them
   before building anything here.
 
-**Owed.** (1) Once that report ships: one `GROUP BY refused` over a day of `[PUSH_BLIND]` on
+**Re-read 2026-11-12 (batch 22): the report shipped.** The `refused=` report and the counted
+fallback (#3027) and the resume fix (#3030) first ship in the stable `v1.6.5` (`git tag
+--contains`), so step (1) is readable now; nothing here is built until it has been read.
+
+**Owed.** (1) One `GROUP BY refused` over a day of `[PUSH_BLIND]` on
 production. (2) The bench run again with a key group of real size: the rig's `newdevice.mjs`
 cycles add a commit each. (3) The iPhone as the receiver: the same two runs with the NSE.
 

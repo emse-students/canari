@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
+  import { onDestroy } from 'svelte';
   import MentionDropdown from './MentionDropdown.svelte';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import {
@@ -116,6 +117,9 @@
     void mentionRoster;
     mention.refreshRoster();
   });
+
+  // A search or a name batch still on its way when the composer goes is dropped, never applied.
+  onDestroy(() => mention.dispose());
 
   const renderOptions = $derived({ markdownPreview });
 

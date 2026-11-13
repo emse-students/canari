@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import VideoPlayer from '../shared/VideoPlayer.svelte';
   import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
@@ -19,7 +20,6 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { formatFileSize } from '$lib/utils/fileSize';
 
   interface Props {
@@ -54,7 +54,7 @@
   let lightboxAttempt = $state(0);
 
   const dateFmt = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    new Intl.DateTimeFormat(intlLocale(), {
       day: '2-digit',
       month: 'short',
       year: '2-digit',
@@ -304,7 +304,13 @@
   >
     {#if lightboxUrl}
       {#if current.media.type === 'video'}
-        <VideoPlayer src={lightboxUrl} soundScope="local" class="h-full w-full" />
+        <VideoPlayer
+          src={lightboxUrl}
+          variant="conversation"
+          soundScope="local"
+          loudness={current.media.loudness}
+          class="h-full w-full"
+        />
       {:else}
         <img
           src={lightboxUrl}

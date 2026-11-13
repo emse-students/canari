@@ -49,6 +49,8 @@
   import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { shareLiveLink } from '$lib/live/shareLive';
+  import { replayFollows, replaysAvailable } from '$lib/live/replayAvailability';
+  import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
   import { grabPosterFrame } from '$lib/live/livePoster';
   import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
   import Button from '$lib/components/ui/Button.svelte';
@@ -57,6 +59,7 @@
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
+  import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
@@ -140,7 +143,9 @@
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
     console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
-    const ok = await showConfirm(m.live_end_confirm(), {
+    // The promise of a replay is made only to a live long enough to leave one (`replayFollows`).
+    const keepsReplay = replayFollows(serverLiveReplaysMode(), broadcast.elapsedMs());
+    const ok = await showConfirm(keepsReplay ? m.live_end_confirm_replay() : m.live_end_confirm(), {
       danger: true,
       confirmLabel: m.live_end_confirm_button(),
       cancelLabel: m.live_end_keep(),
@@ -316,9 +321,20 @@
     failed: m.live_limits_failed,
   };
 
+  /**
+   * What the broadcaster's own end says: "Rien n'en est gardé" is true only without a replay - with
+   * one (a live of at least 30 s while replays are on) it says the replay is visible for 3 days. The
+   * length is the last second the screen counted on air.
+   */
+  function endedByBroadcasterText(): string {
+    return replayFollows(serverLiveReplaysMode(), elapsedMs)
+      ? m.live_ended_broadcaster_replay()
+      : m.live_ended_broadcaster();
+  }
+
   // A moderation cut has its own TITLE and no sentence under it, so it is not in this table.
   const END_TEXT: Record<Exclude<LiveEndCause, 'cut'>, () => string> = {
-    broadcaster: m.live_ended_broadcaster,
+    broadcaster: endedByBroadcasterText,
     server: m.live_ended_server,
     'server-while-away': m.live_ended_server_away,
     failed: m.live_ended_failed,
@@ -335,8 +351,6 @@
 
   const pill =
     'inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50';
-  const iconButton =
-    'ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-accent-icon';
 </script>
 
 <!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS (previewDoubleTap.ts), only while the lens button
@@ -466,16 +480,9 @@
         {/if}
       </div>
     {:else}
-      <button
-        type="button"
-        class={iconButton}
-        aria-label={m.common_close_label()}
-        title={m.common_close_label()}
-        onclick={close}
-        data-live-close
-      >
+      <CameraControlButton label={m.common_close_label()} onclick={close} data-live-close>
         <X size={24} strokeWidth={2.5} />
-      </button>
+      </CameraControlButton>
     {/if}
 
     <div class="flex shrink-0 items-center gap-2">
@@ -483,16 +490,9 @@
         <RotateButton onrotate={orientation.rotate} />
       {/if}
       {#if flipAllowed}
-        <button
-          type="button"
-          class={iconButton}
-          aria-label={m.reels_camera_switch()}
-          title={m.reels_camera_switch()}
-          onclick={flip}
-          data-live-switch
-        >
+        <CameraControlButton label={m.reels_camera_switch()} onclick={flip} data-live-switch>
           <SwitchCamera size={22} strokeWidth={2.25} />
-        </button>
+        </CameraControlButton>
       {/if}
       {#if onAir}
         <!-- The on-air controls, together at the top right: share the link, show or hide the chat
@@ -500,23 +500,17 @@
              End - destructive, so it asks (`confirmEnd`). -->
         {#if broadcast.liveId}
           {@const sharedId = broadcast.liveId}
-          <button
-            type="button"
-            class={iconButton}
-            aria-label={m.live_share_label()}
-            title={m.live_share_label()}
+          <CameraControlButton
+            label={m.live_share_label()}
             onclick={() => shareLiveLink(sharedId)}
             data-live-share
           >
             <Share2 size={20} strokeWidth={2.25} />
-          </button>
+          </CameraControlButton>
         {/if}
-        <button
-          type="button"
-          class={iconButton}
-          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          aria-pressed={chatOpen}
+        <CameraControlButton
+          label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          pressed={chatOpen}
           onclick={() => (chatOpen = !chatOpen)}
           data-live-chat-toggle
         >
@@ -525,7 +519,7 @@
           {:else}
             <MessageCircleOff size={20} strokeWidth={2.25} />
           {/if}
-        </button>
+        </CameraControlButton>
         <!-- A compact X like the other controls, tinted red because it is destructive; its name is
              "Terminer" and the confirmation stays. -->
         <button
@@ -613,7 +607,13 @@
       <ul class="flex flex-col gap-2 text-sm text-white/90">
         <li class="flex items-start gap-2.5">
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
-          {associationId ? m.live_rule_audience_association() : m.live_rule_audience_member()}
+          {#if replaysAvailable(serverLiveReplaysMode())}
+            {associationId
+              ? m.live_rule_audience_association_replay()
+              : m.live_rule_audience_member_replay()}
+          {:else}
+            {associationId ? m.live_rule_audience_association() : m.live_rule_audience_member()}
+          {/if}
         </li>
         <li class="flex items-start gap-2.5">
           <ShieldAlert size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />

@@ -376,6 +376,8 @@ describe('POST /api/internal/associations/lydia-callback-key - core-service only
     baseUrl = await app.getUrl();
   });
   afterAll(async () => {
+    // Sockets a test left idle or half-read must not outlive the worker (open handle at teardown).
+    app.getHttpServer().closeAllConnections();
     await app.close();
     process.env.INTERNAL_SECRET = previousInternal;
   });

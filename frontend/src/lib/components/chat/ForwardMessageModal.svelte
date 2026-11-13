@@ -9,6 +9,7 @@
     shareCandidates,
     type ShareCandidate,
     type WorkspaceLike,
+    forwardPickerOrder,
   } from '$lib/sharing/shareDestinations';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { Conversation } from '$lib/types';
@@ -80,7 +81,9 @@
   });
 
   // All threads (DMs, groups, channels) except the source conversation, never a raw id; a salon is
-  // labelled with its community, since several salons share a name (`shareCandidates`).
+  // labelled with its community, since several salons share a name (`shareCandidates`). MOST RECENT
+  // FIRST, like the conversation list and every other share surface, so the conversation the member
+  // just left leads; a typed search is a list to scan, so it reads alphabetically (lead, 2026-11-12).
   const candidates = $derived(
     shareCandidates({
       conversations,
@@ -89,7 +92,7 @@
       peerNames: resolvedPeerNames,
       query,
       excludeKey,
-      order: 'alphabetical',
+      order: forwardPickerOrder(query),
       preselectedId,
     })
   );

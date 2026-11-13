@@ -49,6 +49,21 @@ already-cached media while every newly received image 401'd - a bug that reads a
 appears after a reload", because a reload is what mints a fresh token. `authToken` still travels as
 a prop, but only as a signal that the session is authenticated.
 
+### What the service asks of a bearer token (2026-11-12)
+
+One function reads it, `subjectOfAccessToken` (`src/media/access-token.ts`), with the checks
+chat-gateway makes on a socket (`decode_access_claims`), so one token is accepted or refused the
+same way by both: the HS256 signature, compared in constant time; an `exp` that is THERE and ahead
+(a token naming no expiry is refused, not read as one that never expires); a `type` that is absent
+or `access` (a refresh token never stands in for an access token); a non-empty string `sub`. A
+payload that is not a JSON object is a 401 like the rest. Every access token core-service signs
+carries `exp` and `type: 'access'`.
+
+**A refusal is logged by the controller** (`verifyToken`): one `warn`,
+`[auth] request refused, 401: <the check that refused>`, never the token. Nest logs no
+`HttpException` and this service has no exception filter, so that line is all a 401 leaves here
+(`media.controller.refusal-log.spec.ts`).
+
 ### A load on the wire stays joinable, and the pool's URL is the one handed out (2026-10-05)
 
 **The report.** On the web, a picture the member had just SENT drew as its blurred ThumbHash with
@@ -684,7 +699,7 @@ exercised only by gate 3 of the design (S5), not by these specs. (5) Part size, 
 
 **Why.** A single-block blob ends with the one GCM tag that authenticates all of it, so no byte may
 be used before the last one has arrived: a 28 MB reel shows a black box until it is all here
-([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken),
+([reels](../frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29),
 R2). Sealing it in independently authenticated segments is what lets segment 0 play while segment 1
 is on the wire.
 
@@ -869,6 +884,7 @@ boot (`ensureDirSync`).
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
 | `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
 | `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
+| `LIVE_SEGMENTS_DIR`                     | no       | The live segments' own store (default `./live_segments`); both estates mount the `live_segments` volume at `/app/live_segments` - never backed up ([live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)) |
 | `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on both estates since 2026-10-30; `lives_mode` closes the routes at runtime ([lives](lives.md)) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself

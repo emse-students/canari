@@ -6,6 +6,7 @@
   import { isOverlayLayout, onViewportChange, OVERLAY_LAYOUT_QUERY } from '$lib/utils/viewport';
   import { m } from '$lib/paraglide/messages';
   import type { Snippet } from 'svelte';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
 
   interface Props {
     /** Whether the panel is showing. The parent owns WHICH one panel that is. */
@@ -31,6 +32,9 @@
   }
 
   let { open, title, onClose, column = false, actions, children }: Props = $props();
+
+  /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
+  const layer = useOverlayLayer(() => open, 'SidePanel');
 
   /**
    * Whether the viewport is one where a panel is a drawer (below `xl`). Followed, not read once: a
@@ -116,7 +120,8 @@
        becomes a column is always a drawer, and always owes one. -->
   <button
     type="button"
-    class="fixed inset-0 z-(--z-side-panel-scrim) bg-black/40 {column ? 'xl:hidden' : ''}"
+    style:z-index={layer.z}
+    class="fixed inset-0 bg-black/40 {column ? 'xl:hidden' : ''}"
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
     use:portalWhile={escapes}
@@ -125,6 +130,7 @@
   ></button>
 
   <aside
+    style:--overlay-z={layer.zAbove}
     class="side-panel bg-cn-surface flex flex-col {column ? 'side-panel-column' : ''}"
     use:portalWhile={escapes}
     use:coversScreen={escapes}

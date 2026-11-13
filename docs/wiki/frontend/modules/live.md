@@ -496,7 +496,7 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 ### What stacks over the viewer (2026-11-07)
 
-The viewer sits on `--z-viewer` (300), above `--z-modal` (280). **One rule, `utils/viewerLayer.ts`:** whatever opens over a full-screen viewer takes `--z-viewer-dialog` (305), and a component says so by `markViewerLayer()` in its own initialisation, which `Modal` and `ModalOverlay` read. The live's own dialogs (report, chat-line report, block confirmation) are on `critical` (320) and clear it already. **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
+**Since 2026-11-13 the viewer and what opens over it are on the overlay stack (`utils/overlayStack.ts`): whatever opens later is on top, with no rung and no mark. (The text below is the 2026-11-07 history, when `utils/viewerLayer.ts` and `--z-viewer-dialog` did this.)** **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
 
 ### The server's kill switch hides the live surfaces (2026-10-21)
 
@@ -796,7 +796,7 @@ never one line each; the key and segment bytes never.
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
 with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
-(read on the iPhone in check Y); **a live now has its own page, `/lives/<id>`** (2026-10-31): the Share button of both screens shares it (`live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device), it is claimed as an app link (`/lives/*` in `appSiteAssociation.ts`, `tauri.conf.json`, the Android manifest) and it is where `fr.emse.canari://live/<id>`, the "X est en live" push, lands. The page opens the viewer; a 404/410 (ended, or not visible to the reader - the server answers both alike) reads "Ce live est terminé", never a raw error (`live/liveRoute.ts`). **The push skips devices known to run a build below `1.5.4`** (the lives floor): social-service puts `minAppVersion` in the push data, chat-delivery's `sendPushToUser` drops tokens whose `key_package.deviceAppVersion` is below it and strips the key; a device whose build was never reported is kept (and counted in the log). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
+(read on the iPhone in check Y); **a live now has its own page, `/lives/<id>`** (2026-10-31): the Share button of both screens shares it (`live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device), it is claimed as an app link (`/lives/*` in `appSiteAssociation.ts`, `tauri.conf.json`, the Android manifest) and it is where `fr.emse.canari://live/<id>`, the "X est en live" push, lands. The page opens the viewer; a 404/410 (ended, or not visible to the reader - the server answers both alike) reads "Ce live est terminé", never a raw error (`live/liveRoute.ts`). **The push skips devices known to run a build below `1.5.4`** (the lives floor): social-service puts `minAppVersion` in the push data (since 2026-11-10 from the key's floor in `notification-client-floor.ts`, [one table for every key](../../legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)), chat-delivery's `sendPushToUser` drops tokens whose `key_package.deviceAppVersion` is below it and strips the key; a device whose build was never reported is kept (and counted in the log). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
 
 ## The broadcaster (as built)
 
@@ -988,7 +988,7 @@ for a broadcaster with no reported live (there is no per-account staff read; the
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
 `Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
 (`getSavedUserId() === live.broadcasterId`). It opens the posts' `ReportReasonDialog` (one reason list)
-with `createReport('live', live.id, reason)`; the dialog is raised on the `critical` layer through the
+with `createReport('live', live.id, reason)`; the dialog was raised on the `critical` layer through the (since retired: the overlay stack puts what opens later on top)
 new `layer` prop of `Modal`/`ReportReasonDialog`, because `--z-viewer` sits ABOVE `--z-modal` and a plain
 modal would open behind the live it is about. Outcomes by TYPE, never by message: `409 ALREADY_REPORTED`
 ("already reported", closes), `404 LIVE_NOT_FOUND` (`ModerationApiError.isLiveNotFound`: "the live is
@@ -1361,7 +1361,9 @@ The microphone of a live or a reel is asked for ONE channel (`REEL_AUDIO_CONSTRA
 `MediaRecorder` wrote as a stereo file playing on one side only (owner, 2026-11-09). Nothing downstream changes the layout
 (the transcode keeps the source's channel count, the player uses no Web Audio splitter or panner). Every capture logs one
 line, `audio layout: mono|stereo|... (ch=N)` (`utils/audioLayout.ts`); a `stereo` answer to the mono request is the case to read
-on the bench phones, see [the backlog entry](../../backlog.d/p2-a-phone-microphone-may-answer-two-channels-with-one-silent.md).
+on the bench phones, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else). Media already published
+with a silent side are left as they are: a playback upmix would decode and measure every file on
+every play, for few files, and live replays are not kept.
 
 ## Mentions in the chat (owner, 2026-11-09)
 

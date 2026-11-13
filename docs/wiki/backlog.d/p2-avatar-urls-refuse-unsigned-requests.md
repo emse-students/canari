@@ -28,16 +28,20 @@ since phase 2 shows those installs initials until they update. Also:
 - `origin=native` and `origin=web` split the residue: a `web` line after the deploy is a page that
   builds the URL by hand (a defect - `avatarUrl.test.ts` should have caught it), not an old build.
 - **`access=unsigned via=direct` must be ZERO.** It is a service on the Docker network calling
-  without `x-internal-secret`, which no client upgrade fixes. Known caller to check: social-service's
-  public roster relay (`GET /api/public/members/:memberId/avatar`, pull request #2954), whose fetch
-  to core must send `x-internal-secret` before phase 2 - phase 1 accepts it unsigned.
+  without `x-internal-secret`, which no client upgrade fixes. The known caller, social-service's
+  public roster relay (`GET /api/public/members/:memberId/avatar`, #2954), sends it
+  (`internalCoreRequestConfig`; `public.controller.spec.ts`, "carries x-internal-secret when the
+  secret is set"; re-read 2026-11-12).
 - **The count only sees what reaches core.** On the apps domain the edge answers a cached entry
   without asking the origin (see below), so `access=unsigned` UNDER-counts there: read it as a
   floor, never as the population.
 
 ### The cold-avatar cost - owed BEFORE the phase-1 stable
 
-**This cost starts with phase 1, not phase 2.** The URL carries the viewer's token, so it is
+**Re-read 2026-11-12: phase 1 SHIPPED in `v1.6.3` (#2966, `git tag --contains`) without this
+reading** - the AV row of [device-verification](../device-verification.md) is NOT-READ (the bench
+accounts carry no photo), so the cost below is live in production and the reading is owed before
+phase 2 instead, on a bench account given a photo. **This cost starts with phase 1, not phase 2.** The URL carries the viewer's token, so it is
 different for every viewer and every UTC day: each viewer's first load of each face each day misses
 the edge AND the browser's HTTP cache (a new URL has no entry to revalidate - a full `200` where the
 day before a `304` would have answered). The community-open budget is already over on every row

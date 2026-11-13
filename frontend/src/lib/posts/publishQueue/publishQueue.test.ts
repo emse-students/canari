@@ -23,6 +23,7 @@ import {
   PublishAccountMismatchError,
   PublishQueue,
   classifyPublishFailure,
+  retryCannotCure,
   type PublishUploadArgs,
   type PublishView,
 } from './publishQueue';
@@ -175,6 +176,7 @@ function rig(store = memoryStore()): Rig {
           }),
           dims: { width: r.video.width, height: r.video.height },
           durationMs: r.video.durationMs,
+          placeholder: 'AAAA',
         };
       }
       return {
@@ -387,6 +389,33 @@ describe('PublishQueue', () => {
     expect(r.published).toEqual(['post-2', 'post-1']);
     // The retry did not upload the media again: its ref was durable.
     expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+  });
+
+  it('a refusal a Retry cannot cure (an institution post with no reach) is FINAL: Delete alone, no endless Retry', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0, 1);
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, 'institution_reach_required', 'no reach');
+    });
+    await r.queue.drain();
+    expect(r.store.posts.get('post-1')!.failure).toEqual({
+      stage: 'createPost',
+      message: 'refused: no reach',
+      final: true,
+    });
+    expect(r.views.find((v) => v.id === 'post-1')).toMatchObject({
+      phase: 'failed',
+      final: true,
+    });
+    // A Retry pressed anyway (another tab, an old banner) sends nothing and keeps the failure.
+    await r.queue.retry('post-1');
+    expect(r.published).toEqual([]);
+    expect(r.store.posts.get('post-1')!.failure?.final).toBe(true);
+    // An ordinary refusal stays curable.
+    expect(retryCannotCure(new ApiRefusalError(400, null, 'bad poll'))).toBe(false);
+    expect(retryCannotCure(new ApiRefusalError(503, 'institution_reach_required', 'x'))).toBe(
+      false
+    );
   });
 
   it('back on screen after a suspension: the transfer in flight is aborted and restarted at once', async () => {
@@ -793,6 +822,15 @@ describe('PublishQueue - every vertical video of 90 s or less is a CanaReel (own
     await r.queue.drain();
     expect(r.payloads).toHaveLength(1);
     expect(r.payloads[0]).toMatchObject({ kind: 'reel', durationMs: 41_250, id: 'v-1' });
+  });
+
+  /** A reader's feed draws the first frame before a byte arrives (owner, 2026-11-10). */
+  it("a video's first-frame placeholder travels with its media ref into the post", async () => {
+    const r = rig();
+    queueFiles(r.store, 'v-2', [['IMG_2.mov', 'video/quicktime']]);
+    await r.queue.drain();
+    const media = r.payloads[0].media as Array<{ placeholder?: string }>;
+    expect(media[0].placeholder).toBe('AAAA');
   });
 
   it('reads the 4:5 boundary and the 90 s cap as the server does', async () => {

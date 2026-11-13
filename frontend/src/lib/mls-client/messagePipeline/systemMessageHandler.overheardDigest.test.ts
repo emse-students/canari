@@ -64,6 +64,7 @@ const DIGEST_FRAME = {
   from: PEER,
   digest: { mode: 'ids', ids: ['m1', 'm2'] },
   since: 0,
+  requestId: 'ask-00000001',
 };
 
 /** Lets the `void`-ed chain behind `answerAfterMailboxDrained` run. */

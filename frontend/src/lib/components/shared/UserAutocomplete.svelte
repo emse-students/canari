@@ -3,7 +3,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
-  import { insideViewerLayer, popoverLayerClass as popoverRung } from '$lib/utils/viewerLayer';
+  import { useOverlayLayer } from '$lib/utils/overlayLayer.svelte';
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -13,9 +13,6 @@
     id: string;
     displayName: string | null;
   }
-
-  /** A dropdown inside a lifted dialog must clear it (`utils/viewerLayer.ts`). */
-  const popoverLayerClass = popoverRung(insideViewerLayer());
 
   interface Props {
     /** Currently selected user ID (empty string when nothing is selected). */
@@ -75,6 +72,9 @@
    * `filterUserSuggestions` because it is worth a test of its own.
    */
   const suggestions = $derived(filterUserSuggestions(results, { excludeIds, filterUserIds }));
+
+  /** Registered while the dropdown shows: opened later than any dialog it sits in, so it clears it. */
+  const layer = useOverlayLayer(() => showDropdown && suggestions.length > 0, 'UserAutocomplete');
 
   const listboxId = $derived(`${inputId}-listbox`);
   const optionId = (index: number) => `${inputId}-option-${index}`;
@@ -279,7 +279,8 @@
       id={listboxId}
       role="listbox"
       aria-label={placeholder}
-      class="bg-cn-surface fixed {popoverLayerClass} overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
+      style:z-index={layer.z}
+      class="bg-cn-surface fixed overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
     >
       {#each suggestions as user, index (user.id)}
         <!--

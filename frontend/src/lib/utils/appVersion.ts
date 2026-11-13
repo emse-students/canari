@@ -104,6 +104,7 @@ export type ServerVersionInfo = {
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
   livesMode: LivesMode;
+  liveReplaysMode: LiveReplaysMode;
   checkpointSkipMode: CheckpointSkipMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
@@ -113,6 +114,8 @@ export type ServerVersionInfo = {
   publishQueue: boolean;
   /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
   formDrafts: boolean;
+  /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
+  rankedFeeds: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -127,6 +130,8 @@ export type AppVersionCheckResult = {
   callsMode: CallsMode;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
+  /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
+  liveReplaysMode: LiveReplaysMode;
   /** Whether a receive-only drain may defer its MLS checkpoint; `off` until a server has said otherwise. */
   checkpointSkipMode: CheckpointSkipMode;
   /**
@@ -159,6 +164,13 @@ export type AppVersionCheckResult = {
    * deploys. `false` for every server older than the field.
    */
   formDrafts: boolean;
+  /**
+   * Whether this estate's social-service serves the RANKED lists (`rankedFeeds`): Pour toi
+   * (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, with their `asOf` pages. An older
+   * one refuses `feed=foryou` `400` and drops `ranked` - and a store build reaches phones before
+   * production deploys. `false` for every server older than the field.
+   */
+  rankedFeeds: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -193,6 +205,16 @@ function normalizeLivesMode(raw: unknown): LivesMode {
 }
 
 /**
+ * The live-replays mode a `/api/version` body carries (`liveReplays.mode`). ABSENT OR UNKNOWN READS
+ * AS `off`: a server that does not publish the switch has no replay, and the client then never asks
+ * for one (`withReplays` is sent only when this reads `on`).
+ */
+function normalizeLiveReplaysMode(raw: unknown): LiveReplaysMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return LIVE_REPLAYS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
  * The checkpoint-skip mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: `off` is
  * the behaviour every client has always had, so a server that does not publish the switch - or a
  * value this client does not know - can only ever mean today's durability.
@@ -210,12 +232,14 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion?: unknown;
     maintenance?: unknown;
     calls?: unknown;
+    liveReplays?: unknown;
     lives?: unknown;
     checkpointSkip?: unknown;
     oidcPkce?: unknown;
     presencePost?: unknown;
     publishQueue?: unknown;
     formDrafts?: unknown;
+    rankedFeeds?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -226,11 +250,13 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
+    liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
+    rankedFeeds: obj.rankedFeeds === true,
   };
 }
 
@@ -246,11 +272,13 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   maintenance: PlatformMaintenanceInfo;
   calls: { mode: CallsMode };
   lives: { mode: LivesMode };
+  liveReplays: { mode: LiveReplaysMode };
   checkpointSkip: { mode: CheckpointSkipMode };
   oidcPkce: boolean;
   presencePost: boolean;
   publishQueue: boolean;
   formDrafts: boolean;
+  rankedFeeds: boolean;
 } {
   return {
     version: info.version,
@@ -258,11 +286,13 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     maintenance: info.maintenance,
     calls: { mode: info.callsMode },
     lives: { mode: info.livesMode },
+    liveReplays: { mode: info.liveReplaysMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
+    rankedFeeds: info.rankedFeeds,
   };
 }
 /**
@@ -286,6 +316,22 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
 export function getClientAppVersion(): string {
   const v = import.meta.env.VITE_APP_VERSION?.trim();
   return v || '0.0.0';
+}
+
+/**
+ * THE HEADER A CALL NAMES THIS BUILD IN, for a server that answers each build what it can use: the
+ * lives routes (a build below their floor is answered like a switched-off estate) and the
+ * notifications read (only the types this build draws - social-service's
+ * `notification-client-floor.ts`). ONE spelling for every caller; the value is
+ * {@link getClientAppVersion}, the version the update gate compares too.
+ */
+export const CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+
+/** `headers` with this build named in {@link CLIENT_VERSION_HEADER}. */
+export function withClientVersionHeader(
+  headers: Record<string, string> = {}
+): Record<string, string> {
+  return { ...headers, [CLIENT_VERSION_HEADER]: getClientAppVersion() };
 }
 
 /**
@@ -427,11 +473,13 @@ export function buildAppVersionCheckResult(
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
+    liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
+    rankedFeeds: serverInfo?.rankedFeeds ?? false,
   };
 }
 

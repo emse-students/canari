@@ -5,12 +5,19 @@ import { NotificationPreferencesController } from './notification-preferences.co
 import { callsAllowedFor } from '../entities/group-member.entity';
 
 describe('NotificationPreferencesController', () => {
-  let row: { disabledCategories: string[] } | null;
+  let row: { disabledCategories: string[]; enabledCategories?: string[] } | null;
   let memberRows: Array<{ groupId: string; notifLevel: string; callsAllowed?: boolean | null }>;
   const manager = {
     findOne: jest.fn(async () => row),
     find: jest.fn(async () => memberRows),
-    upsert: jest.fn().mockResolvedValue(undefined),
+    // The PUT's one merge statement: answers what it stored - here the caller's two sets, and no
+    // push turned on by a save that did not declare the opt-in reading.
+    query: jest.fn(async (_sql: string, params: [string, string, string[], string, boolean]) => [
+      {
+        disabled: (JSON.parse(params[1]) as string[]).sort(),
+        enabled: params[4] ? (JSON.parse(params[3]) as string[]) : [],
+      },
+    ]),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
   let controller: NotificationPreferencesController;
@@ -24,34 +31,99 @@ describe('NotificationPreferencesController', () => {
     } as unknown as ConstructorParameters<typeof NotificationPreferencesController>[0]);
   });
 
-  it('answers an empty set - everything on - for an account that never set anything', async () => {
-    expect(await controller.get('u1')).toEqual({ disabled: [], groupLevels: {}, groupCalls: {} });
-  });
-
-  it('answers what was stored, dropping an id the server no longer knows', async () => {
-    row = { disabledCategories: ['posts', 'retired_category'] };
+  it('answers nothing off and no push turned on for an account that never set anything', async () => {
     expect(await controller.get('u1')).toEqual({
-      disabled: ['posts'],
+      disabled: [],
+      enabled: [],
       groupLevels: {},
       groupCalls: {},
     });
   });
 
-  it('stores the disabled set once per id, keyed by the caller', async () => {
-    const r = await controller.put('u1', { disabled: ['posts', 'posts', 'forms'] });
-    expect(r).toEqual({ disabled: ['posts', 'forms'] });
-    expect(manager.upsert).toHaveBeenCalledWith(
-      expect.anything(),
-      { userId: 'u1', disabledCategories: ['posts', 'forms'] },
-      { conflictPaths: ['userId'] }
+  it('answers what was stored, dropping an id the server no longer knows', async () => {
+    row = { disabledCategories: ['posts', 'retired_category'], enabledCategories: ['posts'] };
+    expect(await controller.get('u1')).toEqual({
+      disabled: ['posts'],
+      // Only an opt-in category can have its push turned on.
+      enabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
+  });
+
+  it('answers the two switches of Suggestions as stored ("Deux niveaux", owner 2026-11-11)', async () => {
+    row = { disabledCategories: ['posts'], enabledCategories: ['suggestions'] };
+    expect(await controller.get('u1')).toMatchObject({
+      disabled: ['posts'],
+      enabled: ['suggestions'],
+    });
+    // The alpha.1 switch turned off: off in the app, and so never pushed.
+    row = { disabledCategories: ['suggestions'], enabledCategories: [] };
+    expect(await controller.get('u1')).toMatchObject({ disabled: ['suggestions'], enabled: [] });
+  });
+
+  /** The parameters of the one merge statement: the caller, its set, the kept ones, the pushes on, declared. */
+  const merged = () =>
+    manager.query.mock.calls[0][1] as [string, string, string[], string, boolean];
+
+  it('stores the disabled set once per id, keyed by the caller, and answers what is stored', async () => {
+    const r = await controller.put(
+      'u1',
+      { disabled: ['posts', 'posts', 'forms'], enabled: ['suggestions'] },
+      '1.6.10'
     );
+    expect(r).toEqual({ disabled: ['posts', 'forms'], enabled: ['suggestions'] });
+    expect(merged()).toEqual(['u1', '["forms","posts"]', [], '["suggestions"]', true]);
+  });
+
+  it('a save without the enabled field never turns a push on, whatever its build (P3, 1.6.10-alpha.1)', async () => {
+    const r = await controller.put('u1', { disabled: [] }, '1.6.10-alpha.1');
+    expect(merged()[4]).toBe(false);
+    expect(merged()[3]).toBe('[]');
+    expect(r.enabled).toEqual([]);
+  });
+
+  it('a declared save with the push left off writes it off', async () => {
+    await controller.put('u1', { disabled: [], enabled: [] }, '1.6.10');
+    expect(merged()[3]).toBe('[]');
+    expect(merged()[4]).toBe(true);
+  });
+
+  it('refuses a non-opt-in id, or a value that is not an array, in enabled', async () => {
+    await expect(
+      controller.put('u1', { disabled: [], enabled: ['posts'] }, '1.6.10')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.put('u1', { disabled: [], enabled: 'suggestions' }, '1.6.10')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(manager.query).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored choice for every category a headerless build (up to 1.6.9) cannot name', async () => {
+    await controller.put('u1', { disabled: ['posts'], enabled: ['suggestions'] });
+    expect(merged()[2]).toEqual(['suggestions']);
+    // It cannot turn the push on: it never drew the switch.
+    expect(merged()[3]).toEqual('[]');
+  });
+
+  it('keeps what a 1.6.8 build draws no switch for: birthdays and suggestions', async () => {
+    await controller.put('u1', { disabled: [] }, '1.6.8');
+    expect(merged()[2]).toEqual(['birthdays', 'suggestions']);
+  });
+
+  it('a pre-release of 1.6.10 names suggestions; an unreadable build names only the oldest set', async () => {
+    await controller.put('u1', { disabled: [] }, '1.6.10-alpha.1');
+    expect(merged()[2]).toEqual([]);
+    manager.query.mockClear();
+    await controller.put('u1', { disabled: [] }, 'latest');
+    expect(merged()[2]).toEqual(['follows', 'bookings', 'birthdays', 'suggestions']);
   });
 
   it('refuses an unknown category rather than reporting it saved', async () => {
     await expect(controller.put('u1', { disabled: ['posts', 'calls'] })).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(manager.upsert).not.toHaveBeenCalled();
+    expect(manager.query).not.toHaveBeenCalled();
   });
 
   it('refuses a body that is not an array', async () => {

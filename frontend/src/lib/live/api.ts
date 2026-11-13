@@ -16,7 +16,7 @@
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
-import { getClientAppVersion } from '$lib/utils/appVersion';
+import { CLIENT_VERSION_HEADER, withClientVersionHeader } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { responseOrigin } from '$lib/utils/apiRefusal';
 import { trackedFetch } from '$lib/utils/trackedFetch';
@@ -39,6 +39,7 @@ import type {
   LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
+  LiveReplayPage,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -209,20 +210,22 @@ function livePath(liveId: string): string {
  * switched-off estate (`LiveEnabledGuard`, docs/wiki/legacy-compatibility.md). Absent on a build
  * that predates it - which is the evidence the server reads.
  */
-export const LIVE_CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+export const LIVE_CLIENT_VERSION_HEADER = CLIENT_VERSION_HEADER;
 
 /** `init` with the client-version header added. */
 function withClientVersion(init: ApiFetchOptions = {}): ApiFetchOptions {
-  return {
-    ...init,
-    headers: { ...init.headers, [LIVE_CLIENT_VERSION_HEADER]: getClientAppVersion() },
-  };
+  return { ...init, headers: withClientVersionHeader(init.headers) };
 }
 
 /** Runs one authenticated lives call and returns its JSON, or throws the typed refusal. */
-async function liveJson<T>(url: string, what: string, init: ApiFetchOptions = {}): Promise<T> {
+async function liveJson<T>(
+  url: string,
+  what: string,
+  init: ApiFetchOptions = {},
+  expected: readonly LiveRefusalKind[] = []
+): Promise<T> {
   const res = await apiFetch(url, withClientVersion(init));
-  if (!res.ok) throw await liveRefusal(res, what);
+  if (!res.ok) throw await liveRefusal(res, what, false, expected);
   return (await res.json()) as T;
 }
 
@@ -238,7 +241,8 @@ export async function fetchLiveLimits(): Promise<LiveLimits> {
  */
 export async function listOpenLives(): Promise<LiveListItem[]> {
   console.debug('[LIVE] list');
-  return liveJson<LiveListItem[]>(livesBase(), 'Live list');
+  // `disabled` is an ordinary answer of this call (the switch is off on the estate), not a warning.
+  return liveJson<LiveListItem[]>(livesBase(), 'Live list', {}, ['disabled']);
 }
 
 /** `GET /api/lives/rules` - whether the caller must accept the first-live rules before starting. */
@@ -298,6 +302,19 @@ export async function startLive(
 export async function fetchLive(liveId: string): Promise<LiveView> {
   console.debug(`[LIVE] open ${liveId}`);
   return liveJson<LiveView>(livePath(liveId), 'Live open');
+}
+
+/**
+ * `GET /api/lives/:id/replay[?from=<index>]` - one page of a finished live's three-day REPLAY: the
+ * key, the segments from `from` with their place on the time line, `nextFrom`. Takes NO seat. Every
+ * refusal is the same `not-found` (an outsider, a block, a removed viewer, an expired replay).
+ */
+export async function fetchLiveReplay(liveId: string, from?: number): Promise<LiveReplayPage> {
+  console.debug(`[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}`);
+  return liveJson<LiveReplayPage>(
+    `${livePath(liveId)}/replay${from === undefined ? '' : `?from=${from}`}`,
+    'Live replay'
+  );
 }
 
 /**

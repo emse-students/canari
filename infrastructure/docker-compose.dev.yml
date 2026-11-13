@@ -67,7 +67,7 @@ services:
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
-    image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     restart: always
     # Byte-for-byte production's arguments, INCLUDING `--appendonly yes`. The previous version of
     # this file dropped both the flag and the volume below, so a dev Redis held the shared message
@@ -193,6 +193,9 @@ services:
     environment:
       RUST_LOG: info
       PORT: "3004"
+      # The origins a socket upgrade may name (docs/wiki/services/call-service.md): the same list
+      # as chat-gateway's, because the same pages open both sockets.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # No TURN credentials HERE, deliberately: since lot 1 (2026-10-17) dev's 1:1 calls are peer to
       # peer and this service only relays their handshake - it opens no peer connection, so it has
@@ -243,6 +246,9 @@ services:
       # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from
       # media-service server-to-server, gated by the shared INTERNAL_SECRET.
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
@@ -359,6 +365,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
@@ -371,8 +380,13 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
       - media_upload_sessions:/app/upload_sessions
     # Production's, plus `start_interval`: the deploy read this service as `none` until 2026-10-19,
@@ -413,6 +427,9 @@ services:
       # Signs the one-time sign-in handoff to the MiConnect sites (docs/wiki/sessions.md, "The
       # sign-in handoff"). Unset: no handoff is minted and every site opens plainly.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      # The read-only MiConnect account a handoff mint asks whether the user may enter the site
+      # (F3-bound). Unset: every mint is refused HANDOFF_MICONNECT_UNAVAILABLE and the site opens plainly.
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # NO /adminer/ ROUTE HERE: dev is publicly resolvable, holds testers' own rows and has no adminer
       # service (see the note where it would sit). Stated rather than left unset, so a missing line
       # is never what keeps the door shut.
@@ -443,8 +460,14 @@ services:
       # Account deletion fans out to media-service to remove the user's own uploads.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
+      # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
+      # (docs/wiki/frontend/guided-help.md). Unset: nobody; a value that does not parse: nobody + boot error.
+      PROFILE_PHOTO_PROMPT_SPACES: ${PROFILE_PHOTO_PROMPT_SPACES:-}
       # CUT, NOT INHERITED. The previous version of this file defaulted this to
       # `https://gallery.mitv.fr`, which is the PRODUCTION MiGallery - a dev environment calling a
       # real service in another repository's estate. Empty means no MiGallery in dev.
@@ -516,6 +539,9 @@ services:
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       PAYMENT_SERVICE_URL: http://core-service:3012
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
+      # which this service accepts on no other ground (cors-origins.ts). Production passes none.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
       # AND THE SAME CLASS AGAIN, MEASURED 2026-09-22: four keys production forwards to this
       # service and this file did not, `INTERNAL_SECRET` chief among them. `.env` on the dev box
       # has held a 64-character value the whole time - the compose file simply never passed it.
@@ -529,6 +555,11 @@ services:
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md).
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # The communities one account may hold as their creator; empty means 20
+      # (apps/social-service/src/channels/community-limits.ts).
+      COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
@@ -664,7 +695,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.8-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09
+    image: nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
     restart: always
     <<: *dev-limits
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
@@ -703,3 +734,6 @@ volumes:
   media_meta:
   # Transient staging, DELIBERATELY not backed up: a session is a day of resumable work at most.
   media_upload_sessions:
+  # Live segments and replays, DELIBERATELY not backed up (owner decision D2, 2026-11-09): a replay
+  # promised gone after 3 days must not survive in a snapshot (docs/wiki/live-replays.md).
+  live_segments:

@@ -24,7 +24,7 @@ import { MemberRepost } from './entities/member-repost.entity';
 import { MEMBER_REPOST_NOTIFICATION, PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCacheFor } from './post-list-cache';
 import { dropMemberRepostsOf, lockPostRow } from './republication-sql';
-import { isWithheldPost, type PostRow } from './republications.service';
+import { assertNotReplay, isWithheldPost, type PostRow } from './republications.service';
 
 /**
  * The stable codes a member-repost refusal carries, which the client maps to its own sentence -
@@ -204,6 +204,7 @@ export class MemberRepostsService {
       // Seen FIRST, so nothing below confirms a post the actor cannot see - not even that it is
       // anonymous.
       await this.assertRepostableFirstHand(manager, postId, actorId);
+      assertNotReplay(post, this.logger);
       if (post.anonymous) {
         this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} refused: anonymous`);
         throw refusal(BadRequestException, MEMBER_REPOST_CODES.anonymous, 'An anonymous post');

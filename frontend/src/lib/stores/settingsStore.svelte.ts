@@ -1,17 +1,25 @@
 /**
  * Persistent user preferences store, backed by localStorage.
  * Defaults to enabled for all settings if no saved value exists.
+ *
+ * EVERY STORAGE ACCESS IS GUARDED: a private window, blocked site data or a full quota makes
+ * `localStorage` THROW, and a preference that cannot be read or kept must never break the page
+ * that reads it - the default is used, the session keeps the choice in memory, and a warning says
+ * which key was lost.
  */
+import { Log } from '$lib/utils/Log';
 
 const SOUNDS_KEY = 'canari_sounds_enabled';
 const VIBRATIONS_KEY = 'canari_vibrations_enabled';
 const POST_FEED_KEY = 'canari_preferred_post_feed';
 const SHARE_SUGGESTIONS_KEY = 'canari_share_suggestions_enabled';
 const EMOJI_STYLE_KEY = 'canari_emoji_style';
+const INFINITE_REELS_KEY = 'canari_infinite_reels_enabled';
+const REELS_ORDER_KEY = 'canari_reels_order';
+const VIDEO_AUTOPLAY_KEY = 'canari_video_autoplay';
 
 function readBool(key: string): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  return localStorage.getItem(key) !== 'false';
+  return readString(key) !== 'false';
 }
 
 /**
@@ -24,7 +32,12 @@ function readBool(key: string): boolean {
  */
 function readString(key: string): string | null {
   if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(key);
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    Log.w('SETTINGS', `${key} could not be read - the default is used: ${String(e)}`);
+    return null;
+  }
 }
 
 let soundsEnabled = $state(readBool(SOUNDS_KEY));
@@ -32,10 +45,16 @@ let vibrationsEnabled = $state(readBool(VIBRATIONS_KEY));
 let preferredPostFeed = $state(readString(POST_FEED_KEY));
 let shareSuggestionsEnabled = $state(readBool(SHARE_SUGGESTIONS_KEY));
 let emojiStyle = $state(readString(EMOJI_STYLE_KEY));
+let infiniteReelsEnabled = $state(readBool(INFINITE_REELS_KEY));
+let reelsOrder = $state(readString(REELS_ORDER_KEY));
+let videoAutoplay = $state(readString(VIDEO_AUTOPLAY_KEY));
 
 function persist(key: string, value: boolean | string): void {
-  if (typeof localStorage !== 'undefined') {
+  if (typeof localStorage === 'undefined') return;
+  try {
     localStorage.setItem(key, String(value));
+  } catch (e) {
+    Log.w('SETTINGS', `${key} could not be kept - this session only: ${String(e)}`);
   }
 }
 
@@ -109,5 +128,47 @@ export const settings = {
   setEmojiStyle(value: string): void {
     emojiStyle = value;
     persist(EMOJI_STYLE_KEY, value);
+  },
+
+  /**
+   * "Défilement infini des CanaReels" ("Nos principes", owner 2026-11-10, principle 3: no trap
+   * scrolling): ON, a feed video opened full screen runs on into the CanaReels list; OFF, the viewer
+   * shows that post's media only. ON by default. Per device, like every display preference here.
+   */
+  get infiniteReelsEnabled(): boolean {
+    return infiniteReelsEnabled;
+  },
+  /** Persists the infinite-reels preference. */
+  setInfiniteReelsEnabled(value: boolean): void {
+    infiniteReelsEnabled = value;
+    persist(INFINITE_REELS_KEY, value);
+  },
+
+  /**
+   * The CanaReels stream's order last chosen ("Pour toi" or "Récents", owner 2026-11-10), verbatim,
+   * or null when none ever was - narrowed by `$lib/reels/reelOrder`, as the feed tab is by
+   * `parsePostFeed`. Per device, remembered like the feed's tab.
+   */
+  get reelsOrder(): string | null {
+    return reelsOrder;
+  },
+  /** Persists the CanaReels order so the next opening starts on it. */
+  setReelsOrder(value: string): void {
+    reelsOrder = value;
+    persist(REELS_ORDER_KEY, value);
+  },
+
+  /**
+   * "Lecture automatique des vidéos" (owner, 2026-11-10), verbatim, or null when never chosen -
+   * narrowed by `$lib/video/autoplayPolicy`, the one place it is applied. Per device: the network a
+   * video would spend is this device's.
+   */
+  get videoAutoplay(): string | null {
+    return videoAutoplay;
+  },
+  /** Persists the autoplay preference. */
+  setVideoAutoplay(value: string): void {
+    videoAutoplay = value;
+    persist(VIDEO_AUTOPLAY_KEY, value);
   },
 };
