@@ -29,21 +29,44 @@ beforeEach(() => {
   revokeAgendaSubscriptions.mockReset();
 });
 
+/** A link asked for at once, the way a reader's tap on "get my link" asks for it. */
+function asked(request: () => AgendaFeedSelection | null) {
+  const root = inRoot(() => createSubscriptionLink(request));
+  root.value.ask();
+  flushSync();
+  return root;
+}
+
 describe('createSubscriptionLink', () => {
   it('asks for nothing while there is nothing to ask (modal closed, no selection)', () => {
     const { value, stop } = inRoot(() => createSubscriptionLink(() => null));
+    value.ask();
+    flushSync();
     expect(requestAgendaSubscription).not.toHaveBeenCalled();
     expect(value.status).toBe('idle');
     expect(value.token).toBe('');
     stop();
   });
 
-  it('holds the token of the CURRENT selection and never the previous one', async () => {
+  it('asks for NOTHING on sight: a shown selection is `unasked` until the reader asks (2026-11-14)', async () => {
+    requestAgendaSubscription.mockResolvedValue('token-1');
+    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ associationId: 'a1' })));
+    expect(value.status).toBe('unasked');
+    expect(requestAgendaSubscription).not.toHaveBeenCalled();
+    value.ask();
+    flushSync();
+    expect(value.status).toBe('signing');
+    await vi.waitFor(() => expect(value.token).toBe('token-1'));
+    expect(requestAgendaSubscription).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it('asks only for the selection shown at the tap: another one chosen after is `unasked`', async () => {
     requestAgendaSubscription.mockImplementation((sel: AgendaFeedSelection) =>
       Promise.resolve(`token-${sel.campus}`)
     );
     let selection = $state<AgendaFeedSelection | null>({ campus: 'gardanne' });
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => selection));
+    const { value, stop } = asked(() => selection);
     expect(value.status).toBe('signing');
     await vi.waitFor(() => expect(value.token).toBe('token-gardanne'));
     expect(value.status).toBe('ready');
@@ -51,6 +74,10 @@ describe('createSubscriptionLink', () => {
     selection = { campus: 'saint-etienne' };
     flushSync();
     expect(value.token).toBe('');
+    expect(value.status).toBe('unasked');
+    expect(requestAgendaSubscription).toHaveBeenCalledTimes(1);
+    value.ask();
+    flushSync();
     await vi.waitFor(() => expect(value.token).toBe('token-saint-etienne'));
     stop();
   });
@@ -61,8 +88,10 @@ describe('createSubscriptionLink', () => {
       () => new Promise<string>((resolve) => resolvers.push(resolve))
     );
     let selection = $state<AgendaFeedSelection | null>({ campus: 'gardanne' });
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => selection));
+    const { value, stop } = asked(() => selection);
     selection = { campus: 'saint-etienne' };
+    flushSync();
+    value.ask();
     flushSync();
     resolvers[1]('second');
     await vi.waitFor(() => expect(value.token).toBe('second'));
@@ -76,7 +105,7 @@ describe('createSubscriptionLink', () => {
     requestAgendaSubscription.mockRejectedValue(
       new SocialApiError('forbidden', 'AGENDA_SELECTION_FORBIDDEN', 403)
     );
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ campus: 'gardanne' })));
+    const { value, stop } = asked(() => ({ campus: 'gardanne' }));
     await vi.waitFor(() => expect(value.status).toBe('error'));
     expect(value.token).toBe('');
     stop();
@@ -84,7 +113,7 @@ describe('createSubscriptionLink', () => {
 
   it('reports a 503 as unavailable, not as a refusal', async () => {
     requestAgendaSubscription.mockRejectedValue(new SocialApiError('down', null, 503));
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ campus: 'gardanne' })));
+    const { value, stop } = asked(() => ({ campus: 'gardanne' }));
     await vi.waitFor(() => expect(value.status).toBe('unavailable'));
     expect(value.token).toBe('');
     stop();
@@ -92,34 +121,39 @@ describe('createSubscriptionLink', () => {
 
   it('reports a transport failure as unavailable', async () => {
     requestAgendaSubscription.mockRejectedValue(new TypeError('Failed to fetch'));
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ campus: 'gardanne' })));
+    const { value, stop } = asked(() => ({ campus: 'gardanne' }));
     await vi.waitFor(() => expect(value.status).toBe('unavailable'));
     stop();
   });
 
-  it('revoke() ends every link, then asks again: the new token replaces the old', async () => {
+  it('revoke() ends every link and asks for NO new one: the next link is asked like the first', async () => {
     let minted = 0;
     requestAgendaSubscription.mockImplementation(() => Promise.resolve(`token-${++minted}`));
     revokeAgendaSubscriptions.mockResolvedValue(1);
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ associationId: 'a1' })));
+    const { value, stop } = asked(() => ({ associationId: 'a1' }));
     await vi.waitFor(() => expect(value.token).toBe('token-1'));
     await value.revoke();
     flushSync();
     expect(revokeAgendaSubscriptions).toHaveBeenCalledTimes(1);
     expect(value.revokeStatus).toBe('revoked');
+    expect(value.token).toBe('');
+    expect(value.status).toBe('unasked');
+    expect(requestAgendaSubscription).toHaveBeenCalledTimes(1);
+    value.ask();
+    flushSync();
     await vi.waitFor(() => expect(value.token).toBe('token-2'));
-    expect(requestAgendaSubscription).toHaveBeenCalledTimes(2);
     stop();
   });
 
   it('a failed revocation is said, and asks for no new link', async () => {
     requestAgendaSubscription.mockResolvedValue('token-1');
     revokeAgendaSubscriptions.mockRejectedValue(new TypeError('Failed to fetch'));
-    const { value, stop } = inRoot(() => createSubscriptionLink(() => ({ associationId: 'a1' })));
+    const { value, stop } = asked(() => ({ associationId: 'a1' }));
     await vi.waitFor(() => expect(value.token).toBe('token-1'));
     await value.revoke();
     flushSync();
     expect(value.revokeStatus).toBe('failed');
+    expect(value.token).toBe('token-1');
     expect(requestAgendaSubscription).toHaveBeenCalledTimes(1);
     stop();
   });

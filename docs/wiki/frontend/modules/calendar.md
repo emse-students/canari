@@ -749,12 +749,14 @@ it, and signs only the reader's own spaces (design and codes:
 [profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
 **Since 2026-11-14 the link is its HOLDER's** ([D40 re-decided](../../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)).
 In the frontend: `requestAgendaSubscription` (`associations/api.ts`) calls `POST /api/associations/calendar/subscription`
-and answers the token; `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`) asks while the
-subscribe modal is open and holds the token apart from the selection it was made for, so a URL is never
-built from the PREVIOUS choice; `/calendar` and the association's calendar section build the URL with
+and answers the token; `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`) asks ONLY on
+the reader's tap (`ask()`, the modal's "Obtenir mon lien d'abonnement"; opening the modal leaves no
+live bearer row) and for the selection shown at that tap, and holds the token apart from that selection,
+so a URL is never built from the PREVIOUS choice; `/calendar` and the association's calendar section build the URL with
 `agendaSubscriptionIcsAbsoluteUrl(token)` - the token alone. `CalendarSubscribeModal` takes `signing`,
-`onRevoke` and `revokeStatus`: it says a link shows what its holder sees, and its revoke button calls
-`revokeAgendaSubscriptions` (`DELETE /api/associations/calendar/subscriptions`), then asks for a new link.
+`onAsk`, `onRevoke` and `revokeStatus`: it says a link shows what its holder sees, and its revoke button,
+once `showConfirm` is answered yes, calls `revokeAgendaSubscriptions` (`DELETE
+/api/associations/calendar/subscriptions`); the next link is asked like the first.
 `AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
 `formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
 The one-event link (`eventIcsAbsoluteUrl`) carries its own event signature (`icsSig`, 2026-11-02).

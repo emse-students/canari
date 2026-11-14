@@ -7,17 +7,29 @@ import {
 import { Log } from '$lib/utils/Log';
 
 /**
- * Where a link stands: asked, answered, REFUSED (`error`: the server answered 4xx, the campus text
- * applies) or UNAVAILABLE (a 5xx or a transport failure: nothing was decided about the reader, so the
- * campus text would lie).
+ * Where a link stands: nothing to ask (`idle`: no selection), a selection the reader has not asked a
+ * link for yet (`unasked`), asked, answered, REFUSED (`error`: the server answered 4xx, the campus
+ * text applies) or UNAVAILABLE (a 5xx or a transport failure: nothing was decided about the reader,
+ * so the campus text would lie).
  */
-export type SubscriptionLinkStatus = 'idle' | 'signing' | 'ready' | 'error' | 'unavailable';
+export type SubscriptionLinkStatus =
+  | 'idle'
+  | 'unasked'
+  | 'signing'
+  | 'ready'
+  | 'error'
+  | 'unavailable';
 
 /**
  * Where a revocation stands: none asked, under way, done, or failed (`failed` keeps the link shown
  * before: nothing tells the reader it stopped working).
  */
 export type SubscriptionRevokeStatus = 'idle' | 'revoking' | 'revoked' | 'failed';
+
+/** The one spelling of a selection as a key: which selection the reader asked a link for. */
+function selectionKey(selection: AgendaFeedSelection): string {
+  return `${selection.campus || '-'}|${selection.formation || '-'}|${selection.associationId || '-'}`;
+}
 
 /**
  * Classifies a failed request BY TYPE AND STATUS, never by message: a status code below 500 is an
@@ -35,11 +47,15 @@ function isRefusal(err: unknown): boolean {
  * the token of the PREVIOUS choice.
  *
  * Call it during component initialisation (it owns an `$effect`). `request` returns the selection,
- * or `null` when nothing should be asked yet - the modal being closed, a selection not chosen - so no
- * request leaves for a link nobody has asked to see.
+ * or `null` when nothing can be asked - the modal being closed, a selection not chosen.
  *
- * `revoke()` ends EVERY link of the reader, then asks again for the current selection's: the new
- * token is a new link.
+ * A LINK IS MADE ON INTENT, NEVER ON SIGHT (review of 2026-11-14): the server keeps a live bearer row
+ * for every link it hands out, so opening the modal asks for nothing (`unasked`). `ask()` - the
+ * reader's "get my link" - asks for the selection shown at that moment, and only that one: another
+ * selection chosen afterwards is `unasked` again until asked.
+ *
+ * `revoke()` ends EVERY link of the reader and asks for no new one: the next link is asked like the
+ * first.
  *
  * @returns `token` is `''` until the CURRENT request is answered; `status` says why it is empty.
  */
@@ -47,15 +63,18 @@ export function createSubscriptionLink(request: () => AgendaFeedSelection | null
   let token = $state('');
   let status = $state<SubscriptionLinkStatus>('idle');
   let revokeStatus = $state<SubscriptionRevokeStatus>('idle');
-  /** Bumped by a revocation: the effect reads it, so the current selection is asked again. */
-  let generation = $state(0);
+  /** The key of the selection the reader asked a link for, or null: set by `ask()` only. */
+  let askedFor = $state<string | null>(null);
 
   $effect(() => {
     const selection = request();
-    void generation;
     token = '';
     if (!selection) {
       status = 'idle';
+      return;
+    }
+    if (askedFor !== selectionKey(selection)) {
+      status = 'unasked';
       return;
     }
     status = 'signing';
@@ -92,14 +111,25 @@ export function createSubscriptionLink(request: () => AgendaFeedSelection | null
     };
   });
 
+  /** The reader's "get my link": asks for the selection shown now. Nothing shown, nothing asked. */
+  function ask(): void {
+    const selection = request();
+    if (!selection) {
+      Log.d('subscriptionLink', 'a link was asked with no selection shown - nothing to ask');
+      return;
+    }
+    revokeStatus = 'idle';
+    askedFor = selectionKey(selection);
+  }
+
   async function revoke(): Promise<void> {
     Log.d('subscriptionLink', 'revoking every subscription link of the reader');
     revokeStatus = 'revoking';
     try {
       const revoked = await revokeAgendaSubscriptions();
-      Log.d('subscriptionLink', `revoked ${revoked} link(s); asking for a new one`);
+      Log.d('subscriptionLink', `revoked ${revoked} link(s); the next one is asked by the reader`);
       revokeStatus = 'revoked';
-      generation += 1;
+      askedFor = null;
     } catch (err) {
       Log.d(
         'subscriptionLink',
@@ -119,6 +149,7 @@ export function createSubscriptionLink(request: () => AgendaFeedSelection | null
     get revokeStatus() {
       return revokeStatus;
     },
+    ask,
     revoke,
   };
 }

@@ -842,7 +842,7 @@ box no longer defines anything.
 | Republication (D38) | associations, lists (2026-10-31) and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent, asked by any of the three kinds (D38b, amended 2026-11-02); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda subscription / `.ics` (D40) | **its HOLDER: the link names a row bound to their account and serves exactly their signed-in agenda for the selection, re-read at every poll; revocable; ends with the account** (owner, 2026-11-14). A legacy `sig` link is served narrowed to what every possible holder sees, until its removal | built ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders); history: [as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)) |
+| Agenda subscription / `.ics` (D40) | **its HOLDER: the link names a row bound to their account and serves exactly their signed-in agenda for the selection, re-read at every poll; revocable; ends with the account** (owner, 2026-11-14). A legacy `sig` link serves a (campus, formation) pair as before and any other shape an EMPTY calendar, until its removal | built ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders); history: [as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)) |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to, or reached by one's nominative read grant (owner, 2026-11-14) | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -1533,8 +1533,8 @@ was the only revocation, and anyone holding a link read what its selection reach
   ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)).
 - **The link** is `feed.ics?token=` alone ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)). A selection read
   anonymously with `&sig=` is the legacy link: an unsigned one is a **403 `AGENDA_SIGNATURE_REQUIRED`**,
-  a wrong one a **403 `AGENDA_SIGNATURE_INVALID`** (logged `[AGENDA_SIG]`), and a valid one is served
-  NARROWED ([legacy](legacy-compatibility.md)); no selection at all stays the 400
+  a wrong one a **403 `AGENDA_SIGNATURE_INVALID`** (logged `[AGENDA_SIG]`), and a valid one serves a pair
+  and nothing for any other shape ([legacy](legacy-compatibility.md)); no selection at all stays the 400
   `AGENDA_SELECTION_REQUIRED`. `from`/`to` stay free.
 - **Open:** a **signed-in** JSON read (already narrowed to the reader's spaces by
   `restrictToViewerSpaces`). **Since 2026-11-02** the one-event link is signed too and the internal
@@ -1567,23 +1567,31 @@ was the only revocation, and anyone holding a link read what its selection reach
 **Decided by the owner (2026-11-14, "Respecter les publics"):** the agenda subscription link must serve
 ONLY what its holder sees in the app, be bound to the holder's account, be revocable, and stop when the
 account is erased. This overrides D40's "no per-user URL" and D40 amended's "the signature names no
-one". Links already distributed keep working, but never serve more than their holder could see.
+one". Links already distributed keep resolving, but never serve more than their holder could see.
 
 **As built:**
 
-- **A row per holder and selection** - `agenda_subscriptions` (migration 170, not held: a new table
+- **A row per holder and selection** - `agenda_subscriptions` (migration 173, not held: a new table
   and two indexes): `id`, `"userId"` (varchar(255)), `campus`, `formation`, `"associationId"` (ON DELETE
-  CASCADE), `"createdAt"`, UNIQUE on (`userId`, `campus`, `formation`, `associationId`) NULLS NOT
-  DISTINCT. Entity `AgendaSubscription`.
+  CASCADE, indexed), `"selectionKey"` (NOT NULL: `agendaSelectionKey`, `campus|formation|associationId`
+  with `-` for a side left out - the ONE spelling, shared by the entity and the service), `"createdAt"`,
+  UNIQUE on (`userId`, `selectionKey`). Entity `AgendaSubscription` declares every constraint, so a
+  schema `synchronize` builds has them too (proved by a spec that builds the table from the entity).
 - **`POST /api/associations/calendar/subscription`** (signed in; body `{campus?, formation?,
-  associationId?}`) answers `{ token }`: `INSERT ... ON CONFLICT DO NOTHING`, then the read, so the same
-  selection gives the same link (the modal asks while it is open). Same bound as before
+  associationId?}`) answers `{ token }`. ONE statement, `INSERT ... ON CONFLICT ("userId",
+  "selectionKey") DO UPDATE SET "userId" = EXCLUDED."userId" RETURNING id`, so the same selection gives
+  the same link; the signing key is checked BEFORE it (an unset key writes nothing), and a foreign-key
+  violation (the association deleted meanwhile, SQLSTATE 23503) is the 404 `findById` gives. The modal
+  asks only on the reader's tap ("Obtenir mon lien d'abonnement"), never when it opens: no live bearer
+  row for a modal merely looked at. Same bound as before
   ([as built](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)),
   same 400 for an empty body.
 - **The token is `<id>.<HMAC>`**, the HMAC of `v2|subscription=<id>` under `AGENDA_SIGNING_KEY`
   (`agendaSubscriptionToken`, `verifiedAgendaSubscriptionId`, `agenda-signature.ts`): its own canonical
   prefix, so neither a selection's `sig` nor an event's can be read as one, nor the reverse.
-- **`feed.ics?token=` and the JSON `feed?token=`** check the HMAC (constant time), load the row, and
+- **`feed.ics?token=`** - and only it: a `token` on the JSON `feed` is a 400 `AGENDA_TOKEN_NOT_ALONE`,
+  so a holder's agenda is never handed out as JSON (account ids, per-event links) - checks the HMAC
+  (constant time), loads the row, and
   serve `listAggregatedCalendarFeed(from, to, row.associationId, { viewer: { userId: row.userId },
   selection })` - EXACTLY the holder's signed-in agenda (their spaces, memberships, read grants, the
   event's public and reach, the promo cutoff), re-read at every poll, so a profile change, a lost
@@ -1593,29 +1601,35 @@ one". Links already distributed keep working, but never serve more than their ho
   the token ALONE, no window: the server's rolling one keeps a saved link current.
 - **Revocation:** `DELETE /api/associations/calendar/subscriptions` (signed in) deletes every row of
   the caller and answers `{ revoked }`; the next ask mints a new id, so a new link. The subscribe modal
-  has the button ("Révoquer mes liens d'abonnement"), which then asks for the current link again.
+  has the button ("Révoquer mes liens d'abonnement"), CONFIRMED first (`showConfirm`: one tap ends every
+  calendar on every device); the next link is asked like the first.
 - **Erasure:** `agenda_subscriptions."userId"` is classified `delete` in `account-erasure.ts`; an
   erased account's links answer 403. Not a source of the erasure's association lock: when such a row is
   all that ties the erasure to an association, the erasure writes nothing else under it, so no cycle.
 - **Links already distributed (`sig`)** - a dated shim, [legacy-compatibility](legacy-compatibility.md):
-  still verified, and `POST calendar/feed-signature` still answers older store builds. A `sig` names no
-  holder, so it serves only what every reader who could hold it sees: a PAIR (campus AND formation,
-  with or without an association) unchanged; anything wider (an association alone, a campus alone - the
-  staff link -, a formation alone from before 2026-10-07) only the events reaching EVERY open space it
-  covers (`eventReachesEveryOpenSpaceMatchingSql`, `reader-spaces.ts`; none matching serves nothing);
-  an event for students or staff never (`restrictAnonymousToPublicReach`). Every such read logs ONE
-  `[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association`, the count its removal waits on.
+  still verified. A `sig` names no holder, so it serves only what every reader who could hold it sees:
+  a PAIR (campus AND formation, with or without an association) unchanged - every legitimate holder was
+  in that space; ANY OTHER SHAPE (an association alone, a campus alone - the staff link -, a formation
+  alone from before 2026-10-07) a valid EMPTY calendar, 200 and no event, so the app keeps the link and
+  shows nothing (owner's review, 2026-11-14); an event for students or staff never
+  (`restrictAnonymousToPublicReach`). `POST calendar/feed-signature` still answers older store builds,
+  for a PAIR only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN`. Each distinct link
+  logs ONE `[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` per process
+  per UTC day (`LegacyLinkSightings`) - count distinct links, not lines.
 - **Frontend:** `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`, was `createFeedSigner`)
-  asks the route and exposes `revoke()`; the modal's sentence now says a link shows what its holder
-  sees and can be revoked (`calendar_subscribe_holder_notice`).
+  is `unasked` until `ask()` (the modal's "get my link"), asks only for the selection shown at that tap,
+  and exposes `revoke()`; the modal's sentence says a link shows what its holder sees and can be
+  revoked (`calendar_subscribe_holder_notice`).
 - **Proof:** `agenda-subscription.integration.spec.ts` (real PostgreSQL, the service and the controller
   for real): a holder outside an association's audience gets nothing, then its events once a member; a
   holder who loses their space stops receiving it on the same token; a students-only event follows the
-  holder's public; a legacy association-alone `sig` serves only events reaching every open space, a
-  campus-alone one every open space of the campus, a pair unchanged; the erasure's statement deletes
-  the row and the token answers 403; a revocation ends the old token and mints a new one; deleting the
-  association deletes its rows. Unit specs: token sign/verify/tamper/cross-kind, the controller's 403,
-  400, `private` header and revocation, the modal's button.
+  holder's public; a legacy association-, campus- or formation-alone `sig` answers an empty calendar,
+  a pair is unchanged; the erasure's statement deletes the row and the token answers 403; a revocation
+  ends the old token and mints a new one; deleting the association deletes its rows; and a table built
+  from the ENTITY alone keeps one row per selection. Unit specs: token sign/verify/tamper/cross-kind, the
+  one-statement write, the key checked before it, the foreign-key 404, `feed-signature` refusing a
+  non-pair, the controller's 403, 400 (a token on the JSON feed too), `private` header, revocation and
+  the once-a-day legacy line, the modal's ask and confirmed revoke.
 
 ### D38b amended - every kind may ask, and an institution's request shows its audience (owner, 2026-11-02)
 

@@ -301,7 +301,7 @@
   /**
    * The reader's own subscription link for the selection (2026-11-14): the server binds it to their
    * account and serves what they see - only their own spaces, or one association, may be asked.
-   * Asked while the modal is open, for nothing else; the URL carries the token alone.
+   * Made when the reader asks for it in the modal, never on sight; the URL carries the token alone.
    */
   const subscriptionLink = createSubscriptionLink(() => {
     if (!showSubscribeModal) return null;
@@ -862,6 +862,7 @@
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
       signing={subscriptionLink.status}
+      onAsk={subscriptionLink.ask}
       revokeStatus={subscriptionLink.revokeStatus}
       onRevoke={subscriptionLink.revoke}
       intro={m.calendar_subscribe_intro()}

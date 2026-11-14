@@ -9,13 +9,13 @@ import type { SpacePair } from '../spaces/reader-spaces';
  *
  * SINCE 2026-11-14 ("Respecter les publics", D40 re-decided): a subscription link names its HOLDER.
  * Its token is `<subscription id>.<HMAC of the id>` ({@link agendaSubscriptionToken}), the id a row of
- * `agenda_subscriptions` (migration 170), and the feed it opens is the holder's own signed-in agenda,
+ * `agenda_subscriptions` (migration 173), and the feed it opens is the holder's own signed-in agenda,
  * re-read at every poll. Deleting the row revokes the link; the account erasure deletes it too.
  *
  * THE LEGACY SELECTION LINK (D40 amended 2026-10-06, a dated shim - docs/wiki/legacy-compatibility.md):
  * `sig`, an HMAC of the canonical selection (campus, formation, association), names no one. It is
- * still verified so saved links keep working, but what it serves is narrowed to what EVERY reader who
- * could have been handed it sees (`legacyAgendaLinkShape`, `eventReachesEveryOpenSpaceMatchingSql`).
+ * still verified so saved links keep resolving, but it serves only what every reader who could hold
+ * it sees: a PAIR as before, any other shape an EMPTY calendar (`legacyAgendaLinkShape`).
  * Rotating the key ends every link of every kind at once.
  */
 
@@ -47,6 +47,14 @@ function signingKey(): string {
     throw new ServiceUnavailableException('Agenda signing is not configured');
   }
   return key;
+}
+
+/**
+ * Throws the 503 an unset or short `AGENDA_SIGNING_KEY` gets, and nothing otherwise: asked BEFORE a
+ * write whose answer needs a signature, so a misconfigured estate writes nothing.
+ */
+export function assertAgendaSigningKey(): void {
+  signingKey();
 }
 
 /**
@@ -169,13 +177,48 @@ export function verifiedAgendaSubscriptionId(token: string | undefined): string 
 /** The WARN tag of a refused subscription token (unknown, revoked or wrongly signed). */
 export const AGENDA_SUBSCRIPTION_REFUSED_TAG = '[AGENDA_SUBSCRIPTION_REFUSED]';
 
-/** The WARN tag of every read through a legacy `sig` link: the count its removal waits on. */
+/**
+ * The WARN tag of a legacy `sig` link seen: ONE line per distinct link per process per UTC day
+ * ({@link LegacyLinkSightings}), the count its removal waits on.
+ */
 export const AGENDA_LEGACY_LINK_TAG = '[AGENDA_LEGACY_LINK]';
 
 /**
- * What a legacy selection link names, for its log line and its narrowing: a space (`pair`, with or
- * without an association), a `campus` alone (the staff link), a `formation` alone (signed before the
- * 2026-10-07 tightening) or an `association` alone.
+ * A legacy link's name in the logs: the first 8 hex characters of SHA-256 of its `sig`. A `sig` names
+ * no one (it signs a selection), and its hash does not let the link be rebuilt.
+ */
+export function legacyLinkFingerprint(sig: string): string {
+  return crypto.createHash('sha256').update(sig.trim()).digest('hex').slice(0, 8);
+}
+
+/**
+ * WHICH LEGACY LINKS THIS PROCESS HAS ALREADY REPORTED TODAY. A calendar app polls its link about a
+ * hundred times a day; the removal of the shim waits on how many distinct LINKS are still polled, so
+ * each is logged once per UTC day and per process. The set is forgotten when the day changes (it
+ * holds one day's links at most). N replicas log a link up to N times a day: count distinct
+ * `link=` values, never lines. It decides nothing but whether to write a log line.
+ */
+export class LegacyLinkSightings {
+  private day = '';
+  private readonly seen = new Set<string>();
+
+  /** True the first time `link` is offered on `day` (a `YYYY-MM-DD`), false after. */
+  firstToday(link: string, day: string): boolean {
+    if (day !== this.day) {
+      this.day = day;
+      this.seen.clear();
+    }
+    if (this.seen.has(link)) return false;
+    this.seen.add(link);
+    return true;
+  }
+}
+
+/**
+ * What a legacy selection link names: a space (`pair`, with or without an association) - the one
+ * shape every holder of which was in that space, so the one that still serves events - or a
+ * `campus` alone (the staff link), a `formation` alone (signed before the 2026-10-07 tightening) or
+ * an `association` alone, which serve an empty calendar (owner's review, 2026-11-14).
  */
 export type LegacyAgendaLinkShape = 'pair' | 'campus' | 'formation' | 'association';
 

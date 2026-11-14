@@ -12,12 +12,16 @@ import { flushSync, mount, unmount } from 'svelte';
 
 const runtimeOs = vi.hoisted(() => ({ value: 'android' }));
 const navigateExternal = vi.hoisted(() => vi.fn());
+const showConfirm = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/mls-client/mlsPlatform', () => ({
   detectRuntimeDeviceOs: () => runtimeOs.value,
 }));
 vi.mock('$lib/utils/openExternal', () => ({
   navigateExternal: (...args: unknown[]) => navigateExternal(...args),
+}));
+vi.mock('$lib/stores/confirm.svelte', () => ({
+  showConfirm: (...args: unknown[]) => showConfirm(...args),
 }));
 
 import { setLocale } from '$lib/paraglide/runtime';
@@ -29,8 +33,9 @@ const mounted: ReturnType<typeof mount>[] = [];
 
 function render(
   extra: {
-    signing?: 'idle' | 'signing' | 'ready' | 'error' | 'unavailable';
+    signing?: 'idle' | 'unasked' | 'signing' | 'ready' | 'error' | 'unavailable';
     icsUrl?: string;
+    onAsk?: () => void;
     onRevoke?: () => Promise<void>;
     revokeStatus?: 'idle' | 'revoking' | 'revoked' | 'failed';
   } = {}
@@ -65,6 +70,7 @@ function appButton(): HTMLButtonElement {
 beforeEach(() => {
   setLocale('en', { reload: false });
   navigateExternal.mockReset();
+  showConfirm.mockReset();
 });
 
 afterEach(() => {
@@ -96,14 +102,51 @@ describe('CalendarSubscribeModal', () => {
     expect(document.querySelector('[data-subscribe-revoke]')).toBeNull();
   });
 
-  it('the revoke button calls the revocation, and the modal says how it went', () => {
+  it('asks nothing on sight: a link is made only when the reader taps "get my link" (2026-11-14)', () => {
+    runtimeOs.value = 'android';
+    const onAsk = vi.fn();
+    render({ signing: 'unasked', icsUrl: '', onAsk });
+    expect(onAsk).not.toHaveBeenCalled();
+    // The explanation is there before the link is.
+    expect(document.querySelector('[data-subscribe-holder-notice]')).not.toBeNull();
+    const ask = document.querySelector('[data-subscribe-ask]') as HTMLButtonElement;
+    expect(ask.textContent?.trim()).toBe(m.calendar_subscribe_ask_button());
+    ask.click();
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ signing: 'ready', onAsk });
+    expect(document.querySelector('[data-subscribe-ask]')).toBeNull();
+  });
+
+  it('revokes only once the reader confirms: one tap ends every calendar on every device', async () => {
     runtimeOs.value = 'android';
     const onRevoke = vi.fn(() => Promise.resolve());
+    showConfirm.mockResolvedValue(false);
+    render({ onRevoke });
+    const button = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    button.click();
+    await vi.waitFor(() => expect(showConfirm).toHaveBeenCalledTimes(1));
+    expect(showConfirm).toHaveBeenCalledWith(
+      m.calendar_subscribe_revoke_confirm(),
+      expect.objectContaining({ danger: true })
+    );
+    await Promise.resolve();
+    expect(onRevoke).not.toHaveBeenCalled();
+    showConfirm.mockResolvedValue(true);
+    button.click();
+    await vi.waitFor(() => expect(onRevoke).toHaveBeenCalledTimes(1));
+  });
+
+  it('the revoke button calls the revocation, and the modal says how it went', async () => {
+    runtimeOs.value = 'android';
+    const onRevoke = vi.fn(() => Promise.resolve());
+    showConfirm.mockResolvedValue(true);
     render({ onRevoke });
     const button = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
     expect(button.textContent?.trim()).toBe(m.calendar_subscribe_revoke_button());
     button.click();
-    expect(onRevoke).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(onRevoke).toHaveBeenCalledTimes(1));
     unmount(mounted.pop()!);
     document.body.innerHTML = '';
     render({ onRevoke, revokeStatus: 'revoking' });

@@ -155,7 +155,7 @@
 
   let showSubscribeModal = $state(false);
 
-  /** The reader's own link to this association's agenda (2026-11-14): asked while the modal is open. */
+  /** The reader's own link to this association's agenda (2026-11-14): made when they ask, in the modal. */
   const subscriptionLink = createSubscriptionLink(() =>
     showSubscribeModal ? { associationId } : null
   );
@@ -634,6 +634,7 @@
   onClose={() => (showSubscribeModal = false)}
   icsUrl={calendarIcsUrl}
   signing={subscriptionLink.status}
+  onAsk={subscriptionLink.ask}
   revokeStatus={subscriptionLink.revokeStatus}
   onRevoke={subscriptionLink.revoke}
   intro={m.asso_calendar_subscribe_intro()}

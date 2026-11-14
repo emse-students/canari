@@ -86,6 +86,7 @@ import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
   assertAgendaAccess,
+  AGENDA_TOKEN_NOT_ALONE,
   assertSubscriptionTokenAlone,
   parseDirectoryQuery,
   parseSpaceSelection,
@@ -97,6 +98,8 @@ import {
   EVENT_ICS_REFUSED_TAG,
   eventIcsSignatureMatches,
   legacyAgendaLinkShape,
+  legacyLinkFingerprint,
+  LegacyLinkSightings,
   verifiedAgendaSubscriptionId,
   withEventIcsSig,
 } from './agenda-signature';
@@ -129,6 +132,8 @@ export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 @Controller('associations')
 export class AssociationsController {
   private readonly logger = new Logger(AssociationsController.name);
+  /** The legacy agenda links already logged today by this process (`legacySelectionRead`). */
+  private readonly legacySightings = new LegacyLinkSightings();
 
   constructor(
     private readonly service: AssociationsService,
@@ -356,37 +361,35 @@ export class AssociationsController {
    * their promo opens on (`promo-visibility.ts`, the rule the posts feed already used). An
    * anonymous reader is unchanged, having no promo to stop at.
    *
-   * `token` (2026-11-14): a subscription link's token reads its HOLDER's agenda, as the `.ics` does
-   * (see `aggregatedCalendarFeedIcs`); it is alone in its request (400 otherwise), refused bodyless.
+   * A subscription TOKEN is not read here (2026-11-14): only `feed.ics` takes one, so a token on this
+   * route is a 400 `AGENDA_TOKEN_NOT_ALONE` and never a holder's agenda in JSON (which would carry
+   * account ids and per-event links that outlive a revocation). An anonymous read with a legacy
+   * `sig` follows `legacySelectionRead`.
    */
   @Get('calendar/feed')
   async aggregatedCalendarFeed(
     @Query('from') from: string | undefined,
     @Query('to') to: string | undefined,
-    @Query('associationId') associationId: string | undefined,
-    @Query('includePending') includePending: string | undefined,
-    @Headers('x-user-id') userId: string | undefined,
-    @Headers('x-global-admin') ga: string | undefined,
-    @Query('campus') campus: string | undefined,
-    @Query('formation') formation: string | undefined,
-    @Query('sig') sig: string | undefined,
-    @Query('token') token: string | undefined,
-    @Res({ passthrough: true }) res: Response
+    @Query('associationId') associationId?: string,
+    @Query('includePending') includePending?: string,
+    @Headers('x-user-id') userId?: string,
+    @Headers('x-global-admin') ga?: string,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string,
+    @Query('token') token?: string
   ) {
     if (token?.trim()) {
-      assertSubscriptionTokenAlone({ token, sig, campus, formation, associationId });
-      const holder = await this.subscriptionHolder(token);
-      if (!holder) {
-        res.status(403);
-        return '';
-      }
-      res.setHeader('Cache-Control', AGENDA_TOKEN_CACHE_CONTROL);
-      return withEventIcsSig(await this.holderFeed(holder, from, to));
+      this.logger.warn(`${AGENDA_SUBSCRIPTION_REFUSED_TAG} a token on the JSON feed: refused`);
+      throw new BadRequestException({
+        code: AGENDA_TOKEN_NOT_ALONE,
+        message: 'A subscription token is read by calendar/feed.ics only',
+      });
     }
     const selection = parseSpaceSelection({ campus, formation });
     const signedIn = Boolean(userId?.trim());
     assertAgendaAccess({ selection, associationId, sig, signedIn });
-    if (!signedIn) this.logLegacyLink(selection);
+    if (!signedIn && !this.legacySelectionRead(selection, sig)) return [];
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -401,7 +404,6 @@ export class AssociationsController {
         includePending: include,
         viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
         selection,
-        legacyLink: !signedIn,
       })
     );
   }
@@ -433,9 +435,24 @@ export class AssociationsController {
     });
   }
 
-  /** ONE WARN line per read through a legacy `sig` link: the count its removal waits on. */
-  private logLegacyLink(selection: SpaceSelection): void {
-    this.logger.warn(`${AGENDA_LEGACY_LINK_TAG} shape=${legacyAgendaLinkShape(selection)}`);
+  /**
+   * A VERIFIED LEGACY `sig` READ (docs/wiki/legacy-compatibility.md): whether it serves anything. A
+   * `sig` names no holder, so it serves what EVERY reader who could hold it sees. A PAIR (campus AND
+   * formation, with or without an association) was signed only for readers of that space: served as
+   * before. Any other shape - a campus alone (signed for staff, who reach nothing through audience
+   * rules), a formation alone, an association alone (signed for anyone) - has a holder who sees
+   * nothing: it answers an EMPTY calendar, the link still resolving (owner's review, 2026-11-14).
+   * Each distinct link is logged ONCE per process per UTC day (`LegacyLinkSightings`).
+   */
+  private legacySelectionRead(selection: SpaceSelection, sig: string | undefined): boolean {
+    const shape = legacyAgendaLinkShape(selection);
+    const link = legacyLinkFingerprint(sig ?? '');
+    if (
+      this.legacySightings.firstToday(`${link}|${shape}`, new Date().toISOString().slice(0, 10))
+    ) {
+      this.logger.warn(`${AGENDA_LEGACY_LINK_TAG} shape=${shape} link=${link}`);
+    }
+    return shape === 'pair';
   }
 
   /**
@@ -459,9 +476,9 @@ export class AssociationsController {
    * wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED]`. It is alone in its request:
    * with `sig`, a selection or an `eventId` it is a 400.
    *
-   * A `sig` selection link is the LEGACY shim (docs/wiki/legacy-compatibility.md): served narrowed to
-   * what every possible holder sees (`legacyLink`), one `[AGENDA_LEGACY_LINK]` line per read. It has
-   * no promo cutoff: it names no holder to cut at.
+   * A `sig` selection link is the LEGACY shim (docs/wiki/legacy-compatibility.md,
+   * `legacySelectionRead`): a pair is served as before, any other shape an EMPTY calendar. It has no
+   * promo cutoff: it names no holder to cut at.
    */
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
@@ -508,12 +525,14 @@ export class AssociationsController {
     } else {
       // `.ics` is always anonymous: a calendar app sends no identity.
       assertAgendaAccess({ selection, associationId, sig, signedIn: false });
-      this.logLegacyLink(selection);
+      if (!this.legacySelectionRead(selection, sig)) {
+        icsHeaders('public, max-age=120');
+        return buildAggregatedCalendarIcs([], { frontendBaseUrl });
+      }
     }
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
       signedEvent: Boolean(wanted),
-      legacyLink: !wanted,
     });
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
@@ -528,8 +547,8 @@ export class AssociationsController {
   /**
    * LEGACY (docs/wiki/legacy-compatibility.md): the signature a pre-2026-11-14 store build puts in its
    * subscription URL (D40 amended 2026-10-06). Signed-in readers only, same bound and same 400 as
-   * `calendar/subscription`; the link it makes is served narrowed (`legacyLink`). Removed with the
-   * `sig` branch of the feeds.
+   * `calendar/subscription`, and since 2026-11-14 a PAIR only (`signAgendaFeedSelection`). Removed
+   * with the `sig` branch of the feeds.
    */
   @UseGuards(NginxAuthGuard)
   @Post('calendar/feed-signature')

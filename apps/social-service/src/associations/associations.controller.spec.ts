@@ -12,6 +12,7 @@ import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import {
   agendaSubscriptionToken,
+  LegacyLinkSightings,
   signAgendaSelection,
   signEventIcs,
   withEventIcsSig,
@@ -837,9 +838,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       undefined,
       args.campus,
       undefined,
-      args.sig,
-      undefined,
-      res
+      args.sig
     );
 
   it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
@@ -856,17 +855,40 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
         selection: { campus: 'gardanne', formation: 'ICM' },
         // Not a one-event link: an anonymous read withholds a public-only event (2026-11-13).
         signedEvent: false,
-        // A `sig` selection is the legacy link (2026-11-14): narrowed to what every holder sees.
-        legacyLink: true,
       }
     );
     await expect(ics(controller, { campus: 'paris' })).rejects.toThrow('Unknown campus: paris');
   });
 
-  it('serves the whole window of a signed selection without an eventId', async () => {
-    const body = await ics(makeController(), { campus: 'gardanne', sig: sigOf('gardanne') });
+  it('serves the whole window of a signed PAIR without an eventId', async () => {
+    const body = await ics(makeController(), {
+      campus: 'gardanne',
+      formation: 'ICM',
+      sig: sigOf('gardanne', 'ICM'),
+    });
     expect(body).toContain('UID:ev1@canari');
     expect(body).toContain('UID:ev2@canari');
+  });
+
+  it('answers a legacy link that is not a pair with a valid EMPTY calendar, and reads no feed (2026-11-14)', async () => {
+    for (const args of [
+      { campus: 'gardanne', sig: sigOf('gardanne') },
+      { formation: 'ICM', sig: sigOf(null, 'ICM') },
+      {
+        associationId: 'a1',
+        sig: signAgendaSelection({ campus: null, formation: null, associationId: 'a1' }),
+      },
+    ]) {
+      const controller = makeController();
+      const body = await ics(controller, args);
+      expect(body).toContain('BEGIN:VCALENDAR');
+      expect(body).not.toContain('BEGIN:VEVENT');
+      const service = (
+        controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+      ).service;
+      expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+    }
+    await expect(json({ campus: 'gardanne', sig: sigOf('gardanne') })).resolves.toEqual([]);
   });
 
   it('REFUSES the bare public feed with a typed 400 (D40)', async () => {
@@ -1223,35 +1245,8 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
     }
   });
 
-  it('the JSON feed reads a token the same way, privately cached, and refuses it bodyless', async () => {
+  it('the JSON feed reads NO token: a token there is a 400, and no feed is read', async () => {
     const { controller, service } = makeController({ [SUB]: holder });
-    const res = response();
-    const json = (token: string) =>
-      controller.aggregatedCalendarFeed(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        token,
-        res as never
-      );
-    await expect(json(agendaSubscriptionToken(SUB))).resolves.toHaveLength(1);
-    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
-      undefined,
-      undefined,
-      undefined,
-      {
-        viewer: { userId: 'holder' },
-        selection: { campus: 'saint-etienne', formation: 'ICM' },
-      }
-    );
-    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, max-age=120');
-    const refused = response();
     await expect(
       controller.aggregatedCalendarFeed(
         undefined,
@@ -1263,11 +1258,11 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
         undefined,
         undefined,
         undefined,
-        agendaSubscriptionToken('00000000-0000-4000-8000-00000000a009'),
-        refused as never
+        agendaSubscriptionToken(SUB)
       )
-    ).resolves.toBe('');
-    expect(refused.status).toHaveBeenCalledWith(403);
+    ).rejects.toMatchObject({ status: 400, response: { code: AGENDA_TOKEN_NOT_ALONE } });
+    expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+    expect(service.findAgendaSubscription).not.toHaveBeenCalled();
   });
 
   it('DELETE calendar/subscriptions revokes: the old token then answers 403', async () => {
@@ -1325,25 +1320,31 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
     );
   });
 
-  it('a legacy sig read is served narrowed and logs ONE [AGENDA_LEGACY_LINK] line with its shape', async () => {
+  it('logs each legacy LINK once per process and day, with its shape and an 8-hex name', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
-      const { controller, service } = makeController();
-      const sig = signAgendaSelection({ campus: null, formation: null, associationId: ASSO });
-      await ics(controller, response(), { associationId: ASSO, sig });
-      expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
-        undefined,
-        undefined,
-        ASSO,
-        expect.objectContaining({ legacyLink: true })
-      );
+      const { controller } = makeController();
+      const assoc = signAgendaSelection({ campus: null, formation: null, associationId: ASSO });
+      for (let poll = 0; poll < 3; poll += 1) {
+        await ics(controller, response(), { associationId: ASSO, sig: assoc });
+      }
       const legacy = warn.mock.calls
         .map((c) => String(c[0]))
         .filter((l) => l.includes('[AGENDA_LEGACY_LINK]'));
-      expect(legacy).toEqual(['[AGENDA_LEGACY_LINK] shape=association']);
+      expect(legacy).toHaveLength(1);
+      expect(legacy[0]).toMatch(/^\[AGENDA_LEGACY_LINK\] shape=association link=[0-9a-f]{8}$/);
+      expect(legacy[0]).not.toContain(assoc);
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('LegacyLinkSightings: once per link per day, again the next day', () => {
+    const seen = new LegacyLinkSightings();
+    expect(seen.firstToday('abcd1234|pair', '2026-11-14')).toBe(true);
+    expect(seen.firstToday('abcd1234|pair', '2026-11-14')).toBe(false);
+    expect(seen.firstToday('ffff0000|pair', '2026-11-14')).toBe(true);
+    expect(seen.firstToday('abcd1234|pair', '2026-11-15')).toBe(true);
   });
 });
 

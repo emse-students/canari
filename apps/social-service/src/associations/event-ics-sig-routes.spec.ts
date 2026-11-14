@@ -49,13 +49,7 @@ describe('the routes that serve an event serve its .ics signature', () => {
       undefined,
       undefined,
       undefined,
-      'reader',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { setHeader: jest.fn() } as never
+      'reader'
     )) as Array<{ id: string; icsSig?: string }>;
     expect(rows[0].icsSig).toBe(signEventIcs('ev-validated'));
     expect(rows[1].icsSig).toBeUndefined();

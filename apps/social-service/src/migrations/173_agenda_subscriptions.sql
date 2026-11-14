@@ -1,10 +1,10 @@
--- Migration 170: the agenda subscription link is its holder's (owner, 2026-11-14, "Respecter les
+-- Migration 173: the agenda subscription link is its holder's (owner, 2026-11-14, "Respecter les
 -- publics"; docs/wiki/profiles-and-access.md, "D40 re-decided 2026-11-14 - the link is its holder's").
 --
 -- A calendar app polls an `.ics` URL with no identity. Until now that URL carried a signature of a
 -- SELECTION (campus, formation, association) and named no one, so it served what the selection
 -- reached, whoever held it. From now on the link names a ROW of this table: the token is
--- `<id>.<HMAC of the id>` (`agenda-subscription.ts`), and the feed it opens is EXACTLY the signed-in
+-- `<id>.<HMAC of the id>` (`agenda-signature.ts`), and the feed it opens is EXACTLY the signed-in
 -- agenda of the row's `userId`, narrowed to the row's selection, re-evaluated at every poll.
 --
 -- - `userId`: the holder, an account id (varchar(255), never uuid: `user-id-column.spec.ts`). No
@@ -15,16 +15,19 @@
 --   association's agenda.
 -- - `associationId`: one association's agenda, or NULL. Deleting the association deletes the rows.
 --
--- ONE ROW PER (holder, selection), NULLs counted equal (PostgreSQL 15+, every estate runs 18): asking
--- twice for the same selection - the subscribe modal asks while it is open - writes nothing new and
--- gives the same link back (`INSERT ... ON CONFLICT DO NOTHING`, then a read).
+-- ONE ROW PER (holder, selection): `"selectionKey"` is the selection spelled once
+-- (`agendaSelectionKey`: `campus|formation|associationId`, `-` for a side left out), and the unique
+-- key is (`"userId"`, `"selectionKey"`) - a plain UNIQUE the entity declares too, so a schema built
+-- by TypeORM `synchronize` holds it as well. Asking twice for the same selection - the subscribe
+-- modal asks on the reader's tap - writes nothing new and gives the same link back
+-- (`INSERT ... ON CONFLICT ... RETURNING id`, one statement).
 --
 -- REVOCATION is deleting the holder's rows (`DELETE /api/associations/calendar/subscriptions`): the
 -- next request mints a new id, so a new link, and every link handed out before answers 403.
 --
--- ADDITIVE: a new table and its two indexes, no existing row read or changed. The foreign key takes
--- a brief lock on `associations`; the migration gives up after 5 s rather than queue behind a long
--- transaction. ROLLBACK: an older image never reads this table and serves the signed selections it
+-- ADDITIVE: a new table, its unique key and an index, no existing row read or changed. The foreign
+-- key takes a brief lock on `associations`; the migration gives up after 5 s rather than queue
+-- behind a long transaction. ROLLBACK: an older image never reads this table and serves the signed selections it
 -- always did. Idempotent for CD: IF NOT EXISTS.
 
 SET lock_timeout = '5s';
@@ -36,12 +39,13 @@ CREATE TABLE IF NOT EXISTS agenda_subscriptions (
   "userId" varchar(255) NOT NULL,
   campus varchar(32) NULL,
   formation varchar(16) NULL,
-  "associationId" uuid NULL REFERENCES associations(id) ON DELETE CASCADE,
-  "createdAt" timestamptz NOT NULL DEFAULT now()
+  "associationId" uuid NULL,
+  "selectionKey" varchar(96) NOT NULL,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT "UQ_agenda_subscriptions_selection" UNIQUE ("userId", "selectionKey"),
+  CONSTRAINT "FK_agenda_subscriptions_association" FOREIGN KEY ("associationId")
+    REFERENCES associations(id) ON DELETE CASCADE
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS "UQ_agenda_subscriptions_selection"
-  ON agenda_subscriptions ("userId", campus, formation, "associationId") NULLS NOT DISTINCT;
 
 -- The association delete's cascade finds its rows through this, not by a scan.
 CREATE INDEX IF NOT EXISTS "IDX_agenda_subscriptions_association"

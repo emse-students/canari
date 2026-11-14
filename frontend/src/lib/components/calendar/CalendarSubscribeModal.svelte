@@ -11,6 +11,7 @@
   import { navigateExternal } from '$lib/utils/openExternal';
   import { copyText } from '$lib/utils/clipboard';
   import { Log } from '$lib/utils/Log';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import type {
     SubscriptionLinkStatus,
     SubscriptionRevokeStatus,
@@ -43,8 +44,11 @@
     /**
      * Where the reader's link stands (2026-11-14): the URL is empty until the server has answered
      * the selection, and an empty URL with `error` is a refusal the reader must be told about.
+     * `unasked` shows the "get my link" action (`onAsk`): no link exists before the reader asks.
      */
     signing?: SubscriptionLinkStatus;
+    /** The reader's "get my link" (2026-11-14): the server makes the link on this tap, not before. */
+    onAsk?: () => void;
     /**
      * Revokes every subscription link of the reader, then asks for a new one (2026-11-14). Absent:
      * no revoke button (the URL is not a holder's link).
@@ -61,6 +65,7 @@
     intro,
     selector,
     signing = 'ready',
+    onAsk,
     onRevoke,
     revokeStatus = 'idle',
   }: Props = $props();
@@ -93,6 +98,24 @@
       Log.d('CalendarSubscribe', `no app took the subscription link on ${os}: ${String(e)}`);
       appOpenFailed = true;
     }
+  }
+
+  /**
+   * Revoking ends every calendar the reader subscribed, on every device, in one tap - so it is
+   * confirmed first (review of 2026-11-14).
+   */
+  async function confirmRevoke() {
+    if (!onRevoke) return;
+    const confirmed = await showConfirm(m.calendar_subscribe_revoke_confirm(), {
+      danger: true,
+      confirmLabel: m.calendar_subscribe_revoke_button(),
+    });
+    if (!confirmed) {
+      Log.d('CalendarSubscribe', 'the reader kept their subscription links');
+      return;
+    }
+    Log.d('CalendarSubscribe', 'the reader revokes their subscription links');
+    await onRevoke();
   }
 </script>
 
@@ -200,7 +223,19 @@
     <p class="text-text-muted text-xs" data-subscribe-holder-notice>
       {m.calendar_subscribe_holder_notice()}
     </p>
-    {#if signing === 'signing'}
+    {#if signing === 'unasked' && onAsk}
+      <button
+        type="button"
+        onclick={() => {
+          Log.d('CalendarSubscribe', 'the reader asks for their link');
+          onAsk();
+        }}
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+        data-subscribe-ask
+      >
+        {m.calendar_subscribe_ask_button()}
+      </button>
+    {:else if signing === 'signing'}
       <p class="text-text-muted text-xs" role="status" data-subscribe-signing>
         {m.calendar_subscribe_signing()}
       </p>
@@ -230,10 +265,7 @@
       <div class="space-y-2" data-subscribe-revoke-section>
         <button
           type="button"
-          onclick={() => {
-            Log.d('CalendarSubscribe', 'the reader revokes their subscription links');
-            void onRevoke();
-          }}
+          onclick={() => void confirmRevoke()}
           disabled={revokeStatus === 'revoking'}
           class="border-cn-border text-text-main hover:bg-cn-bg inline-flex w-full items-center justify-center rounded-xl border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60"
           data-subscribe-revoke
