@@ -12,9 +12,33 @@ import {
   type LiveReplaysMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import type { RetentionDays } from '$lib/legal/retention';
+import { parseRetentionRead, type ServedRetention } from '$lib/legal/retention';
 
 const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
+/** The retention durations of the last LIVE answer and WHEN it was read (`{ days, readAt }`). */
+const RETENTION_READ_KEY = 'canari:retention_read';
+
+/** The retention durations a LIVE answer of THIS process gave, with when; see {@link serverRetention}. */
+let liveRetention = $state<{ days: ServedRetention['days']; readAt: number } | null>(null);
+
+function loadRetentionRead(): { days: ServedRetention['days']; readAt: number } | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(RETENTION_READ_KEY);
+    return raw ? parseRetentionRead(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRetentionRead(read: { days: ServedRetention['days']; readAt: number }): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(RETENTION_READ_KEY, JSON.stringify(read));
+  } catch {
+    /* quota / private mode */
+  }
+}
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
 let inflight: Promise<AppVersionCheckResult> | null = null;
@@ -124,15 +148,16 @@ export function serverLiveReplaysMode(): LiveReplaysMode {
 }
 
 /**
- * The retention durations the server applies to new content, as the last `/api/version` answer gave
- * them - THE CACHED ANSWER COUNTS, for {@link serverPresencePost}'s reason (offline, `lastCheck` is
- * adopted only for a blocking verdict). `null` before any answer this session and from a server older
- * than the field. Read through `retentionInForce` (`$lib/legal/retention`), which says when it has to
- * show the defaults instead.
+ * The retention durations the server applies to new content, with WHEN they were read: the last LIVE
+ * `/api/version` answer of this process (`live: true`), else the one this session read earlier
+ * (`live: false` - the privacy page then shows "valeurs du <date>" rather than presenting it as
+ * current). `null` before any answer this session and from a server older than the field. Read
+ * through `retentionInForce` (`$lib/legal/retention`), which says when it has to show the defaults.
  */
-export function serverRetention(): RetentionDays | null {
-  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.retention;
-  return loadCachedServerInfo()?.retention ?? null;
+export function serverRetention(): ServedRetention | null {
+  if (liveRetention) return { ...liveRetention, live: true };
+  const cached = loadRetentionRead();
+  return cached ? { ...cached, live: false } : null;
 }
 
 /**
@@ -279,6 +304,10 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
       if (live) {
         saveCachedServerInfo(live);
         liveCheckpointSkipMode = live.checkpointSkipMode;
+        if (live.retention) {
+          liveRetention = { days: live.retention, readAt: Date.now() };
+          saveRetentionRead(liveRetention);
+        }
       }
 
       lastCheck = buildAppVersionCheckResult(serverInfo);

@@ -4,12 +4,16 @@ import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
 import { deployedVersion } from './deployed-version';
 import axios from 'axios';
+import { notifyMediaRetentionChanged } from './retention-notice';
 
 jest.mock('axios');
 const mockedAxios = axios as unknown as { post: jest.Mock };
 
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
+jest.mock('./retention-notice', () => ({
+  notifyMediaRetentionChanged: jest.fn().mockResolvedValue(true),
+}));
 const mockDeployed = deployedVersion as jest.MockedFunction<typeof deployedVersion>;
 /** The acting administrator: a uuid whose first 8 characters are what the audit lines print. */
 const ADMIN = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -563,6 +567,16 @@ describe('PlatformService', () => {
       'retentionReelDays 365 -> 180 days by=aaaaaaaa'
     );
     warn.mockRestore();
+  });
+
+  it('tells media-service when a duration MOVES, and not when the save repeats the value', async () => {
+    const notify = jest.mocked(notifyMediaRetentionChanged);
+    notify.mockClear();
+    rowWithMin('0.13.0');
+    await service.updateConfig({ retentionChatReelDays: 30 }, ADMIN);
+    expect(notify).not.toHaveBeenCalled();
+    await service.updateConfig({ retentionChatReelDays: 7 }, ADMIN);
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 
   it('getConfig publishes every retention duration the row holds', async () => {

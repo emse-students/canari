@@ -5,22 +5,30 @@
   import { refreshAppVersionCheck, serverRetention } from '$lib/stores/appVersionCheck.svelte';
   import { retentionInForce } from '$lib/legal/retention';
   import { durationLabel } from '$lib/legal/retentionLabel';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * THE DURATIONS AN ADMIN SETS ARE RENDERED FROM THE SAME SOURCE THE SERVICES READ (owner,
    * 2026-11-14): `GET /api/version`'s `retention`, from `platform_config` - never a number typed in
    * this text, so the policy and the code cannot disagree. The page has no prerendered or
    * server-rendered body (`ssr = false` in the root layout), so it shows the live answer, else this
-   * session's cached one, else - offline with no answer ever read here - the values each setting is
-   * created with, and says so above the table (docs/wiki/retention-settings.md).
+   * session's cached one DATED ("valeurs du ..."), else - offline with no answer ever read here - the
+   * values each setting is created with, and says so above the table (docs/wiki/retention-settings.md).
    */
   const retention = $derived(retentionInForce(serverRetention()));
+  const readOn = $derived(
+    retention.readAt === null
+      ? ''
+      : new Intl.DateTimeFormat(getLocale(), { dateStyle: 'long', timeStyle: 'short' }).format(
+          retention.readAt
+        )
+  );
 
   onMount(() => {
     void refreshAppVersionCheck().then(() => {
-      if (serverRetention() === null) {
+      if (serverRetention()?.live !== true) {
         console.warn(
-          '[privacy] the retention durations could not be read from the server - the defaults are shown, and the page says so'
+          `[privacy] the retention durations could not be read from the server - ${serverRetention() ? 'an earlier answer of this session is shown, dated' : 'the defaults are shown'}, and the page says so`
         );
       }
     });
@@ -819,6 +827,10 @@
     <p>{m.legal_privacy_retention_settings_note()}</p>
     {#if retention.source === 'defaults'}
       <p role="status"><strong>{m.legal_privacy_retention_defaults_notice()}</strong></p>
+    {:else if retention.source === 'cached'}
+      <p role="status">
+        <strong>{m.legal_privacy_retention_cached_notice({ date: readOn })}</strong>
+      </p>
     {/if}
     <div class="legal-table-wrap">
       <table class="legal-table">

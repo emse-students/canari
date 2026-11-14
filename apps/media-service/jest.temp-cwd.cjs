@@ -26,9 +26,9 @@ afterAll(() => {
 });
 
 /**
- * THE RETENTION DURATIONS ARE ANSWERED WITHOUT A NETWORK. Every upload of an `ephemeral` or
- * `chat-reel` file, and every chat hold, reads the durations in force from social-service's relay
- * (`MediaService.readRetention`, docs/wiki/retention-settings.md); a spec has no social-service, so the
+ * THE RETENTION DURATIONS ARE ANSWERED WITHOUT THE HOLDER. Every upload of an `ephemeral` or
+ * `chat-reel` file, and every chat hold, reads the durations HELD in memory
+ * (`MediaService.readRetention`, docs/wiki/retention-settings.md); a spec boots no holder, so the
  * read answers the values the columns are created with (core migration 025). A spec about the read
  * itself replaces this answer with its own `jest.spyOn`.
  */
@@ -36,5 +36,5 @@ beforeEach(() => {
   const { MediaService } = require('./src/media/media.service');
   jest
     .spyOn(MediaService.prototype, 'readRetention')
-    .mockResolvedValue({ chatReelDays: 30, idleFileDays: 90 });
+    .mockReturnValue({ chatReelDays: 30, idleFileDays: 90 });
 });

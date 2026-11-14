@@ -11,7 +11,7 @@ import {
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { StorageService, type StoredObject } from './storage.service';
-import { fetchMediaRetention, type MediaRetentionDays } from './retention-settings';
+import { mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { parseByteRange } from './byte-range';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
@@ -764,7 +764,7 @@ export class MediaService {
   ): Promise<string> {
     // Read BEFORE the bytes are stored: an unreadable duration refuses the upload, never a file kept
     // under a window nobody chose.
-    const stamp = await this.retentionStampFor(retentionClass);
+    const stamp = this.retentionStampFor(retentionClass);
     const release = this.reserveUploadBudgets(retentionClass, ownerId, encryptedBytes.length);
     const mediaId = uuidv4();
     try {
@@ -1810,7 +1810,7 @@ export class MediaService {
 
     // The window IN FORCE now (the admin setting), fixed on the hold: read before the size, so an
     // unreadable duration refuses the hold before anything is charged.
-    const chatWindowMs = chatReelWindowMs(await this.readRetention());
+    const chatWindowMs = chatReelWindowMs(this.readRetention());
     // The budget needs the file's size, which the index holds for a `chat-reel` upload only.
     let size: number | null;
     try {
@@ -2642,7 +2642,7 @@ export class MediaService {
         const mediaId = uuidv4();
         // Read before the store is touched: an unreadable duration leaves the staged bytes for a
         // re-ask rather than a file kept under a window nobody chose.
-        const stamp = await this.retentionStampFor(retentionClass);
+        const stamp = this.retentionStampFor(retentionClass);
 
         await this.storage.putFileStream(mediaId, tempFile, stat.size);
 
@@ -2958,11 +2958,12 @@ export class MediaService {
   }
 
   /**
-   * The retention durations in force, read from social-service's relay (`fetchMediaRetention`, which
-   * fails closed). A method so the specs can answer it without a network.
+   * The retention durations in force, as HELD in memory (`mediaRetention`, read at boot and on each
+   * notice - never a network call on the upload path); nothing held refuses with a 503. A method so
+   * the specs can answer it without the holder.
    */
-  readRetention(): Promise<MediaRetentionDays> {
-    return fetchMediaRetention(this.logger);
+  readRetention(): MediaRetentionDays {
+    return mediaRetention.require();
   }
 
   /**
@@ -2971,9 +2972,9 @@ export class MediaService {
    * Any other class is kept or deleted by something else, so nothing is read for it. Called before
    * the bytes are stored, so an unreadable duration refuses the upload with nothing kept.
    */
-  async retentionStampFor(retentionClass: RetentionClass | undefined): Promise<RetentionStamp> {
+  retentionStampFor(retentionClass: RetentionClass | undefined): RetentionStamp {
     if (retentionClass !== 'ephemeral' && retentionClass !== 'chat-reel') return {};
-    const retention = await this.readRetention();
+    const retention = this.readRetention();
     if (retentionClass === 'ephemeral') {
       this.logger.debug(`[RETENTION] ephemeral upload: idle window ${retention.idleFileDays} days`);
       return { idleRetentionMs: retention.idleFileDays * DAY_MS };

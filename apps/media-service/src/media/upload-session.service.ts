@@ -569,7 +569,7 @@ export class UploadSessionService {
       const mediaId = session.intendedMediaId;
       // The retention in force, read before the store is touched: an unreadable duration leaves the
       // session open for a retried `complete`, never a file kept under a window nobody chose.
-      const stamp = await this.media.retentionStampFor(session.retentionClass);
+      const stamp = this.media.retentionStampFor(session.retentionClass);
       try {
         await this.storage.putFileStream(mediaId, dataPath, session.totalBytes);
       } catch (err) {

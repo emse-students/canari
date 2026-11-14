@@ -97,6 +97,7 @@ import {
 import { assertInternalSecret } from './internal-secret.util';
 import { subjectOfAccessToken } from './access-token';
 import { fetchLivesMode } from './lives-mode';
+import { mediaRetention } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -563,6 +564,22 @@ export class MediaController {
    * no user in sight, and unlike a touch this can also REMOVE a reason to keep an object - so it
    * is not something a logged-in client may aim at somebody else's id.
    */
+  /**
+   * THE RETENTION DURATIONS CHANGED, OR MAY HAVE (docs/wiki/retention-settings.md): core-service
+   * calls this when an admin moves one, social-service at its boot. Media-service re-reads them from
+   * social-service's relay and holds them; a failed re-read keeps the values held (and says so).
+   * Answers what is held after the read, so the caller logs whether its change was taken.
+   */
+  @Post('internal/retention-changed')
+  async retentionChanged(
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ refreshed: boolean; readAt: string | null }> {
+    assertInternalSecret(internalSecret);
+    const refreshed = await mediaRetention.refresh('notice');
+    const held = mediaRetention.snapshot();
+    return { refreshed, readAt: held ? new Date(held.readAt).toISOString() : null };
+  }
+
   @Post('internal/retention-class')
   async setRetentionClass(
     @Body() body: { mediaIds?: unknown; retentionClass?: unknown },

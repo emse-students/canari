@@ -6,11 +6,19 @@
  *    a window read at the sweep would apply a lowered duration to every file already stored;
  *  - a file uploaded before the setting keeps the 90 days it was promised;
  *  - a `chat-reel` upload is due one window (in force) after its upload, written as its hold;
- *  - a duration that cannot be read REFUSES the upload with nothing stored - never a default.
+ *  - a duration that cannot be read REFUSES the upload with nothing stored - never a default;
+ *  - the durations are HELD in memory: social-service down after the boot read leaves uploads
+ *    stamped with the last values, and a notice applies a new value to the next upload - no upload
+ *    waits on a network call (lead's decision after the review of #3521).
  */
 import { ServiceUnavailableException } from '@nestjs/common';
 import { MediaService } from './media.service';
-import { fetchMediaRetention } from './retention-settings';
+import {
+  MediaRetentionHolder,
+  fetchMediaRetention,
+  mediaRetention,
+  type MediaRetentionDays,
+} from './retention-settings';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -59,7 +67,7 @@ function serviceWith(items: Record<string, Entry>) {
 }
 
 const answer = (chatReelDays: number, idleFileDays: number) =>
-  jest.spyOn(MediaService.prototype, 'readRetention').mockResolvedValue({
+  jest.spyOn(MediaService.prototype, 'readRetention').mockReturnValue({
     chatReelDays,
     idleFileDays,
   });
@@ -122,9 +130,9 @@ describe('a chat-reel upload is due one window in force after it', () => {
 
 describe('a duration that cannot be read refuses the upload', () => {
   it('stores nothing and registers nothing', async () => {
-    jest
-      .spyOn(MediaService.prototype, 'readRetention')
-      .mockRejectedValue(new ServiceUnavailableException());
+    jest.spyOn(MediaService.prototype, 'readRetention').mockImplementation(() => {
+      throw new ServiceUnavailableException();
+    });
     const items: Record<string, Entry> = {};
     const { service, put } = serviceWith(items);
 
@@ -166,5 +174,107 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
   it.each([0, 1.5, '30', null])('THROWS on an unusable value %p, never a default', async (bad) => {
     relayAnswers(200, { chatReelDays: bad, idleFileDays: 90 });
     await expect(fetchMediaRetention(logger)).rejects.toThrow(/chatReelDays/);
+  });
+});
+
+describe('MediaRetentionHolder - the durations held in memory', () => {
+  const logs = () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn() });
+  const values = (chatReelDays: number, idleFileDays: number): MediaRetentionDays => ({
+    chatReelDays,
+    idleFileDays,
+  });
+
+  it('refuses with a 503 before any read, and asks for exactly one read beside the upload', async () => {
+    const read = jest.fn(() => Promise.resolve(values(30, 90)));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger);
+
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    await holder.refresh('notice');
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(holder.require()).toEqual(values(30, 90));
+  });
+
+  it('keeps the last values when social-service is down after the boot read, and says how old they are', async () => {
+    let now = 1_000_000;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockResolvedValueOnce(values(14, 60))
+      .mockRejectedValue(new ServiceUnavailableException());
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger, () => now);
+
+    expect(await holder.refresh('boot')).toBe(true);
+    now += 120_000;
+    expect(await holder.refresh('notice')).toBe(false);
+    expect(holder.require()).toEqual(values(14, 60));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('values read 120 s ago'));
+  });
+
+  it('applies a changed value from the notice on', async () => {
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockResolvedValueOnce(values(30, 90))
+      .mockResolvedValueOnce(values(7, 90));
+    const holder = new MediaRetentionHolder(read, logs());
+    await holder.refresh('boot');
+    expect(holder.require().chatReelDays).toBe(30);
+    await holder.refresh('notice');
+    expect(holder.require().chatReelDays).toBe(7);
+  });
+
+  it('shares one read between notices that arrive while it runs', async () => {
+    let resolve!: (v: MediaRetentionDays) => void;
+    const read = jest.fn(() => new Promise<MediaRetentionDays>((r) => (resolve = r)));
+    const holder = new MediaRetentionHolder(read, logs());
+    const a = holder.refresh('notice');
+    const b = holder.refresh('notice');
+    resolve(values(30, 90));
+    await Promise.all([a, b]);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('an upload reads the HELD durations, never the network', () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('social-service down after the boot read: a chat upload is still stamped with the last value', async () => {
+    jest.restoreAllMocks();
+    global.fetch = jest.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ chatReelDays: 9, idleFileDays: 45 }), { status: 200 })
+      )
+    ) as typeof fetch;
+    await mediaRetention.refresh('boot');
+    global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
+
+    const items: Record<string, Entry> = {};
+    const { service } = serviceWith(items);
+    const id = await service.upload(Buffer.alloc(10), 'alice', 'chat-reel');
+    const hold = items[id].holds?.chat;
+    expect(hold!.dueAt - hold!.heldAt).toBe(9 * DAY);
+    const file = await service.upload(Buffer.alloc(10), 'alice', 'ephemeral');
+    expect(items[file].idleRetentionMs).toBe(45 * DAY);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('an admin change, once noticed, applies to the next upload', async () => {
+    jest.restoreAllMocks();
+    global.fetch = jest.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ chatReelDays: 3, idleFileDays: 45 }), { status: 200 })
+      )
+    ) as typeof fetch;
+    await mediaRetention.refresh('notice');
+
+    const items: Record<string, Entry> = {};
+    const { service } = serviceWith(items);
+    const id = await service.upload(Buffer.alloc(10), 'alice', 'chat-reel');
+    const hold = items[id].holds?.chat;
+    expect(hold!.dueAt - hold!.heldAt).toBe(3 * DAY);
   });
 });

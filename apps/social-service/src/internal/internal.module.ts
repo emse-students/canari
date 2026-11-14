@@ -30,6 +30,7 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { InternalRetentionController } from './internal-retention.controller';
+import { RetentionBootNotice } from './retention-boot-notice';
 
 /** Exposes internal endpoints for account deletion and form payment callbacks. */
 @Module({
@@ -69,5 +70,6 @@ import { InternalRetentionController } from './internal-retention.controller';
     InternalPaymentsController,
     InternalRetentionController,
   ],
+  providers: [RetentionBootNotice],
 })
 export class InternalModule {}

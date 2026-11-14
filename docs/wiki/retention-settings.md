@@ -32,11 +32,10 @@ sweep reads the setting.
   a failed query THROWN - the publish fails rather than stamp an expiry nobody can read. The reel's
   lifetime is read before the blob is claimed, so a refused read changes nothing.
   `GET /api/posts/reel-limits` serves `retentionDays` from the same read.
-- **media-service** has no database; it asks social-service's internal relay
-  `GET /api/internal/retention` (`InternalRetentionController`, `X-Internal-Secret`) at each upload of
-  an `ephemeral` or `chat-reel` file and at each chat hold (`media/retention-settings.ts`, the
-  `lives-mode.ts` pattern). It FAILS CLOSED: an unreachable relay is a `503` before a byte is stored.
-  A file uploaded before 2026-11-14 carries no stamp and keeps the window it was promised (90 days
+- **media-service** has no database, and it HOLDS the two durations it stamps in memory
+  (`MediaRetentionHolder`, `media/retention-settings.ts`) - see [below](#media-service-holds-the-durations-it-stamps).
+  An upload of an `ephemeral` or `chat-reel` file, and a chat hold, read the held values and never
+  the network. A file uploaded before 2026-11-14 carries no stamp and keeps the window it was promised (90 days
   idle, 30 days for a chat reel). The bench override `MEDIA_CHAT_REEL_RETENTION_MS` still wins over
   the setting when set, so a bench can cross the window in seconds.
 - **core-service** owns the columns: `RETENTION_SETTINGS` (`platform/retention.ts`) lists each with
@@ -44,6 +43,44 @@ sweep reads the setting.
   make it a `500`), and a change is logged at WARN with the actor (`retentionReelDays 365 -> 180 days
   by=...`). `GET /api/version` publishes the four as `retention: { reelDays, liveReplayDays,
   chatReelDays, idleFileDays }`.
+
+### Media-service holds the durations it stamps
+
+**Decided by the lead after the adversarial review of #3521 (2026-11-14), under the owner's
+"architecturalement réglé" rule:** a conversation upload must not depend on social-service answering
+at that moment. The first build asked social-service's relay at every upload (2 s timeout, a 503 when
+it did not answer) - so a social-service restart refused every chat file for its duration. Now:
+
+- **It reads on three events, and on no clock.**
+  - **Boot:** `RetentionBootstrap` reads before the routes listen.
+  - **Notice:** `POST /api/media/internal/retention-changed`, behind `X-Internal-Secret`. Core-service
+    sends it after an admin moves a duration (`notifyMediaRetentionChanged`). Social-service sends it
+    at its own boot (`RetentionBootNotice`).
+  - **Demand:** once, when an upload finds nothing held.
+- **Every read** asks social-service's relay `GET /api/internal/retention` (`InternalRetentionController`),
+  which reads `platform_config`. The read is single-flight: a notice arriving during a read shares it.
+- **A failed re-read keeps the last values.** It logs `[RETENTION] re-read (notice) FAILED (...):
+  uploads keep the values read N s ago`, naming their age. It never falls back to a default.
+- **Nothing held at all** (the boot read failed, and nothing has succeeded since) **refuses** the
+  upload with a `503`, before a byte is stored. That upload asks for the read, which runs beside the
+  refusal and never in its path. The client's outbox retries a 503, and its next try finds the values.
+- **A notice that fails** is an ERROR on the sender's side, and the admin's save stands. Media-service
+  keeps stamping the values it read last until its next read: the next change, its own next boot, or
+  social-service's next boot.
+
+**The deploy window - stated, retried, no fallback.** The deploy replaces services in `depends_on`
+order, and social-service depends on media-service, so media-service boots first.
+
+- **On the release that introduced the relay** (this one), the new media-service booted beside the
+  old social-service, which has no relay route. Its boot read failed (ERROR), and conversation uploads
+  answered `503` until the new social-service booted and sent its notice. That window is the time
+  between the two replacements, seconds to a minute or two. The client retried those uploads; none
+  was stamped with a guessed value.
+- **On every later release**, the old social-service already answers the relay, so the boot read
+  succeeds and the window is zero.
+- The deploy never waits on this read: media-service's health is its liveness. A health gated on the
+  read would deadlock the deploy that introduced the relay, because media-service would wait for a
+  route that only the next service in the order brings.
 
 `retentionSettingsAgree.test.ts` (frontend) holds the five copies together: the migration's
 defaults and CHECKs, core's list, social-service's reader, the client's defaults, and the two pages
@@ -62,8 +99,10 @@ writes only the Open Graph head), so there is no HTML that could carry a stale n
 in order:
 
 1. the live `/api/version` answer (the page asks for one when it opens);
-2. this session's cached answer (`sessionStorage`, the version check's own cache) - offline, or a
-   probe that failed;
+2. an answer read EARLIER in this session (`sessionStorage`, `canari:retention_read`, stored with
+   the moment it was read) - offline, or a probe that failed. It is never presented as current:
+   a notice above the table says the server could not be reached and gives the date, "valeurs du
+   <date>" (`legal_privacy_retention_cached_notice`; review of #3521);
 3. with neither - the first launch offline - the values each column is created with
    (`RETENTION_DEFAULTS`), and a notice above the table saying they could not be confirmed and may
    differ, logged at WARN. Never a blank.

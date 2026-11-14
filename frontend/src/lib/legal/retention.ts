@@ -70,18 +70,43 @@ export function parseRetention(raw: unknown): RetentionDays | null {
   return days;
 }
 
+/**
+ * The durations a server answered, WHEN, and whether this process read them itself (`live`) or
+ * found them in this session's cache - an answer read earlier, which the page must not present as
+ * current.
+ */
+export interface ServedRetention {
+  days: RetentionDays;
+  /** When the answer was read, in ms since the epoch. */
+  readAt: number;
+  live: boolean;
+}
+
+/** The cached read as stored (`{ days, readAt }`), or null when it is not a whole one. */
+export function parseRetentionRead(raw: unknown): { days: RetentionDays; readAt: number } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { days, readAt } = raw as { days?: unknown; readAt?: unknown };
+  const parsed = parseRetention(days);
+  if (!parsed || typeof readAt !== 'number' || !Number.isFinite(readAt) || readAt <= 0) return null;
+  return { days: parsed, readAt };
+}
+
 /** Where the durations a page shows came from. */
-export type RetentionSource = 'server' | 'defaults';
+export type RetentionSource = 'server' | 'cached' | 'defaults';
 
 /**
- * The durations to show: the server's when this session has read them (live, or the cached
- * `/api/version` answer), else {@link RETENTION_DEFAULTS} with `source: 'defaults'`, which the caller
- * says on the page. Pure - it runs inside a `$derived` - so the caller logs the fallback once.
+ * The durations to show: the server's when this process read them (`server`), an answer read
+ * earlier in this session (`cached`, with its `readAt`, which the page shows as "valeurs du ..."),
+ * else {@link RETENTION_DEFAULTS} (`defaults`, which the page says too). Pure - it runs inside a
+ * `$derived` - so the caller logs the fallback once.
  */
-export function retentionInForce(served: RetentionDays | null): {
+export function retentionInForce(served: ServedRetention | null): {
   days: RetentionDays;
   source: RetentionSource;
+  readAt: number | null;
 } {
-  if (served) return { days: served, source: 'server' };
-  return { days: { ...RETENTION_DEFAULTS }, source: 'defaults' };
+  if (served) {
+    return { days: served.days, source: served.live ? 'server' : 'cached', readAt: served.readAt };
+  }
+  return { days: { ...RETENTION_DEFAULTS }, source: 'defaults', readAt: null };
 }

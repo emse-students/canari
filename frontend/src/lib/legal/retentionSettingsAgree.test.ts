@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { RETENTION_ADMIN_SETTINGS, RETENTION_DEFAULTS, parseRetention } from './retention';
+import {
+  RETENTION_ADMIN_SETTINGS,
+  RETENTION_DEFAULTS,
+  parseRetention,
+  parseRetentionRead,
+  retentionInForce,
+} from './retention';
 
 /**
  * THE RETENTION DURATIONS ARE SPELLED IN FIVE PLACES, AND THEY MUST AGREE (owner, 2026-11-14:
@@ -83,4 +89,50 @@ describe('parseRetention', () => {
   ])('is null for %j - never a partial answer mixed with defaults', (raw) => {
     expect(parseRetention(raw)).toBeNull();
   });
+});
+
+describe('retentionInForce - where the shown durations came from', () => {
+  const days = { reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 };
+
+  it('a live answer of this process is current', () => {
+    expect(retentionInForce({ days, readAt: 1_000, live: true })).toEqual({
+      days,
+      source: 'server',
+      readAt: 1_000,
+    });
+  });
+
+  it('an earlier answer of this session is CACHED, with the date the page shows', () => {
+    expect(retentionInForce({ days, readAt: 1_000, live: false })).toEqual({
+      days,
+      source: 'cached',
+      readAt: 1_000,
+    });
+  });
+
+  it('no answer at all shows the defaults, and says so', () => {
+    expect(retentionInForce(null)).toEqual({
+      days: RETENTION_DEFAULTS,
+      source: 'defaults',
+      readAt: null,
+    });
+  });
+});
+
+describe('parseRetentionRead - the cached read', () => {
+  const days = { reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 };
+
+  it('reads the durations and their date', () => {
+    expect(parseRetentionRead({ days, readAt: 1_794_000_000_000 })).toEqual({
+      days,
+      readAt: 1_794_000_000_000,
+    });
+  });
+
+  it.each([null, { days }, { days, readAt: 'x' }, { days: {}, readAt: 1 }, { days, readAt: 0 }])(
+    'is null for %j - an undated value is never shown as one',
+    (raw) => {
+      expect(parseRetentionRead(raw)).toBeNull();
+    }
+  );
 });

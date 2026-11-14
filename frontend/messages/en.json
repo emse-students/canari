@@ -3328,6 +3328,7 @@
   "legal_privacy_subtitle": "Canari - Association Rootz · EMSE",
   "legal_privacy_retention_settings_note": "The durations of CanaReels, replays and conversation files are set by the platform's administrators; those shown here are the values in force. A changed duration applies only to content created after the change: content already published or sent keeps the duration it was created with.",
   "legal_privacy_retention_defaults_notice": "The server could not be reached: the adjustable durations below are the default values and may differ from those in force. They update as soon as the app reaches the server.",
+  "legal_privacy_retention_cached_notice": "The server could not be reached: the values below are those of {date}, read earlier in this session.",
   "legal_footer_credits": "Canari - Mines Saint-Etienne · Association Rootz",
   "legal_cgu_link": "Terms of service",
   "legal_privacy_link": "Privacy policy",

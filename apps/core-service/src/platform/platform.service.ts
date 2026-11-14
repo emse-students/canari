@@ -21,6 +21,7 @@ import {
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { RETENTION_SETTINGS, type RetentionDays } from './retention';
+import { notifyMediaRetentionChanged } from './retention-notice';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
 import { describeHttpError } from '../common/http-error-log';
@@ -272,6 +273,7 @@ export class PlatformService implements OnModuleInit {
       }
       changes.callRelay = dto.callRelay;
     }
+    let retentionMoved = false;
     for (const setting of RETENTION_SETTINGS) {
       const wanted = dto[setting.key];
       if (wanted === undefined) continue;
@@ -280,6 +282,7 @@ export class PlatformService implements OnModuleInit {
       // now on: each service stamps the expiry of a new item from the value in force.
       if (wanted !== row[setting.key]) {
         this.logger.warn(`${setting.key} ${row[setting.key]} -> ${wanted} days by=${by}`);
+        retentionMoved = true;
       }
       changes[setting.key] = wanted;
     }
@@ -300,6 +303,9 @@ export class PlatformService implements OnModuleInit {
     this.logger.debug(
       `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay} retention=${RETENTION_SETTINGS.map((setting) => `${setting.key}:${saved[setting.key]}`).join(',')}`
     );
+    // Media-service HOLDS the durations it stamps (it has no database): told after the save, it
+    // re-reads them. Best-effort and logged; the save stands either way.
+    if (retentionMoved) await notifyMediaRetentionChanged(this.logger);
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
         this.logger.warn(`paymentProvider -> disabled by=${by}`);
