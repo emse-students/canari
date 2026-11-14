@@ -4169,7 +4169,10 @@ ${rejectionReason}`
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
     // (social-service has no handler) and a notice's failure must never fail a committed write.
-    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    // Every failure is logged at WARN with its stack, and it returns no ids. THE NOTICE IS TWO WRITES
+    // (validators who are also parties, then the others), so a failure may have told one group and
+    // not the other: returning no ids makes the parties' notice tell every party, and the log says
+    // "not all", which is what is known here.
     try {
       return await this.notifyEventValidatorsOfProposalOrThrow(
         associationId,
@@ -4180,7 +4183,7 @@ ${rejectionReason}`
       );
     } catch (err) {
       this.logger.warn(
-        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation (a write of the notice failed)`,
         err instanceof Error ? err.stack : String(err)
       );
       return [];
