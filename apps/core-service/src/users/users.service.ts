@@ -273,7 +273,18 @@ export class UsersService implements OnModuleInit {
       if (firstName && user.firstName !== firstName) changes.firstName = firstName;
       if (lastName && user.lastName !== lastName) changes.lastName = lastName;
       if (!sameProfile(user)) {
-        this.logger.debug(`OIDC profile changed for ${id}: campus=${profile.campus}`);
+        this.logger.debug(`OIDC profile changed for ${id.slice(0, 8)}: campus=${profile.campus}`);
+        // Every audience decision reads these two columns: a sign-in that takes away the campus,
+        // or the whole cursus, takes away every space - and an emptied cursus with a campus kept
+        // makes the person STAFF. It is the provider's answer and it is applied (WP3), but it
+        // accuses: a mapping that stopped emitting looks exactly the same.
+        const lostCampus = !!user.campus && !profile.campus;
+        const lostCursus = (user.cursus ?? []).length > 0 && profile.cursus.length === 0;
+        if (lostCampus || lostCursus) {
+          this.logger.warn(
+            `[OIDC_PROFILE_SHRANK] ${id.slice(0, 8)} lost ${[lostCampus && 'its campus', lostCursus && 'its whole cursus'].filter(Boolean).join(' and ')} at sign-in: the profile it signed in with opens no space`
+          );
+        }
         Object.assign(changes, profile, { promo, formation });
       }
       if (Object.keys(changes).length > 0) {
@@ -283,7 +294,7 @@ export class UsersService implements OnModuleInit {
           // The row is gone since the read: the caller refuses the sign-in, nothing is re-created.
           if (err instanceof UserRowGoneError) throw err;
           // Any other database refusal costs the refresh of the claims, never the sign-in.
-          this.logger.warn(`OIDC upsert of ${id} not saved: ${String(err)}`);
+          this.logger.warn(`OIDC upsert of ${id.slice(0, 8)} not saved: ${String(err)}`);
         }
         Object.assign(user, changes);
       }
