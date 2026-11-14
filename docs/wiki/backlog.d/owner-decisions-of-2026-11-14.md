@@ -129,8 +129,9 @@ répéter"*). Each line names where its detail lives.
 - **A nominative read grant opens everything of its cell**: beside the posts and the agenda, the
   association directory, the shop and the partnerships of the ticked cell - *"elle pourrait même
   payer le tarif cotisant si elle cotisait"*. No per-person switch. To build.
-- **An unknown formation at sign-in is dropped with a warning** (*"L'ignorer et alerter"*), never
-  filed under `Autre`.
+- **An unknown formation at sign-in is ignored and said** (*"L'ignorer et alerter"*), never filed
+  under `Autre`: the cursus entry is kept (it is what tells a student from staff), opens no space,
+  and is logged.
 - **The published carte stays a snapshot** (*"Laisser la photo"*): nothing is withdrawn from it
   between two publications.
 - **The anonymous link preview of a post stays as it is** (*"Garder l'aperçu"*).
