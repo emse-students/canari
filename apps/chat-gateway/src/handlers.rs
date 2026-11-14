@@ -46,6 +46,9 @@ enum SocketEnd {
     /// measurement below and not one variant wider, so a family nobody has seen arrives as the
     /// only ERROR line on the box rather than hiding inside a name that was widened to fit it.
     Fault,
+    /// The client sent a frame longer than this gateway accepts (`FrameLimits::max_frame_bytes`):
+    /// the socket refused it before buffering it. A refusal the gateway chose, said as one.
+    TooLarge,
     /// The error under axum's is not a `tungstenite::Error` at all, so nothing here could read it.
     /// **This is a SIGNAL, never a path** - it can only happen if a future axum bump stops
     /// unifying with this crate's direct `tokio-tungstenite` dependency, at which point every
@@ -75,6 +78,7 @@ fn classify_socket_error(err: &axum::Error) -> SocketEnd {
     };
     match ws {
         WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => SocketEnd::Goodbye,
+        WsError::Capacity(_) => SocketEnd::TooLarge,
         _ => SocketEnd::Fault,
     }
 }
@@ -335,11 +339,15 @@ pub async fn ws_handler(
                 tx,
                 rx,
             };
-            ws.on_upgrade(move |socket| {
-                handle_socket(
-                    socket, state, claims.sub, device_id, declared, client, admitted,
-                )
-            })
+            // The socket itself refuses a longer frame, before buffering it (`SocketEnd::TooLarge`).
+            let max_frame_bytes = state.frame_limits.max_frame_bytes;
+            ws.max_frame_size(max_frame_bytes)
+                .max_message_size(max_frame_bytes)
+                .on_upgrade(move |socket| {
+                    handle_socket(
+                        socket, state, claims.sub, device_id, declared, client, admitted,
+                    )
+                })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
             tracing::warn!(
@@ -650,7 +658,19 @@ async fn handle_socket(
                         continue;
                     }
                     Ok(Message::Text(text)) => {
-                        frames.note(text.len());
+                        let in_minute = frames.note(text.len());
+                        if in_minute > state.frame_limits.max_frames_per_minute {
+                            // Said once: the loop ends here, and the census line that follows
+                            // carries the connection's counts.
+                            tracing::warn!(
+                                "[WS LIMIT] {}:{} sent {} frames in one minute, over the {} a connection may send - ending the socket",
+                                user_id,
+                                device_id,
+                                in_minute,
+                                state.frame_limits.max_frames_per_minute
+                            );
+                            break;
+                        }
                         // Any inbound data frame proves the client is reachable
                         // end-to-end (not just the nginx TCP layer).
                         pong_flag_recv.store(0, Ordering::Relaxed);
@@ -789,6 +809,13 @@ async fn handle_socket(
                             SocketEnd::Fault => {
                                 tracing::error!("WebSocket Error from {}: {}", user_id, e);
                             }
+                            SocketEnd::TooLarge => tracing::warn!(
+                                "[WS LIMIT] {}:{} sent a frame over the {} bytes a connection may send - ending the socket: {}",
+                                user_id,
+                                device_id,
+                                state.frame_limits.max_frame_bytes,
+                                e
+                            ),
                             SocketEnd::Unreadable => tracing::error!(
                                 "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under \
                                  axum's is not a tungstenite::Error, so this crate's direct \
@@ -984,6 +1011,18 @@ mod tests {
         // appearing it will be the only ERROR line on the box, which is the whole point.
         assert_eq!(end_of(WsError::ConnectionClosed), SocketEnd::Fault);
         assert_eq!(end_of(WsError::AlreadyClosed), SocketEnd::Fault);
+    }
+
+    #[test]
+    fn a_frame_over_the_size_limit_is_a_refusal_not_a_fault() {
+        use tokio_tungstenite::tungstenite::error::CapacityError;
+        assert_eq!(
+            end_of(WsError::Capacity(CapacityError::MessageTooLong {
+                size: 5_000,
+                max_size: 4_096
+            })),
+            SocketEnd::TooLarge
+        );
     }
 
     /// `end_of` boxes THIS crate's `tungstenite` type, so it passes whatever axum resolves - it

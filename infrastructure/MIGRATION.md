@@ -181,6 +181,11 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 (the state of both estates), media-service uses its default, 2 GB
 ([media-service](../docs/wiki/services/media-service.md)). The three compose files forward it.
 
+**Two more of the same kind, read by chat-gateway:** `WS_MAX_FRAME_BYTES` and
+`WS_MAX_FRAMES_PER_MINUTE`, the largest frame and the most frames per minute one socket may send.
+Unset (the state of both estates), the gateway uses 4096 and 240
+([chat-gateway](../docs/wiki/services/chat-gateway.md#what-one-connection-may-send-2026-11-14)).
+
 ## 3bis. Repository settings that are not secrets, and that no file in the tree carries
 
 **A SETTING NO FILE CARRIES IS REPRODUCED FROM NOWHERE ON A FORK OR A REBUILD**, and these three

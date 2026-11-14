@@ -7,8 +7,8 @@
 //
 // So each connection carries a [`FrameCensus`], fed by the receive loop, and its `Drop` writes ONE
 // line - `[WS FRAMES]` - whichever way the connection ends: a close frame, a reset, the sender half
-// ending first (which aborts the receive task and drops what it owns). It changes nothing a client
-// sees: it counts, and refuses nothing.
+// ending first (which aborts the receive task and drops what it owns). The census itself counts
+// and refuses nothing; [`FrameLimits`] is what the receive loop compares its counts to.
 //
 // THE CLOCK ONLY NAMES THE MINUTE. A minute here is a fixed window counted from the open, so a burst
 // that straddles two windows is split between them: the true count over ANY sixty seconds is at
@@ -18,6 +18,96 @@ use std::time::{Duration, Instant};
 
 /// The window `peak_per_minute` is counted over.
 const WINDOW: Duration = Duration::from_secs(60);
+
+/// The largest inbound frame a connection may send, in bytes, unless `WS_MAX_FRAME_BYTES` says
+/// otherwise. The socket carries three client frames - the heartbeat, `typing`, `disconnect` -
+/// and the longest is a `typing` naming its conversation; messages travel over HTTP. Production
+/// read 82 bytes as the largest of 389 connections (2026-11-14), so this sits fifty times above
+/// what any client sends.
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 4_096;
+
+/// The most inbound frames a connection may send in one fixed minute, unless
+/// `WS_MAX_FRAMES_PER_MINUTE` says otherwise. Production's busiest minute of those 389 connections
+/// was 21 frames, which bounds any sixty seconds at 42 (see the header): this is over five times
+/// that.
+pub const DEFAULT_MAX_FRAMES_PER_MINUTE: u64 = 240;
+
+/// What one connection may send. Past either bound the gateway says so once (`[WS LIMIT]`) and
+/// ends the socket, so the client reconnects on its own delay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameLimits {
+    /// The largest inbound frame, in bytes; a longer one is refused by the socket itself, before
+    /// it is buffered.
+    pub max_frame_bytes: usize,
+    /// The most inbound frames in one fixed minute of a connection.
+    pub max_frames_per_minute: u64,
+}
+
+impl Default for FrameLimits {
+    fn default() -> Self {
+        Self {
+            max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
+            max_frames_per_minute: DEFAULT_MAX_FRAMES_PER_MINUTE,
+        }
+    }
+}
+
+/// Why a configured limit was not used.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnusableLimit {
+    /// The variable that held it.
+    pub name: &'static str,
+    /// What it held.
+    pub raw: String,
+}
+
+/// Reads one limit: absent means the default, a positive integer means itself, and anything else
+/// is refused by name so the caller can say it - a limit of zero would end every connection.
+fn limit_from(name: &'static str, raw: Option<&str>, default: u64) -> Result<u64, UnusableLimit> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(default);
+    };
+    match raw.parse::<u64>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err(UnusableLimit {
+            name,
+            raw: raw.to_string(),
+        }),
+    }
+}
+
+impl FrameLimits {
+    /// The limits two environment values describe (`WS_MAX_FRAME_BYTES`,
+    /// `WS_MAX_FRAMES_PER_MINUTE`), and every value that could not be used - its limit is then the
+    /// default, and the caller logs the refusal.
+    pub fn from_values(
+        max_frame_bytes: Option<&str>,
+        max_frames_per_minute: Option<&str>,
+    ) -> (Self, Vec<UnusableLimit>) {
+        let mut unusable = Vec::new();
+        let mut read = |name, raw, default| {
+            limit_from(name, raw, default).unwrap_or_else(|refused| {
+                unusable.push(refused);
+                default
+            })
+        };
+        let bytes = read(
+            "WS_MAX_FRAME_BYTES",
+            max_frame_bytes,
+            DEFAULT_MAX_FRAME_BYTES as u64,
+        );
+        let per_minute = read(
+            "WS_MAX_FRAMES_PER_MINUTE",
+            max_frames_per_minute,
+            DEFAULT_MAX_FRAMES_PER_MINUTE,
+        );
+        let limits = Self {
+            max_frame_bytes: usize::try_from(bytes).unwrap_or(usize::MAX),
+            max_frames_per_minute: per_minute,
+        };
+        (limits, unusable)
+    }
+}
 
 /// The counts of one connection's inbound text frames.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -57,6 +147,11 @@ impl FrameCounts {
     pub fn heartbeat(&mut self) {
         self.heartbeats += 1;
     }
+
+    /// Frames counted in the window of the last one: what a per-minute limit is compared to.
+    pub fn in_window(&self) -> u64 {
+        self.in_window
+    }
 }
 
 /// One connection's [`FrameCounts`], written as a single line when the connection ends.
@@ -78,9 +173,11 @@ impl FrameCensus {
         }
     }
 
-    /// Counts one inbound text frame of `len` bytes, received now.
-    pub fn note(&mut self, len: usize) {
+    /// Counts one inbound text frame of `len` bytes, received now, and returns how many frames
+    /// its minute now holds.
+    pub fn note(&mut self, len: usize) -> u64 {
         self.counts.note(len, self.opened.elapsed());
+        self.counts.in_window()
     }
 
     /// Says the frame just counted was an application heartbeat.
@@ -113,7 +210,7 @@ impl Drop for FrameCensus {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameCensus, FrameCounts};
+    use super::{FrameCensus, FrameCounts, FrameLimits, UnusableLimit};
     use std::time::Duration;
 
     fn at(seconds: u64) -> Duration {
@@ -182,6 +279,53 @@ mod tests {
         assert_eq!(
             census.line(at(75)),
             "[WS FRAMES] user-1:device-1 closed after 75s: frames=2 heartbeats=1 bytes=135 largest=120 peakPerMinute=2"
+        );
+    }
+
+    #[test]
+    fn the_window_count_starts_again_with_each_minute() {
+        let mut counts = FrameCounts::default();
+        for _ in 0..3 {
+            counts.note(1, at(10));
+        }
+        assert_eq!(counts.in_window(), 3);
+        counts.note(1, at(60));
+        assert_eq!(counts.in_window(), 1);
+        assert_eq!(counts.peak_per_minute, 3);
+    }
+
+    #[test]
+    fn absent_or_blank_values_are_the_defaults_and_refuse_nothing() {
+        assert_eq!(
+            FrameLimits::from_values(None, Some("  ")),
+            (FrameLimits::default(), vec![])
+        );
+    }
+
+    #[test]
+    fn a_positive_value_is_the_limit() {
+        let (limits, unusable) = FrameLimits::from_values(Some("8192"), Some(" 600 "));
+        assert_eq!(limits.max_frame_bytes, 8_192);
+        assert_eq!(limits.max_frames_per_minute, 600);
+        assert!(unusable.is_empty());
+    }
+
+    #[test]
+    fn zero_or_text_is_refused_by_name_and_the_default_stands() {
+        let (limits, unusable) = FrameLimits::from_values(Some("0"), Some("many"));
+        assert_eq!(limits, FrameLimits::default());
+        assert_eq!(
+            unusable,
+            vec![
+                UnusableLimit {
+                    name: "WS_MAX_FRAME_BYTES",
+                    raw: "0".to_string()
+                },
+                UnusableLimit {
+                    name: "WS_MAX_FRAMES_PER_MINUTE",
+                    raw: "many".to_string()
+                },
+            ]
         );
     }
 }

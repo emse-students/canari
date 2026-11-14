@@ -287,16 +287,55 @@ ending first:
 ```
 
 `frames` is every inbound text frame, `heartbeats` the application pings among them, `largest` the
-largest frame in bytes. It counts and refuses nothing.
+largest frame in bytes. The census counts; the limits below are what refuses.
 
 **`peakPerMinute` is the busiest FIXED minute, counted from the open.** A burst that straddles two
 windows is split between them, so the true count over any sixty seconds is at most twice the value
 written. The clock only names the window.
 
 **Why it exists.** A per-connection limit has to sit above what real clients send, and only the
-gateway sees that: the delivery queue holds what is still stored, a sample of what was accepted.
-A week of this line is the distribution the frame limits are sized from
-([entry](../backlog.d/p2-gateway-frame-limits-sized-from-a-week-of-counts.md)).
+gateway sees that. This line is what the limits below were sized from, and what a change of
+either is checked against.
+
+**A polite close still ends on two lines**, `Client closed connection` and `[WS FRAMES]`. They are
+kept apart: the first is the twin of `Client went away without a closing handshake` and is counted
+with it, the second is written for every ending, including the ones with no close frame.
+
+## What one connection may send (2026-11-14)
+
+| Limit | Default | Variable | Past it |
+| --- | --- | --- | --- |
+| the size of one inbound frame | 4096 bytes | `WS_MAX_FRAME_BYTES` | the socket refuses the frame before buffering it; `[WS LIMIT] ... sent a frame over the N bytes` at WARN, the socket ends |
+| inbound frames in one fixed minute | 240 | `WS_MAX_FRAMES_PER_MINUTE` | `[WS LIMIT] ... sent N frames in one minute` at WARN, the socket ends |
+
+Both live in `FrameLimits` (`frame_census.rs`), read once at boot and said in one `[WS LIMIT]` INFO
+line. A value that is not a positive integer is refused by name at ERROR and its default kept. A
+client whose socket is ended reconnects on its own delay; nothing else changes for it.
+
+**The structural bound, from the code.** A client sends three frames on this socket: the
+heartbeat (`{"type":"ping"}`), `typing` (its type, a conversation id, `start` or `stop`) and
+`disconnect`. Messages, commits and Welcomes travel over HTTP to chat-delivery and never cross it.
+So the longest legitimate frame is a `typing` naming its conversation, and the rate is the
+heartbeat plus the typing signals of one person.
+
+**The measurement** (production, 2026-11-14, read-only aggregates of `[WS FRAMES]` over the three
+hours after the `1.6.12` deploy: 389 closed connections of 145 devices):
+
+| per connection | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- |
+| largest frame, bytes | 21 | 21 | 82 | 82 |
+| busiest fixed minute, frames | 3 | 8 | 12 | 21 |
+| frames that are not heartbeats | 1 | 1 | 7 | 18 |
+| duration, seconds | 36 | 795 | 3735 | 9425 |
+
+Three hours of one Saturday is a small sample, and a connection still open had written no line.
+It was not what set the values: the structural bound was, and the sample agrees with it - no
+frame came within a fiftieth of the size limit, and the busiest minute, doubled for the fixed
+window, is under a fifth of the rate. The delivery-queue figures read on 2026-11-13 (frames up to
+180 kB, 142 a minute) described the HTTP send route, not this socket, and size nothing here.
+
+**To change one**: set the variable in the estate's `infrastructure/.env` and recreate the gateway.
+A `[WS LIMIT]` WARN for an ordinary client means the value is too low.
 
 ## WebSocket message routing
 
