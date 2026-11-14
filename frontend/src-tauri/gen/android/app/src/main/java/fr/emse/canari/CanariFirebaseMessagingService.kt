@@ -1116,7 +1116,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         byGroup[g] = ShadeReadMark(maxOf(held?.at ?: 0L, a), maxOf(held?.serverAt ?: 0L, s))
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
+                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.javaClass.simpleName}")
                 }
             }
             return byGroup
@@ -1171,7 +1171,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @property unusable null when the file names this account; otherwise the token
          *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
          *   `other-account`, `no-names`, `unreadable`.
-         * @property detail the exception message of an `unreadable` file, for its log line.
+         * @property detail the exception CLASS of (never its message: org.json quotes the whole file) an `unreadable` file, for its log line.
          */
         internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
 
@@ -1195,7 +1195,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ?: DisplayNamesRead(null, "no-names")
                 }
             } catch (e: Exception) {
-                DisplayNamesRead(null, "unreadable", e.message)
+                DisplayNamesRead(null, "unreadable", e.javaClass.simpleName)
             }
         }
 
@@ -1228,7 +1228,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 ConversationNicknames.Book(root.optString("userId").lowercase(), scopes, channels)
             } catch (e: Exception) {
-                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.message}")
+                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.javaClass.simpleName}")
                 null
             }
         }
