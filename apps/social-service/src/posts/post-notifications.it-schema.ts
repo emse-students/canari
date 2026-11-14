@@ -60,6 +60,9 @@ export async function createBellTargetTables(q: (sql: string) => Promise<unknown
       ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'validated';
     CREATE TABLE IF NOT EXISTS association_calendar_event_co_owners (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid NOT NULL, association_id uuid NOT NULL);
+    -- The estates' key (migration 074): the bell's party gate probes it per row.
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_calendar_event_co_owner"
+      ON association_calendar_event_co_owners (event_id, association_id);
     CREATE TABLE IF NOT EXISTS booking_spaces (id uuid PRIMARY KEY);
     ALTER TABLE booking_spaces
       ADD COLUMN IF NOT EXISTS "associationId" uuid,

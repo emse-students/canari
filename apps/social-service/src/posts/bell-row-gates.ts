@@ -91,15 +91,37 @@ function eventPartySql(row: BellRowRefs): string {
         AND ${holdsFlagSql('bell_party.association_id', row.reader, AssociationPermissionFlag.PROPOSE_EVENT)}))`;
 }
 
+/** The row recorded, when it was written, that it REPLACED its reader's party notice. */
+function toldAsPartySql(row: BellRowRefs): string {
+  return `(${row.meta}->>'toldAsParty') = 'true'`;
+}
+
 /**
- * A row written to the VALIDATORS: shown while its reader holds EITHER right - the validator's, or a
- * party's (`eventPartySql`). The writer tells a person who is both ONCE, as a validator
- * (`announceEventReopened` drops the validators from the parties), so a gate on the validator's right
- * alone would hide the row from a party who would be told again; and an organiser's `PROPOSE_EVENT`
- * holder reads the event's pending title on the association's own agenda anyway.
+ * A row written to the VALIDATORS: shown while its reader holds the validator's right - or, for a row
+ * that REPLACED its reader's party notice (`meta.toldAsParty`, written by
+ * `notifyEventValidatorsOfProposal` on a reopening, where the writer drops the validators from the
+ * parties), while they hold a party's right (`eventPartySql`), since the party notice they were not
+ * sent would still be shown. Every other validators' row - a first proposal, a row written before
+ * the flag - follows the validator's right alone (fail closed).
  */
 function validatorRowSql(row: BellRowRefs): string {
-  return `(${eventValidatorSql(row)} OR ${eventPartySql(row)})`;
+  return `(${eventValidatorSql(row)} OR (${toldAsPartySql(row)} AND ${eventPartySql(row)}))`;
+}
+
+/** The SQL expressions of bell row `n` the gates read (`BellRowRefs`). */
+function bellRowRefs(n: string): BellRowRefs {
+  return { reader: `${n}."recipientId"`, target: asUuidSql(`${n}."postId"`), meta: `${n}.meta` };
+}
+
+/**
+ * Bell row `n`, a validators' row that replaced its reader's party notice, is admitted NOW by the
+ * party's right alone: its reader no longer validates. Such a row is served as the party notice it
+ * replaced (`PostNotificationsService.getNotifications`), so it never opens the validation queue
+ * its reader can no longer open.
+ */
+export function validatorRowServedAsPartySql(n: string): string {
+  const row = bellRowRefs(n);
+  return `(${toldAsPartySql(row)} AND NOT ${eventValidatorSql(row)})`;
 }
 
 /**
@@ -198,11 +220,7 @@ export const TARGET_BOUND_NOTIFICATION_TYPES: readonly NotificationType[] = (
  * the 90-day sweep, exactly as a post-bound row.
  */
 export function targetBoundRowShownSql(n: string): string {
-  const row: BellRowRefs = {
-    reader: `${n}."recipientId"`,
-    target: asUuidSql(`${n}."postId"`),
-    meta: `${n}.meta`,
-  };
+  const row = bellRowRefs(n);
   const arms = TARGET_BOUND_NOTIFICATION_TYPES.map((type) => {
     const gate = BELL_ROW_GATE[type] as (refs: BellRowRefs) => string;
     return `WHEN '${type}' THEN ${gate(row)}`;

@@ -338,18 +338,80 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     expect(await served('f2')).toEqual([]);
   });
 
-  it("a validator who is also the organiser's proposer keeps the validators' row with either right", async () => {
-    // Told ONCE, as a validator: the writer drops the validators from the parties.
+  /** What `reader`'s bell serves, as the client receives it: the type and the facts. */
+  const servedRows = async (reader: string) =>
+    (await bell.getNotifications(reader, 50))
+      .map((n) => ({ type: n.type, meta: n.meta }))
+      .sort((a, b) => a.type.localeCompare(b.type));
+
+  it('a validator told in place of their party notice keeps it with either right, then reads it as the party notice', async () => {
+    // A reopening tells a validator who is also a party ONCE, as a validator, and records it.
     await member(O, 'val1', F.PROPOSE_EVENT);
-    await row('val1', 'event_proposed', O);
+    await row('val1', 'event_proposed', O, {
+      reason: 'date_moved',
+      audience: 'validators',
+      eventId: E,
+      toldAsParty: true,
+    });
     await row('val1', 'event_pending_coorganiser', O, {
       reason: 'coorganiser_joined',
       audience: 'validators',
       eventId: E,
+      toldAsParty: true,
+    });
+    // Still a validator: the validators' rows, which open the validation queue.
+    expect((await servedRows('val1')).map((r) => r.meta?.audience)).toEqual([
+      'validators',
+      'validators',
+    ]);
+    // Only a party now: served as the party notices they replaced, which open the agenda.
+    await setFlags(B, 'val1', 0);
+    expect(await servedRows('val1')).toEqual([
+      { type: 'event_pending', meta: { reason: 'date_moved', eventId: E } },
+      { type: 'event_pending_coorganiser', meta: { reason: 'coorganiser_joined', eventId: E } },
+    ]);
+    await setFlags(O, 'val1', 0);
+    expect(await served('val1')).toEqual([]);
+  });
+
+  it("a validator who is a party through a CO-ORGANISER keeps that row by the partner's right, through `meta.eventId`", async () => {
+    await member(P, 'val1', F.PROPOSE_EVENT);
+    await row('val1', 'event_pending_coorganiser', O, {
+      reason: 'coorganiser_joined',
+      audience: 'validators',
+      eventId: E,
+      toldAsParty: true,
     });
     await setFlags(B, 'val1', 0);
-    expect(await served('val1')).toEqual(['event_pending_coorganiser', 'event_proposed']);
-    await setFlags(O, 'val1', 0);
+    expect(await served('val1')).toEqual(['event_pending_coorganiser']);
+    // The partner leaves the event: no right is left.
+    await q(`DELETE FROM association_calendar_event_co_owners WHERE association_id = $1`, [P]);
+    expect(await served('val1')).toEqual([]);
+  });
+
+  it("a validators' row that did not replace a party notice follows the validator's right alone (fail closed)", async () => {
+    // val1 holds PROPOSE_EVENT in the organiser AND in the partner, and loses the validator's right.
+    await member(O, 'val1', F.PROPOSE_EVENT);
+    await member(P, 'val1', F.PROPOSE_EVENT);
+    // A first proposal: the writer tells the validators only, so nothing was replaced.
+    await row('val1', 'event_proposed', O);
+    // A reopening's row written before the writer recorded it, naming no event either.
+    await row('val1', 'event_pending_coorganiser', O, {
+      reason: 'coorganiser_joined',
+      audience: 'validators',
+    });
+    // A reopening's row naming its event, but not written in place of a party notice.
+    await row('val1', 'event_proposed', O, {
+      reason: 'date_moved',
+      audience: 'validators',
+      eventId: E,
+    });
+    expect(await served('val1')).toEqual([
+      'event_pending_coorganiser',
+      'event_proposed',
+      'event_proposed',
+    ]);
+    await setFlags(B, 'val1', 0);
     expect(await served('val1')).toEqual([]);
   });
 

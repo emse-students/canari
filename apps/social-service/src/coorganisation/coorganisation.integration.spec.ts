@@ -1349,6 +1349,12 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await Promise.all(spy.mock.results.map((r) => r.value));
       expect(reopenNotices()).toEqual([['event_pending', ['coEd', 'coPub'], 'Reopen 33']]);
       expect(told.filter((t) => t.type === 'event_proposed')).toHaveLength(1);
+      // It names its event, so the bell can re-ask a validator-and-party's row (`BELL_ROW_GATE`).
+      expect(told.find((t) => t.type === 'event_proposed')?.meta).toEqual({
+        reason: 'date_moved',
+        audience: 'validators',
+        eventId: MOVED,
+      });
       expect((await stamp(MOVED)).status).toBe('pending');
     });
 
@@ -1373,6 +1379,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         told.length = 0;
         await proposals.accept(proposalId, 'coPub', false);
         expect(validatorNotices().map((t) => t.recipientIds)).toEqual([['org']]);
+        // Their row records that it replaced their party notice: the bell keeps it by either right.
+        expect(validatorNotices()[0].meta).toEqual({
+          reason: 'coorganiser_joined',
+          audience: 'validators',
+          eventId: DUP,
+          toldAsParty: true,
+        });
         // The parties' notice no longer lists 'org': only the partner's other editor remains.
         expect(reopenNotices()).toEqual([['event_pending_coorganiser', ['coEd'], 'Reopen dup']]);
       } finally {

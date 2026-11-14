@@ -79,7 +79,16 @@ import { recipientsWithCategoryOn } from '../push/notification-category';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
-import { asUuidSql, targetBoundRowShownSql, UUID_SHAPE } from './bell-row-gates';
+import {
+  asUuidSql,
+  targetBoundRowShownSql,
+  UUID_SHAPE,
+  validatorRowServedAsPartySql,
+} from './bell-row-gates';
+import {
+  EVENT_REOPEN_NOTIFICATION_TYPE,
+  type EventReopenReason,
+} from '../associations/event-reopen';
 
 /** The bell's page when the caller names none: what the bell dropdown asks. */
 export const BELL_PAGE_DEFAULT = 30;
@@ -984,6 +993,7 @@ export class PostNotificationsService {
   async getNotifications(userId: string, limit = 30, clientVersion?: string) {
     const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
     await this.resolveTrendLikedBy(rows);
+    await this.serveReplacedPartyNotices(rows);
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
     if (proposed.length === 0) return rows;
     // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
@@ -999,6 +1009,46 @@ export class PostNotificationsService {
     );
     for (const row of rows) if (ids.has(row.id)) row.text = '';
     return rows;
+  }
+
+  /**
+   * A VALIDATORS' ROW WHOSE READER IS NOW ONLY A PARTY, SERVED AS THE PARTY NOTICE IT REPLACED: a
+   * reopening tells a validator who is also a party once, as a validator (`meta.toldAsParty`), and
+   * the bell keeps that row while either right holds (`BELL_ROW_GATE`). Once the validator's right is
+   * gone (`validatorRowServedAsPartySql`), the row is served under the type and facts the party
+   * notice would have carried (`EVENT_REOPEN_NOTIFICATION_TYPE[meta.reason]`, no `audience`), so every
+   * client - an old build included - opens the agenda, never a validation queue its reader can no
+   * longer open. One statement for the page; a page with no such row reads nothing.
+   */
+  private async serveReplacedPartyNotices(rows: PostNotification[]): Promise<void> {
+    const candidates = rows.filter((r) => r.meta?.toldAsParty === true);
+    if (candidates.length === 0) return;
+    const asParty: { id: string }[] = await this.notifRepo.manager.query(
+      `SELECT n.id FROM post_notifications n
+        WHERE n.id = ANY($1::uuid[]) AND ${validatorRowServedAsPartySql('n')}`,
+      [candidates.map((r) => r.id)]
+    );
+    const ids = new Set(asParty.map((r) => r.id));
+    for (const row of candidates) {
+      if (!ids.has(row.id)) continue;
+      const reason = row.meta?.reason;
+      if (
+        typeof reason !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(EVENT_REOPEN_NOTIFICATION_TYPE, reason)
+      ) {
+        // The writer sets `toldAsParty` only with a reason (`announceEventReopened`): a row without
+        // one was not written by it, and is served as stored.
+        this.logger.warn(
+          `[EVENT_REOPENED] bell row ${row.id.slice(0, 8)}: told as a party with no reopen reason, served as stored`
+        );
+        continue;
+      }
+      row.type = EVENT_REOPEN_NOTIFICATION_TYPE[reason as EventReopenReason];
+      row.meta = { reason, eventId: row.meta?.eventId };
+    }
+    if (ids.size > 0) {
+      this.logger.debug(`[EVENT_REOPENED] ${ids.size} validators' row(s) served as a party notice`);
+    }
   }
 
   /**
