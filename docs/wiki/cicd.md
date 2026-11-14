@@ -78,6 +78,21 @@ sha, the NEWEST of them, concluded `success` - not any app's, not one green amon
 left is the instant between those reads and the merge call (a re-run started on the same commit),
 on a commit that was already green. `arm-auto-merge-app.test.sh` B33 pins each refusal.
 
+**A BASE THAT MOVES UNDER THE ARMING IS A REASON TO ASK AGAIN, AND THE ONLY ONE (2026-11-14, Canari
+only).** On a pull request that is already mergeable, `gh pr merge --auto` merges at once, and GitHub
+refuses that merge when `main` took another one in the same seconds ("Base branch was modified",
+measured on #3519, run 43605328429). The step used to treat it as final and to print a cause it had
+not observed, so a ready, green pull request stayed unarmed. One attempt is now a function; the step
+reads the tip of the base before and after it, **as data, never from the prose of the refusal**, and
+asks again only when the pull request is still open, ready, on the judged head AND that tip changed.
+Each further attempt therefore answers one observed change of that tip, there are four attempts at
+most, and nothing waits. Every other refusal fails once and names what was read: the pull request's state and
+merge state, whether its head moved, whether the base moved, and the `CI passed` reading when that
+is what refused the immediate merge. A pull request found merged after a refusal ends the step
+green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal text never varies. **What it
+does not close**: right after a base moves GitHub reads the merge state `UNKNOWN` for a moment, and a
+refusal met there with the base standing still fails once, naming `UNKNOWN`.
+
 **THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
 REQUEST** (user: _"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
 dependabot"_). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism

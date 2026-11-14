@@ -545,12 +545,28 @@ args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   [ "${args[$i]}" = --jq ] && jqexpr="${args[$((i + 1))]}"
 done
+# The <n>th call of one kind is answered by the <n>th word of its list; the last word repeats.
+nth() { # <kind> <list>
+  local n=0 words
+  [ -f "$FAKE_DIR/$1.n" ] && n="$(cat "$FAKE_DIR/$1.n")"
+  echo $((n + 1)) >"$FAKE_DIR/$1.n"
+  read -ra words <<<"$2"
+  [ "$n" -lt "${#words[@]}" ] || n=$((${#words[@]} - 1))
+  printf '%s' "${words[$n]}"
+}
 case "$1 ${2:-}" in
-  "pr merge") case " $* " in *" --auto "*) exit 1 ;; esac; exit 0 ;;
+  "pr merge")
+    case " $* " in
+      *" --auto "*) [ "$(nth auto "${FAKE_AUTO:-refused}")" = armed ] || { echo 'GraphQL: a refusal whose prose decides nothing' >&2; exit 1; } ;;
+      *) [ "$(nth now "${FAKE_NOW:-merged}")" = merged ] || { echo 'GraphQL: a refusal whose prose decides nothing' >&2; exit 1; } ;;
+    esac ;;
   "pr view") case " $* " in
-      *mergeStateStatus*) jq -nr --arg s "$FAKE_STATE" --argjson d "${FAKE_DRAFT:-false}" '{mergeStateStatus: $s, isDraft: $d}' | jq -r "$jqexpr" ;;
+      *mergeStateStatus*)
+        jq -n --arg p "$(nth state "${FAKE_PR_STATE:-OPEN}")" --arg s "$FAKE_STATE" --argjson d "${FAKE_DRAFT:-false}" --arg h "${FAKE_HEAD:-$HEAD_SHA}" \
+          '{state: $p, mergeStateStatus: $s, isDraft: $d, headRefOid: $h}' | jq -r "$jqexpr" ;;
       *) echo false ;;
     esac ;;
+  api*git/ref/heads/main*) jq -n --arg s "$(nth base "${FAKE_BASES:-b0}")" '{object: {sha: $s}}' | jq -r "$jqexpr" ;;
   api*) printf '%s' "$FAKE_RUNS" | jq -r "$jqexpr" ;;
 esac
 SH
@@ -562,12 +578,19 @@ runs() { jq -sc '{check_runs: .}'; }
 GREEN="$(check_run 7 'CI passed' github-actions "$M2" success | runs)"
 merge_case() { # <state> <check runs json> -> $out, $st
   : >"$work/gh.log"
-  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
+  rm -rf "$work/fake" && mkdir "$work/fake"
+  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" BASE_REF=main FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_DIR="$work/fake" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
   st=$?
 }
 merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
+# A refusal is the step's own VERDICT, not any way of ending red: a crash before the gate (a read
+# that failed, a broken fake) also exits non-zero and merges nothing, and would pass for one.
 refused() { # <name>
-  if [ "$st" != 0 ] && ! merged_now; then pass "$1"; else fail "$1 (merged, or the step passed)" "$out"; fi
+  if [ "$st" != 0 ] && ! merged_now && grep -qF 'Could not arm auto-merge on #5 after 1 attempt(s), and it is not armed: state ' <<<"$out"; then
+    pass "$1"
+  else
+    fail "$1 (merged, or the step passed, or it never reached its verdict)" "$out"
+  fi
 }
 for state in CLEAN UNSTABLE; do
   merge_case "$state" "$GREEN"
@@ -592,6 +615,84 @@ merge_case CLEAN "$(check_run 7 'CI passed' github-actions "$M1" success | runs)
 refused "B33 a CI passed on another commit than the judged head does not merge"
 merge_case CLEAN "$(check_run 7 'CI passedx' github-actions "$M2" success | runs)"
 refused "B33 a check run whose name only resembles CI passed does not merge"
+
+# ── B35: a base that moved under the arming is a reason to ask again, and the only one ───────────
+# `main` took a merge while the step ran (#3519): GitHub refused, and the pull request stayed ready,
+# green and unarmed. The step reads the tip of the base before and after each attempt; the fake's
+# refusal carries the same prose every time, so nothing here can be decided by reading it.
+NONE='{"check_runs": []}'
+armings() { grep -c -- ' --auto ' "$work/gh.log" || true; }
+merges_now() { grep -cxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log" || true; }
+says() { grep -qF -- "$1" <<<"$out"; }
+
+FAKE_BASES='b0 b1 b1' FAKE_AUTO='refused armed' merge_case BLOCKED "$NONE"
+if [ "$st" = 0 ] && [ "$(armings)" = 2 ] && says 'main moved during attempt 1 (b0 -> b1)'; then
+  pass "B35 the base moved under the first arming: it is asked again, and armed"
+else
+  fail "B35 a base that moved under the arming did not get a second attempt" "$out"
+fi
+
+FAKE_BASES='b0 b1 b1' FAKE_NOW='refused merged' merge_case CLEAN "$GREEN"
+if [ "$st" = 0 ] && [ "$(merges_now)" = 2 ]; then
+  pass "B35 the base moved under the merge of an already-mergeable pull request: it is asked again, and merged"
+else
+  fail "B35 a base that moved under the immediate merge did not get a second attempt" "$out"
+fi
+
+# The immediate merge is the one the App makes past the ruleset: what it adds to its gate is pinned.
+FAKE_HEAD="$M1" merge_case CLEAN "$GREEN"
+refused "B35 a pull request whose head moved is never merged now, even CLEAN and green on the judged head"
+FAKE_PR_STATE=CLOSED merge_case CLEAN "$GREEN"
+refused "B35 a pull request that is closed is never merged now, even CLEAN and green"
+
+FAKE_BASES='b0 b1 b1 b1' merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 2 ] && says 'after 2 attempt(s)' && says 'did not move during the last attempt (b1), after moving under the earlier one(s): b0->b1'; then
+  pass "B35 a base that moved once and then stood still is asked twice, and the failure keeps the move"
+else
+  fail "B35 the failure after a single move does not say it, or the attempts are not two" "$out"
+fi
+
+merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 1 ] && says 'after 1 attempt(s)' && says 'merge state BLOCKED' && says 'its base main did not move during the last attempt (b0).'; then
+  pass "B35 a refusal with the base where it was is asked once, and the failure names what was read"
+else
+  fail "B35 a refusal with an unmoved base was retried, or its failure names no observed cause" "$out"
+fi
+
+FAKE_BASES='b0 b1 b2 b3 b4 b5 b6' merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 4 ] && says 'after 4 attempt(s)' && says 'moved under every one of 4 attempt(s) (b0->b1, b1->b2, b2->b3, b3->b4)'; then
+  pass "B35 a base that moves under every attempt ends after four, and the failure names each move"
+else
+  fail "B35 the attempts are not bounded at four, or the failure does not name the moves" "$out"
+fi
+
+FAKE_BASES='b0 b1' FAKE_HEAD="$M1" merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 1 ] && says "its head moved from the judged $M2 to $M1"; then
+  pass "B35 a head that moved is not asked again, whatever the base did, and the failure names it"
+else
+  fail "B35 a moved head was retried, or the failure does not name it" "$out"
+fi
+
+FAKE_BASES='b0 b1' FAKE_DRAFT=true merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 1 ] && says 'draft true'; then
+  pass "B35 a pull request that is a draft again is not asked again, whatever the base did"
+else
+  fail "B35 a draft was retried, or the failure does not name it" "$out"
+fi
+
+FAKE_PR_STATE=MERGED merge_case UNKNOWN "$NONE"
+if [ "$st" = 0 ] && [ "$(armings)" = 1 ] && [ "$(merges_now)" = 0 ]; then
+  pass "B35 a pull request found merged after the refusal ends the step green, with nothing more asked"
+else
+  fail "B35 a merged pull request failed the step, or was asked again" "$out"
+fi
+
+merge_case UNSTABLE "$NONE"
+if [ "$st" != 0 ] && says "newest CI passed on $M2 reads 'absent'"; then
+  pass "B35 the failure of a mergeable pull request without a green CI passed names that reading"
+else
+  fail "B35 the failure does not name the CI passed reading" "$out"
+fi
 
 # ── B34: ONE arming implementation - the guard step never arms or merges by itself ───────────────
 # shellcheck disable=SC2016 # the dollar sign is the workflow's own shell text, matched literally

@@ -400,10 +400,21 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           # canari-only:begin
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           # canari-only:end
         run: |
           set -euo pipefail
 
+          # canari-only:begin
+          # ONE ATTEMPT IS A FUNCTION, BECAUSE A BASE THAT MOVES UNDER IT IS A REASON TO ASK AGAIN
+          # (measured on #3519, run 43605328429: `main` took a merge while this step ran, GitHub
+          # answered the merge "Base branch was modified", and a ready, green pull request was left
+          # unarmed with nobody looking). The attempt either ends the step (armed, already armed,
+          # merged) or returns having done nothing; the loop under it then reads WHY as data - the
+          # tip of the base before and after - and never from the prose of the refusal.
+          base_tip() { gh api "repos/$REPO/git/ref/heads/$BASE_REF" --jq '.object.sha'; }
+          attempt() {
+          # canari-only:end
           # `--squash` EXPLICITLY, because the repository permits all three methods - the merge
           # method is decided here rather than by whatever the settings happen to allow, which is
           # why the history is uniform.
@@ -451,19 +462,69 @@ jobs:
           # with `CI passed` pending reads BLOCKED to an admin), and `CI passed` must be GitHub
           # Actions' own check run, the NEWEST of them on the head - not any app's, not any one of
           # several. A draft is refused here too: the event said ready, but it may be a draft again.
-          merge_state="$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus,isDraft --jq 'if .isDraft then "DRAFT" else .mergeStateStatus end')"
-          if [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; then
+          seen="$(gh pr view "$PR" --repo "$REPO" --json state,isDraft,mergeStateStatus,headRefOid \
+            --jq '[.state, (.isDraft | tostring), .mergeStateStatus, .headRefOid] | map(. // "") | join("|")')"
+          # `|` and not a tab: a tab is whitespace to `read`, so an empty field would be swallowed
+          # and every later one read under its neighbour's name.
+          IFS='|' read -r pr_state pr_draft merge_state head_now <<<"$seen"
+          if [ "$pr_state" = 'MERGED' ]; then
+            echo "#$PR is merged; nothing to arm."
+            exit 0
+          fi
+          why=''
+          if [ "$pr_state" = 'OPEN' ] && [ "$pr_draft" = 'false' ] && [ "$head_now" = "$HEAD_SHA" ] &&
+            { [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; }; then
             ci="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
               --jq '[.check_runs[] | select(.name == "CI passed" and .app.slug == "github-actions" and .head_sha == $ENV.HEAD_SHA)] | sort_by(.id) | last | .conclusion // "absent"')"
             if [ "$ci" = 'success' ]; then
               echo "#$PR is already $merge_state and CI passed is green on $HEAD_SHA - merging it now."
-              gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"
-              exit 0
+              if gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
+                exit 0
+              fi
+              why="; GitHub refused to merge it now, with CI passed green on $HEAD_SHA"
+            else
+              why="; GitHub Actions' newest CI passed on $HEAD_SHA reads '$ci', so it was not merged now"
             fi
-            echo "::error::#$PR is $merge_state but GitHub Actions' newest CI passed on $HEAD_SHA reads '$ci' - not merged."
           fi
+          }
+
+          # A RETRY IS OWED A REASON, AND THE ONLY ONE IS A BASE SEEN TO MOVE: the pull request is
+          # still open, ready and on the judged head, and the tip of its base is not the one read
+          # before the attempt. Each further attempt therefore answers one observed change of that
+          # tip, and the count is finite (four attempts) - a base that moves under every attempt
+          # ends in the failure below, which names it. Nothing here waits: a refusal with the base where it was
+          # is an answer, and asking again would only repeat it.
+          attempts=4
+          tried=1
+          moves=''
+          base_before="$(base_tip)"
+          while :; do
+            attempt
+            base_after="$(base_tip)"
+            if [ "$base_after" = "$base_before" ]; then
+              base_note="its base $BASE_REF did not move during the last attempt ($base_after)${moves:+, after moving under the earlier one(s): $moves}"
+              break
+            fi
+            moves="${moves:+$moves, }$base_before->$base_after"
+            base_note="its base $BASE_REF moved under every one of $tried attempt(s) ($moves)"
+            if [ "$pr_state" != 'OPEN' ] || [ "$pr_draft" != 'false' ] || [ "$head_now" != "$HEAD_SHA" ]; then
+              base_note="its base $BASE_REF moved ($base_before -> $base_after), which is not why"
+              break
+            fi
+            [ "$tried" -lt "$attempts" ] || break
+            echo "#$PR: $BASE_REF moved during attempt $tried ($base_before -> $base_after) and the pull request is not armed - asking again."
+            base_before="$base_after"
+            tried=$((tried + 1))
+          done
+          observed="state $pr_state, draft $pr_draft, merge state $merge_state"
+          if [ "$head_now" != "$HEAD_SHA" ]; then
+            observed="$observed, its head moved from the judged $HEAD_SHA to $head_now (the run that push raised decides)"
+          fi
+          observed="$observed, $base_note$why"
           # canari-only:end
-          echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
-          echo "::error::canari-auto-merge App is installed with Pull requests write, and that"
+          # canari-only:shared echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
+          echo "::error::Could not arm auto-merge on #$PR after $tried attempt(s), and it is not armed: $observed."
+          # canari-only:shared echo "::error::canari-auto-merge App is installed with Pull requests write, and that"
+          echo "::error::If GitHub's refusal above names no cause either, check that the canari-auto-merge App is installed with Pull requests write, and that"
           echo "::error::auto-merge is still allowed on the repository."
           exit 1
