@@ -34,7 +34,7 @@ import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { ProductsService } from './products.service';
 import { PARTNERSHIP_ERROR_CODES, PartnershipsService } from './partnerships.service';
-import type { AssociationsService } from './associations.service';
+import { AssociationsService } from './associations.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -75,6 +75,7 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
   let ds: DataSource;
   let products: ProductsService;
   let partnerships: PartnershipsService;
+  let directory: AssociationsService;
 
   beforeAll(async () => {
     for (const level of ['log', 'warn', 'debug'] as const) {
@@ -200,6 +201,18 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
           provider: 'lydia',
         }),
     }) as unknown as ProductsService;
+    // The directory's own query, run for real; the member count it attaches is not under test.
+    const noCounts = {
+      select: () => noCounts,
+      addSelect: () => noCounts,
+      groupBy: () => noCounts,
+      getRawMany: () => Promise.resolve([]),
+    };
+    directory = Object.assign(Object.create(AssociationsService.prototype) as object, {
+      logger: new Logger('AssociationsService'),
+      assoRepo: ds.getRepository(Association),
+      memberRepo: { createQueryBuilder: () => noCounts },
+    }) as unknown as AssociationsService;
     partnerships = new PartnershipsService(
       ds.getRepository(PartnershipCard),
       ds.getRepository(PartnershipCode),
@@ -217,6 +230,18 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
   });
 
   const ids = (rows: { id: string }[]) => rows.map((r) => r.id).sort();
+
+  describe('the association directory', () => {
+    const listed = async (viewerId: string) => ids(await directory.list(undefined, { viewerId }));
+
+    it("lists each reader their campus's associations, a member theirs, and a named reader the granted cell's", async () => {
+      expect(await listed(ICM_SE)).toEqual([SE_ASSO]);
+      expect(await listed(GA_MEMBER)).toEqual([SE_ASSO, GA_ASSO]);
+      // Staff have no space: the grant on Gardanne is their only door, their own campus stays shut.
+      expect(await listed(STAFF_NAMED)).toEqual([GA_ASSO]);
+      expect(await listed(STAFF_PLAIN)).toEqual([]);
+    });
+  });
 
   describe('the shop', () => {
     it("lists each reader the products of their own campus's associations, and a member its association's", async () => {

@@ -872,7 +872,7 @@ the grid. The creator is the caller, who need not become a member.
 
 | `scope` | Lists | Read by |
 | --- | --- | --- |
-| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role), plus those a nominative read grant of the caller reaches (owner, 2026-11-14) - `associationVisibleToViewerSql` with `readGrants`, what the signed-in agenda counts; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
+| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role), plus those a nominative read grant of the caller reaches (owner, 2026-11-14) - `associationVisibleToViewerSql` with `readGrants`, what the signed-in agenda counts; a global admin is an ordinary reader | `/associations`, `/lists`, `/institutions` (`listAssociationDirectory`) |
 | `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
@@ -925,7 +925,8 @@ products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashS
 organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
 LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
 cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
-real space and the predicate is membership alone for it. A refusal by id is a 404, asked AFTER the
+real space and the predicate is membership alone for it (a read grant's door keeps its own
+cohort check, `readGrantReachesAssociationSql`). A refusal by id is a 404, asked AFTER the
 cohort's typed 403, so the cohort keeps its own answer.
 
 **Two decisions the owner took on review (2026-10-31).** A personal booking space follows its owner's
@@ -1878,28 +1879,6 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; **the association directory, the shop and the partnerships ARE widened since 2026-11-14** ([below](#a-grant-opens-everything-of-its-cell-owner-2026-11-14)), a booking space is not; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
 - **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
 - **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
-
-#### A grant opens everything of its cell (owner, 2026-11-14)
-
-The audience audit of 2026-11-14 found a named reader - typically staff, who have a campus, an empty
-cursus and so no space - read the posts and the agenda of the ticked cells while the association
-directory, the shop and the partnerships stayed empty for them. Decided by the owner: **a nominative
-read grant opens everything of its cell, with no per-person switch** - *"elle pourrait meme payer le
-tarif cotisant si elle cotisait"*. Staff are NOT opened by campus: the grant is the door.
-
-- `associationVisibleToViewerSql(association, viewer, { readGrants: true })` is what the directory
-  (`AssociationsService.list`), the shop (`ProductsService.listAllActive`) and the partnerships
-  (`activeCardsVisibleTo`, and `claimCard` through `associationVisibleTo`) now ask: the same grant
-  door as a post's (`readGrantReachesAssociationSql`), review-cohort gate included. A card a named
-  reader is listed is one they may claim.
-- **Unchanged:** a booking space keeps the plain predicate (it was not part of the decision); a
-  grant still never notifies, never opens a personal post, a poll vote or a republication; a
-  product was already payable by its link, and the price a named reader pays follows their own
-  cotisation like anyone's.
-- **Proof:** `read-grants.integration.spec.ts` (the directory per grantee, the plain predicate
-  unwidened) and `shop-partnership-visibility.integration.spec.ts` (a named staff reader is listed
-  and claims the granted cell's cards and products, their own campus stays closed, staff with no
-  grant get nothing).
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read and react: YES; comment and like a comment: YES only with their switch "voit les commentaires" on (2026-11-04, next bullet); vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction), `'COMMENT'` (list, write, edit and like a comment, report a comment - the grant counts, then the comments predicate of the next bullet) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent). **Narrowed on 2026-11-04 for comments** - next bullet.
 - **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer is no global admin, holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (both arms `adminSeesAll`, as the by-id gate does, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
   1. **list, write, edit and like a comment, and report one** - `assertVisible(.., 'COMMENT')` (the edit's answer serves the comment, who liked it included; deleting one's own comment stays open), and `ModerationService` asks `readPostOpenVerdict(.., 'COMMENT')` for a comment report - a third `PostAccessIntent` (`post-openable.ts`: the grant opens the audience term, then a withheld reader is `not-found`, the 404 of an invisible resource);
@@ -1920,6 +1899,30 @@ tarif cotisant si elle cotisait"*. Staff are NOT opened by campus: the grant is 
 - **Ids**: `users.id` is the OIDC subject lowercased (`NginxAuthGuard` lowercases `x-user-id`; core-service does the same), so the controller lowercases the grantee id and the actor before storing. No foreign key crosses services, so the account-deletion hook (`InternalController.deleteUserData`) deletes the account's grants and anonymises it (`[deleted]`) in the journal, both as grantee and as actor.
 - **Cost, measured** (throwaway PostgreSQL 16, 50,000 posts over 300 associations, 20,000 users, 40,000 requested grants = 8,000 grantees with a few cells each - a real grantee holds at most 12 cells, so "20k grants on 200 users" cannot exist; `EXPLAIN (ANALYZE, BUFFERS)` of `postVisibleToViewerSql` as a filter, `ORDER BY createdAt DESC LIMIT 20`, 3rd run, JIT off): a reader with NO grant 600 ms / 198k buffers before this change, 670 ms / 268k buffers with it (+10%, the per-row grant lookup finding no row); a grantee 1,060 ms / 464k buffers. With JIT on the same queries are 930 / 1,180 / 1,500 ms. The baseline itself is a nested loop over every post (the predicate is evaluated per row), which is the pre-existing shape of the feed predicate, not this change. **No index added**: `CREATE INDEX ON association_audiences ("associationId")` was tried and the planner kept the sequential scan of a 300-row table in all six plans; `read_grants` is already served by `idx_read_grants_user` (bitmap index scan).
 - **Owed**: one look at the grid signed in. The feed cache is dropped on every real change.
+
+#### A grant opens everything of its cell (owner, 2026-11-14)
+
+The audience audit of 2026-11-14 found a named reader - typically staff, who have a campus, an empty
+cursus and so no space - read the posts and the agenda of the ticked cells while the association
+directory, the shop and the partnerships stayed empty for them. Decided by the owner: **a nominative
+read grant opens everything of its cell, with no per-person switch** - *"elle pourrait meme payer le
+tarif cotisant si elle cotisait"*. The directory, the shop and the partnerships are NOT opened to staff by campus: the grant is
+the door (an institution's "Personnel" posts and events reach staff by campus on their own, a
+separate decision of the same day).
+
+- `associationVisibleToViewerSql(association, viewer, { readGrants: true })` is what the directory
+  (`AssociationsService.list`), the shop (`ProductsService.listAllActive`) and the partnerships
+  (`activeCardsVisibleTo`, and `claimCard` through `associationVisibleTo`) now ask: the same grant
+  door as a post's (`readGrantReachesAssociationSql`), review-cohort gate included. A card a named
+  reader is listed is one they may claim.
+- **Unchanged:** a booking space keeps the plain predicate (it was not part of the decision); a
+  grant still never notifies, never opens a personal post, a poll vote or a republication; a
+  product was already payable by its link, and the price a named reader pays follows their own
+  cotisation like anyone's.
+- **Proof:** `read-grants.integration.spec.ts` (the directory per grantee, the plain predicate
+  unwidened) and `shop-partnership-visibility.integration.spec.ts` (a named staff reader is listed
+  and claims the granted cell's cards and products, their own campus stays closed, staff with no
+  grant get nothing).
 
 #### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
 
@@ -2560,6 +2563,8 @@ Seven decisions on the audience of associations, lists and institutions (the las
 ### The nominative read grants - the decisions (user, 2026-10-07; moved from the backlog 2026-10-08)
 
 WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Cases named: the director of the ME, the ME communication and the School's student liaison reading the posts of associations but not the personal posts of students; a director of formations reading the associations of Saint-Etienne and Gardanne. Decisions: (1) a grid of checkboxes per person shaped like `/admin/spaces` (campus x formation, and whole campus); (2) it covers the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too - with comments, reactions, events and agenda; (3) NEVER the personal posts of students; (4) readers may react and comment; (5) a global admin grants, the grant ADDS and never removes; (6) staff without a cursus see nothing more by default, the named ones do (closes the staff-feed question); (7) no end date, the list of named readers is internal (global admins only), and a journal keeps who granted what to whom and when. The user's "ISTP" is FSSS. Named readers only READ and react, and get NO notifications for their perimeter (answers of 2026-10-07). As built: WP-C above.
+
+**AMENDED BY THE OWNER ON 2026-11-14 - decision (2), what a grant covers.** Beside the posts and the agenda, a grant opens the association directory, the shop and the partnerships of the ticked cells, with no per-person switch. As built: [a grant opens everything of its cell](#a-grant-opens-everything-of-its-cell-owner-2026-11-14).
 
 **AMENDED BY THE OWNER ON 2026-11-04 - decisions (2) and (4), for comments.** Students' comments are their own expression, like their personal posts, which a grant never opens. So: (a) a named reader who sees an association, list or institution post ONLY through the grant does not see its comments; (b) it is a PER-READER switch "voit les commentaires" in the "Accès en lecture" sheet, OFF by default for new AND existing named readers, each change journalled like a grant; (c) with it OFF the reader may still REACT, but not comment nor like a comment - the comment button and count are not shown, and the API answers 404 as for an invisible resource; ON keeps the behaviour above (read and comment); (d) with it OFF, reactions and poll votes are TOTALS, never who; (e) only when the grant is the reader's ONLY door - visible with grants and not without them - so a reader who also reaches the post natively keeps everything; (f) no new notification may leak. And (owner, same day): "un truc clair et propre, le plus user-friendly possible" - the switch reads plainly in the existing sheet (a label and one line saying what the reader will and will not see), and on the reader's side no dead control, nothing hinting at a hidden discussion. As built: the "Comments and people of a grant-only post" bullet of WP-C above. **And (owner, same day) the chat of an association's live is the same rule**: a named reader who sees a live only through their grant sees the video but not its chat - no lines, no sending - unless the same switch is on; no second switch. As built: "The chat of a grant-only live", WP-C above.
 

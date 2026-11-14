@@ -200,7 +200,8 @@ export class AssociationsController {
    * Returns associations. `?type=association|list` restricts; omit for both.
    *
    * THE DIRECTORY (D37) BY DEFAULT: only the associations whose rules reach one of the caller's
-   * spaces, plus those the caller is a member of - a global admin included, as in the feed.
+   * spaces, plus those the caller is a member of, plus those a nominative read grant of the caller
+   * reaches (owner, 2026-11-14) - a global admin included, as in the feed.
    * `?scope=all` is the whole catalogue, for screens that PICK an association (see
    * `directory-query.ts`); it is open to any signed-in caller because a hidden association is not
    * a secret - its page stays reachable by its link. `?campus=` / `?formation=` keep only the
