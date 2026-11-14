@@ -167,6 +167,31 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   an `[AUDIT]` LOG line; any other is reported at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted
   a LIVE cashier row`, naming the association and the Business, never the phone - the same line the
   association's delete writes before its `ON DELETE CASCADE` - [payments](frontend/modules/payments.md#the-cashiers-enrolment-lot-3).
+- **A carte de la vie asso** (`poster_projects`, 2026-11-14): a published map is served to the
+  anonymous showcase and names people three ways - a CARD per shown member (id, name, role), a
+  directory ROSTER per association (`members`: id, name, role, stored and never served) and the
+  printed roster LINE derived from it ("Name (Role) - Name"); a layout lists the ids picked for a
+  bubble's bureau (`selectedBureau`). Both columns were classed as holding no account, so an erased
+  person stayed on the public map until its next publication. Now, in the erasure's transaction,
+  `scrubCarteDocument` removes every card, roster member and picked id that is the account, and
+  `settleCarteDirectory` RE-DERIVES each roster's line from who is left. A map published before
+  rosters were stored has a line of NAMES and no id, which no erasure can search: the line of every
+  association the account was a member of (read before its memberships are deleted) is BLANKED, the
+  map stays live, that roster text is withheld until the next publication, and the social service
+  says so at WARN once per map (`[CARTE] account erasure ... withheld N legacy directory line(s) of
+  live map <id>`). A rewritten publication loses its fingerprint, which the editor reads as
+  "unknown" and answers with "Mettre a jour la publication". A stale editor cannot write the account
+  back: a publish keeps only the cards and roster members that are CURRENT memberships of their
+  association, a save cuts each `selectedBureau` the same way, both from one query and both at WARN
+  when they drop something ([carte-vie-asso](carte-vie-asso.md#rules)).
+  The maps are locked at the TOP of the erasure in a publish's order - the `spaces` row of every map
+  it will write, then the maps, by id (`ERASURE_CARTE_SPACES_LOCK_SQL`, after the associations) - so
+  an erasure and a publish never hold one map each. Two limits sit outside the transaction:
+  `GET /api/public/carte` is sent `Cache-Control: public, max-age=300`, so a cache may serve the
+  removed card for up to five minutes after the erasure commits; and the portail's own avatar proxy
+  caches a photo by account id for longer, on its side (outside this repository). Between two
+  publications nothing else is withdrawn from a carte - it is a snapshot by decision - erasure is the
+  one exception.
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 
@@ -203,13 +228,8 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   text is not scanned for tokens. A moderation tombstone carries no account, so erasure never finds
   one; when it removes the LAST reply under one, `scrubComments` prunes the empty tombstone too
   (`pruneEmptyTombstones`, [moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)).
-- **A carte de la vie asso loses the account's member card** (2026-11-14): the published document
-  carries one card per shown member (id, name, role) and is served to the anonymous showcase, and a
-  layout lists the members picked for a bubble. Both columns were classed as holding no account, so
-  an erased person stayed on the public map until its next publication. `scrubCarteDocument` removes
-  the cards and the picked ids from every map that names the account (`CANDIDATE_CARTES_SQL`); the
-  map stays live. Between two publications nothing else is withdrawn from a carte - it is a
-  snapshot by decision ([carte-vie-asso](carte-vie-asso.md)) - erasure is the one exception.
+- **Free text and images an author typed or uploaded onto a carte de la vie asso** (its title, its
+  labels, its background) are that author's content: they are not found by id and stay.
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.

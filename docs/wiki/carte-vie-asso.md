@@ -455,7 +455,7 @@ decides nothing.
 | Coordinates | poster px, 1600 px stage | poster px + the `stage` dims, so the consumer scales once |
 | Silhouettes | shape KEYS into `shapes.ts` | resolved CSS `border-radius` values |
 | Unit | blob + bureau crown + president card + name band | the same, every sub-box resolved |
-| Members | re-resolved live on every open | frozen: `cards[]` per unit + the directory lines |
+| Members | re-resolved live on every open | frozen: `cards[]` per unit + the directory rosters and lines |
 | Palette | `CARTE_STYLE` | a resolved `style` block |
 | Directory | rendered from the model | a resolved panel: rect, heading, zones, rosters |
 
@@ -473,6 +473,18 @@ its own (Canari seeds one from the id; the showcase seeds from the name, so this
 **What is frozen, on purpose:** which member sits in which crown slot is an authoring decision
 (`selectedBureau`), and so is the roster order, so member names, roles and initials travel in the
 payload. **A roster change therefore needs a republish** - the same way a printed poster does.
+
+**A directory entry carries its roster, and the server writes its line** (2026-11-14). Each
+`directory.zones[].assos[]` entry is sent as `{ assoId, line, members }`: `members` is
+`{ userId, name, role }[]` in PRINT order (by family name - the editor alone holds the name parts).
+`sanitizePublishedCarte` stores the roster and DERIVES `line` from it with `directoryLine` in
+`published-carte.ts`, ignoring the line sent; the editor's own `rosterLine` (`generator.ts`) prints
+the poster and the PDF, and both specs read `directory-line.cases.json` so the two cannot drift. An
+entry with no `members` (a client from before this change) is stored as sent, line only. **The
+roster is never served**: it holds account ids, and `PosterService.toPublished` strips it
+(`publicCarte`), so `GET /api/public/carte` answers `{ assoId, line }` per entry, as it always has.
+It exists so the server can CHECK a roster against the membership table and an account erasure can
+find a member by id ([account-erasure](account-erasure.md#the-dispositions-and-why)).
 
 **One measurement is duplicated, deliberately:** the directory shrinks its font until the roster
 fits its fixed panel. That is a DOM measurement, not a constant, so both sides run the same loop -
@@ -573,6 +585,16 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   transaction): the later one replaces the earlier instead of hitting the index with a 500.
 - **Every association the document names - unit AND directory line - must be switched on and of
   the space**, or the publish is refused `CARTE_UNIT_OUTSIDE_MAP`.
+- **Only a CURRENT member may appear on a map.** An
+  editor tab opened before someone left an association - or before their account was erased - still
+  holds their card, their roster entry and their bureau pick. Under the space's lock, a publish keeps
+  only the cards and roster members whose `(assoId, userId)` is an `association_members` row today,
+  re-derives each line from what is kept, and says at WARN how many it dropped; the stored
+  fingerprint is then NULL (it described the document sent, not the one stored), which the editor
+  reads as "unknown" and answers with an update. A save does the same to each bubble's
+  `selectedBureau`, after locking the map's row. One query for the whole document
+  (`PosterService.currentMembership`), used by those two paths and nothing else. A line sent without
+  a roster cannot be checked and is stored as sent.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a

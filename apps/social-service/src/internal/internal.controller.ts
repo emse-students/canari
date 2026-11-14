@@ -315,6 +315,14 @@ export class InternalController {
           `Lydia still lists that cashier`
       );
     }
+    for (const carte of result.cartesWithheld) {
+      // A line published before rosters were stored prints names and no id: it was blanked, and
+      // that association's roster stays off the public map until the map is published again.
+      this.logger.warn(
+        `[CARTE] account erasure of user=${who} withheld ${carte.lines} legacy directory line(s) ` +
+          `of live map ${carte.id} until its next publication`
+      );
+    }
     const pins = await this.channelService.announceErasedPins(result.pinsRemoved);
     const dropped = await invalidatePostListCache(this.redis);
 

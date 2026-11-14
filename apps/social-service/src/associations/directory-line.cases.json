@@ -1,0 +1,26 @@
+{
+  "about": "One roster line, two implementations: the server's directoryLine (published-carte.ts) and the editor's rosterLine (frontend/src/lib/carte/generator.ts). Both specs read these cases; members are in PRINT order.",
+  "cases": [
+    {
+      "members": [{ "userId": "u1", "name": "Zoe Bernard", "role": "Presidente" }],
+      "line": "Zoe Bernard (Presidente)"
+    },
+    {
+      "members": [
+        { "userId": "u1", "name": "Zoe Bernard", "role": "Membre" },
+        { "userId": "u2", "name": "Alice Martin", "role": "" },
+        { "userId": "u3", "name": "Yves Martin", "role": "Trésorier" }
+      ],
+      "line": "Zoe Bernard - Alice Martin - Yves Martin (Trésorier)"
+    },
+    {
+      "members": [
+        { "userId": "u1", "name": "Casimir", "role": "member" },
+        { "userId": "u2", "name": "Paul Van Dupont", "role": "Adhérente" },
+        { "userId": "u3", "name": "Lea Roux", "role": " ADHERENT " }
+      ],
+      "line": "Casimir - Paul Van Dupont - Lea Roux"
+    },
+    { "members": [], "line": "" }
+  ]
+}

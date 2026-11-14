@@ -12,7 +12,14 @@ import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { CreatePosterProjectDto, PosterEntryDto, UpdatePosterProjectDto } from './dto/poster.dto';
-import { sanitizePublishedCarte, type PublishedCarte } from './published-carte';
+import {
+  keepCurrentMembers,
+  publicCarte,
+  publishedMemberPairs,
+  sanitizePublishedCarte,
+  type CurrentMembership,
+  type PublishedCarte,
+} from './published-carte';
 import {
   ALL_CARTE_SPACES_SQL,
   CARTE_ERROR,
@@ -270,11 +277,27 @@ export class PosterService {
       }
     }
     return this.posterRepo.manager.transaction(async (manager) => {
-      if (dto.name !== undefined) project.name = dto.name;
-      if (dto.layout !== undefined) project.layout = dto.layout;
-      const attaching = dto.spaceId !== undefined && project.spaceId === null;
-      if (attaching) project.spaceId = dto.spaceId as string;
-      const saved = await manager.getRepository(PosterProject).save(project);
+      // The map's row FIRST, then the row itself and who is a member: an account erasure holds this
+      // row until it commits, so a save that waited on it reads what the erasure left - and writes
+      // back none of the columns it was not asked to change (an entity read before the lock would
+      // carry a publication the erasure has since scrubbed, and `save` writes what differs).
+      await manager.query('SELECT 1 FROM poster_projects WHERE id = $1 FOR NO KEY UPDATE', [id]);
+      const row = await manager.getRepository(PosterProject).findOne({ where: { id } });
+      if (!row) throw new NotFoundException('Poster project not found');
+      if (dto.name !== undefined) row.name = dto.name;
+      if (dto.layout !== undefined) {
+        const isMember = await this.currentMembership(manager, layoutBureauPairs(dto.layout));
+        const kept = keepCurrentBureaus(dto.layout, isMember);
+        if (kept.dropped > 0) {
+          this.logger.warn(
+            `[CARTE] save of map ${id} dropped ${kept.dropped} bureau pick(s) of non-members - a stale editor`
+          );
+        }
+        row.layout = kept.layout;
+      }
+      const attaching = dto.spaceId !== undefined && row.spaceId === null;
+      if (attaching) row.spaceId = dto.spaceId as string;
+      const saved = await manager.getRepository(PosterProject).save(row);
       if (attaching) {
         const placed = layoutAssociationIds(saved.layout);
         const offered = await this.spaceAssociationIds(saved.spaceId as string, manager);
@@ -577,6 +600,16 @@ export class PosterService {
       // it, and wins: the last publish is the live one. NO KEY: the row is not deleted nor its key
       // changed, so the foreign keys that reference the space (KEY SHARE) are not blocked by it.
       await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR NO KEY UPDATE', [spaceId]);
+      // Who is a member is read UNDER that lock: an account erasure takes the space's row before it
+      // deletes the account's memberships, so a publish that waited on it sees them gone.
+      const isMember = await this.currentMembership(manager, publishedMemberPairs(publication));
+      const kept = keepCurrentMembers(publication, isMember);
+      const dropped = kept.droppedCards + kept.droppedMembers;
+      if (dropped > 0) {
+        this.logger.warn(
+          `[CARTE] publish of map ${id} dropped ${kept.droppedCards} card(s) and ${kept.droppedMembers} roster member(s) of non-members - a stale editor`
+        );
+      }
       const repo = manager.getRepository(PosterProject);
       // Clear the space's previous live map FIRST; the unique index allows one live row per space.
       // Its fingerprint goes with it: a row that is not live describes no published document.
@@ -585,9 +618,11 @@ export class PosterService {
         { publication: null, publishedAt: null, publicationFingerprint: null }
       );
       await repo.update(id, {
-        publication: publication as unknown as Record<string, unknown>,
+        publication: kept.carte as unknown as Record<string, unknown>,
         publishedAt: new Date(),
-        publicationFingerprint: fingerprint,
+        // The client's fingerprint describes the document it SENT; once something was dropped it
+        // describes no stored document, and NULL is the editor's "unknown" (offers an update).
+        publicationFingerprint: dropped > 0 ? null : fingerprint,
       });
       const saved = await repo.findOne({ where: { id } });
       if (!saved) throw new NotFoundException('Poster project not found');
@@ -608,10 +643,32 @@ export class PosterService {
     return this.posterRepo.save(project);
   }
 
-  /** The response the showcase reads, from a live row. */
+  /**
+   * Which of `pairs` are CURRENT memberships, in one query. The ONE check the publish and the save
+   * run against what an editor sends: a card, a roster member or a bureau pick of someone who is no
+   * longer a member - an erased account above all - never goes back in through a stale editor.
+   */
+  private async currentMembership(
+    manager: EntityManager,
+    pairs: { assoId: string; userId: string }[]
+  ): Promise<CurrentMembership> {
+    if (pairs.length === 0) return () => false;
+    const rows: { assoId: string; userId: string }[] = await manager.query(
+      `SELECT "associationId"::text AS "assoId", "userId" FROM association_members
+        WHERE "associationId"::text = ANY($1::text[]) AND "userId" = ANY($2::text[])`,
+      [[...new Set(pairs.map((p) => p.assoId))], [...new Set(pairs.map((p) => p.userId))]]
+    );
+    const current = new Set(rows.map((r) => `${r.assoId}:${r.userId}`));
+    this.logger.debug(
+      `[CARTE] membership checked: ${pairs.length} pair(s), ${current.size} current`
+    );
+    return (assoId, userId) => current.has(`${assoId}:${userId}`);
+  }
+
+  /** The response the showcase reads, from a live row: never a stored roster (account ids). */
   private toPublished(project: PosterProject): PublishedCarteResponse {
     return {
-      ...(project.publication as unknown as PublishedCarte),
+      ...publicCarte(project.publication as unknown as PublishedCarte),
       name: project.name,
       publishedAt: (project.publishedAt as Date).toISOString(),
     };
@@ -682,4 +739,43 @@ export function layoutAssociationIds(
     if (typeof assoId === 'string') ids.add(assoId);
   }
   return ids;
+}
+
+/** Every (association, account) pair a saved layout's bubbles pick for their bureau. */
+export function layoutBureauPairs(
+  layout: Record<string, unknown> | null | undefined
+): { assoId: string; userId: string }[] {
+  const bubbles = layout?.bubbles;
+  if (!Array.isArray(bubbles)) return [];
+  return bubbles.flatMap((b) => {
+    const { assoId, selectedBureau } = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
+    if (typeof assoId !== 'string' || !Array.isArray(selectedBureau)) return [];
+    return selectedBureau
+      .filter((u): u is string => typeof u === 'string')
+      .map((userId) => ({ assoId, userId }));
+  });
+}
+
+/**
+ * The layout with each bubble's `selectedBureau` cut to the CURRENT members of that bubble's
+ * association, so a tab left open across a departure or an account erasure cannot save the id back.
+ * A layout with nothing to cut is returned as it came.
+ */
+export function keepCurrentBureaus(
+  layout: Record<string, unknown>,
+  isMember: CurrentMembership
+): { layout: Record<string, unknown>; dropped: number } {
+  const bubbles = layout.bubbles;
+  if (!Array.isArray(bubbles)) return { layout, dropped: 0 };
+  let dropped = 0;
+  const next = bubbles.map((b) => {
+    const bubble = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
+    if (typeof bubble.assoId !== 'string' || !Array.isArray(bubble.selectedBureau)) return b;
+    const assoId = bubble.assoId;
+    const kept = bubble.selectedBureau.filter((u) => typeof u === 'string' && isMember(assoId, u));
+    if (kept.length === bubble.selectedBureau.length) return b;
+    dropped += bubble.selectedBureau.length - kept.length;
+    return { ...bubble, selectedBureau: kept };
+  });
+  return dropped > 0 ? { layout: { ...layout, bubbles: next }, dropped } : { layout, dropped: 0 };
 }
