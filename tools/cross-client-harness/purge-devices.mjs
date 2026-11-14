@@ -23,8 +23,8 @@
  * **THE KEY IS THE FULL DEVICE ID, AND IT IS THE ONE THE DELETE ITSELF USES.** The visible short id
  * is `deviceId.slice(0, 8)` and does NOT discriminate - every web device of one user renders the same
  * eight characters, which is why the backlog entry proposed keying on `Connecte le <date>` instead. It
- * does not have to: `DeviceManagementPanel.svelte` puts the WHOLE id in the `title` attribute of the
- * row's mono line, so the identity the API deletes by is in the DOM, per row, exactly once. An
+ * does not have to: `DeviceManagementPanel.svelte` puts the WHOLE id in the `data-device-id` attribute of
+ * the row, so the identity the API deletes by is in the DOM, per row, exactly once. An
  * attribute is as rendered as a text node for this purpose, and unlike a date it cannot tie.
  *
  * **`--expect N` REFUSES A FLEET THAT CHANGED SHAPE.** A caller decided what to delete by looking at a
@@ -81,8 +81,9 @@ const DELETE_SEL = `[aria-label="${DELETE_LABEL}"]`;
 const DELETE_SEL_JS = JSON.stringify(DELETE_SEL);
 
 /**
- * Walks up from a delete button to its ROW - the first ancestor holding exactly one `div[title]`,
- * which is the mono line carrying the full device id.
+ * Walks up from a delete button to its ROW - the first ancestor carrying `data-device-id`, the
+ * full device id `DeviceManagementPanel.svelte` puts on each row that holds a device (no visible
+ * effect; the id used to sit in a `title`, which the panel stopped rendering).
  *
  * Per-ROW is the whole point. `dlg.querySelectorAll('[title]')` would collect the rename buttons and
  * the header too, and pairing those with delete buttons by position is exactly the ordinal reasoning
@@ -91,8 +92,7 @@ const DELETE_SEL_JS = JSON.stringify(DELETE_SEL);
 const ROW_WALKER = `function (b) {
   var el = b;
   for (var i = 0; i < 8 && el; i++) {
-    var titled = el.querySelectorAll ? el.querySelectorAll('div[title]') : [];
-    if (titled.length === 1 && (titled[0].getAttribute('title') || '').length > 0) return el;
+    if (el.getAttribute && (el.getAttribute('data-device-id') || '').length > 0) return el;
     el = el.parentElement;
   }
   return null;
@@ -108,7 +108,7 @@ const READ_PANEL = `(function () {
     var row = rowOf(b);
     if (!row) return { deviceId: null, text: '(no id found for this row)' };
     return {
-      deviceId: (row.querySelector('div[title]').getAttribute('title') || '').trim(),
+      deviceId: (row.getAttribute('data-device-id') || '').trim(),
       text: (row.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 160)
     };
   });
@@ -132,7 +132,7 @@ const TAG_BY_ID = (id) => `(function () {
   for (var i = 0; i < buttons.length; i++) {
     var row = rowOf(buttons[i]);
     if (!row) continue;
-    if ((row.querySelector('div[title]').getAttribute('title') || '').trim() !== want) continue;
+    if ((row.getAttribute('data-device-id') || '').trim() !== want) continue;
     buttons[i].setAttribute('data-purge-target', '1');
     return (row.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
   }

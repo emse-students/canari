@@ -490,6 +490,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/usability-selftest.mjs
 	@bun tools/cross-client-harness/archive/sourcestamp-selftest.mjs
 	@bun tools/cross-client-harness/archive/selector-selftest.mjs
+	@bun tools/cross-client-harness/archive/purgedevices-selftest.mjs
 	@bun tools/cross-client-harness/archive/caption-selftest.mjs
 	@bun tools/cross-client-harness/archive/picker-selftest.mjs
 	@bun tools/cross-client-harness/archive/names-selftest.mjs
