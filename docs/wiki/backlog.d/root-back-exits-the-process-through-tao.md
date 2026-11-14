@@ -1,0 +1,5 @@
+## Root Back finishes the activity and tao exits the process (read on the Mi 9T 2026-11-14, a decision owed)
+
+target: 1.7.0
+
+Back at a root tab with no history finishes `MainActivity` (`super.onBackPressed()`; the only `moveTaskToBack` is the pre-Android-12 call case). `onDestroy` logs `finishing=true`, and about 400 ms later `ActivityManager` reports `Process ... has died: cch CRE` while Zygote says `Process exited cleanly (0)`: not a kill, an exit with code 0. The source is the framework: tao's Android `EventLoop::run` ends with `std::process::exit(exit_code)` when the window is destroyed (`tao-0.37.2/src/platform_impl/android/mod.rs`); no Canari code calls `exit` or `killProcess` on Android (`app.exit(0)` is the desktop tray's `quit`). So the next launch is a cold start. **Decision owed (lead/owner):** let it be (Android's usual "app closes" feel, no background cost), or `moveTaskToBack(true)` at the root on every API level (warm reopen, which fits the slow-link chantier, at the price of a live process). Not changed here: a Kotlin change `MainActivity` is compiled by no PR gate and needs a build to read.
