@@ -22,6 +22,7 @@ describe('VersionService', () => {
       checkpointSkipMode: 'on',
       liveReplaysMode: 'on',
       groupCallsMode: 'mesh',
+      callRelay: 'none',
     }),
   } as unknown as PlatformService;
 
@@ -34,7 +35,7 @@ describe('VersionService', () => {
   it('publishes the calls kill switch, so a client hides what the server would refuse', async () => {
     const out = await service.getVersion();
 
-    expect(out.calls).toEqual({ mode: 'audio', groupMode: 'mesh' });
+    expect(out.calls).toEqual({ mode: 'audio', groupMode: 'mesh', relay: 'none' });
   });
 
   it('publishes the lives kill switch, so a client hides the live surfaces the server would refuse', async () => {

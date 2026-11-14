@@ -1,11 +1,13 @@
 import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import {
   CALLS_MODES,
+  CALL_RELAYS,
   CHECKPOINT_SKIP_MODES,
   GROUP_CALLS_MODES,
   LIVES_MODES,
   LIVE_REPLAYS_MODES,
   PUSH_MODES,
+  type CallRelay,
   type CallsMode,
   type CheckpointSkipMode,
   type GroupCallsMode,
@@ -65,4 +67,9 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(GROUP_CALLS_MODES)
   groupCallsMode?: GroupCallsMode;
+
+  /** Which relay carries a group call: `none` (the mesh only) or `call-service` (our SFU). */
+  @IsOptional()
+  @IsIn(CALL_RELAYS)
+  callRelay?: CallRelay;
 }

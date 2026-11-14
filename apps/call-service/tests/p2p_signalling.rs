@@ -463,24 +463,6 @@ async fn the_raw_one_to_one_wire_carries_exactly_the_known_fields() {
     );
 }
 
-/// An SFU join whose token carries a group call's seat cap is refused until the SFU enforces one
-/// (WP-GC4): admitted, it would hold more participants than the cap it was signed with.
-#[tokio::test]
-async fn an_sfu_join_with_a_seat_cap_is_refused() {
-    let svc = start().await;
-    let room = "room-sfu-cap";
-    let mut alice = connect(&svc, "alice").await;
-    send(
-        &mut alice,
-        json!({ "type": "Join", "room_id": room, "room_token": room_token_with_seats("alice", room, 4) }),
-    )
-    .await;
-    assert_eq!(
-        recv(&mut alice).await,
-        json!({ "type": "Refused", "reason": "seats-refused" })
-    );
-}
-
 #[tokio::test]
 async fn a_third_user_is_refused_with_a_reason() {
     let svc = start().await;
@@ -1197,4 +1179,148 @@ async fn a_seat_count_out_of_range_or_disagreeing_is_refused() {
         recv(&mut bob).await,
         json!({ "type": "Refused", "reason": "seats-mismatch" })
     );
+}
+
+// ---- The SFU's seats, for a group call through the relay (WP-GC4, 2026-11-13) ----
+
+/// A room token for an SFU room: `seats` as `max_seats`, and the `mode` claim when given.
+fn sfu_room_token(user: &str, room: &str, seats: usize, mode: Option<&str>) -> String {
+    let mut claims =
+        json!({ "sub": user, "room_id": room, "group_id": "g", "exp": exp(), "max_seats": seats });
+    if let Some(m) = mode {
+        claims["mode"] = json!(m);
+    }
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
+    )
+    .unwrap()
+}
+
+/// Opens a socket for `user` and sends an SFU `Join` of `room` with a token naming `seats`.
+async fn join_sfu(svc: &Service, user: &str, room: &str, seats: usize) -> Ws {
+    let mut ws = connect(svc, user).await;
+    send(
+        &mut ws,
+        json!({ "type": "Join", "room_id": room, "room_token": sfu_room_token(user, room, seats, None), "mode": "sfu" }),
+    )
+    .await;
+    ws
+}
+
+/// The SFU's `Joined`, which carries no resume token (the SFU has no seat to resume).
+async fn sfu_joined(ws: &mut Ws, room: &str) {
+    assert_eq!(recv(ws).await, json!({ "type": "Joined", "room_id": room }));
+}
+
+/// The cap is the server's in the relay too: a room of 3 seats seats three users and refuses the
+/// fourth `room-full`; a second device of a seated user still takes ITS seat.
+#[tokio::test]
+async fn an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user() {
+    let svc = start().await;
+    let room = "room-sfu-cap";
+    let mut seated = Vec::new();
+    for user in ["u0", "u1", "u2"] {
+        let mut ws = join_sfu(&svc, user, room, 3).await;
+        sfu_joined(&mut ws, room).await;
+        seated.push(ws);
+    }
+    let mut late = join_sfu(&svc, "late", room, 3).await;
+    assert_eq!(
+        recv(&mut late).await,
+        json!({ "type": "Refused", "reason": "room-full" })
+    );
+    svc.logged(&[
+        "refused from SFU room",
+        room,
+        "all 3 seat(s) are held by other users",
+    ])
+    .await;
+    let mut sibling = join_sfu(&svc, "u1", room, 3).await;
+    sfu_joined(&mut sibling, room).await;
+    svc.logged(&["[multi-device] SFU room", room, "takes the seat of u1:"])
+        .await;
+}
+
+/// The reservation is ATOMIC: eight users racing for three seats - every Join sent before any
+/// answer is read - seat exactly three and refuse exactly five.
+#[tokio::test]
+async fn racing_joins_never_seat_more_than_the_cap() {
+    let svc = start().await;
+    let room = "room-sfu-race";
+    let mut sockets = Vec::new();
+    for i in 0..8 {
+        sockets.push(connect(&svc, &format!("racer{i}")).await);
+    }
+    let sends = sockets.iter_mut().enumerate().map(|(i, ws)| {
+        let user = format!("racer{i}");
+        let frame = json!({ "type": "Join", "room_id": room, "room_token": sfu_room_token(&user, room, 3, None), "mode": "sfu" });
+        async move { send(ws, frame).await }
+    });
+    futures_util::future::join_all(sends).await;
+    let (mut seated, mut refused) = (0, 0);
+    for ws in sockets.iter_mut() {
+        let frame = recv(ws).await;
+        match frame["type"].as_str() {
+            Some("Joined") => seated += 1,
+            Some("Refused") => {
+                assert_eq!(frame["reason"], "room-full", "{frame}");
+                refused += 1;
+            }
+            _ => panic!("unexpected answer {frame}"),
+        }
+    }
+    assert_eq!((seated, refused), (3, 5));
+}
+
+/// A seat freed by a hangup seats the next user; the seat count must agree with the room's, and
+/// stay within what the relay holds.
+#[tokio::test]
+async fn an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked() {
+    let svc = start().await;
+    let room = "room-sfu-free";
+    let mut a = join_sfu(&svc, "a", room, 2).await;
+    sfu_joined(&mut a, room).await;
+    let mut b = join_sfu(&svc, "b", room, 2).await;
+    sfu_joined(&mut b, room).await;
+    b.close(None).await.unwrap();
+    svc.logged(&["seat freed", room, "held=1/2"]).await;
+    let mut c = join_sfu(&svc, "c", room, 2).await;
+    sfu_joined(&mut c, room).await;
+
+    let mut other = join_sfu(&svc, "d", room, 3).await;
+    assert_eq!(
+        recv(&mut other).await,
+        json!({ "type": "Refused", "reason": "seats-mismatch" })
+    );
+    for seats in [1usize, 9] {
+        let mut out = join_sfu(&svc, "e", "room-sfu-range", seats).await;
+        assert_eq!(
+            recv(&mut out).await,
+            json!({ "type": "Refused", "reason": "seats-refused" }),
+            "{seats} seat(s)"
+        );
+    }
+}
+
+/// The mode chat-delivery-service signed is the mode the call goes in: a token signing `sfu` is
+/// refused for a p2p Join, and one signing `p2p` for an SFU Join.
+#[tokio::test]
+async fn a_token_signing_a_mode_refuses_a_join_in_the_other() {
+    let svc = start().await;
+    for (signed, asked) in [("sfu", "p2p"), ("p2p", "sfu")] {
+        let room = format!("room-signed-{signed}");
+        let mut ws = connect(&svc, "alice").await;
+        send(
+            &mut ws,
+            json!({ "type": "Join", "room_id": room, "room_token": sfu_room_token("alice", &room, 3, Some(signed)), "mode": asked }),
+        )
+        .await;
+        assert_eq!(
+            recv(&mut ws).await,
+            json!({ "type": "Refused", "reason": "mode-mismatch" }),
+            "token {signed}, join {asked}"
+        );
+    }
 }

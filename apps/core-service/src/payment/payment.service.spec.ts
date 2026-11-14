@@ -15,6 +15,7 @@ function makeService(paymentProvider: 'lydia' | 'disabled') {
     checkpointSkipMode: 'off',
     liveReplaysMode: 'off',
     groupCallsMode: 'off',
+    callRelay: 'none',
   };
   const platformService = {
     getConfig: jest.fn().mockResolvedValue(config),
@@ -58,6 +59,7 @@ describe('PaymentService provider selection', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
+      callRelay: 'none',
     };
     const platformService = {
       getConfig: jest.fn().mockResolvedValue(config),

@@ -27,11 +27,13 @@ import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
 import {
   GROUP_CALL_MESH_VERSION,
+  GROUP_CALL_SFU_VERSION,
   MESH_SEATS_AUDIO,
   MESH_SEATS_VIDEO,
   parseGroupCallVersion,
   readGroupCallsMode,
 } from '../utils/group-calls-mode';
+import { readCallRelay, RELAY_SEATS } from '../utils/call-relay';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -118,6 +120,26 @@ export interface InitiateCallResponse {
    * relays it in the MLS invite, so both ends ring for the window THIS server enforces.
    */
   ringTimeoutMs: number;
+  /**
+   * `sfu` when this GROUP call goes through call-service's relay (`platform_config.call_relay`,
+   * WP-GC4): the client joins with `Join { mode: "sfu" }`, and call-service refuses any other mode
+   * (the room token signs it). Absent: a group call is the mesh, a 1:1 call peer to peer, as before.
+   */
+  mode?: 'sfu';
+}
+
+/** What `room-token` answers: the token, and the mode the room carries its call in (see `initiate`). */
+export interface RoomTokenResponse {
+  roomToken: string;
+  /** `sfu` for a group call through the relay; absent otherwise (see {@link InitiateCallResponse.mode}). */
+  mode?: 'sfu';
+}
+
+/** What the group-call gate decided at `initiate`: the seat cap, and the relay when one carries it. */
+interface GroupCallPath {
+  maxSeats: number;
+  /** `sfu`: call-service's relay carries the call from the start (interim, until WP-GC5). */
+  mode?: 'sfu';
 }
 
 /**
@@ -136,6 +158,11 @@ interface CallRoomBinding {
    */
   maxSeats?: number;
   /**
+   * `sfu` for a GROUP call through call-service's relay (WP-GC4), signed into every room token as
+   * `mode` so call-service refuses a Join in another mode. Absent on the mesh and on a 1:1 call.
+   */
+  mode?: 'sfu';
+  /**
    * A GROUP call's kind, fixed at `initiate` with its seat cap (3 in video, 4 in audio): the ring
    * must announce the same kind, or a 4-seat audio room would ring as a video call and become a
    * 4-person video mesh past the video cap. Present exactly when `maxSeats` is.
@@ -143,15 +170,19 @@ interface CallRoomBinding {
   video?: boolean;
 }
 
-/** A room token's claims: `max_seats` only for a group call (see {@link CallRoomBinding.maxSeats}). */
+/**
+ * A room token's claims: `max_seats` only for a group call (see {@link CallRoomBinding.maxSeats}),
+ * `mode` only for one through the relay (see {@link CallRoomBinding.mode}).
+ */
 function roomClaims(
   roomId: string,
   userId: string,
   groupId: string,
-  maxSeats: number | undefined
+  binding: Pick<CallRoomBinding, 'maxSeats' | 'mode'>
 ): Record<string, unknown> {
   const claims: Record<string, unknown> = { room_id: roomId, sub: userId, group_id: groupId };
-  if (maxSeats !== undefined) claims.max_seats = maxSeats;
+  if (binding.maxSeats !== undefined) claims.max_seats = binding.maxSeats;
+  if (binding.mode !== undefined) claims.mode = binding.mode;
   return claims;
 }
 
@@ -227,6 +258,11 @@ interface RingPlan {
   calleeIds: string[];
   /** A GROUP call (WP-GC2): its ring reaches only devices whose binary speaks the mesh. */
   group: boolean;
+  /**
+   * The group-call version a device must have declared to be rung: the mesh's, or the SFU leg's
+   * for a call through the relay. 0 for a 1:1 call.
+   */
+  needsVersion: number;
 }
 
 @Injectable()
@@ -374,9 +410,14 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // A conversation of more than two members is a GROUP call (WP-GC2): its own switch, a seat cap
     // signed into the token, and a block that drops a member rather than the call.
     const group = others.length >= 2;
-    let maxSeats: number | undefined;
+    let path: GroupCallPath | undefined;
     if (group) {
-      maxSeats = await this.assertGroupCallsOpen(userId, groupId, video);
+      path = await this.assertGroupCallsOpen(
+        userId,
+        groupId,
+        video,
+        parseGroupCallVersion(groupCallVersion).version
+      );
       this.assertSpeaksTheMesh(userId, groupCallVersion, `initiate group=${groupId}`);
       this.refuseAcrossReviewCohort(userId, others, `initiate group=${groupId}`);
     } else {
@@ -390,10 +431,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const roomId = crypto.randomUUID();
-    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, maxSeats), roomSecret, {
-      expiresIn: '5m',
-      algorithm: 'HS256',
-    });
+    const maxSeats = path?.maxSeats;
+    const mode = path?.mode;
+    const roomToken = jwt.sign(
+      roomClaims(roomId, userId, groupId, { maxSeats, mode }),
+      roomSecret,
+      {
+        expiresIn: '5m',
+        algorithm: 'HS256',
+      }
+    );
 
     // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
     // binding does not yet name.
@@ -402,7 +449,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       callRoomKey(roomId),
       JSON.stringify(
         (group
-          ? { groupId, callerId: userId, maxSeats, video }
+          ? { groupId, callerId: userId, maxSeats, video, ...(mode ? { mode } : {}) }
           : { groupId, callerId: userId }) satisfies CallRoomBinding
       ),
       'EX',
@@ -412,9 +459,15 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
     this.logger.log(
-      `[call] invite room=${roomId} user=${userId} group=${groupId}${group ? ` kind=group seats=${maxSeats} video=${video}` : ''}`
+      `[call] invite room=${roomId} user=${userId} group=${groupId}${group ? ` kind=group seats=${maxSeats} video=${video} path=${mode ?? 'mesh'}` : ''}`
     );
-    return { roomId, roomToken, ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000 };
+    const response: InitiateCallResponse = {
+      roomId,
+      roomToken,
+      ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000,
+    };
+    if (mode !== undefined) response.mode = mode;
+    return response;
   }
 
   /**
@@ -430,7 +483,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     groupId: string,
     roomId: string,
     groupCallVersion?: unknown
-  ): Promise<{ roomToken: string }> {
+  ): Promise<RoomTokenResponse> {
     this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
     await this.assertCallsOpen(`join-token room=${roomId}`, userId);
 
@@ -454,7 +507,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('This call does not belong to this conversation');
     }
     if (binding.maxSeats !== undefined) {
-      this.assertSpeaksTheMesh(userId, groupCallVersion, `join-token room=${roomId}`);
+      this.assertSpeaksTheMesh(
+        userId,
+        groupCallVersion,
+        `join-token room=${roomId}`,
+        binding.mode === 'sfu' ? GROUP_CALL_SFU_VERSION : GROUP_CALL_MESH_VERSION
+      );
       // The review cohort's boundary, as at `initiate` and `ring`: every participant the joiner
       // would be paired with, the caller included.
       this.refuseAcrossReviewCohort(
@@ -503,15 +561,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new GoneException('This call is over');
     }
 
-    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, binding.maxSeats), roomSecret, {
+    const roomToken = jwt.sign(roomClaims(roomId, userId, groupId, binding), roomSecret, {
       expiresIn: '5m',
       algorithm: 'HS256',
     });
 
     // The answer half: a callee asking for a token is a callee about to join the SFU. Paired
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
-    this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
-    return { roomToken };
+    this.logger.log(
+      `[call] join-token room=${roomId} user=${userId} group=${groupId}${binding.mode ? ` path=${binding.mode}` : ''}`
+    );
+    return binding.mode === undefined ? { roomToken } : { roomToken, mode: binding.mode };
   }
 
   /**
@@ -570,18 +630,24 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     const value = parsed as Partial<CallRoomBinding> | null;
     if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
+      if (value.mode !== undefined && value.mode !== 'sfu') {
+        this.logger.error(`[call] room binding for ${roomId} names an unknown mode - refused`);
+        return null;
+      }
       if (value.maxSeats === undefined) return { groupId: value.groupId, callerId: value.callerId };
       if (
         typeof value.maxSeats === 'number' &&
         Number.isInteger(value.maxSeats) &&
         typeof value.video === 'boolean'
       ) {
-        return {
+        const binding: CallRoomBinding = {
           groupId: value.groupId,
           callerId: value.callerId,
           maxSeats: value.maxSeats,
           video: value.video,
         };
+        if (value.mode !== undefined) binding.mode = value.mode;
+        return binding;
       }
       this.logger.error(
         `[call] room binding for ${roomId} has an unusable seat cap or kind - refused`
@@ -914,12 +980,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
       return null;
     }
-    return { callerId, groupId, callId, hasVideo, calleeIds, group };
+    const needsVersion = !group
+      ? 0
+      : bound?.mode === 'sfu'
+        ? GROUP_CALL_SFU_VERSION
+        : GROUP_CALL_MESH_VERSION;
+    return { callerId, groupId, callId, hasVideo, calleeIds, group, needsVersion };
   }
 
   /** The push fan-out of a ring; resolves with how many devices were handed the ring. */
   private async fanOutRing(plan: RingPlan): Promise<{ rang: number }> {
-    const { callerId, groupId, callId, hasVideo, calleeIds, group } = plan;
+    const { callerId, groupId, callId, hasVideo, calleeIds, group, needsVersion } = plan;
     const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
     if (ringable.length === 0) {
       this.logger.log(`[ring] call=${callId} group=${groupId} rang=0 - nobody may be rung`);
@@ -930,11 +1001,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // A GROUP call rings only binaries that speak the mesh: an older one would ring, then join as
     // a 1:1 call and break the others' legs - never offered (WP-GC2). Its member is not told.
     const tokens = group
-      ? registered.filter((pt) => (pt.groupCallVersion ?? 0) >= GROUP_CALL_MESH_VERSION)
+      ? registered.filter((pt) => (pt.groupCallVersion ?? 0) >= needsVersion)
       : registered;
     if (tokens.length < registered.length) {
       this.logger.log(
-        `[ring] call=${callId} group=${groupId} kind=group skipped=${registered.length - tokens.length} device(s) whose build predates group calls`
+        `[ring] call=${callId} group=${groupId} kind=group skipped=${registered.length - tokens.length} device(s) whose build predates group calls (needs groupCallVersion>=${needsVersion})`
       );
     }
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
@@ -1111,15 +1182,18 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The group-call gate (WP-GC2): `group_calls_mode` must be `mesh`, and the answer is the seat cap
-   * the room's tokens will carry - the mesh's, by the call's kind (D-A: 4 in audio, 3 in video).
-   * Past it call-service refuses the user (`room-full`) until a relay leg exists (WP-GC3/GC4).
+   * The group-call gate (WP-GC2): `group_calls_mode` must be `mesh`, and the answer is the path the
+   * room's tokens will carry. With `call_relay = none`, the mesh's seat cap by the call's kind (D-A:
+   * 4 in audio, 3 in video), past which call-service refuses the user (`room-full`). With
+   * `call_relay = call-service` (WP-GC4), the relay from the start - `mode: sfu` and the relay's own
+   * cap - an INTERIM rule until WP-GC5 moves a mesh to the relay mid-call.
    */
   private async assertGroupCallsOpen(
     userId: string,
     groupId: string,
-    video: boolean
-  ): Promise<number> {
+    video: boolean,
+    callerVersion: number
+  ): Promise<GroupCallPath> {
     const mode = await readGroupCallsMode(this.groupMemberRepo.manager, this.logger);
     if (mode === 'off') {
       this.logger.log(
@@ -1130,7 +1204,20 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         message: 'Group calls are not available on this server.',
       });
     }
-    return video ? MESH_SEATS_VIDEO : MESH_SEATS_AUDIO;
+    const relay = await readCallRelay(this.groupMemberRepo.manager, this.logger);
+    if (relay === 'call-service' && callerVersion < GROUP_CALL_SFU_VERSION) {
+      // The relay is on, but this caller's build has no SFU leg: it would `Join` p2p and be
+      // refused `mode-mismatch`. The call stays on the mesh, where it works, and says so.
+      this.logger.log(
+        `[call] initiate group=${groupId} user=${userId}: stays on the mesh although call_relay=call-service - the caller's build has no SFU leg (groupCallVersion=${callerVersion})`
+      );
+    } else if (relay === 'call-service') {
+      this.logger.log(
+        `[call] initiate group=${groupId} user=${userId}: through call-service's relay (call_relay=call-service, seats=${RELAY_SEATS})`
+      );
+      return { maxSeats: RELAY_SEATS, mode: 'sfu' };
+    }
+    return { maxSeats: video ? MESH_SEATS_VIDEO : MESH_SEATS_AUDIO };
   }
 
   /**
@@ -1138,11 +1225,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * {@link GROUP_CALL_MESH_VERSION}). An older build would join as a 1:1 call - one connection, the
    * 1:1 keys - and break every other leg; it is refused with a code of its own, before a token.
    */
-  private assertSpeaksTheMesh(userId: string, declared: unknown, scope: string): void {
+  private assertSpeaksTheMesh(
+    userId: string,
+    declared: unknown,
+    scope: string,
+    needs: number = GROUP_CALL_MESH_VERSION
+  ): void {
     const { version, malformed } = parseGroupCallVersion(declared);
-    if (version >= GROUP_CALL_MESH_VERSION) return;
+    if (version >= needs) return;
     this.logger.log(
-      `[call] ${scope} REFUSED user=${userId}: the client does not speak group calls (groupCallVersion=${malformed ? 'unreadable' : version})`
+      `[call] ${scope} REFUSED user=${userId}: the client does not speak this group call (groupCallVersion=${malformed ? 'unreadable' : version}, needs ${needs})`
     );
     throw new ForbiddenException({
       code: RefusalCode.GROUP_CALL_CLIENT_TOO_OLD,

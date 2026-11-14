@@ -2342,14 +2342,15 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at, group) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
           ctx.getUserId(),
-          at
+          at,
+          group
         );
         void ctx
           .getCallService()
@@ -2358,7 +2359,8 @@ export async function loginImpl(
             groupId,
             callMsg,
             ctx.getUserId(),
-            ctx.ensureMls().getDeviceId()
+            ctx.ensureMls().getDeviceId(),
+            group
           );
       },
       // The group just became sendable (a Welcome processed): the one seam an external join shares.

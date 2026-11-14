@@ -23,6 +23,19 @@ import {
   buildCallAudioConstraints,
   configureCallAudioSenders,
 } from '../../../frontend/src/lib/utils/callAudio';
+import {
+  askReport,
+  currentFault,
+  keyCommand,
+  legStats,
+  log,
+  note,
+  sendFrame,
+  setFault,
+  startWorker,
+  transform,
+  type WorkerHandle,
+} from './common';
 
 interface E2eConfig {
   /** `ws://host:port/ws` of the call-service under test. */
@@ -46,24 +59,14 @@ interface E2eConfig {
 const testKey = (a: number, b: number) => Uint8Array.from({ length: 32 }, (_, i) => i * a + b);
 const KEYS = { caller: testKey(7, 3), callee: testKey(13, 1) };
 
-const log: string[] = [];
 let cfg: E2eConfig;
 let pc: RTCPeerConnection | null = null;
 let ws: WebSocket | null = null;
-let worker: Worker | null = null;
+let wh: WorkerHandle | null = null;
 /** Every server frame type received, in order: what the driver prints when a run fails. */
 const frames: string[] = [];
-/** Set once: why this participant's call cannot go on (a refusal, a socket that ended, an error). */
-let fault: string | null = null;
 /** True once `hangup()` closed the socket: an end this page asked for is not a fault. */
 let hungUp = false;
-let lastReport: Record<string, unknown> | null = null;
-/**
- * Settles once the worker can no longer answer (a script that would not load or parse, an uncaught
- * error, a message it could not deserialise): every wait on the worker races it, so a dead worker
- * is a fault the driver reads rather than a report it waits for forever.
- */
-let workerDead: Promise<void> = new Promise(() => {});
 /**
  * Server frames are handled ONE AT A TIME, in arrival order: each handler awaits the peer
  * connection, and two running at once would apply a candidate before the description it belongs to.
@@ -75,65 +78,17 @@ let signalChain: Promise<void> = Promise.resolve();
  */
 const earlyCandidates: RTCIceCandidateInit[] = [];
 
-function note(msg: string) {
-  log.push(`${(performance.now() / 1000).toFixed(2)} ${msg}`);
-}
-
-function setFault(why: string) {
-  note(`FAULT ${why}`);
-  fault ??= why;
-}
-
 function send(frame: Record<string, unknown>) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    setFault(`could not send ${String(frame.type)}: the socket is not open`);
-    return;
-  }
-  ws.send(JSON.stringify(frame));
+  sendFrame(ws, frame);
 }
 
 /** The app worker, keyed as `CallService.ensureWorkerKeyReady` keys it, BEFORE the first track. */
-async function keyWorker(): Promise<Worker> {
-  const w = new Worker('/encryption.worker.js', { type: 'module' });
-  workerDead = new Promise<void>((resolve) => {
-    w.addEventListener('error', (e: ErrorEvent) => {
-      setFault(`the encryption worker failed: ${e.message || 'it did not load'}`);
-      resolve();
-    });
-    w.addEventListener('messageerror', () => {
-      setFault('the encryption worker sent a message that could not be deserialised');
-      resolve();
-    });
-  });
-  w.addEventListener('message', (e: MessageEvent<{ type?: string; detail?: string }>) => {
-    const t = e.data?.type;
-    if (t === 'report') lastReport = e.data as Record<string, unknown>;
-    else if (
-      ['decryptError', 'keyError', 'warn', 'transformError', 'undecryptable'].includes(t ?? '')
-    )
-      note(`worker ${JSON.stringify(e.data)}`);
-  });
-  const keyed = new Promise<void>((resolve, reject) => {
-    const onKey = (e: MessageEvent<{ type?: string; detail?: string }>) => {
-      if (e.data?.type === 'keyReady') resolve();
-      if (e.data?.type === 'keyError') reject(new Error(e.data.detail));
-    };
-    w.addEventListener('message', onKey);
-    const send = KEYS[cfg.role].slice().buffer;
-    const receive = KEYS[cfg.role === 'caller' ? 'callee' : 'caller'].slice().buffer;
-    w.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
-  });
-  await Promise.race([
-    keyed,
-    workerDead.then(() => {
-      throw new Error(fault ?? 'the encryption worker died');
-    }),
-  ]);
-  return w;
-}
-
-function transform(side: 'sender' | 'receiver', kind: 'audio' | 'video') {
-  return new RTCRtpScriptTransform(worker!, { side, kind });
+async function keyWorker(): Promise<WorkerHandle> {
+  const h = startWorker();
+  const sendKey = KEYS[cfg.role].slice().buffer;
+  const receive = KEYS[cfg.role === 'caller' ? 'callee' : 'caller'].slice().buffer;
+  await keyCommand(h, { type: 'setKeys', send: sendKey, receive }, [sendKey, receive], 'keyReady');
+  return h;
 }
 
 async function flushEarlyCandidates(peer: RTCPeerConnection) {
@@ -186,7 +141,7 @@ async function onSignal(raw: string) {
 /** Builds the peer connection, keys the worker, opens the socket and joins the room. */
 async function start(config: E2eConfig) {
   cfg = config;
-  worker = await keyWorker();
+  wh = await keyWorker();
   const stream = await navigator.mediaDevices.getUserMedia({ audio: buildCallAudioConstraints() });
   pc = new RTCPeerConnection({
     iceServers: cfg.iceServers,
@@ -197,8 +152,9 @@ async function start(config: E2eConfig) {
     const kind = e.track.kind as 'audio' | 'video';
     // As CallService.handleRemoteTrack: a transceiver the remote offer created is armed HERE, in
     // the task that created it - receiver and sender both.
-    if (!e.receiver.transform) e.receiver.transform = transform('receiver', kind);
-    if (!e.transceiver.sender.transform) e.transceiver.sender.transform = transform('sender', kind);
+    if (!e.receiver.transform) e.receiver.transform = transform(wh!, 'receiver', kind);
+    if (!e.transceiver.sender.transform)
+      e.transceiver.sender.transform = transform(wh!, 'sender', kind);
     const audio = new Audio();
     audio.srcObject = e.streams[0] ?? new MediaStream([e.track]);
     void audio.play().catch((err) => note(`play: ${String(err)}`));
@@ -224,8 +180,8 @@ async function start(config: E2eConfig) {
     const t = peer.getTransceivers().find((x) => x.sender === sender)!;
     // In the task that created the sender and its transceiver: one task later, Chromium
     // short-circuits both for good (CALL-E2E-BYPASS-MI9T).
-    sender.transform = transform('sender', 'audio');
-    t.receiver.transform = transform('receiver', 'audio');
+    sender.transform = transform(wh!, 'sender', 'audio');
+    t.receiver.transform = transform(wh!, 'receiver', 'audio');
   }
   await configureCallAudioSenders(peer, false, note);
 
@@ -249,47 +205,15 @@ async function start(config: E2eConfig) {
  * decrypt failures), the inbound audio counters, and the selected candidate pair's types.
  */
 async function state() {
-  const peer = pc;
-  const answered = new Promise<void>((resolve) => {
-    const onReport = (e: MessageEvent<{ type?: string }>) => {
-      if (e.data?.type !== 'report') return;
-      worker?.removeEventListener('message', onReport);
-      resolve();
-    };
-    worker?.addEventListener('message', onReport);
-  });
-  worker?.postMessage({ type: 'report', tag: 'e2e' });
-  let inbound: Record<string, unknown> | null = null;
-  let pair: Record<string, unknown> | null = null;
-  if (peer) {
-    const stats = await peer.getStats();
-    const byId = new Map<string, Record<string, unknown>>();
-    stats.forEach((s: Record<string, unknown>) => byId.set(String(s.id), s));
-    for (const s of byId.values()) {
-      if (s.type === 'inbound-rtp' && s.kind === 'audio') {
-        inbound = { packetsReceived: s.packetsReceived, bytesReceived: s.bytesReceived };
-      }
-      if (s.type === 'transport' && s.selectedCandidatePairId) {
-        const p = byId.get(String(s.selectedCandidatePairId));
-        const local = p && byId.get(String(p.localCandidateId));
-        const remote = p && byId.get(String(p.remoteCandidateId));
-        pair = {
-          local: local?.candidateType ?? null,
-          localProtocol: local?.protocol ?? null,
-          remote: remote?.candidateType ?? null,
-        };
-      }
-    }
-  }
-  // A dead worker never answers: its fault (set by the same event) is then what this returns.
-  await Promise.race([answered, workerDead]);
+  const leg = await legStats(pc);
+  if (wh) await askReport(wh);
   return {
-    fault,
+    fault: currentFault(),
     frames,
-    connectionState: peer?.connectionState ?? null,
-    report: lastReport,
-    inbound,
-    pair,
+    connectionState: leg.connectionState,
+    report: wh?.lastReport ?? null,
+    inbound: leg.inbound,
+    pair: leg.pair,
   };
 }
 

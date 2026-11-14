@@ -95,3 +95,18 @@ describe('UpdatePlatformConfigDto.groupCallsMode', () => {
     expect(errors.map((e) => e.property)).toEqual(['groupCallsMode']);
   });
 });
+
+/** The call relay takes exactly the two values migration 023's CHECK allows. */
+describe('UpdatePlatformConfigDto.callRelay', () => {
+  const errorsFor = (callRelay: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { callRelay }));
+
+  it.each(['none', 'call-service'])('accepts %s', async (relay) => {
+    expect(await errorsFor(relay)).toHaveLength(0);
+  });
+
+  it.each(['cloudflare', 'CALL-SERVICE', 'sfu', '', true, 1])('refuses %s', async (relay) => {
+    const errors = await errorsFor(relay);
+    expect(errors.map((e) => e.property)).toEqual(['callRelay']);
+  });
+});
