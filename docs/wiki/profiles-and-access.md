@@ -830,7 +830,7 @@ box no longer defines anything.
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
 | Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31); **the people directory is a dashboard row and a page for every signed-in member since 2026-11-13** (it was linked to staff only, the server always answered any member; the row shows the same fields as a public profile, no per-field privacy setting exists in core-service to honour; the review-cohort rule still applies; blocked accounts are hidden in both directions, like the New chat search, `applyBlockVisibility`) | built |
 | Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate, read grants included since 2026-11-14); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
-| Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Booking spaces | an association's space: as its association (read grants included since 2026-11-14); a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 
 ### Filters and rights
 
@@ -872,7 +872,7 @@ the grid. The creator is the caller, who need not become a member.
 
 | `scope` | Lists | Read by |
 | --- | --- | --- |
-| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role), plus those a nominative read grant of the caller reaches (owner, 2026-11-14) - `associationVisibleToViewerSql` with `readGrants`, what the signed-in agenda counts; a global admin is an ordinary reader | `/associations`, `/lists`, `/institutions` (`listAssociationDirectory`) |
+| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role), plus those a nominative read grant of the caller reaches (owner, 2026-11-14) - `associationVisibleToViewerSql` (read grants counted), what the signed-in agenda counts; a global admin is an ordinary reader | `/associations`, `/lists`, `/institutions` (`listAssociationDirectory`) |
 | `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
