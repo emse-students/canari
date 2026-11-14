@@ -8,7 +8,6 @@ import {
   SetMetadata,
 } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
-import { isUUID } from 'class-validator';
 
 /**
  * What a path parameter IS, as its route declares it:
@@ -37,6 +36,22 @@ export const ROUTE_PARAMS_KEY = 'route_params';
  * declaration names, and on a declaration naming a parameter no route has.
  */
 export const RouteParams = (kinds: RouteParamKinds) => SetMetadata(ROUTE_PARAMS_KEY, kinds);
+
+/** The canonical text of a uuid: 8-4-4-4-12 hexadecimal digits, either case. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether a value is the canonical text of a uuid, WHATEVER ITS VERSION AND VARIANT BITS.
+ *
+ * The question is "would the `uuid` column take this", not "is this an RFC 9562 uuid": Postgres
+ * stores any 128 bits, so a stricter check (class-validator's `isUUID` refuses
+ * `11111111-1111-1111-1111-111111111111`) would put a row that exists out of reach behind a 400.
+ *
+ * @param value a path parameter as the router gave it
+ */
+export function isUuidShaped(value: unknown): value is string {
+  return typeof value === 'string' && UUID_SHAPE.test(value);
+}
 
 /**
  * The declaration that applies to one handler: its class's, then its own on top.
@@ -71,7 +86,7 @@ export class RouteParamsGuard implements CanActivate {
     const params: Record<string, unknown> = context.switchToHttp().getRequest().params ?? {};
     for (const [name, kind] of Object.entries(kinds)) {
       if (kind !== 'uuid' || !(name in params)) continue;
-      if (!isUUID(params[name])) {
+      if (!isUuidShaped(params[name])) {
         this.logger.debug(
           `[ROUTE_PARAMS] ${context.getClass().name}.${context.getHandler().name}: "${name}" is not a uuid - 400`
         );

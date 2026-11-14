@@ -113,11 +113,13 @@ export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
 /** The `code` of the 403 a BDE caller gets deleting an institution: the global admin's alone (2026-11-02). */
 export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 
-/** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 /**
- * Every path parameter of this controller, by kind (`RouteParams`): each `uuid` is the key of a
+ * Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products.
+ *
+ * `RouteParams` names every path parameter of this controller by kind: each `uuid` is the key of a
  * row, checked by the global guard before `GlobalAdminOrAssociationRoleGuard` asks the database
- * about `:id`; a user id is not a uuid in this service, and a slug is a word.
+ * about `:id`; a user id is not a uuid in this service, and a slug is a word. A NEW ROUTE REUSING
+ * ONE OF THESE NAMES FOR SOMETHING ELSE must say so on its handler (`@RouteParams({ id: 'opaque' })`).
  */
 @RouteParams({
   id: 'uuid',

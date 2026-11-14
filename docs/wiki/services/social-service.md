@@ -147,7 +147,9 @@ The numbers and what they imply are in
 `@RouteParams({ id: 'uuid', userId: 'opaque', ... })` (`src/common/route-params.ts`), on the class
 or on one handler (which adds to its class and wins over it). `RouteParamsGuard`, registered through
 `APP_GUARD` in `AppModule`, answers `400` naming the parameter when a `uuid` is not one. It reads the
-declaration and the path, never the database.
+declaration and the path, never the database. **"A uuid" means what the column takes** - the
+canonical 8-4-4-4-12 text, whatever its version and variant bits (`isUuidShaped`): Postgres stores
+any 128 bits, and a stricter RFC check would put an existing row out of reach behind a `400`.
 
 **Why not `ParseUUIDPipe` on each `@Param`.** Nest runs guards BEFORE pipes.
 `GlobalAdminOrAssociationRoleGuard` reads `:id` and asks the service whether the caller may act on
@@ -165,13 +167,19 @@ written down too: an unvalidated parameter is a choice somebody made, never an o
 `NginxAuthGuard`, so an unsigned request with a malformed id is answered `400`. A malformed path
 reveals nothing about any row, and nginx authenticates before the service is reached.
 
-**What holds it** - two specs, neither needing a database:
+**One status changed that was not a `500`.** `GET /api/associations/<not a uuid>` was a `404` (the
+service checked the id itself); it is a `400` now, like every other route of the controller. The
+frontend's and core-service's callers pass row ids and treat any failure alike.
+
+**What holds it** - three specs, none needing a database:
 
 - `src/route-params.coverage.spec.ts` walks `AppModule`'s own module graph and fails on a path
   parameter no declaration names, on a declaration naming a parameter its routes do not have (a typo
   would otherwise validate nothing while looking like it does), and on `AppModule` not providing the
   guard. Controllers not converted yet are a `PENDING` list in that file which can only shrink: a
   name that no longer has an undeclared parameter fails the spec until it is removed.
+- `src/common/route-params.spec.ts` holds the guard alone: what it refuses, that `opaque` is never
+  looked at, and that a handler's declaration wins over its class's.
 - `src/associations/associations.route-params.http.spec.ts` boots the real controller and the real
   guards over HTTP: a malformed association id is a `400` and none of the role guard's questions
   (`mayAct`, `isMember`, `isAssociationSuperAdminOf`) was asked; the same route with a uuid reaches
@@ -179,7 +187,7 @@ reveals nothing about any row, and nginx authenticates before the service is rea
 
 **Where it stands.** The inventory of 2026-11-14 counted about 146 id-like path parameters without
 validation in this service, about 120 of them in `associations.controller.ts` - the only controller
-whose guard reads one - and 69 in `channels.controller.ts`; posts, forms, bookings, lives, spaces,
+whose guard asks the database about one - and 69 in `channels.controller.ts`; posts, forms, bookings, lives, spaces,
 proposals, refunds and the poster routes already carried a pipe on nearly all of theirs.
 `AssociationsController` is converted (thirteen names, `userId` and `slug` opaque). The rest, the
 removal of the per-parameter pipes the declaration makes redundant, and the same mechanism in
