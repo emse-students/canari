@@ -9,7 +9,9 @@ import {
   loadRoster,
   loadRosters,
   loadedMembers,
+  markStale,
   publishBlock,
+  runUnlessBlocked,
   shownButUnlisted,
 } from './rosterLoads';
 
@@ -52,7 +54,7 @@ describe('rosterLoads - a failed roster is a state, never an empty list', () => 
     expect(publishBlock(['a1'], loads, [])).toBeNull();
   });
 
-  it('a failed roster is not drawn as an empty bubble the way the old catch did', async () => {
+  it('blocks the publish of a failed roster even though the model draws it with an empty member list', async () => {
     const loads = await loadRosters(['a1'], () => Promise.reject(new Error('503')));
     const asso = { id: 'a1', name: 'A1', type: 'association', archived: false } as never;
     // Drawn from what loaded, the association has no roster entry at all - and publishBlock, not an
@@ -66,5 +68,46 @@ describe('rosterLoads - a failed roster is a state, never an empty list', () => 
     const unlisted = shownButUnlisted(new Set(['a1', 'a3']), ['a1', 'a2', 'a3'], new Set(['a1']));
     expect(unlisted).toEqual(['a3']);
     expect(publishBlock([], {}, unlisted)).toEqual({ rosters: [], unlisted: ['a3'] });
+  });
+
+  it('fails a roster whose answer is not a list, instead of drawing it empty', async () => {
+    const load = await loadRoster('a1', () => Promise.resolve({} as never));
+    expect(load).toEqual({ state: 'failed' });
+    expect(publishBlock(['a1'], { a1: load }, [])).toEqual({ rosters: ['a1'], unlisted: [] });
+  });
+
+  it('leaves a review account out of a roster: no public map carries one', async () => {
+    const review = { ...member('rev'), reviewAccount: true } as AssociationMember;
+    const load = await loadRoster('a1', () => Promise.resolve([member('u1'), review]));
+    expect(load).toEqual({ state: 'loaded', members: [member('u1')] });
+  });
+
+  it('marks the rosters the server called stale, which blocks until they are re-read', async () => {
+    const loads = await loadRosters(['a1', 'a2'], () => Promise.resolve([member('u1')]));
+    const stale = markStale(loads, ['a2']);
+    expect(stale.a2).toEqual({ state: 'stale' });
+    expect(publishBlock(['a1', 'a2'], stale, [])).toEqual({ rosters: ['a2'], unlisted: [] });
+  });
+});
+
+describe('runUnlessBlocked - the one gate in front of a publish and an export', () => {
+  it('does not run the action while something blocks, and says what blocks', async () => {
+    const act = vi.fn(() => Promise.resolve());
+    const onRefused = vi.fn();
+    const loads = await loadRosters(['a1'], () => Promise.reject(new TypeError('Failed to fetch')));
+    const ran = await runUnlessBlocked(publishBlock(['a1'], loads, []), onRefused, act);
+    expect(ran).toBe(false);
+    expect(act).not.toHaveBeenCalled();
+    expect(onRefused).toHaveBeenCalledWith({ rosters: ['a1'], unlisted: [] });
+  });
+
+  it('runs the action when every drawn roster is loaded, an empty one included', async () => {
+    const act = vi.fn(() => Promise.resolve());
+    const onRefused = vi.fn();
+    const loads = await loadRosters(['a1'], () => Promise.resolve([]));
+    const ran = await runUnlessBlocked(publishBlock(['a1'], loads, []), onRefused, act);
+    expect(ran).toBe(true);
+    expect(act).toHaveBeenCalledTimes(1);
+    expect(onRefused).not.toHaveBeenCalled();
   });
 });

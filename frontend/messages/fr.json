@@ -2236,6 +2236,7 @@
   "carte_publish_refused_outside": "La carte contient une association désactivée ou hors de son espace. Rechargez l'éditeur puis republiez.",
   "carte_publish_refused_unattached": "Rattachez la carte à un espace avant de la publier.",
   "carte_publish_refused_roster": "L'annuaire de la carte a été préparé par une ancienne version de l'éditeur. Rechargez l'éditeur puis republiez.",
+  "carte_roster_stale": "ses membres ont changé depuis l'ouverture de l'éditeur",
   "carte_roster_failed_title": "Des données de la carte n'ont pas pu être chargées",
   "carte_roster_failed_body": "Une association dont les membres manquent n'est pas une association vide : la carte ne peut être ni publiée ni exportée tant qu'ils ne sont pas chargés.",
   "carte_roster_unlisted": [

@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 function render(props: {
-  missing: { id: string; name: string; loading: boolean }[];
+  missing: { id: string; name: string; loading: boolean; stale: boolean }[];
   unlisted: number;
   onRetry: (id: string) => void;
 }) {
@@ -28,7 +28,7 @@ function render(props: {
 it('names each association whose roster failed, and its retry reloads that one', () => {
   const onRetry = vi.fn();
   const target = render({
-    missing: [{ id: 'a2', name: 'Club Two', loading: false }],
+    missing: [{ id: 'a2', name: 'Club Two', loading: false, stale: false }],
     unlisted: 0,
     onRetry,
   });
@@ -41,7 +41,7 @@ it('names each association whose roster failed, and its retry reloads that one',
 
 it('disables the retry while it runs', () => {
   const target = render({
-    missing: [{ id: 'a2', name: 'Club Two', loading: true }],
+    missing: [{ id: 'a2', name: 'Club Two', loading: true, stale: false }],
     unlisted: 0,
     onRetry: vi.fn(),
   });

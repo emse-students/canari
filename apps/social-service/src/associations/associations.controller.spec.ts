@@ -1159,4 +1159,15 @@ describe('AssociationsController.listMembers and the review cohort', () => {
     expect(await controller.listMembers('asso1', 'member')).toEqual([{ userId: 'member' }]);
     expect(await controller.listMembers('asso1', 'admin', 'true')).toHaveLength(2);
   });
+
+  it('marks the review account on the roster an admin reads, and no one else', async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller } = makeController([]);
+    const rows = (await controller.listMembers('asso1', 'admin', 'true')) as {
+      userId: string;
+      reviewAccount?: boolean;
+    }[];
+    expect(rows.find((r) => r.userId === 'reviewer')?.reviewAccount).toBe(true);
+    expect(rows.find((r) => r.userId === 'member')?.reviewAccount).toBeUndefined();
+  });
 });

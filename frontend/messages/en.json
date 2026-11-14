@@ -2204,6 +2204,7 @@
   "carte_publish_refused_outside": "The map holds an association that is switched off or outside its space. Reload the editor, then publish again.",
   "carte_publish_refused_unattached": "Attach the map to a space before publishing it.",
   "carte_publish_refused_roster": "The map's directory was prepared by an older version of the editor. Reload the editor, then publish again.",
+  "carte_roster_stale": "its members changed since the editor opened",
   "carte_roster_failed_title": "Some of the map's data could not be loaded",
   "carte_roster_failed_body": "An association whose members are missing is not an empty association: the map cannot be published or exported until they are loaded.",
   "carte_roster_unlisted": [

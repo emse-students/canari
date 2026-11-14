@@ -620,7 +620,7 @@ export class PosterService {
       const dropped = kept.droppedCards + kept.droppedMembers;
       if (dropped > 0) {
         this.logger.warn(
-          `[CARTE] publish of map ${id} dropped ${kept.droppedCards} card(s) and ${kept.droppedMembers} roster member(s) of non-members - a stale editor`
+          `[CARTE] publish of map ${id} dropped ${kept.droppedCards} card(s) and ${kept.droppedMembers} roster member(s) of accounts no public roster carries (non-members, review accounts) - a stale editor`
         );
       }
       const repo = manager.getRepository(PosterProject);
@@ -735,6 +735,12 @@ export class PosterService {
    * Association ids are compared as `uuid`, so the primary-key index is used; a pair whose
    * association is not a uuid - a layout can carry any string - is not a membership and never
    * reaches the query.
+   *
+   * A REVIEW-COHORT account is never a member here, whatever its row: no public roster may carry it
+   * (`listMembersPublic`), and the carte is served without an account, so the publish drops it from
+   * the cards and the rosters, and the save from the bureau picks, exactly as a non-member - by the
+   * same predicate the roster route applies (`isInReviewCohort`). The platform admin's roster shows
+   * those accounts (marked `reviewAccount`), which is why the check cannot be left to the editor.
    */
   private async currentMembership(
     manager: EntityManager,
@@ -749,7 +755,9 @@ export class PosterService {
       [[...new Set(asked.map((p) => p.assoId))], [...new Set(asked.map((p) => p.userId))]]
     );
     const key = (assoId: string, userId: string) => `${assoId.toLowerCase()}:${userId}`;
-    const current = new Set(rows.map((r) => key(r.assoId, r.userId)));
+    const current = new Set(
+      rows.filter((r) => !isInReviewCohort(r.userId)).map((r) => key(r.assoId, r.userId))
+    );
     this.logger.debug(
       `[CARTE] membership checked: ${pairs.length} pair(s), ${pairs.length - asked.length} not of a uuid association, ${current.size} current`
     );

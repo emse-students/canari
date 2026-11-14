@@ -23,6 +23,7 @@
     deletePosterZone,
     reorderPosterZones,
     CARTE_REFUSAL,
+    SocialApiError,
     type Association,
     type CarteSpace,
     type PosterEntry,
@@ -74,8 +75,10 @@
     loadRoster,
     loadRosters,
     loadedMembers,
+    markStale,
     publishBlock,
     rostersNotLoaded,
+    runUnlessBlocked,
     shownButUnlisted,
     type RosterLoads,
   } from '$lib/carte/rosterLoads';
@@ -327,6 +330,7 @@
       id,
       name: spaceAssociations.find((a) => a.id === id)?.name ?? id,
       loading: rosterLoads[id]?.state === 'loading',
+      stale: rosterLoads[id]?.state === 'stale',
     }))
   );
   /** Switched-on associations of the space the catalogue did not list: they would not be drawn. */
@@ -338,28 +342,32 @@
     )
   );
 
+  /** What blocks a publish or an export now ({@link publishBlock}), or null. */
+  const currentBlock = $derived(publishBlock(drawnIds, rosterLoads, associationsUnlisted));
   /**
-   * Why the map cannot be published or exported now, or null when it can: a roster not loaded, or a
-   * shown association the editor could not read. Named, because the author has to act on it.
+   * Whether a publish or an export was refused for {@link currentBlock}. Its message is DERIVED from
+   * the block, kept apart from `error`, so it goes by itself once the block lifts and a retry never
+   * wipes an unrelated error.
    */
-  function publishBlocker(): string | null {
-    const block = publishBlock(drawnIds, rosterLoads, associationsUnlisted);
-    if (!block) return null;
-    if (block.rosters.length > 0) {
+  let blockRefused = $state(false);
+  const blockNotice = $derived.by(() => {
+    if (!blockRefused || !currentBlock) return null;
+    if (currentBlock.rosters.length > 0) {
       const nameOf = (id: string) => spaceAssociations.find((a) => a.id === id)?.name ?? id;
-      return m.carte_publish_blocked_rosters({ names: block.rosters.map(nameOf).join(', ') });
+      return m.carte_publish_blocked_rosters({
+        names: currentBlock.rosters.map(nameOf).join(', '),
+      });
     }
-    return m.carte_publish_blocked_unlisted({ count: block.unlisted.length });
-  }
+    return m.carte_publish_blocked_unlisted({ count: currentBlock.unlisted.length });
+  });
 
-  /** Re-reads one roster that failed, then redraws with it. */
+  /** Re-reads one roster that failed (or that the server called stale), then redraws with it. */
   async function retryRoster(associationId: string): Promise<void> {
     Log.d('admin.carte.id.retryRoster', { associationId });
     rosterLoads = { ...rosterLoads, [associationId]: { state: 'loading' } };
     const load = await loadRoster(associationId, listMembers);
     rosterLoads = { ...rosterLoads, [associationId]: load };
     if (load.state !== 'loaded') return;
-    error = null;
     rebuildModel();
     void refreshPublishFingerprint();
   }
@@ -946,15 +954,17 @@
   async function handlePublish() {
     if (!project || publishing) return;
     Log.d('admin.carte.id.handlePublish', { projectId: project.id });
-    const blocked = publishBlocker();
-    if (blocked) {
-      Log.w('admin.carte.id.handlePublish refused: a roster or an association is not loaded', {
-        rosters: rostersMissing.map((r) => r.id),
-        unlisted: associationsUnlisted,
-      });
-      error = blocked;
-      return;
-    }
+    await runUnlessBlocked(currentBlock, refuseForBlock, publishNow);
+  }
+
+  /** Remembers that an action was refused for the current block, so its notice shows. */
+  function refuseForBlock(): void {
+    blockRefused = true;
+  }
+
+  /** The publish itself, behind {@link runUnlessBlocked}. */
+  async function publishNow(): Promise<void> {
+    blockRefused = false;
     publishing = true;
     error = null;
     try {
@@ -963,6 +973,17 @@
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
       const code = refusalCode(e);
+      if (code === CARTE_REFUSAL.ROSTER_MISSING) {
+        // The server read members where this editor sent nobody (usually someone who joined after
+        // it opened): those rosters are marked stale, offered for a retry, and named in the block.
+        const ids = e instanceof SocialApiError ? (e.associationIds ?? []) : [];
+        Log.w('admin.carte.id.handlePublish refused CARTE_ROSTER_MISSING', { ids });
+        if (ids.length > 0) {
+          rosterLoads = markStale(rosterLoads, ids);
+          blockRefused = true;
+          return;
+        }
+      }
       error =
         code === CARTE_REFUSAL.UNIT_OUTSIDE_MAP
           ? m.carte_publish_refused_outside()
@@ -1057,15 +1078,14 @@
 
   async function handleExport() {
     if (!posterEl || !project || exporting) return;
-    const blocked = publishBlocker();
-    if (blocked) {
-      Log.w('admin.carte.id.handleExport refused: a roster or an association is not loaded', {
-        rosters: rostersMissing.map((r) => r.id),
-        unlisted: associationsUnlisted,
-      });
-      error = blocked;
-      return;
-    }
+    Log.d('admin.carte.id.handleExport', { projectId: project.id });
+    await runUnlessBlocked(currentBlock, refuseForBlock, exportNow);
+  }
+
+  /** The PDF export itself, behind {@link runUnlessBlocked}. */
+  async function exportNow(): Promise<void> {
+    if (!posterEl || !project) return;
+    blockRefused = false;
     exporting = true;
     error = null;
     // Clear selections and the overlap outlines so none of them is captured in the PDF.
@@ -1349,6 +1369,9 @@
         <div class="relative flex min-w-0 flex-1 flex-col">
           {#if error}
             <p class="shrink-0 px-4 pt-2 text-sm text-red-500" role="alert">{error}</p>
+          {/if}
+          {#if blockNotice}
+            <p class="shrink-0 px-4 pt-2 text-sm text-red-500" role="alert">{blockNotice}</p>
           {/if}
 
           <!-- A background tab throttles the animation frames the capture runs on, and an export

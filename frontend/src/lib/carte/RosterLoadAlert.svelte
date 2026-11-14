@@ -10,8 +10,11 @@
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
-    /** The drawn associations whose roster is not loaded; `loading` while a retry runs. */
-    missing: { id: string; name: string; loading: boolean }[];
+    /**
+     * The drawn associations whose roster is not loaded; `loading` while a retry runs, `stale` when
+     * the server said the roster changed since the editor read it.
+     */
+    missing: { id: string; name: string; loading: boolean; stale: boolean }[];
     /** How many shown associations the editor could not read at all (a reload is the cure). */
     unlisted: number;
     /** Re-reads one association's roster. */
@@ -34,7 +37,12 @@
       <ul class="mt-2 flex flex-col gap-1.5">
         {#each missing as asso (asso.id)}
           <li class="flex items-center gap-2" data-roster-failed={asso.id}>
-            <span class="text-text-main min-w-0 flex-1 truncate text-sm">{asso.name}</span>
+            <span class="text-text-main min-w-0 flex-1 truncate text-sm">
+              {asso.name}
+              {#if asso.stale}
+                <span class="text-text-muted text-xs">- {m.carte_roster_stale()}</span>
+              {/if}
+            </span>
             <Button
               size="compact"
               variant="secondary"
