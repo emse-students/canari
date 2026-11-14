@@ -141,8 +141,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       {
         build: async (input: { answers: Record<string, string[]> }) => ({
-          promo: null,
-          formation: null,
+          cursus: [{ promo: null, formation: null }],
           cotisationTiers: [],
           answers: input.answers,
         }),

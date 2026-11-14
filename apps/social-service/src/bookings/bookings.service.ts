@@ -17,7 +17,7 @@ import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
-import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
+import { matchesCondition, needsProfile, NO_CURSUS, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
   normaliseCondition,
@@ -597,8 +597,8 @@ export class BookingsService {
       (s) => s.associationId !== null && !managed.has(s.associationId) && s.audience
     );
     const needProfile = judged.some((s) => needsProfile(s.audience));
-    const [profile, tiers] = await Promise.all([
-      this.pricingFacts.profileFor(actor.userId, needProfile).catch((e: unknown) => {
+    const [cursus, tiers] = await Promise.all([
+      this.pricingFacts.cursusFor(actor.userId, needProfile).catch((e: unknown) => {
         this.logger.error(
           `[BOOKINGS] listedSpaces: profile unavailable, the spaces whose audience needs it are ` +
             `left out of this answer: ${e instanceof Error ? e.message : String(e)}`
@@ -613,10 +613,10 @@ export class BookingsService {
     ]);
     const open = rows.filter((s) => {
       if (!judged.includes(s)) return true;
-      if (needsProfile(s.audience) && profile === null) return false;
+      if (needsProfile(s.audience) && cursus === null) return false;
       return matchesCondition(s.audience!, {
-        promo: profile?.promo ?? null,
-        formation: profile?.formation ?? null,
+        // Every cursus (D32): a space open to either of a person's cursus is open to them.
+        cursus: cursus ?? NO_CURSUS,
         cotisationTiers: tiers.get(s.associationId as string) ?? [],
         answers: {},
       });

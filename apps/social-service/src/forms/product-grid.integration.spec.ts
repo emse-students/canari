@@ -114,8 +114,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       // The cotisant holds the base tier; anybody else none.
       {
         build: async (input: { userId?: string; answers: Record<string, string[]> }) => ({
-          promo: null,
-          formation: null,
+          cursus: [{ promo: null, formation: null }],
           cotisationTiers: input.userId === COTISANT ? [null] : [],
           answers: input.answers,
         }),

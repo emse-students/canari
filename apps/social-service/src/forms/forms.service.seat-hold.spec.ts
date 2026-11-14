@@ -304,8 +304,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
     const pricingFacts: any = opts.pricingFacts ?? {
       build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: input.answers ?? {},
       })),

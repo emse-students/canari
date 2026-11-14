@@ -3,14 +3,23 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
+import type { CursusEntry } from '../users/miconnect-profile';
 import { isInReviewCohort } from '../review-cohort';
 
-/** The minimum a `/profile/:id` share needs to render a preview, and nothing else. */
+/**
+ * The minimum a `/profile/:id` share needs to render a preview, plus what social-service prices on.
+ *
+ * `cursus` is EVERY entry, in the provider's order: social-service evaluates a price grid, a
+ * question's condition and a form's audience once per cursus (D32 - two cursus pay the most
+ * favourable price). `promo`/`formation` are the FIRST entry (`legacyColumns`), kept for the readers
+ * that still take them.
+ */
 export interface InternalPublicProfile {
   id: string;
   displayName: string | null;
   promo: number | null;
   formation: string | null;
+  cursus: CursusEntry[];
 }
 
 /**
@@ -36,7 +45,9 @@ export class InternalUsersController {
   ) {}
 
   /**
-   * Distinct non-null `formation` values in use, with how many users carry each.
+   * Distinct formation values in use, with how many users carry each - read from EVERY cursus entry
+   * (D32), so a formation followed only as a second cursus is offered too, and a person counts once
+   * per formation however many entries name it.
    *
    * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
    * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
@@ -51,15 +62,7 @@ export class InternalUsersController {
     @Headers('x-internal-secret') secret?: string
   ): Promise<{ value: string; count: number }[]> {
     assertInternalSecret(secret);
-    const rows: { value: string; count: string }[] = await this.userRepo
-      .createQueryBuilder('u')
-      .select('u.formation', 'value')
-      .addSelect('COUNT(*)', 'count')
-      .where('u.formation IS NOT NULL')
-      .andWhere("u.formation <> ''")
-      .groupBy('u.formation')
-      .orderBy('COUNT(*)', 'DESC')
-      .getRawMany();
+    const rows: { value: string; count: string }[] = await this.userRepo.query(FORMATIONS_SQL);
     this.logger.debug(`internal formations listing rows=${rows.length}`);
     return rows.map((r) => ({ value: r.value, count: Number(r.count) }));
   }
@@ -88,6 +91,20 @@ export class InternalUsersController {
       displayName: user.displayName ?? null,
       promo: user.promo ?? null,
       formation: user.formation ?? null,
+      cursus: user.cursus ?? [],
     };
   }
 }
+
+/**
+ * Every formation named by a cursus entry, and how many DISTINCT people name it. `jsonb_array_elements`
+ * over `users.cursus` (never the `formation` column, which is the first entry only); the most used
+ * first, then by name so equal counts list in a stable order.
+ */
+export const FORMATIONS_SQL = `
+  SELECT entry->>'formation' AS value, COUNT(DISTINCT u.id) AS count
+  FROM users u
+  CROSS JOIN LATERAL jsonb_array_elements(u.cursus) AS entry
+  WHERE COALESCE(entry->>'formation', '') <> ''
+  GROUP BY entry->>'formation'
+  ORDER BY COUNT(DISTINCT u.id) DESC, entry->>'formation' ASC`;

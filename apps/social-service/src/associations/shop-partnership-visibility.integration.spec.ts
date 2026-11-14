@@ -171,7 +171,7 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
       // Which rows survive is under test, not how they are annotated.
       annotateForViewer: (rows: AssociationProduct[]) => Promise.resolve(rows),
       // Payments are routed and ready: what is under test is who may buy, not where it is paid.
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
       activePaymentProvider: () => Promise.resolve('lydia'),
       routeWith: () =>
         Promise.resolve({

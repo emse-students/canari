@@ -786,6 +786,16 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- user-write-gone.integration
 
+      # EVERY CURSUS ENTRY IS READ (D32): the directory's promo and formation filters and the
+      # formations listing are `jsonb_array_elements` over `users.cursus`, which no mock can judge.
+      # Its own `users` table, in a throwaway schema (docs/wiki/profiles-and-access.md, D32).
+      - name: Cursus reads against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- cursus-reads.integration
+
       # A PLATFORM CONFIG WRITE UPDATES THE COLUMNS IT NAMES: two administrators editing different
       # settings keep both. Its own table, in a throwaway schema (docs/wiki/services/core-service.md).
       - name: Platform config writes against PostgreSQL

@@ -9,12 +9,35 @@ import { OTHERS_BUCKET_ID } from '../forms/form-option-rules';
  * question that set it is not a bug anyone reports clearly.
  */
 
-/** Everything a criterion may look at. Assembled once per request, never re-fetched per bucket. */
-export interface PricingFacts {
+/**
+ * ONE line of a person's schooling, as a criterion reads it: the promo and the formation of the SAME
+ * cursus entry. A criterion never pairs the promo of one entry with the formation of another - "ICM
+ * 2024 and ISMIN 2022" is not "ICM 2022".
+ */
+export interface CursusView {
   /** ENTRY year from the identity provider - "la promo 2024" entered in 2024. Null when unset. */
   promo: number | null;
   /** Formation/track from the identity provider; null when unset. */
   formation: string | null;
+}
+
+/**
+ * The cursus of somebody who has none - staff, a guest, an id core-service does not know, or a
+ * caller whose criteria need no profile: ONE view with nothing in it, which every criterion on who
+ * the person is reads as "everyone else". Exactly what a person with no cursus was before D32.
+ */
+export const NO_CURSUS: readonly CursusView[] = Object.freeze([
+  Object.freeze({ promo: null, formation: null }),
+]);
+
+/** Everything a criterion may look at. Assembled once per request, never re-fetched per bucket. */
+export interface PricingFacts {
+  /**
+   * EVERY cursus of the person, in the identity provider's order (D32: two cursus pay the most
+   * favourable price, and a question or a submission open to either is open). Never empty -
+   * `NO_CURSUS` for a person with none.
+   */
+  cursus: readonly CursusView[];
   /**
    * The cotisation tiers this submitter currently holds for the form's association, by
    * `variantKey` - `null` being the base, un-suffixed tier. Empty when they hold none.
@@ -22,6 +45,95 @@ export interface PricingFacts {
   cotisationTiers: (string | null)[];
   /** Answers, by question id, as the option ids selected. A free-text answer contributes nothing. */
   answers: Record<string, string[]>;
+}
+
+/** Type-only brand: a `CursusFacts` is obtainable through `cursusViews` and nowhere else. */
+declare const ONE_CURSUS: unique symbol;
+
+/**
+ * The facts read through ONE cursus: what a bucket, a cell and a product-grid tier are decided on.
+ *
+ * Branded, so a caller holding a person's `PricingFacts` cannot hand them to `bucketFor` or
+ * `resolveCellPrice` and silently price on one cursus: the only way to get one is `cursusViews`,
+ * and the only callers of that are the two rules below - "any view" for a condition
+ * (`failedCriterion`), "the cheapest whole price" for an amount (`cheapestCursus`).
+ */
+export type CursusFacts = CursusView &
+  Omit<PricingFacts, 'cursus'> & {
+    readonly [ONE_CURSUS]: true;
+  };
+
+/**
+ * One `CursusFacts` per cursus of the person, in their order. Throws on an empty list: `NO_CURSUS`
+ * is how "no cursus" is said, so an empty one is facts assembled by something that skipped the
+ * service, and pricing them on nothing would be inventing a person.
+ */
+export function cursusViews(facts: PricingFacts): CursusFacts[] {
+  if (!facts.cursus?.length) {
+    throw new Error('[PRICING] facts carry no cursus view - NO_CURSUS is how "none" is said');
+  }
+  return facts.cursus.map(
+    (c) =>
+      ({
+        promo: c.promo,
+        formation: c.formation,
+        cotisationTiers: facts.cotisationTiers,
+        answers: facts.answers,
+      }) as CursusFacts
+  );
+}
+
+/** What `cheapestCursus` chose: the winning view, its place in the list, and what it priced. */
+export interface CursusChoice<T> {
+  /** The view every displayed bucket and tier must be read from - never another one. */
+  view: CursusFacts;
+  /** Its index in `PricingFacts.cursus`, for the log. */
+  index: number;
+  /** How many views were compared. */
+  of: number;
+  /** What `quote` returned for the winner. */
+  quote: T;
+  /** Its total in cents, or null when the winner's combination does not exist (every view's then). */
+  cents: number | null;
+}
+
+/**
+ * THE most-favourable-price rule (D32): `quote` prices the WHOLE thing for each cursus - base cell,
+ * every bucket-dependent surcharge - and the cheapest total wins. A `null` total (a combination the
+ * manager marked unavailable) loses to any price: being allowed to buy is more favourable than
+ * being refused. A tie goes to the FIRST cursus, so the order is deterministic and is the
+ * provider's. When every total is null the first view is returned with `cents: null`, and the
+ * caller refuses exactly as it did with one cursus.
+ *
+ * Called ONCE per pricing operation, and everything shown or stored about that operation is read
+ * from `view` - a bucket displayed from another cursus than the one charged is the disagreement this
+ * returns the view to prevent.
+ */
+export function cheapestCursus<T>(
+  facts: PricingFacts,
+  quote: (view: CursusFacts) => T,
+  cents: (quoted: T) => number | null
+): CursusChoice<T> {
+  const views = cursusViews(facts);
+  let best: CursusChoice<T> | null = null;
+  for (const [index, view] of views.entries()) {
+    const quoted = quote(view);
+    const total = cents(quoted);
+    const better = best === null || (total !== null && (best.cents === null || total < best.cents));
+    if (better) best = { view, index, of: views.length, quote: quoted, cents: total };
+  }
+  return best;
+}
+
+/**
+ * The winning cursus as a log fragment - `cursus=2/2 formation=ICM promo=2024` - so a charged price
+ * stays explainable. Formation and promo only: nothing else about the person.
+ */
+export function describeCursus(choice: Pick<CursusChoice<unknown>, 'view' | 'index' | 'of'>) {
+  return (
+    `cursus=${choice.index + 1}/${choice.of} formation=${choice.view.formation ?? 'null'} ` +
+    `promo=${choice.view.promo ?? 'null'}`
+  );
 }
 
 interface BucketBase {
@@ -114,7 +226,7 @@ export type AudienceCriterion = keyof AudienceCondition;
 /** True when the submitter holds a cotisation the bucket accepts. */
 function matchesCotisation(
   bucket: Pick<CotisationBucket, 'anyTier' | 'variantKeys'>,
-  facts: PricingFacts
+  facts: CursusFacts
 ): boolean {
   if (facts.cotisationTiers.length === 0) return false;
   if (bucket.anyTier) return true;
@@ -128,17 +240,17 @@ function matchesCotisation(
  * A null promo matches nothing - it is not a year, and treating it as one would put somebody in a
  * priced cell on the strength of a missing value.
  */
-function matchesPromo(values: number[], facts: PricingFacts): boolean {
+function matchesPromo(values: number[], facts: CursusFacts): boolean {
   return facts.promo !== null && values.includes(facts.promo);
 }
 
 /** True when the submitter's formation is one of the bucket's values. Case-sensitive, as stored. */
-function matchesFormation(values: string[], facts: PricingFacts): boolean {
+function matchesFormation(values: string[], facts: CursusFacts): boolean {
   return facts.formation !== null && values.includes(facts.formation);
 }
 
 /** True when the submitter selected one of the bucket's options for that question. */
-function matchesAnswer(questionId: string, optionIds: string[], facts: PricingFacts): boolean {
+function matchesAnswer(questionId: string, optionIds: string[], facts: CursusFacts): boolean {
   const selected = facts.answers[questionId];
   if (!selected?.length) return false;
   return selected.some((id) => optionIds.includes(id));
@@ -151,8 +263,10 @@ function matchesAnswer(questionId: string, optionIds: string[], facts: PricingFa
  * The first matching bucket wins, and that is not a priority rule to reason about: the editor
  * refuses overlapping buckets within a dimension (`findOverlappingBuckets`), so at most one can
  * ever match. First-match is how the loop ends, not how ties are broken.
+ *
+ * ONE cursus at a time (`CursusFacts`): which cursus prices is `cheapestCursus`'s decision.
  */
-export function bucketFor(dimension: Dimension, facts: PricingFacts): string {
+export function bucketFor(dimension: Dimension, facts: CursusFacts): string {
   switch (dimension.kind) {
     case 'cotisation':
       return dimension.buckets.find((b) => matchesCotisation(b, facts))?.id ?? OTHERS_BUCKET_ID;
@@ -177,10 +291,23 @@ export function bucketFor(dimension: Dimension, facts: PricingFacts): string {
  * `notCotisation` is asked first, so a refusal names it whenever it is among the failures: "you
  * already hold this cotisation" is the one refusal a person can read as an answer rather than a
  * wall, and the caller types it (`submitRefusalCode`) instead of reading it back out of prose.
+ *
+ * D32: the condition holds when it holds for AT LEAST ONE cursus, promo and formation read from the
+ * same entry. When it holds for none, the criterion named is the FIRST cursus's - `notCotisation`
+ * does not depend on the cursus, so it keeps its precedence whatever the views.
  */
 export function failedCriterion(
   condition: AudienceCondition,
   facts: PricingFacts
+): AudienceCriterion | null {
+  const failures = cursusViews(facts).map((view) => failedForCursus(condition, view));
+  return failures.includes(null) ? null : failures[0];
+}
+
+/** `failedCriterion` for ONE cursus. */
+function failedForCursus(
+  condition: AudienceCondition,
+  facts: CursusFacts
 ): AudienceCriterion | null {
   if (condition.notCotisation && matchesCotisation(condition.notCotisation, facts)) {
     return 'notCotisation';
@@ -198,7 +325,7 @@ export function failedCriterion(
   return null;
 }
 
-/** True when the submitter satisfies every criterion present in the condition. */
+/** True when the submitter satisfies every criterion present in the condition, through any cursus. */
 export function matchesCondition(condition: AudienceCondition, facts: PricingFacts): boolean {
   return failedCriterion(condition, facts) === null;
 }

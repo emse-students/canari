@@ -390,6 +390,21 @@ describe('UsersService.directory campus and post filters', () => {
     expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
   });
 
+  // D32: the promo and formation filters read EVERY cursus entry, the two from the same entry - never
+  // the `promo`/`formation` columns, which are the first entry only. Judged on SQL in
+  // `cursus-reads.integration.spec.ts`; here, that the query asks it.
+  it('filters promo and formation on one cursus entry, never on the first-entry columns', async () => {
+    const { service, where } = makeService();
+    await service.directory({ promo: 2024, formation: 'ICM' });
+    expect(where).toContainEqual([
+      'EXISTS (SELECT 1 FROM jsonb_array_elements(user.cursus) AS entry WHERE ' +
+        "entry->>'promo' = :cursusPromo AND " +
+        "unaccent(LOWER(entry->>'formation')) LIKE unaccent(LOWER(:cursusFormation)))",
+      { cursusPromo: '2024', cursusFormation: '%ICM%' },
+    ]);
+    expect(where.some(([sql]) => /\buser\.(promo|formation)\b/.test(sql))).toBe(false);
+  });
+
   it('hides accounts blocked in either direction, as the New chat search does', async () => {
     const { service, where, invisibleUserIdsFor } = makeService(['blocked-1', 'blocker-2']);
     await service.directory({ campus: 'gardanne' }, 'me');
