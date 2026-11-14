@@ -12,6 +12,8 @@ const isTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 const leadershipMock = vi.hoisted(() =>
   vi.fn((): 'undecided' | 'leader' | 'follower' => (isTabLeaderMock() ? 'leader' : 'follower'))
 );
+// The hand-over ask a visible follower posts (`tabLeader.ts`); recorded, never sent here.
+const handoverAskMock = vi.hoisted(() => vi.fn());
 const decidedMock = vi.hoisted(() => ({
   promise: Promise.resolve('leader') as Promise<'leader' | 'follower'>,
 }));
@@ -32,6 +34,7 @@ vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
   getIsTabLeader: () => isTabLeaderMock(),
   getTabLeadership: () => leadershipMock(),
   whenTabLeadershipDecided: () => decidedMock.promise,
+  requestLeaderHandover: (log: (msg: string) => void) => handoverAskMock(log),
 }));
 vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
@@ -1668,6 +1671,26 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
       String(l).includes('every flush is asked of the leader tab')
     );
     expect(said).toHaveLength(1);
+  });
+
+  it('a follower asks a hidden leader for the lead for a due entry - never while offline', async () => {
+    // Review of #3321: offline, the entry waits on the link, not on the leader; a lead taken would
+    // not send it, and both tabs would reload with no network to load the app from.
+    isTabLeaderMock.mockReturnValue(false);
+    handoverAskMock.mockClear();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    connectivity.notifyServerUnreachable();
+    await outbox.flush();
+    await outboxIdle();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+    expect(handoverAskMock).not.toHaveBeenCalled();
+
+    connectivity.notifyServerReachable();
+    await outbox.flush();
+    await outboxIdle();
+    expect(handoverAskMock).toHaveBeenCalled();
   });
 
   it('a send whose tab stopped leading during its gates is not sealed here, and stays queued', async () => {

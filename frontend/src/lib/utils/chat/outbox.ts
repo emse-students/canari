@@ -3351,7 +3351,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // a photo queued here stayed unsent until the HIDDEN leader tab was brought forward). A hidden
       // leader hands the lead over, a visible one ignores the ask (`tabLeader.ts`, `watchHandover`).
       // Asked only while the shared queue holds an entry that is due - never for a text failed on
-      // 5xx, which waits for the member's Retry, not for a leader.
+      // 5xx, which waits for the member's Retry, not for a leader. And NEVER WHILE THIS TAB IS
+      // OFFLINE: the entry then waits on the link, not on the leader - a lead taken would not send it
+      // (the leader's own flush refuses offline, below), and both tabs would RELOAD with no network
+      // to load from, leaving two browser error pages where the app was (review of #3321).
+      if (connectivity.isOffline) return;
       void readQueue('handover ask').then((entries) => {
         if (entries.some((e) => e.kind !== 'reel-take' && !isServerFailureTerminal(e))) {
           requestLeaderHandover(log);

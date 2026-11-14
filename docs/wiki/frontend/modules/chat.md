@@ -1513,7 +1513,9 @@ taken from that tab.
    - **The hand-over (every engine).** A VISIBLE follower whose shared queue holds an entry that is
      due posts `leader_handover_request` on `canari-mls-tab` with every flush it hands over
      (`requestLeaderHandover`, from `runFlush`'s follower branch). It says so once per visible
-     stretch.
+     stretch. **Never while it is offline** (`connectivity.isOffline`, review of #3321): the entry
+     then waits on the link, not on the leader, and the two reloads a hand-over costs would find no
+     network to load the app from.
    - A leader that is itself HIDDEN answers. It first decides `follower`, then posts
      `leader_handover_granted` naming the asker, then hands over: its socket is paused (handlers
      detached, so the old copy reads and acknowledges nothing) and its reload is scheduled.
@@ -1617,7 +1619,8 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
     forgotten.
 - `BaseMlsService.leadLostAck.test.ts`: an ack reaching its request after the lead left is withheld.
 - the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
-- `outbox.test.ts`: the line is said once, and a lead lost during the gates leaves the entry queued.
+- `outbox.test.ts`: the line is said once, a lead lost during the gates leaves the entry queued, and
+  an offline follower does not ask for the lead.
 - `messageMerge.mergePage.test.ts`: the status is kept.
 - `MessageBubble.orphan.svelte.test.ts`: a queued photo with no status says it is queued.
 
