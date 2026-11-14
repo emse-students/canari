@@ -1129,17 +1129,14 @@ export class FormsService {
     }
     // A form no respondent may reach - a DRAFT, or one of an ARCHIVED association - is its
     // managers' alone: anyone else is answered what an absent form answers, so the id cannot be
-    // probed (`respondentFormWhere`, `form-status.ts`). Managers keep reading it, to export.
-    const closedBecause =
-      form.status === FORM_DRAFT
-        ? 'a draft'
-        : form.associationId &&
-            (await isAssociationArchived(this.formRepo.manager, form.associationId))
-          ? 'of an archived association'
-          : null;
-    if (closedBecause && !(await this.managesForm(form, viewer))) {
+    // probed. Judged by the ONE respondent `where` (`respondentFormWhere`), never a second copy of
+    // its clauses. Managers keep reading it, to export.
+    const reachable =
+      form.status !== FORM_DRAFT &&
+      !!(await this.formRepo.findOne({ select: { id: true }, where: respondentFormWhere(id) }));
+    if (!reachable && !(await this.managesForm(form, viewer))) {
       this.logger.debug(
-        `get: form ${id.slice(0, 8)} is ${closedBecause}, not served to a non-manager`
+        `get: form ${id.slice(0, 8)} is a draft or of an archived association, not served to a non-manager`
       );
       throw new NotFoundException('Form not found');
     }
