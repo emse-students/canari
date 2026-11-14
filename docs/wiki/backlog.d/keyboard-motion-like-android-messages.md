@@ -53,16 +53,18 @@ frame and the keyboard slides under or over it.
   page lays out full height, then every `[data-keyboard-ride]` piece is translated back by its own
   move and animated to its place over the keyboard's duration and curve, on the compositor.
 
-**Measured on the owner's Pixel 6a** (Canari `1.6.12`, whose stable build carries #3490 - the release
-run built `640aa34b2`; a long DM, 2026-11-14, the owner's go), the same instrument as Messages:
+**Measured on the owner's Pixel 6a** (Canari `1.6.12`; a long DM, 2026-11-14, the owner's go), the
+same instrument as Messages. **`v1.6.12` is `1.6.12-alpha.2`'s commit plus the bump (`git ls-remote`,
+2026-11-14): it carries NEITHER #3490 NOR #3492**, so this is the shipped behaviour BEFORE them - the
+baseline, not a reading of either PR:
 
 | | what the frames show |
 | --- | --- |
 | keyboard opening | 5 frames of the old layout while the keyboard starts; then **3 frames (~50 ms) of a cropped stale frame** (8 before #3490): a blank band where the last bubbles and the composer were; then the whole page in its FINAL layout (868 px up) while the keyboard is still a quarter short |
 | keyboard closing | **the composer stays up for 13 frames (~220 ms) while the keyboard slides away**, a blank band growing under it, then the whole page drops 868 px in one frame |
 
-So on Android #3490's owed readings 1 and 2 are read here: the rise is better but still crops, and
-the fall's band is not covered by the keyboard - it opens ABOVE the keys, under the composer.
+So on Android the shipped rise crops and the shipped fall opens a band ABOVE the keys, under the
+composer. #3490's owed readings 1 and 2 are NOT read by this: they need a build that carries it.
 
 ### The design: the ride, in both directions, on both platforms
 
@@ -97,20 +99,20 @@ frame every 40 ms), so a curve is coarse but its shape is plain. A full screen i
 | | keyboard opening | keyboard closing |
 | --- | --- | --- |
 | **Apple Messages** | the thread LEADS: ~75 % of its 309 pt travel in the first 40 ms, the rest eased; the composer rides the keyboard with a spring, ~16 pt past its rest (302) then 286 pt; ~300 ms in all | only by dragging the thread down: the keyboard follows the finger (interactive dismissal). No key, no tap and no drag from the composer closes it |
-| **Canari `1.6.12`** (store build) | the composer jumps to its FINAL place in one frame while the keyboard is a quarter up, a blank band under it for ~3 frames; the GIF near the end is drawn WHITE for ~4 frames (160 ms) as the WebView's frame shrinks and WebKit repaints; the thread then rises over ~6 frames | a tap on the thread closes it: in the FIRST frame of the fall the whole page drops to its final layout, so the composer is hidden under the still-falling keyboard for ~3 frames |
+| **Canari `1.6.12-alpha.2`** (TestFlight, before #3492) | the composer jumps to its FINAL place in one frame while the keyboard is a quarter up, a blank band under it for ~3 frames; the GIF near the end is drawn WHITE for ~4 frames (160 ms) as the WebView's frame shrinks and WebKit repaints; the thread then rises over ~6 frames | a tap on the thread closes it: in the FIRST frame of the fall the whole page drops to its final layout, so the composer is hidden under the still-falling keyboard for ~3 frames |
 
-The fall is NOT ridden in that reading, which is what #3492's owed reading 7 refuses - **unless the
-build on the bench iPhone predates #3492; which build it was is asked of the bench's owner and not
-yet answered**. The rise blanking a medium for 160 ms is the WKWebView frame changing under a page
+The bench iPhone ran `1.6.12-alpha.2` (TestFlight), which predates #3492: the fall is not ridden
+because that build has no ride - this is the shipped baseline, and #3492's readings are still owed
+on a build that carries it. The rise blanking a medium for 160 ms is the WKWebView frame changing under a page
 that has not repainted, the iOS face of Android's cropped frames. Messages' spring on the composer is
 the platform's keyboard curve (curve 7, the stand-in of `keyboardRide.ts` is to be read against it);
 the thread LEADING the keys is a choice Canari need not copy.
 
 ### Readings owed before and after a build
 
-- Canari on the Mi 9T, recorded and analysed exactly as above (frames, travel per frame, the
-  composer-to-keyboard gap), as the "before". Reading #42 gives the one-frame jump but not the
-  per-frame gap.
+- Canari on the Mi 9T on a build carrying #3490/#3492 (`main`), recorded and analysed exactly as
+  above (frames, travel per frame, the composer-to-keyboard gap), as the "before" of the ride - the
+  Pixel and iPhone readings above are of the code before those two PRs.
 - After: the same, with a long DM and a salon, both directions, plus the GIF panel's
   [handoff](../frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02),
   which must still swap with the keyboard in one frame.

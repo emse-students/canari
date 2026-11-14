@@ -1,7 +1,8 @@
 ## P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step
 
-Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, the current stable (no keyboard
-or thread-anchor change on `main` since), with the owner's go. The five most recent DMs, each opened
+Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, the current stable - which is
+`1.6.12-alpha.2`'s commit and does NOT carry the keyboard work of #3490/#3492 that `main` has since -
+with the owner's go. The five most recent DMs, each opened
 from the list, the composer tapped, the keyboard put away with Back, the DM left. Screen-recorded and
 read frame by frame: every bubble's box located by colour against the background, its movement
 between frames compared with the others' (a rigid move is every bubble by the same amount). The
