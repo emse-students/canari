@@ -5,7 +5,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { listRefusedDevices, setRefusedDeviceListener } from '$lib/mls-client/refusedDevices';
 import { isNewToItsOwner, keyFingerprintOf, type KeyFirstSight } from '$lib/mls-client/deviceTrust';
-import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
+import { canonicalIdentity, canonicalUserId } from '$lib/mls-client/leafIdentity';
 import {
   deliverDeviceEvents,
   dropNoticesOfRevokedDevices,
@@ -201,6 +201,34 @@ export async function keyAgeOf(
 }
 
 /**
+ * Whether the server's roster of `groupId` seats `userId` as an ADMITTED member - on the roster and
+ * not awaiting a member's answer - for the uninvited-entry classifier (`decideUninvitedEntry`). ONE
+ * `POST /api/mls/group-rosters` for the one group, the read the stray sweep makes; asked only for a
+ * self-admitted entrant this device saw no departure of.
+ *
+ * THROWS when the server did not answer for the group - unanswered, or refused (this account holds
+ * no seat there, so it cannot read who does): the entry stays owed to the next delivery, never
+ * guessed.
+ */
+export async function rosterSeatOf(
+  mls: IMlsService,
+  groupId: string,
+  userId: string
+): Promise<'admitted' | 'not-admitted'> {
+  const batch = await mls.getGroupRosters([groupId]);
+  const roster = batch.rosters.get(groupId);
+  if (!roster) {
+    throw new Error(
+      `roster of ${groupId.slice(0, 8)}... ${batch.refused.has(groupId) ? 'refused to this account' : 'not answered'}`
+    );
+  }
+  const who = canonicalUserId(userId);
+  const seated = roster.some((id) => canonicalUserId(id) === who);
+  const awaiting = (batch.awaiting.get(groupId) ?? []).some((id) => canonicalUserId(id) === who);
+  return seated && !awaiting ? 'admitted' : 'not-admitted';
+}
+
+/**
  * When THIS device enrolled, as the server saw it: the first sight of its oldest dated key. `null`
  * when none is dated - unknown, so `isNewToItsOwner` skips the comparison rather than announcing
  * nothing.
@@ -318,6 +346,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),
+      rosterSeat: (groupId, userId) => rosterSeatOf(mls, groupId, userId),
       commitAcceptedAt: (groupId, baseEpoch) => mls.commitAcceptedAt(groupId, baseEpoch),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,

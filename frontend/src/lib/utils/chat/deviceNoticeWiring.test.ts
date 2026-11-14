@@ -6,6 +6,7 @@ import {
   dropAlertsOfRevokedDevices,
   keyAgeOf,
   ownEnrolledAtOf,
+  rosterSeatOf,
   unregisterDeviceNotices,
   registerDeviceNotices,
 } from './deviceNoticeWiring';
@@ -136,5 +137,45 @@ describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
     expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['tablet-3']);
     unregisterDeviceNotices();
     localStorage.clear();
+  });
+});
+
+describe('rosterSeatOf - whether the server seats an entrant as an admitted member', () => {
+  const answering = (batch: {
+    rosters?: [string, string[]][];
+    refused?: string[];
+    awaiting?: [string, string[]][];
+  }) => {
+    const getGroupRosters = vi.fn(async () => ({
+      rosters: new Map(batch.rosters ?? []),
+      refused: new Set(batch.refused ?? []),
+      revoked: new Map<string, string[]>(),
+      awaiting: new Map(batch.awaiting ?? []),
+    }));
+    return { mls: { getGroupRosters } as unknown as IMlsService, getGroupRosters };
+  };
+
+  it('is admitted when the roster names the person, whatever the case, in ONE read of that group', async () => {
+    const { mls, getGroupRosters } = answering({ rosters: [['g1', ['Alice', 'bob']]] });
+    await expect(rosterSeatOf(mls, 'g1', 'alice')).resolves.toBe('admitted');
+    expect(getGroupRosters).toHaveBeenCalledTimes(1);
+    expect(getGroupRosters).toHaveBeenCalledWith(['g1']);
+  });
+
+  it('is not admitted when the person is absent, or still awaits a member', async () => {
+    const absent = answering({ rosters: [['g1', ['bob']]] });
+    await expect(rosterSeatOf(absent.mls, 'g1', 'alice')).resolves.toBe('not-admitted');
+    const waiting = answering({
+      rosters: [['g1', ['alice', 'bob']]],
+      awaiting: [['g1', ['alice']]],
+    });
+    await expect(rosterSeatOf(waiting.mls, 'g1', 'alice')).resolves.toBe('not-admitted');
+  });
+
+  it('throws when the group was not answered, or refused - never guessed', async () => {
+    await expect(rosterSeatOf(answering({}).mls, 'g1', 'alice')).rejects.toThrow('not answered');
+    await expect(rosterSeatOf(answering({ refused: ['g1'] }).mls, 'g1', 'alice')).rejects.toThrow(
+      'refused'
+    );
   });
 });

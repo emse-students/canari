@@ -32,6 +32,18 @@ own tree (a departure epoch it saw), never from the roster the server holds. The
 line so far (above) is the evidence: the entrant held a roster seat for two months and the commit
 was that member's own new web device, so a MEMBER's new device with no leaf in the reporter's tree
 was reported as `new-person`. After the `1.6.12` deploy (09:11 UTC) production has 0
-`[UNINVITED_ENTRY]` lines in its live log, dev 0. Left: the classification from the server's
-roster (a seat held by the entrant before the commit means `returning` or `unvouched-device`,
-never `new-person`), then the count.
+`[UNINVITED_ENTRY]` lines in its live log, dev 0.
+
+**Owner's decision, 2026-11-14: *"Oui, corriger"* - classify from the server's roster. Built:**
+`decideUninvitedEntry` (`deviceNotices.svelte.ts`) keeps a departure this device saw as `returning`
+with no request; otherwise it asks `rosterSeatOf` (`deviceNoticeWiring.ts`) - ONE
+`POST /api/mls/group-rosters` for that group, the read the stray sweep already makes (no roster is
+held between passes, so there was none to reuse) - and an ADMITTED seat (on the roster, not awaiting a
+member) is `returning`, never `new-person`: the server accepts an external commit into a conversation
+only from an admitted seat holder (`assertCommitterMayCommit`), so the seat was held before the
+commit. Asked only for a self-admitted entrant with no leaf in the reporter's tree and no departure
+seen - never per commit. An unanswered or refused roster keeps the entry owed. The production line of
+2026-11-14 is the test that failed on the old code (`deviceNotices.svelte.test.ts`). The mechanism is
+in [mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). **Left: the
+`[UNINVITED_ENTRY] kind=new-person` count once this build serves both stores**, and the waiting-seat
+ring on dev.

@@ -19,12 +19,15 @@ import type { DeviceEvent } from './deviceTrust';
  * What THIS device knows about the entrant, which separates a legitimate self-rejoin from an entry
  * nobody wanted (`noteUninvitedEntries` in `deviceNotices.svelte.ts` decides it):
  *
- * - `returning`: this device saw the same USER leave the tree at an earlier epoch
- *   (`IMlsService.removalEpochs`) - a member who lost every leaf and rejoined, which the external
- *   join exists for.
+ * - `returning`: a MEMBER coming back - a member who lost every leaf and rejoined, or added their
+ *   own new device by external join, which the external join exists for. This device saw the same
+ *   USER leave the tree at an earlier epoch (`IMlsService.removalEpochs`), or, when it saw no
+ *   departure, the server's roster seats the user as an admitted member (owner, 2026-11-14): the
+ *   server accepts an external commit only from an admitted seat holder, so that seat was held before
+ *   the entry. Decided from the roster, never from this device's tree alone.
  * - `direct-peer`: the other person of a 1:1 conversation - the conversation IS the two of them.
- * - `new-person`: neither - written in the conversation, since a member must be told about it. A
- *   device that never saw a departure reads a returning member as this.
+ * - `new-person`: none of these - absent from the roster or still awaiting a member - written in the
+ *   conversation, since a member must be told about it.
  * - `unvouched-device`: a device of a user ALREADY in the tree, seen for the first time, that
  *   admitted itself (`entersAsUnvouchedDevice`). No member added it - a further device of a member is
  *   a member's Add after a member's tap, and an honest device never joins itself on a seat no commit
