@@ -18,6 +18,7 @@
  */
 import type { StoredComment as RemovableComment } from '../posts/comment-identity';
 import { pruneEmptyTombstones } from '../posts/comment-removal';
+import { directoryLine } from '../associations/published-carte';
 
 /** The account id written in place of an erased one. Read as "a deleted account" by every client. */
 export const DELETED_ACCOUNT = '[deleted]';
@@ -266,10 +267,18 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     "a form's unpublished revision: the editor's payload, the same content as `forms`"
   ),
   'channel_members.notifLevels': NO_ACCOUNT('channel id -> notification level of one member'),
-  'poster_projects.layout': NO_ACCOUNT('the layout of a poster'),
-  'poster_projects.publication': NO_ACCOUNT(
-    'the normalized map geometry published for portail-etu'
-  ),
+  // A map names people: a bubble's `selectedBureau` lists member ids in the layout, and the
+  // published document carries one card per shown member (`userId`, name, role) and a directory
+  // roster per association (`members`, and the printed `line` of names), served to the anonymous
+  // showcase. Both were classed as holding no account until the audit of 2026-11-14.
+  'poster_projects.layout': {
+    action: 'code',
+    by: 'scrubCarteDocument, over the maps CANDIDATE_CARTES_SQL locks',
+  },
+  'poster_projects.publication': {
+    action: 'code',
+    by: 'scrubCarteDocument then settleCarteDirectory, over the maps CANDIDATE_CARTES_SQL locks',
+  },
   'user_tags.metadata': {
     action: 'delete',
     via: 'userId',
@@ -1164,6 +1173,204 @@ export function scrubPolls(polls: unknown, userId: string): { polls: unknown; ch
 }
 
 /**
+ * [LEGACY] A stored publication with a directory entry that prints a roster LINE and carries no
+ * `members` - published by a client older than the structured roster (2026-11-14). Such a line
+ * names people by NAME (or, for a member with no display name, by raw account id) and no id the
+ * erasure can search: whoever left an association before erasing their account is in it too. So
+ * the FIRST erasure after it blanks every such line, in every map ({@link settleCarteDirectory}).
+ * A blanked line no longer matches. Written defensively: a stored document of an older schema (no
+ * directory, no zones) matches nothing and fails nothing. Removal condition and count query:
+ * docs/wiki/legacy-compatibility.md.
+ */
+const LEGACY_DIRECTORY_LINE = `(publication IS NOT NULL AND EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
+                                     THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+           jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                     THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
+     WHERE a.value -> 'members' IS NULL
+       AND COALESCE(a.value ->> 'line', '') <> ''))`;
+
+/**
+ * Every map the erasure will write: the ones the account created (`createdBy` is anonymised by a
+ * row statement), the ones whose layout or publication names its id, and the ones holding a
+ * legacy directory line ({@link LEGACY_DIRECTORY_LINE}). `$1` account, `$2`
+ * {@link jsonStringLikePattern}.
+ */
+const ERASURE_CARTES_TOUCHED = `"createdBy" = $1 OR layout::text LIKE $2 OR publication::text LIKE $2
+     OR ${LEGACY_DIRECTORY_LINE}`;
+
+/**
+ * THE MAP LOCKS, TAKEN BEFORE ANY ROW STATEMENT, IN THE ORDER A PUBLISH TAKES THEM: first the
+ * `spaces` row of every map the erasure will write (this statement), then those maps themselves
+ * ({@link ERASURE_CARTES_LOCK_SQL}), each set ordered by id - and both before the row statements
+ * delete the account's memberships, which a publish and a save read `FOR KEY SHARE` after taking
+ * their space or map (`PosterService.currentMembership`, where the whole lock graph is written).
+ *
+ * `PosterService.publish` locks its space's row, then writes the space's previous live map, then its
+ * own. Without this, the erasure's `UPDATE poster_projects SET "createdBy"` held map A while the
+ * scrub waited for map B, and a publish holding the space and B waited for A (`40P01`). With it,
+ * whichever of the two comes second waits on the space row holding no map. A save
+ * (`PosterService.update`) locks its one map row first; for a map in this set, whichever comes
+ * second waits there holding nothing.
+ *
+ * `FOR NO KEY UPDATE` throughout: a space row is not deleted nor its key changed (the lock a publish
+ * takes), and a map's writes here change no key, so the foreign keys that point at either are not
+ * blocked. A map with no space is locked by the second statement only - it can never be published.
+ * Taken AFTER {@link ERASURE_ASSOCIATION_LOCK_SQL}: an association delete writes the spaces it
+ * governed (`"bdeAssociationId"` is set NULL), so it too goes association first, space second.
+ * A space shown by several touched maps comes back once per map; locking a row twice takes nothing.
+ */
+export const ERASURE_CARTE_SPACES_LOCK_SQL = `SELECT s.id FROM poster_projects p
+  JOIN spaces s ON s.id = p."spaceId"
+  WHERE ${ERASURE_CARTES_TOUCHED}
+  ORDER BY s.id
+  FOR NO KEY UPDATE OF s`;
+
+/** The maps of {@link ERASURE_CARTE_SPACES_LOCK_SQL}, locked after their spaces, ordered by id. */
+export const ERASURE_CARTES_LOCK_SQL = `SELECT id FROM poster_projects
+  WHERE ${ERASURE_CARTES_TOUCHED}
+  ORDER BY id
+  FOR NO KEY UPDATE`;
+
+/**
+ * The maps ("Carte de la vie asso") the scrub reads: the layout or published document may name the
+ * account's id (`$1`, {@link jsonStringLikePattern} - a candidate filter only,
+ * {@link scrubCarteDocument} decides), or the publication holds a legacy line. Nearly always already
+ * locked by {@link ERASURE_CARTES_LOCK_SQL} in the same mode, so this takes nothing new. A map that
+ * came to name the account AFTER that lock - a save that read the membership before the DELETE, and
+ * committed - is locked here; if a second save of that same map holds its row while waiting on the
+ * deleted membership, the two wait on each other and PostgreSQL aborts one (the one interleaving
+ * `PosterService.currentMembership` names: the save is retried by the editor, the erasure by
+ * core-service's queue).
+ */
+export const CANDIDATE_CARTES_SQL = `SELECT id, layout, publication FROM poster_projects
+  WHERE layout::text LIKE $1 OR publication::text LIKE $1 OR ${LEGACY_DIRECTORY_LINE}
+  ORDER BY id
+  FOR NO KEY UPDATE`;
+
+/**
+ * Writes one scrubbed map back: `$1` id, `$2` layout JSON, `$3` publication JSON - either NULL when
+ * that document did not change, so an unchanged one is never rewritten from a copy (and a map that
+ * is not live keeps its NULL publication). A rewritten publication loses its fingerprint: the
+ * editor's fingerprint described the document as published, and NULL is its "unknown", which offers
+ * an update and nothing else (`frontend/src/lib/carte/publishAction.ts`).
+ */
+export const WRITE_SCRUBBED_CARTE_SQL = `UPDATE poster_projects
+  SET layout = COALESCE($2::jsonb, layout), publication = COALESCE($3::jsonb, publication),
+      "publicationFingerprint" = CASE WHEN $3::jsonb IS NULL THEN "publicationFingerprint" END
+  WHERE id = $1`;
+
+/**
+ * A map document (the editor's layout, or the published carte) without the erased account: every
+ * list loses the entries that ARE the account's id (a bubble's `selectedBureau`) and the objects
+ * whose `userId` is the account (a published member card, a directory roster member - the name and
+ * role go with it). The walk is structural, not tied to one schema version, so a document saved by
+ * an older editor is scrubbed the same way. It does not reach a printed directory line: that is
+ * {@link settleCarteDirectory}'s, run after it on the publication.
+ */
+export function scrubCarteDocument(
+  doc: unknown,
+  userId: string
+): { doc: unknown; changed: boolean } {
+  let changed = false;
+  const names = (v: unknown): boolean =>
+    v === userId ||
+    (typeof v === 'object' &&
+      v !== null &&
+      !Array.isArray(v) &&
+      (v as Record<string, unknown>).userId === userId);
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) {
+      const kept = v.filter((item) => !names(item));
+      if (kept.length !== v.length) changed = true;
+      return kept.map(walk);
+    }
+    if (typeof v === 'object' && v !== null) {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([key, value]) => [key, walk(value)])
+      );
+    }
+    return v;
+  };
+  const next = walk(doc);
+  return { doc: changed ? next : doc, changed };
+}
+
+/**
+ * A publication's directory made consistent after {@link scrubCarteDocument}: every association
+ * with a roster (`members`) gets its printed line RE-DERIVED from what is left ({@link directoryLine},
+ * the publish path's own); EVERY entry WITHOUT a roster - [LEGACY] a line published by a client
+ * older than 2026-11-14, names and no ids - gets its line BLANKED, whoever it names: it cannot be
+ * searched, so it is not kept past the first erasure ({@link LEGACY_DIRECTORY_LINE}). The map stays
+ * live; that roster text is withheld until the next publication. `withheld` counts the blanked
+ * lines, for the WARN line the caller writes.
+ */
+export function settleCarteDirectory(publication: unknown): {
+  doc: unknown;
+  changed: boolean;
+  withheld: number;
+} {
+  const unchanged = { doc: publication, changed: false, withheld: 0 };
+  if (!publication || typeof publication !== 'object') return unchanged;
+  const directory = (publication as Record<string, unknown>).directory;
+  if (!directory || typeof directory !== 'object') return unchanged;
+  const zones = (directory as Record<string, unknown>).zones;
+  if (!Array.isArray(zones)) return unchanged;
+  let changed = false;
+  let withheld = 0;
+  const settle = (entry: unknown): unknown => {
+    if (!entry || typeof entry !== 'object') return entry;
+    const a = entry as Record<string, unknown>;
+    if (Array.isArray(a.members)) {
+      const line = directoryLine(a.members as { name: string; role: string }[]);
+      if (line === a.line) return entry;
+      changed = true;
+      return { ...a, line };
+    }
+    if (a.line === undefined || a.line === null || a.line === '') return entry;
+    changed = true;
+    withheld += 1;
+    return { ...a, line: '' };
+  };
+  const nextZones = zones.map((zone) => {
+    if (!zone || typeof zone !== 'object') return zone;
+    const z = zone as Record<string, unknown>;
+    return Array.isArray(z.assos) ? { ...z, assos: z.assos.map(settle) } : zone;
+  });
+  if (!changed) return unchanged;
+  return {
+    doc: { ...publication, directory: { ...directory, zones: nextZones } },
+    changed: true,
+    withheld,
+  };
+}
+
+/**
+ * The parameters that write one candidate map back, or null when the erasure changes nothing in it
+ * (the LIKE filter matched something else). An unchanged document is passed as NULL, which
+ * {@link WRITE_SCRUBBED_CARTE_SQL} keeps. `withheld` is how many legacy directory lines it blanked.
+ */
+export function scrubbedCarteParams(
+  carte: { id: string; layout: unknown; publication: unknown },
+  userId: string
+): { params: [string, string | null, string | null]; withheld: number } | null {
+  const layout = scrubCarteDocument(carte.layout, userId);
+  const scrubbed = scrubCarteDocument(carte.publication, userId);
+  const settled = settleCarteDirectory(scrubbed.doc);
+  const publicationChanged = scrubbed.changed || settled.changed;
+  if (!layout.changed && !publicationChanged) return null;
+  return {
+    params: [
+      carte.id,
+      layout.changed ? JSON.stringify(layout.doc) : null,
+      publicationChanged ? JSON.stringify(settled.doc) : null,
+    ],
+    withheld: settled.withheld,
+  };
+}
+
+/**
  * The parameters that write one candidate post back, or null when the account left nothing on it.
  * A column that did not change is passed as NULL, which {@link WRITE_SCRUBBED_POST_SQL} keeps.
  */
@@ -1208,6 +1415,11 @@ export interface SocialErasureResult {
    * caller reports each one at ERROR. Never the phone.
    */
   liveCashiersErased: Array<{ associationId: string; vendorToken: string }>;
+  /**
+   * [LEGACY] The maps whose published directory had legacy lines (names, no ids) - every one,
+   * whoever it names - BLANKED, and how many each: the caller WARNs once per map.
+   */
+  cartesWithheld: Array<{ id: string; lines: number }>;
 }
 
 /** The account's live Lydia cashier rows, read before the erasure deletes them. */
@@ -1252,6 +1464,10 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const livesLocked = await db.read<{ id: string }>(ERASURE_LIVES_LOCK_SQL, [userId]);
+  // The maps, in a publish's order (space, then map), before any row statement writes one.
+  const cartesParams = [userId, jsonStringLikePattern(userId)];
+  await db.read(ERASURE_CARTE_SPACES_LOCK_SQL, cartesParams);
+  await db.read(ERASURE_CARTES_LOCK_SQL, cartesParams);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
   const liveCashiersErased = await db.read<{ associationId: string; vendorToken: string }>(
     LIVE_CASHIERS_SQL,
@@ -1275,7 +1491,24 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
     await db.write(WRITE_SCRUBBED_POST_SQL, params);
     postsScrubbed += 1;
   }
+  // The maps naming the account: its cards and roster entries leave the published carte and the
+  // layouts, its roster lines are re-derived, and EVERY legacy line of every map is
+  // withheld (names, no ids: it cannot be scrubbed).
+  let cartesScrubbed = 0;
+  const cartesWithheld: Array<{ id: string; lines: number }> = [];
+  const cartes = await db.read<{ id: string; layout: unknown; publication: unknown }>(
+    CANDIDATE_CARTES_SQL,
+    [jsonStringLikePattern(userId)]
+  );
+  for (const carte of cartes) {
+    const scrub = scrubbedCarteParams(carte, userId);
+    if (!scrub) continue;
+    await db.write(WRITE_SCRUBBED_CARTE_SQL, scrub.params);
+    cartesScrubbed += 1;
+    if (scrub.withheld > 0) cartesWithheld.push({ id: carte.id, lines: scrub.withheld });
+  }
+  if (cartesScrubbed > 0) counts.cartes_scrubbed = cartesScrubbed;
   // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
   Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
-  return { counts, postsScrubbed, pinsRemoved, liveCashiersErased };
+  return { counts, postsScrubbed, pinsRemoved, liveCashiersErased, cartesWithheld };
 }

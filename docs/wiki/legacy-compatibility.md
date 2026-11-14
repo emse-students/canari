@@ -96,6 +96,70 @@ The events twin of the entry above.
 - **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
   passes the first stable carrying the event reach, and this entry is then deleted.
 
+### A legacy shape at rest: a carte directory line with no roster (2026-11-14)
+
+- **What.** A carte published before the structured roster stores each directory entry as
+  `{ assoId, line }`: the printed names, no account id
+  ([carte-vie-asso](carte-vie-asso.md#rules)). Such a publication is **served as stored until the
+  first account erasure or its map's next publication**. An erasure cannot tell whose name a line
+  holds, so the first one after this change blanks EVERY non-empty line-only entry, in every map
+  (`settleCarteDirectory`, matched by `LEGACY_DIRECTORY_LINE` in `account-erasure.ts`); the map stays
+  live with that roster text withheld. No new one is written: a publish refuses it
+  (`CARTE_ROSTER_UNSTRUCTURED`), and an editor older than the roster is told to reload.
+- **Measured by.** The WARN the social service writes once per map an erasure blanks:
+  `[CARTE] account erasure of user=... withheld N legacy directory line(s) of live map <id> until
+  its next publication`, and the refusal's WARN `[CARTE] publish of map <id> refused:
+  CARTE_ROSTER_UNSTRUCTURED`.
+- **The step that closes the past (owner, 2026-11-14).** An account erased BEFORE this change is
+  still on the live maps - a card with its id, a name in a line - and no later erasure matches its
+  id. So the lead REPUBLISHES EVERY LIVE MAP ONCE, right after the release carrying #3526: a publish
+  by the new editor keeps current members only and stores rosters, so those cards and the legacy
+  lines go (the gesture, step by step:
+  [carte-vie-asso](carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once)).
+  No migration. It is done when both counts below read `0` (cards and roster members whose
+  `userId` has no `users` row) and the line-only count of the removal condition reads `0`:
+
+  ```sql
+  SELECT
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication -> 'units') = 'array'
+                                      THEN p.publication -> 'units' ELSE '[]'::jsonb END) u,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(u.value -> 'cards') = 'array'
+                                      THEN u.value -> 'cards' ELSE '[]'::jsonb END) c
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(c.value ->> 'userId')))
+      AS cards_of_no_account,
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication #> '{directory,zones}') = 'array'
+                                      THEN p.publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(a.value -> 'members') = 'array'
+                                      THEN a.value -> 'members' ELSE '[]'::jsonb END) m
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(m.value ->> 'userId')))
+      AS roster_members_of_no_account;
+  ```
+
+- **Removal condition.** No map stores a line-only entry any more - this count reads `0` - **and no
+  restorable backup predates this change**: a restore brings line-only entries back, and the
+  erasure replay that follows it must still blank them.
+
+  ```sql
+  SELECT count(*) FROM poster_projects
+   WHERE publication IS NOT NULL AND EXISTS (
+     SELECT 1
+       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
+                                      THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
+      WHERE a.value -> 'members' IS NULL
+        AND COALESCE(a.value ->> 'line', '') <> '');
+  ```
+
+- **Then delete.** The blanking branch of `settleCarteDirectory`, its predicate
+  `LEGACY_DIRECTORY_LINE` (and its use in `ERASURE_CARTES_TOUCHED` and `CANDIDATE_CARTES_SQL`), and
+  `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
+  it is the rule, not a shim.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its

@@ -32,6 +32,7 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     };
     return {
       findOne: () => Promise.resolve(row),
+      update: inner.update,
       save: (project: PosterProject) => {
         saved = project;
         return Promise.resolve(project);
@@ -155,8 +156,8 @@ describe('PosterService - the fingerprint of the document that went live', () =>
           {
             label: 'Z',
             assos: [
-              { assoId: 'a1', line: 'x' },
-              { assoId: 'a9', line: 'y' },
+              { assoId: 'a1', line: '', members: [] },
+              { assoId: 'a9', line: '', members: [] },
             ],
           },
         ],
@@ -190,7 +191,14 @@ describe('PosterService - the fingerprint of the document that went live', () =>
 
   it('forgets the fingerprint when the poster goes offline', async () => {
     await service.unpublish('p1', ADMIN);
-    expect(saved.publicationFingerprint).toBeNull();
-    expect(saved.publication).toBeNull();
+    // A targeted write of the three publication columns, never a `save` of the entity read for the
+    // access check: that would write back a layout an account erasure scrubbed in between.
+    expect(saved).toBeUndefined();
+    expect(updates).toEqual([
+      {
+        where: 'p1',
+        patch: { publication: null, publishedAt: null, publicationFingerprint: null },
+      },
+    ]);
   });
 });

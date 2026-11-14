@@ -2203,6 +2203,7 @@
   "carte_alerts_toggle": "Alerts ({count})",
   "carte_publish_refused_outside": "The map holds an association that is switched off or outside its space. Reload the editor, then publish again.",
   "carte_publish_refused_unattached": "Attach the map to a space before publishing it.",
+  "carte_publish_refused_roster": "The map's directory was prepared by an older version of the editor. Reload the editor, then publish again.",
   "carte_desktop_only_title": "Editing is desktop-only",
   "carte_desktop_only_body": "Bubbles are placed with a mouse: open this map on a computer to change it. Here you can view it, export it to PDF and publish it.",
   "carte_desktop_only_short": "Creating a map is desktop-only.",
