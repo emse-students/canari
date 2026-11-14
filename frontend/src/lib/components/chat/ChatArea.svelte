@@ -591,7 +591,7 @@
       // In the SAME flush as the reveal, so the floor never rises between the two.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch);
+      void widenEntryWindow(epoch).then(() => fillShortThread(epoch));
     });
   }
 
@@ -756,7 +756,7 @@
       // widen after it has finished.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch);
+      void widenEntryWindow(epoch).then(() => fillShortThread(epoch));
     });
   }
 
@@ -768,6 +768,32 @@
    * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
+  /**
+   * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY, NOT AT THE NEXT STRAY SCROLL (owner's
+   * Pixel 6a, 1.6.12, 2026-11-14: a six-row DM showed the older-history spinner in the middle of a
+   * keyboard CLOSE, and the thread jumped twice). Such a pane cannot be scrolled, so `measureScroll`'s
+   * trigger was reached only by whatever scroll event came first - a box changing under the keyboard -
+   * and the fill ran then. Here it runs once the entry has settled, from the local sources outward
+   * (`loadOlderGroups`: the in-memory window, the device's store, then the one peer ask per visit),
+   * until the pane overflows or a pass changes nothing. TERMINATION IS A FACT, NOT A COUNT: a pass that
+   * moved none of the four values below has nothing left to bring.
+   */
+  async function fillShortThread(epoch: number) {
+    for (;;) {
+      if (epoch !== entryEpoch || !chatContainer) return;
+      if (chatContainer.scrollHeight > chatContainer.clientHeight) return;
+      const before = [renderWindow.start, messageGroups.length, hasMoreInDb, scrollbackState];
+      Log.d('chat.entry', `short thread: asking for older history (window ${before[0]})`);
+      await loadOlderGroups();
+      await tick();
+      const after = [renderWindow.start, messageGroups.length, hasMoreInDb, scrollbackState];
+      if (before.every((value, i) => value === after[i])) {
+        Log.d('chat.entry', 'short thread: nothing older to bring - the fill ends');
+        return;
+      }
+    }
+  }
+
   async function widenEntryWindow(epoch: number) {
     try {
       await yieldToMainThread();

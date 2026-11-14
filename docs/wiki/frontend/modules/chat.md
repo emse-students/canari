@@ -4742,6 +4742,29 @@ follows the bottom.
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
 portrait photo near its end.**
 
+### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
+
+The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a
+six-row DM drew its rows at the TOP of the pane, and closing the keyboard showed the older-history
+spinner and jumped the thread twice. **Both came from the same fact: a pane its thread does not fill
+cannot be scrolled.**
+
+- **Where it sits.** The owner decided the Messenger/Messages layout: the rows sit against the
+  composer. `app.css` gives the scroller's first child `margin-top: auto`, which takes the free space
+  above a short thread and is zero once the thread overflows. `justify-content: flex-end` was refused:
+  it overflows UPWARD, past `scrollTop` 0, so the top of a long thread could not be reached.
+- **When it loads its past.** The older-history load is triggered by `measureScroll` near the top
+  (`OLDER_TRIGGER_PX`). A pane that cannot scroll reached it only on the first stray scroll event,
+  and the keyboard closing was one. That is the spinner, and the prepend under the motion is the jump.
+  `fillShortThread` now runs once the entry has widened (both entry paths). It calls
+  `loadOlderGroups` (the window, then the store, then the one peer ask of the visit) until the pane
+  overflows or a pass changes none of the window start, the group count, `hasMoreInDb` and
+  `scrollbackState`. **It ends on a fact, not a count.**
+- `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it: an exhausted store is asked
+  once with no scroll, a growing one until the pane overflows, and an overflowing pane is never asked.
+  Both fill cases fail without the change. **Owed: one reading on the Mi 9T, a short DM, keyboard open
+  and closed.**
+
 ### A picture keeps its height when the keyboard opens (2026-11-13)
 
 Reported by the owner on Android `1.6.11` (a DM ending on a tall screenshot): with the keyboard up

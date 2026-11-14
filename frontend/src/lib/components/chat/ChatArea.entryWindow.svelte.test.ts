@@ -117,11 +117,15 @@ function mountArea(count: number) {
 }
 
 /** The same mount with a conversation the test can switch, as the parent page does. */
-function mountSwitchable(count: number, onLoadOlderMessages?: () => Promise<boolean>) {
+function mountSwitchable(
+  count: number,
+  onLoadOlderMessages?: () => Promise<boolean>,
+  conversation: Conversation = conversationOf(count, 'g1')
+) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const props = $state({
-    conversation: conversationOf(count, 'g1'),
+    conversation,
     messageText: '',
     onMessageChange: () => {},
     bindDraftWriter: () => () => {},
@@ -379,5 +383,59 @@ describe('ChatArea entry window (F6)', () => {
     answer(true);
     await settleEntry();
     expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+  });
+});
+
+/**
+ * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY (owner's Pixel 6a, 2026-11-14): such a
+ * pane cannot be scrolled, so the older-history load used to wait for the first stray scroll event -
+ * a keyboard close - and its spinner and its prepend landed in the middle of that motion.
+ */
+describe('ChatArea short thread fill', () => {
+  /** The newest `held` rows of one 35-row thread: what the store has handed over so far. */
+  const FULL = conversationOf(35);
+  const newest = (held: number): Conversation => ({
+    ...FULL,
+    messages: FULL.messages.slice(FULL.messages.length - held),
+  });
+
+  it('a short thread with an exhausted store asks it once at entry, with no scroll at all', async () => {
+    rowPx = 36; // 5 rows = 180 px in a 700 px pane.
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(5, load);
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps asking while the pane is short, and stops once it overflows', async () => {
+    rowPx = 36; // 20 rows (720 px) are the first count past the 700 px pane.
+    modelGeometry();
+    let held = 5;
+    const ref: { props?: { conversation: Conversation } } = {};
+    // The store's answer is prepended, as the parent page does: the same newest rows, older above.
+    const load = vi.fn(async () => {
+      held += 10;
+      ref.props!.conversation = newest(held);
+      return true;
+    });
+    ref.props = mountSwitchable(5, load, newest(5)).props;
+    await settleEntry();
+    await settleEntry();
+    // 5 -> 15 (540 px, still short) -> 25 (900 px): two asks, and none once the pane overflows.
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(held).toBe(25);
+  });
+
+  it('a pane the thread already overflows asks nothing at entry', async () => {
+    rowPx = 48; // 25 rows = 1200 px.
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(25, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
   });
 });
