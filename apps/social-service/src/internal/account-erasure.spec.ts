@@ -8,7 +8,6 @@ import {
   settleCarteDirectory,
   eraseSocialRows,
   CANDIDATE_CARTES_SQL,
-  ERASED_MEMBER_ASSOCIATIONS_SQL,
   ERASURE_CARTE_SPACES_LOCK_SQL,
   ERASURE_CARTES_LOCK_SQL,
   WRITE_SCRUBBED_CARTE_SQL,
@@ -179,18 +178,20 @@ describe('scrubCarteDocument', () => {
 
   it('writes back only the document that changed', () => {
     const layout = { bubbles: [{ selectedBureau: [ME] }] };
-    const none = new Set<string>();
-    expect(scrubbedCarteParams({ id: 'p1', layout, publication: null }, ME, none)).toEqual({
+    expect(scrubbedCarteParams({ id: 'p1', layout, publication: null }, ME)).toEqual({
       params: ['p1', JSON.stringify({ bubbles: [{ selectedBureau: [] }] }), null],
       withheld: 0,
     });
-    expect(scrubbedCarteParams({ id: 'p1', layout: {}, publication: null }, ME, none)).toBeNull();
+    expect(scrubbedCarteParams({ id: 'p1', layout: {}, publication: null }, ME)).toBeNull();
   });
 });
 
 describe('the directory of a published carte after an erasure', () => {
   const ME = 'erased';
-  /** A directory: `a1` with a stored roster, `a2` and `a3` with a legacy line only (names). */
+  /**
+   * A directory: `a1` with a stored roster; `a2` (of the account) and `a3` (whose line names someone
+   * the erasure cannot know - a member who left, a raw id) with a legacy line only (names).
+   */
   const publication = () => ({
     units: [{ assoId: 'a1', cards: [{ userId: ME, name: 'Erased Person' }] }],
     directory: {
@@ -215,13 +216,9 @@ describe('the directory of a published carte after an erasure', () => {
     },
   });
 
-  it('re-derives a roster line from who is left and blanks a legacy line of an association of the account', () => {
-    const out = scrubbedCarteParams(
-      { id: 'p1', layout: {}, publication: publication() },
-      ME,
-      new Set(['a1', 'a2'])
-    );
-    expect(out?.withheld).toBe(1);
+  it('re-derives a roster line from who is left and blanks EVERY legacy line, whoever it names', () => {
+    const out = scrubbedCarteParams({ id: 'p1', layout: {}, publication: publication() }, ME);
+    expect(out?.withheld).toBe(2);
     const written = JSON.parse(out!.params[2] as string);
     expect(written.directory.zones[0].assos).toEqual([
       {
@@ -229,39 +226,43 @@ describe('the directory of a published carte after an erasure', () => {
         line: 'Other Person',
         members: [{ userId: 'other', name: 'Other Person', role: 'Membre' }],
       },
-      // Names and no id: the account's name cannot be found, so the line is withheld.
+      // Names and no id: no line can be searched, so every one is withheld at the first erasure.
       { assoId: 'a2', line: '' },
-      // Not an association of the account: untouched.
-      { assoId: 'a3', line: 'Third Person' },
+      { assoId: 'a3', line: '' },
     ]);
     expect(written.directory.heading).toBe('Annuaire');
     expect(JSON.stringify(written)).not.toContain('Erased Person');
   });
 
   it('is idempotent: a second pass over its own result changes nothing', () => {
-    const memberOf = new Set(['a1', 'a2']);
-    const first = scrubbedCarteParams(
-      { id: 'p1', layout: {}, publication: publication() },
-      ME,
-      memberOf
-    );
+    const first = scrubbedCarteParams({ id: 'p1', layout: {}, publication: publication() }, ME);
     const again = scrubbedCarteParams(
       { id: 'p1', layout: {}, publication: JSON.parse(first!.params[2] as string) },
-      ME,
-      memberOf
+      ME
     );
     expect(again).toBeNull();
   });
 
-  it('leaves a directory of other associations, and a document with no directory, untouched', () => {
-    const doc = publication();
-    expect(settleCarteDirectory(doc, new Set(['a9']))).toEqual({
-      doc,
-      changed: false,
-      withheld: 0,
-    });
+  it('leaves a directory with rosters and no legacy line, and a document with no directory, untouched', () => {
+    const doc = {
+      directory: {
+        zones: [
+          {
+            assos: [
+              {
+                assoId: 'a1',
+                line: 'Other Person',
+                members: [{ userId: 'o', name: 'Other Person', role: '' }],
+              },
+              { assoId: 'a2', line: '' },
+            ],
+          },
+        ],
+      },
+    };
+    expect(settleCarteDirectory(doc)).toEqual({ doc, changed: false, withheld: 0 });
     const v1 = { bubbles: [{ assoId: 'a2' }] };
-    expect(settleCarteDirectory(v1, new Set(['a2']))).toEqual({
+    expect(settleCarteDirectory(v1)).toEqual({
       doc: v1,
       changed: false,
       withheld: 0,
@@ -279,7 +280,6 @@ describe('eraseSocialRows - the order of the map locks', () => {
       },
       read: async <T>(sql: string): Promise<T[]> => {
         sqls.push(sql);
-        if (sql === ERASED_MEMBER_ASSOCIATIONS_SQL) return [{ id: 'a2' }] as T[];
         if (sql === CANDIDATE_CARTES_SQL) {
           return [
             {
@@ -297,8 +297,7 @@ describe('eraseSocialRows - the order of the map locks', () => {
     const firstRowStatement = sqls.findIndex((sql) =>
       ERASURE_ROW_STATEMENTS.some((s) => s.sql === sql)
     );
-    expect(at(ERASED_MEMBER_ASSOCIATIONS_SQL)).toBeGreaterThanOrEqual(0);
-    expect(at(ERASED_MEMBER_ASSOCIATIONS_SQL)).toBeLessThan(at(ERASURE_CARTE_SPACES_LOCK_SQL));
+    expect(at(ERASURE_CARTE_SPACES_LOCK_SQL)).toBeGreaterThanOrEqual(0);
     expect(at(ERASURE_CARTE_SPACES_LOCK_SQL)).toBeLessThan(at(ERASURE_CARTES_LOCK_SQL));
     expect(at(ERASURE_CARTES_LOCK_SQL)).toBeLessThan(firstRowStatement);
     expect(at(WRITE_SCRUBBED_CARTE_SQL)).toBeGreaterThan(at(CANDIDATE_CARTES_SQL));

@@ -204,7 +204,7 @@ export class PosterService {
       const project = await manager.getRepository(PosterProject).save(
         manager.getRepository(PosterProject).create({
           name: dto.name,
-          layout: dto.layout ?? {},
+          layout: {},
           spaceId: dto.spaceId,
           createdBy: caller.userId,
         })
@@ -583,6 +583,16 @@ export class PosterService {
       this.logger.warn(`publish rejected for ${id}: payload has no usable bubble`);
       throw new BadRequestException('Publication payload is empty or malformed');
     }
+    const unstructured = unstructuredRosterEntries(publication);
+    if (unstructured > 0) {
+      this.logger.warn(
+        `[CARTE] publish of map ${id} refused: ${CARTE_ERROR.ROSTER_UNSTRUCTURED} (${unstructured} directory line(s) with no roster - a client older than the structured roster)`
+      );
+      throw new BadRequestException({
+        code: CARTE_ERROR.ROSTER_UNSTRUCTURED,
+        message: 'Every directory line must carry its roster; reload the editor and publish again.',
+      });
+    }
     const project = await this.get(id, caller);
     const refusal = await this.refuseUnitsOutsideMap(project, publication);
     if (refusal) {
@@ -600,8 +610,9 @@ export class PosterService {
       // it, and wins: the last publish is the live one. NO KEY: the row is not deleted nor its key
       // changed, so the foreign keys that reference the space (KEY SHARE) are not blocked by it.
       await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR NO KEY UPDATE', [spaceId]);
-      // Who is a member is read UNDER that lock: an account erasure takes the space's row before it
-      // deletes the account's memberships, so a publish that waited on it sees them gone.
+      // Who is a member is read under that lock, and LOCKED (`FOR KEY SHARE`, see
+      // `currentMembership`): a membership an erasure has deleted but not committed is waited for
+      // and then read gone, so this publish cannot commit the account back after the erasure's scan.
       const isMember = await this.currentMembership(manager, publishedMemberPairs(publication));
       const kept = keepCurrentMembers(publication, isMember);
       const dropped = kept.droppedCards + kept.droppedMembers;
@@ -657,22 +668,50 @@ export class PosterService {
    * Which of `pairs` are CURRENT memberships, in one query. The ONE check the publish and the save
    * run against what an editor sends: a card, a roster member or a bureau pick of someone who is no
    * longer a member - an erased account above all - never goes back in through a stale editor.
+   *
+   * The rows read are locked `FOR KEY SHARE`. A plain read would still see a membership an account
+   * erasure has DELETED but not committed, and the publish or save would then commit the account
+   * back onto a map the erasure's scan had already passed. KEY SHARE conflicts with that DELETE: the
+   * read waits for the erasure and reads the row gone - or, taken first, makes the erasure's DELETE
+   * wait for this transaction, whose write the erasure's later candidate scan then sees and scrubs.
+   *
+   * THE LOCK GRAPH. A publish holds its space row, then these rows, then writes its space's maps. A
+   * save holds its map row, then these rows, then writes that map. The erasure takes associations,
+   * lives, the spaces then the maps it will write (`ERASURE_CARTE_SPACES_LOCK_SQL`), and only then
+   * deletes its memberships, before re-reading its candidate maps. A space or map in the erasure's
+   * set is therefore taken in one order by all three: whoever comes second waits holding no
+   * membership row. ONE interleaving still closes a cycle: a save commits the account's id into a
+   * map OUTSIDE the erasure's set after that set was locked but before the DELETE (it read the row
+   * first, so the DELETE waited for it), and a SECOND save of that same map then holds its row while
+   * waiting on the deleted membership - while the erasure's candidate scan waits on that map row.
+   * PostgreSQL aborts one of the two (`40P01`): the save fails and the editor's next save retries
+   * it, or the erasure rolls back whole and core-service's durable queue runs it again
+   * (docs/wiki/account-erasure.md). A deletion of an association works the same way against a
+   * publish of the space it governs (association, its members, then the space's `bdeAssociationId`
+   * against space, then members): the loser is retried by its author.
+   *
+   * Association ids are compared as `uuid`, so the primary-key index is used; a pair whose
+   * association is not a uuid - a layout can carry any string - is not a membership and never
+   * reaches the query.
    */
   private async currentMembership(
     manager: EntityManager,
     pairs: { assoId: string; userId: string }[]
   ): Promise<CurrentMembership> {
-    if (pairs.length === 0) return () => false;
+    const asked = pairs.filter((p) => UUID_PATTERN.test(p.assoId));
+    if (asked.length === 0) return () => false;
     const rows: { assoId: string; userId: string }[] = await manager.query(
       `SELECT "associationId"::text AS "assoId", "userId" FROM association_members
-        WHERE "associationId"::text = ANY($1::text[]) AND "userId" = ANY($2::text[])`,
-      [[...new Set(pairs.map((p) => p.assoId))], [...new Set(pairs.map((p) => p.userId))]]
+        WHERE "associationId" = ANY($1::uuid[]) AND "userId" = ANY($2::text[])
+        FOR KEY SHARE`,
+      [[...new Set(asked.map((p) => p.assoId))], [...new Set(asked.map((p) => p.userId))]]
     );
-    const current = new Set(rows.map((r) => `${r.assoId}:${r.userId}`));
+    const key = (assoId: string, userId: string) => `${assoId.toLowerCase()}:${userId}`;
+    const current = new Set(rows.map((r) => key(r.assoId, r.userId)));
     this.logger.debug(
-      `[CARTE] membership checked: ${pairs.length} pair(s), ${current.size} current`
+      `[CARTE] membership checked: ${pairs.length} pair(s), ${pairs.length - asked.length} not of a uuid association, ${current.size} current`
     );
-    return (assoId, userId) => current.has(`${assoId}:${userId}`);
+    return (assoId, userId) => current.has(key(assoId, userId));
   }
 
   /** The response the showcase reads, from a live row: never a stored roster (account ids). */
@@ -735,6 +774,20 @@ export class PosterService {
     );
     return this.toPublished(sole);
   }
+}
+
+/** A canonical uuid, the only shape an association id has. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * How many directory entries of a publication print a roster line with no `members` behind it: a
+ * line of names the server can neither check nor scrub, which a publish refuses
+ * (`CARTE_ROSTER_UNSTRUCTURED`). An entry with an empty line and no roster names nobody.
+ */
+export function unstructuredRosterEntries(carte: PublishedCarte): number {
+  return (carte.directory?.zones ?? [])
+    .flatMap((z) => z.assos)
+    .filter((a) => !a.members && a.line.trim() !== '').length;
 }
 
 /** The association ids a saved layout placed (`layout.bubbles[].assoId`), read defensively. */

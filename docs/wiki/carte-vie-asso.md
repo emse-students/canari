@@ -479,12 +479,24 @@ payload. **A roster change therefore needs a republish** - the same way a printe
 `{ userId, name, role }[]` in PRINT order (by family name - the editor alone holds the name parts).
 `sanitizePublishedCarte` stores the roster and DERIVES `line` from it with `directoryLine` in
 `published-carte.ts`, ignoring the line sent; the editor's own `rosterLine` (`generator.ts`) prints
-the poster and the PDF, and both specs read `directory-line.cases.json` so the two cannot drift. An
-entry with no `members` (a client from before this change) is stored as sent, line only. **The
+the poster and the PDF, and both specs read `directory-line.cases.json` so the two cannot drift.
+**A publish whose entry prints a non-empty `line` with no `members` is REFUSED** (`400`,
+`CARTE_ROSTER_UNSTRUCTURED`, at WARN): names with no id can be neither checked nor scrubbed by an
+erasure, and only an editor older than this change sends one - the editor tells its author to
+reload. An entry naming nobody (empty line) needs no roster. The line-only entries ALREADY stored
+are served as they are until their map's next publication or the first account erasure, which
+blanks them all ([account-erasure](account-erasure.md#the-dispositions-and-why),
+[legacy-compatibility](legacy-compatibility.md)). **The
 roster is never served**: it holds account ids, and `PosterService.toPublished` strips it
 (`publicCarte`), so `GET /api/public/carte` answers `{ assoId, line }` per entry, as it always has.
 It exists so the server can CHECK a roster against the membership table and an account erasure can
 find a member by id ([account-erasure](account-erasure.md#the-dispositions-and-why)).
+
+**Every map published by an older client reads "changed since publication" after this release.**
+The client's fingerprint now covers the roster (`members`) the document carries, so the fingerprint
+of what the editor would publish no longer equals the one stored for a map published without it,
+even when nothing was edited. That is the intended prompt: one republish stores the roster, after
+which the map is checked at every publish and scrubbed by id at an erasure rather than blanked.
 
 **One measurement is duplicated, deliberately:** the directory shrinks its font until the roster
 fits its fixed panel. That is a DOM measurement, not a constant, so both sides run the same loop -
@@ -593,8 +605,11 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   fingerprint is then NULL (it described the document sent, not the one stored), which the editor
   reads as "unknown" and answers with an update. A save does the same to each bubble's
   `selectedBureau`, after locking the map's row. One query for the whole document
-  (`PosterService.currentMembership`), used by those two paths and nothing else. A line sent without
-  a roster cannot be checked and is stored as sent.
+  (`PosterService.currentMembership`), used by those two paths and nothing else; it reads the
+  memberships `FOR KEY SHARE`, so an erasure's uncommitted DELETE is waited for, never read past. A
+  line sent without a roster cannot be checked, so the publish is refused `CARTE_ROSTER_UNSTRUCTURED`;
+  the editor adopts whatever a save or a publish dropped (`adoptDroppedPeople`), so it does not send
+  the same ids again.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a

@@ -81,49 +81,110 @@ export function createSerialSaver(persist: () => Promise<void>): SerialSaver {
   };
 }
 
-/** Each placed bubble's bureau picks in a stored layout, by association id. */
-function bureauByAssociation(bubbles: unknown): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
-  if (!Array.isArray(bubbles)) return out;
-  for (const b of bubbles) {
-    const { assoId, selectedBureau } = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
-    if (typeof assoId !== 'string' || !Array.isArray(selectedBureau)) continue;
-    out.set(assoId, new Set(selectedBureau.filter((u): u is string => typeof u === 'string')));
+/** The account ids a document names, by association id. */
+export type PeopleByAssociation = Map<string, Set<string>>;
+
+/** Adds `userId` under `assoId`, skipping anything that is not two strings (stored JSON is opaque). */
+function addPerson(out: PeopleByAssociation, assoId: unknown, userId: unknown): void {
+  if (typeof assoId !== 'string' || typeof userId !== 'string') return;
+  const ids = out.get(assoId) ?? new Set<string>();
+  ids.add(userId);
+  out.set(assoId, ids);
+}
+
+/** The objects of `value` when it is an array, none otherwise. */
+function records(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+    : [];
+}
+
+/** The bureau picks of a layout's bubbles (`selectedBureau`), by association id. */
+export function bureauPicksByAssociation(bubbles: unknown): PeopleByAssociation {
+  const out: PeopleByAssociation = new Map();
+  for (const b of records(bubbles)) {
+    for (const userId of Array.isArray(b.selectedBureau) ? b.selectedBureau : []) {
+      addPerson(out, b.assoId, userId);
+    }
   }
   return out;
 }
 
 /**
- * The editor's bubbles without the bureau picks the server DROPPED on a save: an id the editor sent
- * for an association and the stored layout no longer has - someone who left that association, or
- * whose account was erased, since this editor loaded (the server keeps only current members).
- *
- * Adopting them is what keeps the next save from sending the same ids again, to be dropped again
- * with another WARN on the server. Only what the server took out is removed: a pick the author
- * added while the save was in flight was never sent, so it stays.
- *
- * @param local - The editor's bubbles now (they may have moved since the save was sent).
- * @param sent - The `bubbles` of the layout the save sent.
- * @param stored - The `bubbles` of the layout the server answered with.
- * @returns The bubbles to adopt and how many picks were removed; `local` itself when none was.
+ * The people a published document names, by association id: its units' cards and its directory's
+ * rosters (`members`) - the two places a publish keeps only current members.
  */
-export function adoptDroppedBureauPicks(
-  local: PositionedBubble[],
-  sent: unknown,
-  stored: unknown
-): { bubbles: PositionedBubble[]; dropped: number } {
-  const before = bureauByAssociation(sent);
-  const after = bureauByAssociation(stored);
+export function publishedPeopleByAssociation(publication: unknown): PeopleByAssociation {
+  const out: PeopleByAssociation = new Map();
+  const doc = (publication ?? {}) as { units?: unknown; directory?: { zones?: unknown } };
+  for (const unit of records(doc.units)) {
+    for (const card of records(unit.cards)) addPerson(out, unit.assoId, card.userId);
+  }
+  for (const zone of records(doc.directory?.zones)) {
+    for (const asso of records(zone.assos)) {
+      for (const member of records(asso.members)) addPerson(out, asso.assoId, member.userId);
+    }
+  }
+  return out;
+}
+
+/** What the editor holds that names people: its bubbles' bureau picks and the rosters it loaded. */
+export interface EditorPeople<M extends { userId: string }> {
+  positioned: PositionedBubble[];
+  parked: PositionedBubble[];
+  members: Record<string, M[]>;
+}
+
+/**
+ * The editor's state without the people the server DROPPED from what it was sent - an id named under
+ * an association in `sent` and no longer under it in `stored`: someone who left that association,
+ * or whose account was erased, since this editor loaded (a save and a publish keep only current
+ * members). The ONE adoption, for both answers: a save's (its layout's picks) and a publish's (its
+ * document's cards and rosters).
+ *
+ * Adopting them is what keeps the next save or publish from sending the same ids again, to be
+ * dropped again with another WARN on the server. Only what the server took out is removed: a pick
+ * added while the request was in flight was never sent, so it stays.
+ *
+ * @param local - The editor's state now (it may have moved since the request was sent).
+ * @param sent - Who the request named ({@link bureauPicksByAssociation} or
+ *   {@link publishedPeopleByAssociation}).
+ * @param stored - Who the answer's stored row names, read the same way.
+ * @returns The state to adopt and how many (association, person) pairs were dropped; `local` itself
+ *   when none was.
+ */
+export function adoptDroppedPeople<M extends { userId: string }>(
+  local: EditorPeople<M>,
+  sent: PeopleByAssociation,
+  stored: PeopleByAssociation
+): { people: EditorPeople<M>; dropped: number } {
+  const gone: PeopleByAssociation = new Map();
   let dropped = 0;
-  const bubbles = local.map((bubble) => {
-    const was = before.get(bubble.assoId);
-    const kept = after.get(bubble.assoId);
-    if (!was || !bubble.selectedBureau) return bubble;
-    const gone = (id: string) => was.has(id) && !kept?.has(id);
-    const next = bubble.selectedBureau.filter((id) => !gone(id));
-    if (next.length === bubble.selectedBureau.length) return bubble;
-    dropped += bubble.selectedBureau.length - next.length;
-    return { ...bubble, selectedBureau: next };
-  });
-  return dropped > 0 ? { bubbles, dropped } : { bubbles: local, dropped: 0 };
+  for (const [assoId, ids] of sent) {
+    const kept = stored.get(assoId);
+    const cut = new Set([...ids].filter((id) => !kept?.has(id)));
+    if (cut.size === 0) continue;
+    gone.set(assoId, cut);
+    dropped += cut.size;
+  }
+  if (dropped === 0) return { people: local, dropped: 0 };
+  const withoutPicks = (bubbles: PositionedBubble[]) =>
+    bubbles.map((bubble) => {
+      const cut = gone.get(bubble.assoId);
+      if (!cut || !bubble.selectedBureau?.some((id) => cut.has(id))) return bubble;
+      return { ...bubble, selectedBureau: bubble.selectedBureau.filter((id) => !cut.has(id)) };
+    });
+  const members: Record<string, M[]> = {};
+  for (const [assoId, roster] of Object.entries(local.members)) {
+    const cut = gone.get(assoId);
+    members[assoId] = cut ? roster.filter((m) => !cut.has(m.userId)) : roster;
+  }
+  return {
+    people: {
+      positioned: withoutPicks(local.positioned),
+      parked: withoutPicks(local.parked),
+      members,
+    },
+    dropped,
+  };
 }

@@ -77,9 +77,12 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { exactDate } from '$lib/utils/time';
   import {
-    adoptDroppedBureauPicks,
+    adoptDroppedPeople,
+    bureauPicksByAssociation,
     createSerialSaver,
     layoutFingerprint,
+    publishedPeopleByAssociation,
+    type PeopleByAssociation,
   } from '$lib/carte/editorPersistence';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
@@ -721,6 +724,24 @@
     reader.readAsDataURL(file);
   }
 
+  /**
+   * Takes into the editor the people the server dropped from what it was sent (a save's bureau
+   * picks, a publish's cards and rosters): they are no current member any more, so the bubbles stop
+   * picking them and the rosters stop listing them, and the model is rebuilt from what is left.
+   *
+   * @returns How many (association, person) pairs were dropped.
+   */
+  function adoptDropped(sent: PeopleByAssociation, stored: PeopleByAssociation): number {
+    const kept = adoptDroppedPeople({ positioned, parked, members: membersByAsso }, sent, stored);
+    if (kept.dropped === 0) return 0;
+    Log.d('admin.carte.id.adoptDropped', { dropped: kept.dropped });
+    positioned = kept.people.positioned;
+    parked = kept.people.parked;
+    membersByAsso = kept.people.members;
+    rebuildModel();
+    return kept.dropped;
+  }
+
   /** Writes the current layout to the server. Always called through {@link handleSave}. */
   async function persistLayout(): Promise<void> {
     if (!project) return;
@@ -739,16 +760,10 @@
       // The server keeps only CURRENT members in a bureau: adopt what it dropped, or every later
       // save sends the same ids again. Unedited meanwhile, what is now held IS what was stored.
       const unedited = fingerprint === pinned;
-      const stored = project?.layout?.bubbles;
-      const keptPlaced = adoptDroppedBureauPicks(positioned, sent.bubbles, stored);
-      const keptParked = adoptDroppedBureauPicks(parked, sent.bubbles, stored);
-      if (keptPlaced.dropped + keptParked.dropped > 0) {
-        Log.d('admin.carte.id.persistLayout adopted dropped bureau picks', {
-          dropped: keptPlaced.dropped + keptParked.dropped,
-        });
-        positioned = keptPlaced.bubbles;
-        parked = keptParked.bubbles;
-      }
+      adoptDropped(
+        bureauPicksByAssociation(sent.bubbles),
+        bureauPicksByAssociation(project?.layout?.bubbles)
+      );
       savedFingerprint = unedited ? fingerprint : pinned;
       saved = true;
       setTimeout(() => (saved = false), 2500);
@@ -853,7 +868,14 @@
       const carte = buildPublishedCarte(params);
       const published = await fingerprintPublishedCarte(carte);
       project = await publishPosterProject(project.id, carte, published);
-      liveFingerprint = published;
+      // The answer is the stored row: a publish keeps only current members, so adopt whom it cut
+      // from the cards and rosters, and take the fingerprint it stored - null ("unknown", offers an
+      // update) once it dropped someone, since the sent fingerprint then describes no stored map.
+      adoptDropped(
+        publishedPeopleByAssociation(carte),
+        publishedPeopleByAssociation(project?.publication)
+      );
+      liveFingerprint = project?.publicationFingerprint ?? null;
     },
   });
 
@@ -873,7 +895,9 @@
           ? m.carte_publish_refused_outside()
           : code === CARTE_REFUSAL.NOT_ATTACHED
             ? m.carte_publish_refused_unattached()
-            : m.common_save_error();
+            : code === CARTE_REFUSAL.ROSTER_UNSTRUCTURED
+              ? m.carte_publish_refused_roster()
+              : m.common_save_error();
     } finally {
       publishing = false;
     }

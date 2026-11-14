@@ -334,7 +334,8 @@ describe('the directory roster', () => {
     });
   });
 
-  it('accepts a line-only entry from a client that predates rosters, and stores no roster', () => {
+  // The sanitizer keeps a line-only entry as is; PosterService.publish refuses it (CARTE_ROSTER_UNSTRUCTURED).
+  it('keeps a line-only entry as is and invents no roster', () => {
     const out = sanitizePublishedCarte(withDirectory([{ assoId: 'a1', line: 'Zoe Bernard' }]));
     expect(out?.directory?.zones[0].assos[0]).toEqual({ assoId: 'a1', line: 'Zoe Bernard' });
   });

@@ -316,8 +316,9 @@ export class InternalController {
       );
     }
     for (const carte of result.cartesWithheld) {
-      // A line published before rosters were stored prints names and no id: it was blanked, and
-      // that association's roster stays off the public map until the map is published again.
+      // [LEGACY] A line published before rosters were stored prints names and no id, so every one
+      // is blanked at the first erasure, whoever it names; that roster stays off the public map
+      // until the map is published again. Its removal condition: docs/wiki/legacy-compatibility.md.
       this.logger.warn(
         `[CARTE] account erasure of user=${who} withheld ${carte.lines} legacy directory line(s) ` +
           `of live map ${carte.id} until its next publication`

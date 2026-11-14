@@ -1173,44 +1173,46 @@ export function scrubPolls(polls: unknown, userId: string): { polls: unknown; ch
 }
 
 /**
- * A stored publication whose directory lists one of the associations `<assos>` (a text[] parameter)
- * by a LINE ONLY - no `members`, published by a client older than 2026-11-14 - that is not already
- * withheld. Such a line prints the members' NAMES and no id, so the erasure cannot find the account
- * in it: it is blanked instead ({@link settleCarteDirectory}). Written defensively: a stored document
- * of an older schema (no directory, no zones) matches nothing and fails nothing.
+ * [LEGACY] A stored publication with a directory entry that prints a roster LINE and carries no
+ * `members` - published by a client older than the structured roster (2026-11-14). Such a line
+ * names people by NAME (or, for a member with no display name, by raw account id) and no id the
+ * erasure can search: whoever left an association before erasing their account is in it too. So
+ * the FIRST erasure after it blanks every such line, in every map ({@link settleCarteDirectory}).
+ * A blanked line no longer matches. Written defensively: a stored document of an older schema (no
+ * directory, no zones) matches nothing and fails nothing. Removal condition and count query:
+ * docs/wiki/legacy-compatibility.md.
  */
-function legacyDirectoryLineOf(assos: string): string {
-  return `(publication IS NOT NULL AND EXISTS (
+const LEGACY_DIRECTORY_LINE = `(publication IS NOT NULL AND EXISTS (
     SELECT 1
       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
                                      THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
-     WHERE a.value ->> 'assoId' = ANY(${assos}::text[])
-       AND a.value -> 'members' IS NULL
+     WHERE a.value -> 'members' IS NULL
        AND COALESCE(a.value ->> 'line', '') <> ''))`;
-}
 
 /**
  * Every map the erasure will write: the ones the account created (`createdBy` is anonymised by a
- * row statement), the ones whose layout or publication names its id, and the live ones holding a
- * legacy directory line of one of its associations. `$1` account, `$2`
- * {@link jsonStringLikePattern}, `$3` the account's associations.
+ * row statement), the ones whose layout or publication names its id, and the ones holding a
+ * legacy directory line ({@link LEGACY_DIRECTORY_LINE}). `$1` account, `$2`
+ * {@link jsonStringLikePattern}.
  */
 const ERASURE_CARTES_TOUCHED = `"createdBy" = $1 OR layout::text LIKE $2 OR publication::text LIKE $2
-     OR ${legacyDirectoryLineOf('$3')}`;
+     OR ${LEGACY_DIRECTORY_LINE}`;
 
 /**
  * THE MAP LOCKS, TAKEN BEFORE ANY ROW STATEMENT, IN THE ORDER A PUBLISH TAKES THEM: first the
  * `spaces` row of every map the erasure will write (this statement), then those maps themselves
- * ({@link ERASURE_CARTES_LOCK_SQL}), each set ordered by id.
+ * ({@link ERASURE_CARTES_LOCK_SQL}), each set ordered by id - and both before the row statements
+ * delete the account's memberships, which a publish and a save read `FOR KEY SHARE` after taking
+ * their space or map (`PosterService.currentMembership`, where the whole lock graph is written).
  *
  * `PosterService.publish` locks its space's row, then writes the space's previous live map, then its
  * own. Without this, the erasure's `UPDATE poster_projects SET "createdBy"` held map A while the
  * scrub waited for map B, and a publish holding the space and B waited for A (`40P01`). With it,
  * whichever of the two comes second waits on the space row holding no map. A save
- * (`PosterService.update`) locks its one map row before reading who is a member; it holds no other
- * map, so it cannot close a cycle - and whichever commits first, the other reads its result.
+ * (`PosterService.update`) locks its one map row first; for a map in this set, whichever comes
+ * second waits there holding nothing.
  *
  * `FOR NO KEY UPDATE` throughout: a space row is not deleted nor its key changed (the lock a publish
  * takes), and a map's writes here change no key, so the foreign keys that point at either are not
@@ -1232,22 +1234,18 @@ export const ERASURE_CARTES_LOCK_SQL = `SELECT id FROM poster_projects
   FOR NO KEY UPDATE`;
 
 /**
- * The associations the account is a member of, read BEFORE `association_members` loses its rows:
- * the set whose legacy directory lines are withheld ({@link settleCarteDirectory}).
- */
-export const ERASED_MEMBER_ASSOCIATIONS_SQL = `SELECT "associationId"::text AS id
-  FROM association_members WHERE "userId" = $1`;
-
-/**
  * The maps ("Carte de la vie asso") the scrub reads: the layout or published document may name the
  * account's id (`$1`, {@link jsonStringLikePattern} - a candidate filter only,
- * {@link scrubCarteDocument} decides), or the publication holds a legacy line of one of its
- * associations (`$2`). Already locked by {@link ERASURE_CARTES_LOCK_SQL} in the same mode, so this
- * takes nothing new - unless a save wrote the id into another map meanwhile, which then waits here
- * for that save, holding no lock the save wants.
+ * {@link scrubCarteDocument} decides), or the publication holds a legacy line. Nearly always already
+ * locked by {@link ERASURE_CARTES_LOCK_SQL} in the same mode, so this takes nothing new. A map that
+ * came to name the account AFTER that lock - a save that read the membership before the DELETE, and
+ * committed - is locked here; if a second save of that same map holds its row while waiting on the
+ * deleted membership, the two wait on each other and PostgreSQL aborts one (the one interleaving
+ * `PosterService.currentMembership` names: the save is retried by the editor, the erasure by
+ * core-service's queue).
  */
 export const CANDIDATE_CARTES_SQL = `SELECT id, layout, publication FROM poster_projects
-  WHERE layout::text LIKE $1 OR publication::text LIKE $1 OR ${legacyDirectoryLineOf('$2')}
+  WHERE layout::text LIKE $1 OR publication::text LIKE $1 OR ${LEGACY_DIRECTORY_LINE}
   ORDER BY id
   FOR NO KEY UPDATE`;
 
@@ -1302,15 +1300,17 @@ export function scrubCarteDocument(
 /**
  * A publication's directory made consistent after {@link scrubCarteDocument}: every association
  * with a roster (`members`) gets its printed line RE-DERIVED from what is left ({@link directoryLine},
- * the publish path's own); every association of `memberOf` WITHOUT a roster - a line published by a
- * client older than 2026-11-14, names and no ids - gets its line BLANKED, since the account's name
- * in it cannot be found. The map stays live; that roster text is withheld until the next
- * publication. `withheld` counts the blanked lines, for the WARN line the caller writes.
+ * the publish path's own); EVERY entry WITHOUT a roster - [LEGACY] a line published by a client
+ * older than 2026-11-14, names and no ids - gets its line BLANKED, whoever it names: it cannot be
+ * searched, so it is not kept past the first erasure ({@link LEGACY_DIRECTORY_LINE}). The map stays
+ * live; that roster text is withheld until the next publication. `withheld` counts the blanked
+ * lines, for the WARN line the caller writes.
  */
-export function settleCarteDirectory(
-  publication: unknown,
-  memberOf: ReadonlySet<string>
-): { doc: unknown; changed: boolean; withheld: number } {
+export function settleCarteDirectory(publication: unknown): {
+  doc: unknown;
+  changed: boolean;
+  withheld: number;
+} {
   const unchanged = { doc: publication, changed: false, withheld: 0 };
   if (!publication || typeof publication !== 'object') return unchanged;
   const directory = (publication as Record<string, unknown>).directory;
@@ -1328,7 +1328,7 @@ export function settleCarteDirectory(
       changed = true;
       return { ...a, line };
     }
-    if (typeof a.assoId !== 'string' || !memberOf.has(a.assoId) || !a.line) return entry;
+    if (a.line === undefined || a.line === null || a.line === '') return entry;
     changed = true;
     withheld += 1;
     return { ...a, line: '' };
@@ -1353,12 +1353,11 @@ export function settleCarteDirectory(
  */
 export function scrubbedCarteParams(
   carte: { id: string; layout: unknown; publication: unknown },
-  userId: string,
-  memberOf: ReadonlySet<string>
+  userId: string
 ): { params: [string, string | null, string | null]; withheld: number } | null {
   const layout = scrubCarteDocument(carte.layout, userId);
   const scrubbed = scrubCarteDocument(carte.publication, userId);
-  const settled = settleCarteDirectory(scrubbed.doc, memberOf);
+  const settled = settleCarteDirectory(scrubbed.doc);
   const publicationChanged = scrubbed.changed || settled.changed;
   if (!layout.changed && !publicationChanged) return null;
   return {
@@ -1417,8 +1416,8 @@ export interface SocialErasureResult {
    */
   liveCashiersErased: Array<{ associationId: string; vendorToken: string }>;
   /**
-   * The maps whose published directory had legacy lines (names, no ids) of the account's
-   * associations BLANKED, and how many each: the caller WARNs once per map.
+   * [LEGACY] The maps whose published directory had legacy lines (names, no ids) - every one,
+   * whoever it names - BLANKED, and how many each: the caller WARNs once per map.
    */
   cartesWithheld: Array<{ id: string; lines: number }>;
 }
@@ -1465,12 +1464,8 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const livesLocked = await db.read<{ id: string }>(ERASURE_LIVES_LOCK_SQL, [userId]);
-  // The maps, in a publish's order (space, then map), before any row statement writes one - and the
-  // account's associations, read before its memberships are deleted.
-  const memberOf = (await db.read<{ id: string | null }>(ERASED_MEMBER_ASSOCIATIONS_SQL, [userId]))
-    .map((r) => r.id)
-    .filter((id): id is string => typeof id === 'string');
-  const cartesParams = [userId, jsonStringLikePattern(userId), memberOf];
+  // The maps, in a publish's order (space, then map), before any row statement writes one.
+  const cartesParams = [userId, jsonStringLikePattern(userId)];
   await db.read(ERASURE_CARTE_SPACES_LOCK_SQL, cartesParams);
   await db.read(ERASURE_CARTES_LOCK_SQL, cartesParams);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
@@ -1497,17 +1492,16 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
     postsScrubbed += 1;
   }
   // The maps naming the account: its cards and roster entries leave the published carte and the
-  // layouts, its roster lines are re-derived, and a legacy line of one of its associations is
+  // layouts, its roster lines are re-derived, and EVERY legacy line of every map is
   // withheld (names, no ids: it cannot be scrubbed).
   let cartesScrubbed = 0;
   const cartesWithheld: Array<{ id: string; lines: number }> = [];
-  const memberSet = new Set(memberOf);
   const cartes = await db.read<{ id: string; layout: unknown; publication: unknown }>(
     CANDIDATE_CARTES_SQL,
-    [jsonStringLikePattern(userId), memberOf]
+    [jsonStringLikePattern(userId)]
   );
   for (const carte of cartes) {
-    const scrub = scrubbedCarteParams(carte, userId, memberSet);
+    const scrub = scrubbedCarteParams(carte, userId);
     if (!scrub) continue;
     await db.write(WRITE_SCRUBBED_CARTE_SQL, scrub.params);
     cartesScrubbed += 1;

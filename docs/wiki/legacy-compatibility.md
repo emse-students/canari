@@ -96,6 +96,39 @@ The events twin of the entry above.
 - **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
   passes the first stable carrying the event reach, and this entry is then deleted.
 
+### A legacy shape at rest: a carte directory line with no roster (2026-11-14)
+
+- **What.** A carte published before the structured roster stores each directory entry as
+  `{ assoId, line }`: the printed names, no account id
+  ([carte-vie-asso](carte-vie-asso.md#rules)). Such a publication is **served as stored until the
+  first account erasure or its map's next publication**. An erasure cannot tell whose name a line
+  holds, so the first one after this change blanks EVERY non-empty line-only entry, in every map
+  (`settleCarteDirectory`, matched by `LEGACY_DIRECTORY_LINE` in `account-erasure.ts`); the map stays
+  live with that roster text withheld. No new one is written: a publish refuses it
+  (`CARTE_ROSTER_UNSTRUCTURED`), and an editor older than the roster is told to reload.
+- **Measured by.** The WARN the social service writes once per map an erasure blanks:
+  `[CARTE] account erasure of user=... withheld N legacy directory line(s) of live map <id> until
+  its next publication`, and the refusal's WARN `[CARTE] publish of map <id> refused:
+  CARTE_ROSTER_UNSTRUCTURED`.
+- **Removal condition.** No map stores a line-only entry any more - this count reads `0`:
+
+  ```sql
+  SELECT count(*) FROM poster_projects
+   WHERE publication IS NOT NULL AND EXISTS (
+     SELECT 1
+       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
+                                      THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
+      WHERE a.value -> 'members' IS NULL
+        AND COALESCE(a.value ->> 'line', '') <> '');
+  ```
+
+- **Then delete.** The blanking branch of `settleCarteDirectory`, its predicate
+  `LEGACY_DIRECTORY_LINE` (and its use in `ERASURE_CARTES_TOUCHED` and `CANDIDATE_CARTES_SQL`), and
+  `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
+  it is the rule, not a shim.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its

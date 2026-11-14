@@ -10,8 +10,10 @@ import { PosterProject } from './entities/poster-project.entity';
 describe('PosterService - only current members reach a map', () => {
   const ADMIN = { userId: 'admin', isGlobalAdmin: true };
   const FP = 'b'.repeat(64);
-  /** The memberships `association_members` holds: `a1` has `u1` only. */
-  const MEMBERS = [{ assoId: 'a1', userId: 'u1' }];
+  /** An association of the space: ids are uuids, as the membership query compares them. */
+  const A1 = '00000000-0000-4000-8000-0000000000a1';
+  /** The memberships `association_members` holds: `A1` has `u1` only. */
+  const MEMBERS = [{ assoId: A1, userId: 'u1' }];
   let queries: { sql: string; params: unknown[] }[];
   let updates: { where: unknown; patch: Record<string, unknown> }[];
   let saved: PosterProject | undefined;
@@ -34,7 +36,7 @@ describe('PosterService - only current members reach a map', () => {
       findOne: () => Promise.resolve(row),
       manager: {
         // The associations space `s1` offers (`CARTE_SPACE_ASSOCIATIONS_SQL`).
-        query: () => Promise.resolve([{ id: 'a1' }]),
+        query: () => Promise.resolve([{ id: A1 }]),
         transaction: (run: (m: unknown) => Promise<unknown>) =>
           run({
             getRepository: () => inner,
@@ -48,7 +50,7 @@ describe('PosterService - only current members reach a map', () => {
   }
 
   const entryRepo = () => ({
-    find: () => Promise.resolve([{ associationId: 'a1', enabled: true }]),
+    find: () => Promise.resolve([{ associationId: A1, enabled: true }]),
   });
 
   const card = (userId: string) => ({ userId, name: `Name ${userId}`, role: 'Bureau' });
@@ -57,7 +59,7 @@ describe('PosterService - only current members reach a map', () => {
   function carte() {
     return {
       stage: { w: 1600, h: 1131 },
-      units: [{ assoId: 'a1', cards: [card('u1'), card('gone')] }],
+      units: [{ assoId: A1, cards: [card('u1'), card('gone')] }],
       texts: [],
       directory: {
         zones: [
@@ -65,7 +67,7 @@ describe('PosterService - only current members reach a map', () => {
             label: 'Z',
             assos: [
               {
-                assoId: 'a1',
+                assoId: A1,
                 members: [
                   { userId: 'gone', name: 'Gone Person', role: 'Presidente' },
                   { userId: 'u1', name: 'Kept Person', role: '' },
@@ -112,22 +114,66 @@ describe('PosterService - only current members reach a map', () => {
   });
 
   it('keeps the fingerprint when every card is a current member', async () => {
-    const doc = { ...carte(), units: [{ assoId: 'a1', cards: [card('u1')] }], directory: null };
+    const doc = { ...carte(), units: [{ assoId: A1, cards: [card('u1')] }], directory: null };
     await service.publish('p1', { carte: doc, fingerprint: FP }, ADMIN);
     expect(updates.find((u) => u.where === 'p1')!.patch.publicationFingerprint).toBe(FP);
   });
 
-  it('accepts a line-only directory as sent: there is no id to check', async () => {
+  // A line with no roster names people by name only: the server could neither check it nor scrub an
+  // erased account out of it, so it is refused - a stale or old editor is told to reload.
+  it('refuses a directory line with no roster, typed, and writes nothing', async () => {
     const doc = {
       ...carte(),
-      units: [{ assoId: 'a1', cards: [] }],
-      directory: { zones: [{ label: 'Z', assos: [{ assoId: 'a1', line: 'Legacy Line' }] }] },
+      units: [{ assoId: A1, cards: [] }],
+      directory: {
+        zones: [
+          {
+            label: 'Z',
+            assos: [
+              { assoId: A1, line: 'Legacy Line' },
+              // An entry naming nobody is no roster to check, and passes.
+              { assoId: A1, line: '' },
+            ],
+          },
+        ],
+      },
+    };
+    await expect(
+      service.publish('p1', { carte: doc, fingerprint: FP }, ADMIN)
+    ).rejects.toMatchObject({ response: { code: 'CARTE_ROSTER_UNSTRUCTURED' } });
+    expect(updates).toEqual([]);
+    expect(queries).toEqual([]);
+  });
+
+  it('accepts a directory entry that names nobody, with no roster', async () => {
+    const doc = {
+      ...carte(),
+      units: [{ assoId: A1, cards: [] }],
+      directory: { zones: [{ label: 'Z', assos: [{ assoId: A1, line: '' }] }] },
     };
     await service.publish('p1', { carte: doc, fingerprint: FP }, ADMIN);
-    const patch = updates.find((u) => u.where === 'p1')!.patch;
-    expect(patch.publicationFingerprint).toBe(FP);
-    expect(JSON.stringify(patch.publication)).toContain('Legacy Line');
-    expect(queries.some((q) => /association_members/.test(q.sql))).toBe(false);
+    expect(updates.find((u) => u.where === 'p1')!.patch.publicationFingerprint).toBe(FP);
+  });
+
+  it('reads the memberships by uuid and LOCKS them, skipping an association id that is no uuid', async () => {
+    const layout = {
+      bubbles: [
+        { assoId: A1, selectedBureau: ['u1'] },
+        { assoId: 'not-a-uuid', selectedBureau: ['u1'] },
+      ],
+    };
+    await service.update('p1', { layout }, ADMIN);
+    const membership = queries.find((q) => /association_members/.test(q.sql))!;
+    expect(membership.sql).toMatch(/"associationId" = ANY\(\$1::uuid\[\]\)/);
+    expect(membership.sql).toMatch(/FOR KEY SHARE/);
+    expect(membership.params).toEqual([[A1], ['u1']]);
+    // A pick under an association that cannot be one is not a membership: dropped.
+    expect(saved?.layout).toEqual({
+      bubbles: [
+        { assoId: A1, selectedBureau: ['u1'] },
+        { assoId: 'not-a-uuid', selectedBureau: [] },
+      ],
+    });
   });
 
   it("cuts a bubble's bureau to current members at save, after locking the map's row", async () => {
@@ -137,12 +183,12 @@ describe('PosterService - only current members reach a map', () => {
     );
     const layout = {
       version: 3,
-      bubbles: [{ assoId: 'a1', x: 4, selectedBureau: ['gone', 'u1'] }],
+      bubbles: [{ assoId: A1, x: 4, selectedBureau: ['gone', 'u1'] }],
     };
     await service.update('p1', { layout }, ADMIN);
     expect(saved?.layout).toEqual({
       version: 3,
-      bubbles: [{ assoId: 'a1', x: 4, selectedBureau: ['u1'] }],
+      bubbles: [{ assoId: A1, x: 4, selectedBureau: ['u1'] }],
     });
     expect(queries.map((q) => q.sql)).toEqual([
       expect.stringMatching(/FROM poster_projects .* FOR NO KEY UPDATE/),
@@ -158,7 +204,7 @@ describe('PosterService - only current members reach a map', () => {
       publishedAt: new Date('2026-11-14T10:00:00Z'),
       publication: {
         version: 2,
-        units: [{ assoId: 'a1', cards: [card('u1')] }],
+        units: [{ assoId: A1, cards: [card('u1')] }],
         directory: {
           heading: 'Annuaire',
           zones: [
@@ -166,7 +212,7 @@ describe('PosterService - only current members reach a map', () => {
               label: 'Z',
               assos: [
                 {
-                  assoId: 'a1',
+                  assoId: A1,
                   line: 'Kept Person',
                   members: [{ userId: 'u1', name: 'Kept Person', role: '' }],
                 },
@@ -185,7 +231,7 @@ describe('PosterService - only current members reach a map', () => {
       {} as never
     );
     const served = await reader.getSoleLegacyPublished();
-    expect(served?.directory?.zones[0].assos).toEqual([{ assoId: 'a1', line: 'Kept Person' }]);
+    expect(served?.directory?.zones[0].assos).toEqual([{ assoId: A1, line: 'Kept Person' }]);
     expect(JSON.stringify(served)).not.toContain('"members"');
     // A card's `userId` is served, as it always was: the showcase keys its photos on it.
     expect(served?.units[0].cards[0].userId).toBe('u1');
@@ -196,10 +242,10 @@ describe('PosterService - only current members reach a map', () => {
   it('reads the pairs of a layout defensively and returns an untouched layout as it came', () => {
     expect(
       layoutBureauPairs({
-        bubbles: [null, { assoId: 'a1' }, { assoId: 'a2', selectedBureau: ['u', 3] }],
+        bubbles: [null, { assoId: A1 }, { assoId: 'a2', selectedBureau: ['u', 3] }],
       })
     ).toEqual([{ assoId: 'a2', userId: 'u' }]);
-    const layout = { bubbles: [{ assoId: 'a1', selectedBureau: ['u1'] }] };
+    const layout = { bubbles: [{ assoId: A1, selectedBureau: ['u1'] }] };
     const out = keepCurrentBureaus(layout, () => true);
     expect(out).toEqual({ layout, dropped: 0 });
     expect(out.layout).toBe(layout);

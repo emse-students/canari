@@ -174,19 +174,29 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   bubble's bureau (`selectedBureau`). Both columns were classed as holding no account, so an erased
   person stayed on the public map until its next publication. Now, in the erasure's transaction,
   `scrubCarteDocument` removes every card, roster member and picked id that is the account, and
-  `settleCarteDirectory` RE-DERIVES each roster's line from who is left. A map published before
-  rosters were stored has a line of NAMES and no id, which no erasure can search: the line of every
-  association the account was a member of (read before its memberships are deleted) is BLANKED, the
-  map stays live, that roster text is withheld until the next publication, and the social service
-  says so at WARN once per map (`[CARTE] account erasure ... withheld N legacy directory line(s) of
-  live map <id>`). A rewritten publication loses its fingerprint, which the editor reads as
+  `settleCarteDirectory` RE-DERIVES each roster's line from who is left. **A line published before
+  rosters were stored names people by NAME and carries no id, so no erasure can tell whose it is:
+  the FIRST erasure blanks EVERY such line, in EVERY map, whoever it names** - a member who left an
+  association before erasing their account is in it too, so no membership read could narrow it.
+  Those maps stay live, the roster text is withheld until their next publication, and the social
+  service says so at WARN once per map (`[CARTE] account erasure ... withheld N legacy directory
+  line(s) of live map <id>`); a publish no longer accepts such a line (`CARTE_ROSTER_UNSTRUCTURED`),
+  so none is written again ([legacy-compatibility](legacy-compatibility.md)). A rewritten publication loses its fingerprint, which the editor reads as
   "unknown" and answers with "Mettre a jour la publication". A stale editor cannot write the account
   back: a publish keeps only the cards and roster members that are CURRENT memberships of their
   association, a save cuts each `selectedBureau` the same way, both from one query and both at WARN
   when they drop something ([carte-vie-asso](carte-vie-asso.md#rules)).
   The maps are locked at the TOP of the erasure in a publish's order - the `spaces` row of every map
   it will write, then the maps, by id (`ERASURE_CARTE_SPACES_LOCK_SQL`, after the associations) - so
-  an erasure and a publish never hold one map each. Two limits sit outside the transaction:
+  an erasure and a publish never hold one map each. A publish and a save read the memberships
+  `FOR KEY SHARE`, so one that read before the erasure's DELETE holds it off until it commits, and
+  one that reads after waits for the erasure and reads the membership gone. **One deadlock is left,
+  by design rather than by chance**: a save commits the account's id into a map the erasure had not
+  locked (the id was not there yet) while a second save of that same map, holding its row, waits on
+  the deleted membership, and the erasure's candidate scan waits on that row. PostgreSQL aborts one
+  (`40P01`): a save is retried by the editor's next save, an erasure by core-service's durable
+  queue; neither leaves the account behind (`PosterService.currentMembership` walks the graph). Two
+  limits sit outside the transaction:
   `GET /api/public/carte` is sent `Cache-Control: public, max-age=300`, so a cache may serve the
   removed card for up to five minutes after the erasure commits; and the portail's own avatar proxy
   caches a photo by account id for longer, on its side (outside this repository). Between two

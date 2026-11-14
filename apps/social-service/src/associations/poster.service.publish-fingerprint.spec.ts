@@ -156,8 +156,8 @@ describe('PosterService - the fingerprint of the document that went live', () =>
           {
             label: 'Z',
             assos: [
-              { assoId: 'a1', line: 'x' },
-              { assoId: 'a9', line: 'y' },
+              { assoId: 'a1', line: '', members: [] },
+              { assoId: 'a9', line: '', members: [] },
             ],
           },
         ],
