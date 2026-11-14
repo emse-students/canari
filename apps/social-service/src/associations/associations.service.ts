@@ -4042,7 +4042,9 @@ ${rejectionReason}`
       return reason === 'coorganiser_joined'
         ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
             type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
-            meta: { reason, audience: 'validators' },
+            // `eventId`: a validator who is also a party keeps this row while either right holds
+            // (`BELL_ROW_GATE`), the writer having told them once, as a validator.
+            meta: { reason, audience: 'validators', eventId: ev.id },
             // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
             // on the validation queue, as for a proposal, never on the plain agenda.
             pushData: { associationId: ev.associationId, action: 'proposed', reason },

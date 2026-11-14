@@ -41,15 +41,22 @@ export interface BellRowRefs {
  * Bell reader `reader` holds `flag` in association `association` through their OWN membership row -
  * the member tier `listFlagHolders` and `holdersOf` read when they chose the recipients, so a row is
  * shown exactly while its reader would be chosen again.
+ *
+ * A SCALAR aggregate on the `(associationId, userId)` unique key, never an `EXISTS`: the planner may
+ * turn an `EXISTS` correlated by plain equalities into a hashed subplan, which reads every flag
+ * holder of the whole table once per kind met on the page - a scan whose cost grows with the
+ * estate, not with the reader (measured 2026-11-14, posts.md). A scalar subquery is never hashed:
+ * each row costs one probe of the unique index. `bit_or` rather than the bare column, so the
+ * expression stays defined over any number of rows instead of failing the whole bell.
  */
 function holdsFlagSql(
   association: string,
   reader: string,
   flag: AssociationPermissionFlag
 ): string {
-  return `EXISTS (SELECT 1 FROM association_members bell_role
-      WHERE bell_role."associationId" = ${association} AND bell_role."userId" = ${reader}
-        AND (bell_role.permissions & ${flag}) <> 0)`;
+  return `((COALESCE((SELECT bit_or(bell_role.permissions) FROM association_members bell_role
+      WHERE bell_role."associationId" = ${association} AND bell_role."userId" = ${reader}), 0)
+      & ${flag}) <> 0)`;
 }
 
 /** A row addressed to the holders of `flag` in the association its `postId` names. */
@@ -62,11 +69,12 @@ const roleInTarget =
  * A row told to who may VALIDATE the events of the association its `postId` names
  * (`notifyEventValidatorsOfProposal`): the BDE agenda right over it (`holdsBdeAgendaRightOverSql`,
  * the predicate the recipients were read with), or a platform administrator (told when a targeted
- * space has no BDE, and who validates any event).
+ * space has no BDE, and who validates any event). The administrator is read as a scalar on the
+ * primary key, for the reason `holdsFlagSql` gives.
  */
 function eventValidatorSql({ reader, target }: BellRowRefs): string {
   return `(${holdsBdeAgendaRightOverSql(reader, target)}
-    OR EXISTS (SELECT 1 FROM users bell_admin WHERE bell_admin.id = ${reader} AND bell_admin.admin))`;
+    OR COALESCE((SELECT bool_or(bell_admin.admin) FROM users bell_admin WHERE bell_admin.id = ${reader}), false))`;
 }
 
 /**
@@ -81,6 +89,17 @@ function eventPartySql(row: BellRowRefs): string {
     OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners bell_party
       WHERE bell_party.event_id = ${event}
         AND ${holdsFlagSql('bell_party.association_id', row.reader, AssociationPermissionFlag.PROPOSE_EVENT)}))`;
+}
+
+/**
+ * A row written to the VALIDATORS: shown while its reader holds EITHER right - the validator's, or a
+ * party's (`eventPartySql`). The writer tells a person who is both ONCE, as a validator
+ * (`announceEventReopened` drops the validators from the parties), so a gate on the validator's right
+ * alone would hide the row from a party who would be told again; and an organiser's `PROPOSE_EVENT`
+ * holder reads the event's pending title on the association's own agenda anyway.
+ */
+function validatorRowSql(row: BellRowRefs): string {
+  return `(${eventValidatorSql(row)} OR ${eventPartySql(row)})`;
 }
 
 /**
@@ -115,12 +134,12 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   event_updated: roleInTarget(AssociationPermissionFlag.PROPOSE_EVENT),
   event_deleted: roleInTarget(AssociationPermissionFlag.PROPOSE_EVENT),
   event_rejected: roleInTarget(AssociationPermissionFlag.PROPOSE_EVENT),
-  event_proposed: eventValidatorSql,
+  event_proposed: validatorRowSql,
   event_pending: eventPartySql,
   // Told to the validators (`meta.audience = 'validators'`) and to the parties, under one type.
   event_pending_coorganiser: (row) =>
     `(CASE WHEN ${row.meta}->>'audience' = 'validators'
-      THEN ${eventValidatorSql(row)} ELSE ${eventPartySql(row)} END)`,
+      THEN ${validatorRowSql(row)} ELSE ${eventPartySql(row)} END)`,
   // An event's opening, told to its organiser's followers: shown while the event is on the agenda
   // (validated, organiser not archived - the opening's own `targetLive`) and its reader sees it.
   event_open: ({ reader, target }) => `EXISTS (SELECT 1 FROM association_calendar_events bell_ev

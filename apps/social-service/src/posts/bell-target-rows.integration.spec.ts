@@ -338,6 +338,68 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     expect(await served('f2')).toEqual([]);
   });
 
+  it("a validator who is also the organiser's proposer keeps the validators' row with either right", async () => {
+    // Told ONCE, as a validator: the writer drops the validators from the parties.
+    await member(O, 'val1', F.PROPOSE_EVENT);
+    await row('val1', 'event_proposed', O);
+    await row('val1', 'event_pending_coorganiser', O, {
+      reason: 'coorganiser_joined',
+      audience: 'validators',
+      eventId: E,
+    });
+    await setFlags(B, 'val1', 0);
+    expect(await served('val1')).toEqual(['event_pending_coorganiser', 'event_proposed']);
+    await setFlags(O, 'val1', 0);
+    expect(await served('val1')).toEqual([]);
+  });
+
+  it("an event's opening is gated by the READ predicate: an institution's reach, and a read grant, admit as the agenda does", async () => {
+    // An institution of the whole Saint-Etienne campus, its event ticking ICM x Saint-Etienne.
+    const I = id(5);
+    const EI = id(12);
+    await q(
+      `INSERT INTO associations (id, name, slug, type) VALUES ($1, 'I', 'i', 'institution')
+       ON CONFLICT (id) DO NOTHING`,
+      [I]
+    );
+    await q(
+      `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, $2)
+       ON CONFLICT DO NOTHING`,
+      [I, SE]
+    );
+    await q(
+      `INSERT INTO association_calendar_events (id, "associationId", title, status, "reachPublic", "reachSpaces")
+       VALUES ($1, $2, 'Forum', 'validated', 'all', $3::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [EI, I, JSON.stringify([{ formation: 'ICM', campus: SE }])]
+    );
+    // `iss` studies in an unticked space; `nr` has no space, only a read grant on the ticked cell.
+    await q(
+      `INSERT INTO users (id, campus, cursus) VALUES ('iss', $1, $2), ('nr', NULL, '[]')
+             ON CONFLICT (id) DO NOTHING`,
+      [SE, '[{"formation":"ISMIN","promo":2024}]']
+    );
+    await q(
+      `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('nr', $1, 'ICM', 'admin')`,
+      [SE]
+    );
+    try {
+      for (const u of ['f1', 'iss', 'nr']) await row(u, 'event_open', EI);
+      expect(await served('f1')).toEqual(['event_open']);
+      expect(await served('iss')).toEqual([]);
+      // A read grant is a read door: the row once written stays (the opening itself is never told
+      // through a grant - its writer asks the plain predicate).
+      expect(await served('nr')).toEqual(['event_open']);
+      // "Students" closes the grant door, as on the agenda.
+      await q(`UPDATE association_calendar_events SET "reachPublic" = 'students' WHERE id = $1`, [
+        EI,
+      ]);
+      expect(await served('nr')).toEqual([]);
+      expect(await served('f1')).toEqual(['event_open']);
+    } finally {
+      await q(`DELETE FROM read_grants WHERE user_id = 'nr'`);
+    }
+  });
+
   it("a booking space's opening leaves the bell when the space takes an audience, goes link-only, or its reader stops seeing it", async () => {
     await row('f1', 'booking_open', S);
     await row('f2', 'booking_open', S);
