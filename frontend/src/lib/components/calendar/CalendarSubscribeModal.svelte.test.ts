@@ -28,7 +28,12 @@ const FEED = 'https://canari.emse.fr/api/associations/calendar/feed.ics';
 const mounted: ReturnType<typeof mount>[] = [];
 
 function render(
-  extra: { signing?: 'idle' | 'signing' | 'ready' | 'error' | 'unavailable'; icsUrl?: string } = {}
+  extra: {
+    signing?: 'idle' | 'signing' | 'ready' | 'error' | 'unavailable';
+    icsUrl?: string;
+    onRevoke?: () => Promise<void>;
+    revokeStatus?: 'idle' | 'revoking' | 'revoked' | 'failed';
+  } = {}
 ) {
   const component = mount(CalendarSubscribeModal, {
     target: document.body,
@@ -76,13 +81,47 @@ describe('CalendarSubscribeModal', () => {
     expect((input as HTMLInputElement).value).toBe(FEED);
   });
 
-  it('warns that links saved before the signature stopped working (2026-10-06)', () => {
+  it('says the link shows what its holder sees and can be revoked (2026-11-14)', () => {
     runtimeOs.value = 'windows';
     render();
-    expect(document.querySelector('[data-subscribe-old-links]')?.textContent?.trim()).toBe(
-      m.calendar_subscribe_old_links_notice()
+    expect(document.querySelector('[data-subscribe-holder-notice]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_holder_notice()
     );
     expect(document.querySelector('[data-subscribe-sign-failed]')).toBeNull();
+  });
+
+  it('offers no revoke button without a revocation to call', () => {
+    runtimeOs.value = 'windows';
+    render();
+    expect(document.querySelector('[data-subscribe-revoke]')).toBeNull();
+  });
+
+  it('the revoke button calls the revocation, and the modal says how it went', () => {
+    runtimeOs.value = 'android';
+    const onRevoke = vi.fn(() => Promise.resolve());
+    render({ onRevoke });
+    const button = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    expect(button.textContent?.trim()).toBe(m.calendar_subscribe_revoke_button());
+    button.click();
+    expect(onRevoke).toHaveBeenCalledTimes(1);
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'revoking' });
+    const busy = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    expect(busy.textContent?.trim()).toBe(m.calendar_subscribe_revoking());
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'revoked' });
+    expect(document.querySelector('[data-subscribe-revoked]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_revoked()
+    );
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'failed' });
+    expect(document.querySelector('[data-subscribe-revoke-failed]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_revoke_failed()
+    );
   });
 
   it('says it is preparing the link, then that the server refused to sign it', () => {

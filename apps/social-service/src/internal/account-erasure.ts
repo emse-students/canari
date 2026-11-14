@@ -79,6 +79,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // reader's dismissal OF this person - the second names the erased account as a `user` target.
   'follow_suggestion_dismissals.userId': { action: 'delete' },
   'follow_suggestion_dismissals.targetId': { action: 'delete' },
+  // The holder's agenda subscription links (migration 170): theirs, and every link they handed out
+  // answers 403 once the rows are gone.
+  'agenda_subscriptions.userId': { action: 'delete' },
   'engagement_push_days.userId': { action: 'delete' },
   'campus_trend_weeks.userId': { action: 'delete' },
   'user_activity_settings.userId': { action: 'delete' },
@@ -612,6 +615,14 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'follow_suggestion_dismissals',
     sql: `DELETE FROM follow_suggestion_dismissals WHERE "userId" = $1 OR "targetId" = $1`,
+  },
+  // The holder's agenda subscriptions (migration 170): every `.ics` link they handed out then
+  // answers 403. Not a source of the association lock: when this row is all that ties the erasure to
+  // an association, the erasure writes nothing else under it, so an association delete that waits on
+  // this row waits on nothing the erasure itself waits for - no cycle (40P01) to break.
+  {
+    label: 'agenda_subscriptions',
+    sql: `DELETE FROM agenda_subscriptions WHERE "userId" = $1`,
   },
   // The daily engagement push counters (engagement WP-8): the recipient's own rows.
   {

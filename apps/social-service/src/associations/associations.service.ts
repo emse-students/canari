@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   PayloadTooLargeException,
@@ -52,6 +53,7 @@ import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
+  agendaSubscriptionToken,
   selectionWithinSpaces,
   signAgendaSelection,
 } from './agenda-signature';
@@ -195,6 +197,7 @@ import {
 import {
   associationRulesReachSpaceMatchingSql,
   eventReachesSpaceMatchingSql,
+  eventReachesEveryOpenSpaceMatchingSql,
   associationVisibleToViewerSql,
   eventCardShownToViewerSql,
   eventVisibleToViewerSql,
@@ -417,6 +420,14 @@ function calendarDateRefusal(
  * an anonymous reader - so this is optional by construction, and an absent viewer gets the whole
  * window exactly as before. The limit itself is `promoCutoffFor`, shared with the posts feed.
  */
+/** What a subscription link reads of its row: the holder and the selection. */
+export interface AgendaSubscriptionRow {
+  userId: string;
+  campus: SpaceSelection['campus'];
+  formation: SpaceSelection['formation'];
+  associationId: string | null;
+}
+
 export interface CalendarViewer {
   userId?: string;
   isGlobalAdmin?: boolean;
@@ -2799,6 +2810,33 @@ export class AssociationsService {
   }
 
   /**
+   * A LEGACY SELECTION LINK SERVES WHAT EVERY ONE OF ITS POSSIBLE HOLDERS SEES (owner, 2026-11-14): a
+   * `sig` names no reader, and one signed for a campus alone, a formation alone or an association
+   * alone could have been handed to a reader of any open space it covers - so only the events
+   * reaching EVERY such space are kept (`eventReachesEveryOpenSpaceMatchingSql`). A pair is left as
+   * it was: every legitimate holder was in that space. The public an anonymous read withholds is
+   * `restrictAnonymousToPublicReach`'s, applied as well.
+   */
+  private restrictLegacyLinkToEveryHolder(
+    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+    selection: SpaceSelection | undefined
+  ): void {
+    const campus = selection?.campus ?? null;
+    const formation = selection?.formation ?? null;
+    if (campus !== null && formation !== null) return;
+    this.logger.debug(
+      `[AGENDA] legacy link ${formation ?? '*'} x ${campus ?? '*'}: events reaching every open space of it`
+    );
+    qb.andWhere(
+      eventReachesEveryOpenSpaceMatchingSql('e', {
+        campus: campus === null ? null : ':legacyCampus',
+        formation: formation === null ? null : ':legacyFormation',
+      }),
+      { legacyCampus: campus, legacyFormation: formation }
+    );
+  }
+
+  /**
    * AN ANONYMOUS READ NEVER CARRIES A "STUDENTS" OR "STAFF" EVENT (owner, 2026-11-13; the lead's
    * "same rules as posts", review of #3460): a post whose public is students or staff never reaches
    * an anonymous reader (the link preview refuses it), and neither does an event. An association-only
@@ -3623,17 +3661,17 @@ export class AssociationsService {
   }
 
   /**
-   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
-   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
-   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
-   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
-   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
+   * THE BOUND ON WHAT A SUBSCRIPTION SELECTOR MAY NAME (D40 amended 2026-10-06, tightened 2026-10-07):
+   * a pair that is one of the reader's OWN spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`),
+   * or - for a reader with a campus and NO cursus (EMSE staff) - their own campus alone; an
+   * association needs no membership, only to exist (404 otherwise). 403 `AGENDA_SELECTION_FORBIDDEN`
+   * outside it. It bounds the SELECTOR only: what a link serves is decided at every read.
    */
-  async signAgendaFeedSelection(
+  private async assertAgendaSelectionAllowed(
     userId: string,
     selection: SpaceSelection,
     associationId: string | null
-  ): Promise<{ sig: string }> {
+  ): Promise<void> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
     // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
@@ -3649,14 +3687,90 @@ export class AssociationsService {
     }
     if (!selectionWithinSpaces(selection, spaces, campusWide)) {
       this.logger.warn(
-        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+        `[AGENDA_SIG] refused campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
       );
       throw new ForbiddenException({
         code: AGENDA_SELECTION_FORBIDDEN,
         message: 'You can only subscribe to the agenda of your own campus and formations',
       });
     }
+  }
+
+  /**
+   * LEGACY (docs/wiki/legacy-compatibility.md): signs a selection for the store builds that still
+   * build `sig` links. Same bound as {@link subscribeAgenda}; the `sig` goes into the URL unchanged,
+   * and what it serves is narrowed at read time (`listAggregatedCalendarFeed`, `legacyLink`).
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
     return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
+   * THE HOLDER'S SUBSCRIPTION LINK (owner, 2026-11-14, "Respecter les publics"): the row of
+   * `agenda_subscriptions` for (reader, selection), created on first ask, and its token. Deterministic:
+   * the modal asks while it is open, and the same selection gives the same link until the reader
+   * revokes it (`INSERT ... ON CONFLICT DO NOTHING`, then the read; migration 170's index counts NULLs
+   * equal). The selection is bounded as the legacy one was; what the link SERVES is the holder's
+   * signed-in agenda, read at every poll.
+   */
+  async subscribeAgenda(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ token: string }> {
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
+    const params = [userId, selection.campus, selection.formation, associationId];
+    await this.assoRepo.manager.query(
+      `INSERT INTO agenda_subscriptions ("userId", campus, formation, "associationId")
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      params
+    );
+    const rows = (await this.assoRepo.manager.query(
+      `SELECT id FROM agenda_subscriptions
+        WHERE "userId" = $1 AND campus IS NOT DISTINCT FROM $2::varchar
+          AND formation IS NOT DISTINCT FROM $3::varchar
+          AND "associationId" IS NOT DISTINCT FROM $4::uuid`,
+      params
+    )) as Array<{ id: string }>;
+    if (rows.length !== 1) {
+      // The insert and the read name the same row: anything else is a schema fault, said as one.
+      this.logger.error(
+        `[AGENDA_SUBSCRIPTION] ${rows.length} row(s) for one selection of ${userId.slice(0, 8)}`
+      );
+      throw new InternalServerErrorException('Agenda subscription could not be read back');
+    }
+    this.logger.debug(
+      `[AGENDA_SUBSCRIPTION] link ${rows[0].id.slice(0, 8)} for ${userId.slice(0, 8)} campus=${selection.campus ?? '-'} formation=${selection.formation ?? '-'} association=${associationId ? associationId.slice(0, 8) : '-'}`
+    );
+    return { token: agendaSubscriptionToken(rows[0].id) };
+  }
+
+  /**
+   * Revokes every subscription link of the reader: their rows go, so every link they handed out
+   * answers 403, and the next {@link subscribeAgenda} mints a new id, hence a new link.
+   */
+  async revokeAgendaSubscriptions(userId: string): Promise<{ revoked: number }> {
+    const result = (await this.assoRepo.manager.query(
+      `DELETE FROM agenda_subscriptions WHERE "userId" = $1 RETURNING id`,
+      [userId]
+    )) as [unknown[], number];
+    const revoked = result[1];
+    this.logger.log(`[AGENDA_SUBSCRIPTION] ${userId.slice(0, 8)} revoked ${revoked} link(s)`);
+    return { revoked };
+  }
+
+  /** The subscription row a verified token names, or null when it is gone (revoked, erased). */
+  async findAgendaSubscription(id: string): Promise<AgendaSubscriptionRow | null> {
+    const rows = (await this.assoRepo.manager.query(
+      `SELECT "userId", campus, formation, "associationId" FROM agenda_subscriptions WHERE id = $1`,
+      [id]
+    )) as AgendaSubscriptionRow[];
+    return rows[0] ?? null;
   }
 
   /**
@@ -3686,6 +3800,11 @@ export class AssociationsService {
       selection?: SpaceSelection;
       /** The one-event `.ics` link, signed for that event: no public is withheld from it. */
       signedEvent?: boolean;
+      /**
+       * A LEGACY `sig` selection link (docs/wiki/legacy-compatibility.md): no holder is named, so a
+       * selection that is not a pair serves only what reaches every open space it covers.
+       */
+      legacyLink?: boolean;
     }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
@@ -3723,6 +3842,7 @@ export class AssociationsService {
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
     this.restrictToSelection(qb, opts?.selection);
+    if (opts?.legacyLink) this.restrictLegacyLinkToEveryHolder(qb, opts.selection);
     this.restrictAnonymousToPublicReach(qb, opts);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.

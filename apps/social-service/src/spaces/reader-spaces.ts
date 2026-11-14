@@ -261,6 +261,37 @@ export function eventReachesSpaceMatchingSql(
 }
 
 /**
+ * THE LEGACY SELECTION LINK, NARROWED TO WHAT EVERY HOLDER SEES (owner, 2026-11-14, "Respecter les
+ * publics"): calendar event row `event` reaches EVERY OPEN SPACE matching `filter` (sides as in
+ * {@link eventReachesSpaceMatchingSql}; both `null` = every open space) - there is at least one such
+ * space, and NO open matching space the event does not reach ({@link eventReachesSpaceMatchingSql}
+ * asked of that exact space). A legacy `sig` link names no holder; one signed for a campus alone (a
+ * staff link) or an association alone could have been handed to a reader of ANY space it covers, so
+ * it may serve only what all of them see. A pair needs none of this: every legitimate holder was in
+ * that one space. Open spaces are the rows of `spaces` (D17); with none matching, nothing is served.
+ */
+export function eventReachesEveryOpenSpaceMatchingSql(
+  event: string,
+  filter: { formation: string | null; campus: string | null }
+): string {
+  const matches = (space: string) =>
+    [
+      filter.formation === null ? null : `${space}.formation = ${filter.formation}`,
+      filter.campus === null ? null : `${space}.campus = ${filter.campus}`,
+    ]
+      .filter((c): c is string => c !== null)
+      .map((c) => ` AND ${c}`)
+      .join('');
+  const reachesThatSpace = eventReachesSpaceMatchingSql(event, {
+    formation: 'every_space.formation',
+    campus: 'every_space.campus',
+  });
+  return `(EXISTS (SELECT 1 FROM spaces any_space WHERE true${matches('any_space')})
+    AND NOT EXISTS (SELECT 1 FROM spaces every_space WHERE true${matches('every_space')}
+      AND NOT ${reachesThatSpace}))`;
+}
+
+/**
  * An association that REPUBLISHED post row `post` (D38, `post_republications`) is visible to user
  * row `user` - the same predicate as the original's association, applied to the republisher: a
  * member of it (D21) or a reader its rules reach.

@@ -334,6 +334,30 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal at < 1 % of agenda reads over 7 days, floor at the token release - the `sig` agenda link (owner, 2026-11-14)
+
+**Site:** the `sig` branch of `GET /api/associations/calendar/feed.ics` and of the anonymous
+`calendar/feed` (`assertAgendaAccess`, `assertAgendaSignature`, `logLegacyLink` in
+`associations.controller.ts`), `POST calendar/feed-signature` and `AssociationsService.signAgendaFeedSelection`,
+the `legacyLink` option of `listAggregatedCalendarFeed` with `restrictLegacyLinkToEveryHolder`, and
+`eventReachesEveryOpenSpaceMatchingSql` (`spaces/reader-spaces.ts`).
+**What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
+`?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
+the token link, whose modal still asks `feed-signature` and builds such links. Since 2026-11-14 a link
+is its holder's (`?token=`, [D40 re-decided](profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders));
+a `sig` names no one, so it is SERVED NARROWED to what every reader who could hold it sees: a pair
+(campus AND formation) as before, anything wider only the events reaching EVERY open space it covers,
+an event for students or staff never.
+**The cost while it stands:** a second agenda link that names no holder and cannot be revoked alone
+(only a key rotation ends it), and a second filter on the feed.
+**Measured by:** one WARN line per read, `[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association`
+(no id), against the agenda reads of the same days.
+**Removal condition:** the tag is under 1 % of agenda reads over 7 consecutive days, AND NOT BEFORE
+`minClientVersion` is at least the store version that ships the token link (the floor rule above).
+Then, in one pull request: the `sig` branch of both feeds (a `sig` is then the 403 it was without a
+signature), `feed-signature`, `signAgendaFeedSelection`, `legacyLink` and its helper, their specs, and
+this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
+
 ### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
 
 - **What.** `POST /minesweeper/challenges` answers `426 generator_update_required` to a client that does not
@@ -1713,11 +1737,13 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
 - **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
   (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
   before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
-  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  subscribes again from `/calendar` or the association's page; the modal said so until 2026-11-14
+  (`calendar_subscribe_old_links_notice`, removed when the link became its holder's).
   The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
   modal builds unsigned links until it updates: they are refused.
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
-  break on purpose (it is the revocation) and needs no code.
+  break on purpose and needs no code. Since 2026-11-14 a holder also revokes their own links alone, and
+  the `sig` link itself is a dated shim (the diary entry above).
 
 ## Nothing to remove - an UNSIGNED single-event calendar link now gets a 403 (2026-11-02)
 

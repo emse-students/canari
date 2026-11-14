@@ -1,17 +1,22 @@
 import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { isUUID } from 'class-validator';
 import type { SpaceSelection } from './directory-query';
 import type { SpacePair } from '../spaces/reader-spaces';
 
 /**
- * THE SIGNED AGENDA URL (D40 amended 2026-10-06, docs/wiki/profiles-and-access.md).
+ * THE AGENDA LINKS A CALENDAR APP OPENS WITH NO IDENTITY (docs/wiki/profiles-and-access.md).
  *
- * A calendar app sends no identity, so a subscription cannot be restricted by WHO asks. It is
- * restricted by WHAT is asked: the URL carries `sig`, an HMAC of the canonical selection (campus,
- * formation, association) under `AGENDA_SIGNING_KEY`, and the server signs ONLY selections inside
- * the signed-in reader's own spaces. The signature names no one: two readers of the same campus
- * hold the same URL, and a URL saved by a student keeps working for as long as the key does.
- * Rotating the key ends every saved URL at once - that is the revocation.
+ * SINCE 2026-11-14 ("Respecter les publics", D40 re-decided): a subscription link names its HOLDER.
+ * Its token is `<subscription id>.<HMAC of the id>` ({@link agendaSubscriptionToken}), the id a row of
+ * `agenda_subscriptions` (migration 170), and the feed it opens is the holder's own signed-in agenda,
+ * re-read at every poll. Deleting the row revokes the link; the account erasure deletes it too.
+ *
+ * THE LEGACY SELECTION LINK (D40 amended 2026-10-06, a dated shim - docs/wiki/legacy-compatibility.md):
+ * `sig`, an HMAC of the canonical selection (campus, formation, association), names no one. It is
+ * still verified so saved links keep working, but what it serves is narrowed to what EVERY reader who
+ * could have been handed it sees (`legacyAgendaLinkShape`, `eventReachesEveryOpenSpaceMatchingSql`).
+ * Rotating the key ends every link of every kind at once.
  */
 
 /** 403 code: the selection names a campus / formation / association and carries no `sig`. */
@@ -132,6 +137,54 @@ export function withOneEventIcsSig<T extends { id: string; status?: string }>(
 /** Constant-time check of an event `.ics` link's signature; false when absent or wrong. */
 export function eventIcsSignatureMatches(eventId: string, sig: string | undefined): boolean {
   return agendaKeySignatureMatches(canonicalEventIcs(eventId), sig);
+}
+
+/**
+ * The canonical string of one subscription's link: its own `v2|subscription=` prefix, so neither a
+ * selection's signature nor an event's can be read as a subscription token, nor the reverse.
+ */
+export function canonicalAgendaSubscription(subscriptionId: string): string {
+  return `v2|subscription=${subscriptionId}`;
+}
+
+/** The token a subscription link carries: `<id>.<base64url HMAC of the canonical id>`. */
+export function agendaSubscriptionToken(subscriptionId: string): string {
+  return `${subscriptionId}.${signWithAgendaKey(canonicalAgendaSubscription(subscriptionId))}`;
+}
+
+/**
+ * The subscription id a token names, once its HMAC is checked (constant time) - or null for a token
+ * that is malformed, names no uuid or is wrongly signed. Whether the row still EXISTS (revoked, erased)
+ * is the caller's question: a correct signature proves only that the server minted it.
+ */
+export function verifiedAgendaSubscriptionId(token: string | undefined): string | null {
+  const raw = token?.trim() ?? '';
+  const dot = raw.indexOf('.');
+  if (dot <= 0) return null;
+  const id = raw.slice(0, dot);
+  if (!isUUID(id)) return null;
+  return agendaKeySignatureMatches(canonicalAgendaSubscription(id), raw.slice(dot + 1)) ? id : null;
+}
+
+/** The WARN tag of a refused subscription token (unknown, revoked or wrongly signed). */
+export const AGENDA_SUBSCRIPTION_REFUSED_TAG = '[AGENDA_SUBSCRIPTION_REFUSED]';
+
+/** The WARN tag of every read through a legacy `sig` link: the count its removal waits on. */
+export const AGENDA_LEGACY_LINK_TAG = '[AGENDA_LEGACY_LINK]';
+
+/**
+ * What a legacy selection link names, for its log line and its narrowing: a space (`pair`, with or
+ * without an association), a `campus` alone (the staff link), a `formation` alone (signed before the
+ * 2026-10-07 tightening) or an `association` alone.
+ */
+export type LegacyAgendaLinkShape = 'pair' | 'campus' | 'formation' | 'association';
+
+/** The shape of a legacy selection (see {@link LegacyAgendaLinkShape}). */
+export function legacyAgendaLinkShape(sel: SpaceSelection): LegacyAgendaLinkShape {
+  if (sel.campus !== null && sel.formation !== null) return 'pair';
+  if (sel.campus !== null) return 'campus';
+  if (sel.formation !== null) return 'formation';
+  return 'association';
 }
 
 /**

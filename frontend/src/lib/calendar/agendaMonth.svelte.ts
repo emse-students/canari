@@ -38,9 +38,9 @@ export function monthRangeISO(d: Date): MonthRangeISO {
  *
  * A scroll that never terminates cannot tell "nothing more is planned" from "still loading", so the
  * window has a stated end and the list says so in words when it reaches it. Twelve months is the
- * range the `.ics` subscription already publishes (`icsSubscriptionRangeISO`) and the one the
- * backend falls back to when a feed URL carries no window - so this is the horizon the app already
- * had, now visible to the reader rather than only to the calendar app.
+ * window the backend falls back to when a feed URL carries none - which the `.ics` subscription link
+ * never does - so this is the horizon the app already had, now visible to the reader rather than
+ * only to the calendar app.
  */
 export const ROLLING_HORIZON_MONTHS = 12;
 

@@ -11,7 +11,10 @@
   import { navigateExternal } from '$lib/utils/openExternal';
   import { copyText } from '$lib/utils/clipboard';
   import { Log } from '$lib/utils/Log';
-  import type { FeedSigningStatus } from '$lib/calendar/signedFeedUrl.svelte';
+  import type {
+    SubscriptionLinkStatus,
+    SubscriptionRevokeStatus,
+  } from '$lib/calendar/subscriptionLink.svelte';
 
   /**
    * Subscribe options for an `.ics` feed, ordered by what works on the platform reading them.
@@ -38,13 +41,29 @@
     /** Intro line shown above the options - context-specific per caller (one club vs. everyone). */
     intro: string;
     /**
-     * Where the link's signature stands (2026-10-06): the URL is empty until the server has signed
+     * Where the reader's link stands (2026-11-14): the URL is empty until the server has answered
      * the selection, and an empty URL with `error` is a refusal the reader must be told about.
      */
-    signing?: FeedSigningStatus;
+    signing?: SubscriptionLinkStatus;
+    /**
+     * Revokes every subscription link of the reader, then asks for a new one (2026-11-14). Absent:
+     * no revoke button (the URL is not a holder's link).
+     */
+    onRevoke?: () => Promise<void>;
+    /** Where the revocation `onRevoke` started stands. */
+    revokeStatus?: SubscriptionRevokeStatus;
   }
 
-  let { open, onClose, icsUrl, intro, selector, signing = 'ready' }: Props = $props();
+  let {
+    open,
+    onClose,
+    icsUrl,
+    intro,
+    selector,
+    signing = 'ready',
+    onRevoke,
+    revokeStatus = 'idle',
+  }: Props = $props();
 
   const os = detectRuntimeDeviceOs('desktop');
   const isPhone = isPhoneOs(os);
@@ -178,8 +197,8 @@
 
     {@render selector?.()}
 
-    <p class="text-text-muted text-xs" data-subscribe-old-links>
-      {m.calendar_subscribe_old_links_notice()}
+    <p class="text-text-muted text-xs" data-subscribe-holder-notice>
+      {m.calendar_subscribe_holder_notice()}
     </p>
     {#if signing === 'signing'}
       <p class="text-text-muted text-xs" role="status" data-subscribe-signing>
@@ -205,6 +224,35 @@
     {:else}
       {@render googleSection()}
       {@render appSection()}
+    {/if}
+
+    {#if onRevoke}
+      <div class="space-y-2" data-subscribe-revoke-section>
+        <button
+          type="button"
+          onclick={() => {
+            Log.d('CalendarSubscribe', 'the reader revokes their subscription links');
+            void onRevoke();
+          }}
+          disabled={revokeStatus === 'revoking'}
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex w-full items-center justify-center rounded-xl border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60"
+          data-subscribe-revoke
+        >
+          {revokeStatus === 'revoking'
+            ? m.calendar_subscribe_revoking()
+            : m.calendar_subscribe_revoke_button()}
+        </button>
+        <p class="text-text-muted text-xs">{m.calendar_subscribe_revoke_hint()}</p>
+        {#if revokeStatus === 'revoked'}
+          <p class="text-text-muted text-xs" role="status" data-subscribe-revoked>
+            {m.calendar_subscribe_revoked()}
+          </p>
+        {:else if revokeStatus === 'failed'}
+          <p class="text-red-err text-xs" role="alert" data-subscribe-revoke-failed>
+            {m.calendar_subscribe_revoke_failed()}
+          </p>
+        {/if}
+      </div>
     {/if}
 
     <p class="text-text-muted text-2xs">

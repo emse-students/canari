@@ -1,16 +1,22 @@
-import { BadRequestException, ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, ParseUUIDPipe } from '@nestjs/common';
 import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { AssociationsController, INSTITUTION_DELETE_ADMIN_ONLY } from './associations.controller';
-import { AssociationsService } from './associations.service';
+import { AssociationsService, type AgendaSubscriptionRow } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
-import { signAgendaSelection, signEventIcs, withEventIcsSig } from './agenda-signature';
+import {
+  agendaSubscriptionToken,
+  signAgendaSelection,
+  signEventIcs,
+  withEventIcsSig,
+} from './agenda-signature';
+import { AGENDA_TOKEN_NOT_ALONE } from './directory-query';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
@@ -807,6 +813,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       associationId?: string;
       eventId?: string;
       sig?: string;
+      token?: string;
     }
   ) =>
     controller.aggregatedCalendarFeedIcs(
@@ -817,7 +824,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       res,
       args.campus,
       args.formation,
-      args.sig
+      args.sig,
+      args.token
     );
   const json = (args: { campus?: string; userId?: string; sig?: string }) =>
     makeController().aggregatedCalendarFeed(
@@ -829,7 +837,9 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       undefined,
       args.campus,
       undefined,
-      args.sig
+      args.sig,
+      undefined,
+      res
     );
 
   it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
@@ -846,6 +856,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
         selection: { campus: 'gardanne', formation: 'ICM' },
         // Not a one-event link: an anonymous read withholds a public-only event (2026-11-13).
         signedEvent: false,
+        // A `sig` selection is the legacy link (2026-11-14): narrowed to what every holder sees.
+        legacyLink: true,
       }
     );
     await expect(ics(controller, { campus: 'paris' })).rejects.toThrow('Unknown campus: paris');
@@ -983,7 +995,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
           { setHeader: jest.fn(), status } as never,
           undefined,
           undefined,
-          sig
+          sig,
+          undefined
         );
         expect(status).toHaveBeenCalledWith(403);
         expect(body).toBe('');
@@ -1042,6 +1055,295 @@ describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () 
     await expect(controller.signCalendarFeedSelection('u1', { campus: 'paris' })).rejects.toThrow(
       'Unknown campus: paris'
     );
+  });
+});
+
+describe('AssociationsController - the subscription link is its holder (2026-11-14)', () => {
+  const KEY = 'agenda-test-key-0123456789abcdef0123456789';
+  const previousKey = process.env.AGENDA_SIGNING_KEY;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+  });
+  afterAll(() => {
+    if (previousKey === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previousKey;
+  });
+
+  const SUB = '00000000-0000-4000-8000-00000000a001';
+  const ASSO = '00000000-0000-4000-8000-00000000b001';
+  const rows = [
+    {
+      id: 'ev1',
+      title: 'Gala',
+      description: null,
+      startsAt: '2026-11-05T18:00:00.000Z',
+      endsAt: null,
+      associationName: 'BDE',
+      associationSlug: 'bde',
+    },
+  ];
+
+  /** A service holding subscription rows in memory, the way the table does. */
+  function makeController(initial: Record<string, AgendaSubscriptionRow> = {}) {
+    const table = new Map(Object.entries(initial));
+    const service = {
+      listAggregatedCalendarFeed: jest.fn(() => Promise.resolve(rows)),
+      findAgendaSubscription: jest.fn((id: string) => Promise.resolve(table.get(id) ?? null)),
+      subscribeAgenda: jest.fn(() => Promise.resolve({ token: agendaSubscriptionToken(SUB) })),
+      revokeAgendaSubscriptions: jest.fn((userId: string) => {
+        let revoked = 0;
+        for (const [id, row] of table) {
+          if (row.userId === userId) {
+            table.delete(id);
+            revoked += 1;
+          }
+        }
+        return Promise.resolve({ revoked });
+      }),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService,
+      {} as never,
+      {} as never
+    );
+    return { controller, service };
+  }
+  const holder: AgendaSubscriptionRow = {
+    userId: 'holder',
+    campus: 'saint-etienne',
+    formation: 'ICM',
+    associationId: null,
+  };
+  const response = () => ({ setHeader: jest.fn(), status: jest.fn() });
+  const ics = (
+    controller: AssociationsController,
+    res: ReturnType<typeof response>,
+    args: {
+      token?: string;
+      sig?: string;
+      campus?: string;
+      associationId?: string;
+      eventId?: string;
+    }
+  ) =>
+    controller.aggregatedCalendarFeedIcs(
+      undefined,
+      undefined,
+      args.associationId,
+      args.eventId,
+      res as never,
+      args.campus,
+      undefined,
+      args.sig,
+      args.token
+    );
+
+  it("serves EXACTLY the holder's signed-in agenda for the row's selection, privately cached", async () => {
+    const { controller, service } = makeController({ [SUB]: holder });
+    const res = response();
+    const body = await ics(controller, res, { token: agendaSubscriptionToken(SUB) });
+    expect(body).toContain('UID:ev1@canari');
+    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      {
+        viewer: { userId: 'holder' },
+        selection: { campus: 'saint-etienne', formation: 'ICM' },
+      }
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, max-age=120');
+    expect(res.setHeader).not.toHaveBeenCalledWith('Cache-Control', 'public, max-age=120');
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("an association row reads that association's agenda as its holder", async () => {
+    const { controller, service } = makeController({
+      [SUB]: { ...holder, campus: null, formation: null, associationId: ASSO },
+    });
+    await ics(controller, response(), { token: agendaSubscriptionToken(SUB) });
+    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(undefined, undefined, ASSO, {
+      viewer: { userId: 'holder' },
+      selection: { campus: null, formation: null },
+    });
+  });
+
+  it('refuses an unknown, a forged or a malformed token with a BODYLESS 403, logged, and reads no feed', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const token = agendaSubscriptionToken(SUB);
+      const forged = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+      const other = agendaSubscriptionToken('00000000-0000-4000-8000-00000000a002');
+      const selectionSig = signAgendaSelection({
+        campus: 'gardanne',
+        formation: null,
+        associationId: null,
+      });
+      for (const [rowsHeld, candidate] of [
+        [{}, token],
+        [{ [SUB]: holder }, forged],
+        [{ [SUB]: holder }, `${SUB}.${other.split('.')[1]}`],
+        [{ [SUB]: holder }, `${SUB}.${selectionSig}`],
+        [{ [SUB]: holder }, 'not-a-token'],
+      ] as const) {
+        const { controller, service } = makeController(rowsHeld);
+        const res = response();
+        expect(await ics(controller, res, { token: candidate })).toBe('');
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+      }
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.filter((l) => l.startsWith('[AGENDA_SUBSCRIPTION_REFUSED]'))).toHaveLength(5);
+      // The id is cut to 8 characters: a refused token is never logged whole.
+      expect(lines.some((l) => l.includes(token))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('refuses a token with a sig, a selection or an event beside it: a 400, never one of them', async () => {
+    const token = agendaSubscriptionToken(SUB);
+    for (const extra of [
+      { sig: 'x' },
+      { campus: 'gardanne' },
+      { associationId: ASSO },
+      { eventId: 'ev1' },
+    ]) {
+      const { controller, service } = makeController({ [SUB]: holder });
+      await expect(ics(controller, response(), { token, ...extra })).rejects.toMatchObject({
+        status: 400,
+        response: { code: AGENDA_TOKEN_NOT_ALONE },
+      });
+      expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+    }
+  });
+
+  it('the JSON feed reads a token the same way, privately cached, and refuses it bodyless', async () => {
+    const { controller, service } = makeController({ [SUB]: holder });
+    const res = response();
+    const json = (token: string) =>
+      controller.aggregatedCalendarFeed(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        token,
+        res as never
+      );
+    await expect(json(agendaSubscriptionToken(SUB))).resolves.toHaveLength(1);
+    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      {
+        viewer: { userId: 'holder' },
+        selection: { campus: 'saint-etienne', formation: 'ICM' },
+      }
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, max-age=120');
+    const refused = response();
+    await expect(
+      controller.aggregatedCalendarFeed(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        agendaSubscriptionToken('00000000-0000-4000-8000-00000000a009'),
+        refused as never
+      )
+    ).resolves.toBe('');
+    expect(refused.status).toHaveBeenCalledWith(403);
+  });
+
+  it('DELETE calendar/subscriptions revokes: the old token then answers 403', async () => {
+    const { controller } = makeController({
+      [SUB]: holder,
+      '00000000-0000-4000-8000-00000000a003': { ...holder, userId: 'someone-else' },
+    });
+    const token = agendaSubscriptionToken(SUB);
+    const before = response();
+    await ics(controller, before, { token });
+    expect(before.status).not.toHaveBeenCalled();
+    await expect(controller.revokeCalendarSubscriptions('holder')).resolves.toEqual({ revoked: 1 });
+    const after = response();
+    expect(await ics(controller, after, { token })).toBe('');
+    expect(after.status).toHaveBeenCalledWith(403);
+    // Another holder's link is not theirs to revoke.
+    const theirs = response();
+    await ics(controller, theirs, {
+      token: agendaSubscriptionToken('00000000-0000-4000-8000-00000000a003'),
+    });
+    expect(theirs.status).not.toHaveBeenCalled();
+  });
+
+  it('POST calendar/subscription and DELETE calendar/subscriptions are behind the sign-in guard', () => {
+    for (const route of ['subscribeCalendarFeed', 'revokeCalendarSubscriptions'] as const) {
+      const guards = Reflect.getMetadata(
+        GUARDS_METADATA,
+        AssociationsController.prototype[route]
+      ) as unknown[] | undefined;
+      expect(guards).toContain(NginxAuthGuard);
+    }
+  });
+
+  it('POST calendar/subscription parses the selection and refuses an empty one with a 400', async () => {
+    const { controller, service } = makeController();
+    await expect(
+      controller.subscribeCalendarFeed('u1', { campus: 'gardanne', formation: 'ICM' })
+    ).resolves.toEqual({ token: agendaSubscriptionToken(SUB) });
+    expect(service.subscribeAgenda).toHaveBeenCalledWith(
+      'u1',
+      { campus: 'gardanne', formation: 'ICM' },
+      null
+    );
+    await controller.subscribeCalendarFeed('u1', { associationId: ` ${ASSO} ` });
+    expect(service.subscribeAgenda).toHaveBeenLastCalledWith(
+      'u1',
+      { campus: null, formation: null },
+      ASSO
+    );
+    await expect(controller.subscribeCalendarFeed('u1', {})).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_REQUIRED' },
+    });
+    await expect(controller.subscribeCalendarFeed('u1', { campus: 'paris' })).rejects.toThrow(
+      'Unknown campus: paris'
+    );
+  });
+
+  it('a legacy sig read is served narrowed and logs ONE [AGENDA_LEGACY_LINK] line with its shape', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { controller, service } = makeController();
+      const sig = signAgendaSelection({ campus: null, formation: null, associationId: ASSO });
+      await ics(controller, response(), { associationId: ASSO, sig });
+      expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        ASSO,
+        expect.objectContaining({ legacyLink: true })
+      );
+      const legacy = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('[AGENDA_LEGACY_LINK]'));
+      expect(legacy).toEqual(['[AGENDA_LEGACY_LINK] shape=association']);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
