@@ -2,11 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
+import { publicRetention, type PublicRetention } from '../platform/retention';
 import type {
   CallsMode,
   CheckpointSkipMode,
   LivesMode,
   LiveReplaysMode,
+  GroupCallsMode,
+  CallRelay,
 } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
@@ -32,6 +35,20 @@ export type AppVersionResponse = {
    */
   calls: {
     mode: CallsMode;
+    /**
+     * The group calls switch (`platform_config.group_calls_mode`): `mesh` lets a group conversation
+     * call peer to peer (4 in audio, 3 in video). ENFORCED BY CHAT-DELIVERY-SERVICE at `initiate`
+     * (403 `GROUP_CALLS_DISABLED`); a client reads it to hide the control, and reads an absent or
+     * unknown value as `off`. `mode = off` still closes everything.
+     */
+    groupMode: GroupCallsMode;
+    /**
+     * Which relay carries a group call (`platform_config.call_relay`, WP-GC4): `none` - the mesh,
+     * refused past its cap; `call-service` - our SFU, from the start. ENFORCED BY
+     * CHAT-DELIVERY-SERVICE, which signs the mode into the room tokens; a client reads it to say
+     * what a group call will be, and reads an absent or unknown value as `none`.
+     */
+    relay: CallRelay;
   };
   /**
    * The server's kill switch for lives (`platform_config.lives_mode`). Clients hide the live card,
@@ -59,6 +76,12 @@ export type AppVersionResponse = {
   liveReplays: {
     mode: LiveReplaysMode;
   };
+  /**
+   * The retention durations in force, in days (`platform_config.retention_*`, migration 025). The
+   * privacy policy renders them, so the text a member reads is the value the services apply; each
+   * service reads the column itself at the creation of an item. Absent from an older server.
+   */
+  retention: PublicRetention;
   /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
    * `POST /api/auth/oidc/callback` to MiConnect. A client sends a `code_challenge` only to a server
@@ -119,6 +142,27 @@ export type AppVersionResponse = {
    * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
    */
   rankedFeeds: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: it lets a
+   * respondent change their own answer (`forms.allowAnswerEdit`, migration 166: `GET
+   * /forms/:id/my-answers`, `PUT /forms/:id/submissions/:submissionId/answers`). An older
+   * social-service answers both `404` and strips the switch from a form's save (its validation
+   * whitelists the body) - and a store build reaches phones before production deploys: the client
+   * offers neither the switch nor "Modifier ma reponse" on an estate that does not say so. Always
+   * `true` from this release on (docs/wiki/legacy-compatibility.md, "an answer editor newer than its
+   * server").
+   */
+  formAnswerEdit: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: an
+   * institution's calendar event carries a reach (migration 165, `GET
+   * /api/associations/:id/events/reach-options`). An older social-service answers the options route
+   * `404` and cannot store a reach, and a store build reaches phones before production deploys: the
+   * event form draws the reach picker, and requires it, only on an estate that says so. Always
+   * `true` from this release on (docs/wiki/legacy-compatibility.md, "an event form newer than its
+   * server").
+   */
+  eventReach: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -138,16 +182,23 @@ export class VersionService {
         enabled: platform.maintenanceEnabled,
         message: platform.maintenanceMessage,
       },
-      calls: { mode: platform.callsMode },
+      calls: {
+        mode: platform.callsMode,
+        groupMode: platform.groupCallsMode,
+        relay: platform.callRelay,
+      },
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },
+      retention: publicRetention(platform),
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,
       formDrafts: true,
       gridRequiredSwitch: true,
       rankedFeeds: true,
+      formAnswerEdit: true,
+      eventReach: true,
     };
   }
 }

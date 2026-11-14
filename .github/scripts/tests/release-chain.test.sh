@@ -463,10 +463,13 @@ if [ -r "$AM" ]; then
     pass 'the arming runs in parallel with the suite, which is what --auto is for'
   fi
 
-  if grep -qE 'pr merge [^|]*--auto' <<<"$AM_CODE"; then
+  # Either spelling of "arm, and let GitHub merge when the required check is green": the
+  # `enablePullRequestAutoMerge` mutation (Canari since 2026-11-14, which can only arm) or
+  # `gh pr merge --auto` (which also merges by itself when the pull request looks mergeable to it).
+  if grep -qE 'enablePullRequestAutoMerge|pr merge [^|]*--auto' <<<"$AM_CODE"; then
     pass 'it arms and holds no opinion about green - GitHub reads CI passed, the one check the ruleset requires'
   else
-    fail 'the arming does not use --auto - it would be merging on its own reading of green, a second opinion beside the required check'
+    fail 'the arming does not arm auto-merge - it would be merging on its own reading of green, a second opinion beside the required check'
   fi
 
   if grep -q -- '--delete-branch' <<<"$AM_CODE"; then

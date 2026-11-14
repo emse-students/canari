@@ -38,7 +38,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
@@ -116,7 +119,8 @@
   } from '$lib/forms/draftCopies';
   import { tellCopyDropped } from '$lib/forms/draftResend';
   import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
-  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
@@ -141,6 +145,10 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 166). */
+  let allowAnswerEdit = $state(false);
+  /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
+  const answerEditAvailable = serverFormAnswerEdit() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -310,14 +318,14 @@
   });
 
   /**
-   * The associations a draft may be moved to: the builder's memberships (the server asks membership
-   * of both sides), with the draft's own one even when it is not among them - a global admin's, or
+   * The associations a draft may be moved to: those whose forms the builder manages (the server asks
+   * MANAGE_FORMS of both sides, `formManagedAssociations`), with the draft's own one even when it is not among them - a global admin's, or
    * one the builder has left - so the picker always names where the draft is.
    */
   async function draftAssociationChoices(): Promise<Association[]> {
     let mine: Association[] = [];
     try {
-      mine = await listMyAssociations();
+      mine = formManagedAssociations(await listMyAssociations());
     } catch (e) {
       console.warn(
         `[forms-editor] memberships not loaded; the draft's own association alone is offered: ${e}`
@@ -411,6 +419,7 @@
     allowCashPayment = f.allowCashPayment ?? false;
     allowOnlinePayment = f.allowOnlinePayment ?? true;
     allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
+    allowAnswerEdit = f.allowAnswerEdit ?? false;
     anonymous = f.anonymous ?? false;
     isPublic = f.isPublic ?? false;
     guestFields = askedGuestFields(f.guestFields);
@@ -458,6 +467,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -636,6 +646,7 @@
       items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
+      ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
       guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
@@ -975,6 +986,8 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
+      {answerEditAvailable}
       bind:anonymous
       anonymousFixed={!isDraft}
       bind:isPublic

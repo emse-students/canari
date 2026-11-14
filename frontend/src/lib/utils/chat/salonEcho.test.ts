@@ -58,6 +58,11 @@ describe('nextEchoMessages', () => {
     expect(next?.[1].awaitingServerId).toBeUndefined();
   });
 
+  it('keeps the key the row was drawn under, so the thread updates it and does not remount it', () => {
+    const settled = nextEchoMessages([echo()], 'local', { kind: 'settled', serverId: 'srv' });
+    expect(settled?.[0]).toMatchObject({ id: 'srv', renderKey: 'local' });
+  });
+
   it('never duplicates: the server row already there means the echo is dropped', () => {
     const next = nextEchoMessages([row('srv'), echo()], 'local', {
       kind: 'settled',

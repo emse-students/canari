@@ -37,7 +37,12 @@ import {
   type OwedWelcome,
   type PendingSubmissionRead,
 } from '$lib/mls-client/commitSubmission';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type {
+  DeviceEvent,
+  DevicePin,
+  KeyPackageVerdict,
+  MembershipEvidence,
+} from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
@@ -672,18 +677,19 @@ export class TauriMlsService extends BaseMlsService {
           () => unwatch(),
           (e: unknown) => {
             unwatch();
-            // THE REFUSAL IS THE ANSWER TO OUR OWN FRAME, WHETHER OR NOT ITS `Close` HAS ARRIVED.
-            // The gateway answers `disconnect` by ending the connection (`handle_disconnect`: the
-            // recv loop breaks), and the plugin forgets a connection the instant the peer's Close
-            // reaches Rust - BEFORE it delivers that `Close` to this page. So `disconnect()` can
-            // be refused ("closed connection") ahead of the `Close` message the watcher waits
-            // for: the plugin gives no earlier signal, and the sign-out reading of 2026-11-08 (Mi 9T,
-            // 77 ms between the accepted frame and the refusal) lost exactly that race. The frame
-            // was ACCEPTED, so the socket is released by the gateway, which is what was asked.
+            // A REFUSAL MEANS THE PEER HAD ALREADY ENDED THE CONNECTION. Since 2026-11-14 the
+            // gateway no longer ends it on `disconnect`: it retires the session, then waits for
+            // THIS `disconnect()`'s Close and answers it, so the ordinary path is the success
+            // above (docs/wiki/services/chat-gateway.md). Before that it dropped the connection
+            // at once and the plugin, which forgets a connection the instant the peer's Close
+            // reaches Rust and before it delivers that `Close` here, refused this call - the race
+            // of the 2026-11-08 sign-out reading (Mi 9T, 77 ms). What can still refuse is a peer
+            // that ended the socket for its own reason (a gateway retired by a release, the
+            // network): the frame was ACCEPTED and the session is gone with the connection.
             console.log(
               closedNatively
                 ? `[WS] pauseSocket: the peer had already closed the socket (${String(e)}) - released.`
-                : `[WS] pauseSocket: the gateway closed the socket on our disconnect frame before the native release ran (${String(e)}) - released.`
+                : `[WS] pauseSocket: the connection was gone before the native release ran (${String(e)}) - released.`
             );
           }
         );
@@ -1578,6 +1584,14 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
   protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
     return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
+  /** Tauri-native `invoke` wrapper - `preuves_appartenance` (`MembershipEvidence`, camelCase). */
+  protected async membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence> {
+    return invoke<MembershipEvidence>('preuves_appartenance', { groupId, userId });
   }
 
   /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */

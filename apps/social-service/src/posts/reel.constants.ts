@@ -25,9 +25,11 @@ export const CHAT_REEL_MAX_DURATION_MS = 60_000;
 export const CHAT_REEL_MAX_TARGETS = 15;
 
 /**
- * How long a reel lives: ONE YEAR (owner, 2026-11-09, replacing C6's month). Applied ONCE, at
- * creation, into `posts.expiresAt`; the reels published under the month were moved to the year by
- * migration 158. A live REPLAY (`kind = 'replay'`) keeps its own lifetime and never reads this one.
+ * How long a reel lived when the lifetime became an admin setting: ONE YEAR (owner, 2026-11-09,
+ * replacing C6's month). Since 2026-11-14 the value IN FORCE is `platform_config.retention_reel_days`
+ * (core migration 025, created at this value), read at each publication and applied ONCE into
+ * `posts.expiresAt` (`common/retention-settings.ts`); this constant is the year migration 158 moved
+ * the earlier reels to, and nothing reads it to stamp a new reel.
  */
 export const REEL_RETENTION_DAYS = 365;
 
@@ -86,8 +88,11 @@ export function isExpiredPost(
   return new Date(post.expiresAt).getTime() <= now;
 }
 
-/** The numbers as the API serves them. */
-export function reelLimits(): {
+/**
+ * The numbers as the API serves them. `retentionDays` is the lifetime IN FORCE (the admin setting),
+ * which the caller reads from `platform_config` - never a constant a later setting would contradict.
+ */
+export function reelLimits(retentionDays: number): {
   maxDurationMs: number;
   chatMaxDurationMs: number;
   chatReelMaxTargets: number;
@@ -100,7 +105,7 @@ export function reelLimits(): {
     maxAspectRatio: REEL_MAX_ASPECT_RATIO,
     chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
     chatReelMaxTargets: CHAT_REEL_MAX_TARGETS,
-    retentionDays: REEL_RETENTION_DAYS,
+    retentionDays,
     warningWindowDays: REEL_EXPIRY_WARNING_DAYS,
   };
 }

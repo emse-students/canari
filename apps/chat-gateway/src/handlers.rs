@@ -46,6 +46,9 @@ enum SocketEnd {
     /// measurement below and not one variant wider, so a family nobody has seen arrives as the
     /// only ERROR line on the box rather than hiding inside a name that was widened to fit it.
     Fault,
+    /// The client sent a frame longer than this gateway accepts (`FrameLimits::max_frame_bytes`):
+    /// the socket refused it before buffering it. A refusal the gateway chose, said as one.
+    TooLarge,
     /// The error under axum's is not a `tungstenite::Error` at all, so nothing here could read it.
     /// **This is a SIGNAL, never a path** - it can only happen if a future axum bump stops
     /// unifying with this crate's direct `tokio-tungstenite` dependency, at which point every
@@ -75,8 +78,31 @@ fn classify_socket_error(err: &axum::Error) -> SocketEnd {
     };
     match ws {
         WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => SocketEnd::Goodbye,
+        WsError::Capacity(_) => SocketEnd::TooLarge,
         _ => SocketEnd::Fault,
     }
+}
+
+/// Whether a connection whose minute now holds `in_minute` frames is past its rate, said ONCE as
+/// a `[WS LIMIT]` line: the caller ends the socket, and the census line that follows carries the
+/// connection's counts.
+fn over_frame_rate(state: &AppState, in_minute: u64, user_id: &str, device_id: &str) -> bool {
+    let limits = &state.frame_limits;
+    if in_minute <= limits.max_frames_per_minute {
+        return false;
+    }
+    state
+        .limit_endings
+        .over_rate
+        .fetch_add(1, Ordering::Relaxed);
+    tracing::warn!(
+        "[WS LIMIT] {}:{} sent {} frames in one minute, over the {} a connection may send - ending the socket",
+        user_id,
+        device_id,
+        in_minute,
+        limits.max_frames_per_minute
+    );
+    true
 }
 
 // ── Cookie helper ─────────────────────────────────────────────────────────
@@ -335,11 +361,15 @@ pub async fn ws_handler(
                 tx,
                 rx,
             };
-            ws.on_upgrade(move |socket| {
-                handle_socket(
-                    socket, state, claims.sub, device_id, declared, client, admitted,
-                )
-            })
+            // The socket itself refuses a longer frame, before buffering it (`SocketEnd::TooLarge`).
+            let max_frame_bytes = state.frame_limits.max_frame_bytes;
+            ws.max_frame_size(max_frame_bytes)
+                .max_message_size(max_frame_bytes)
+                .on_upgrade(move |socket| {
+                    handle_socket(
+                        socket, state, claims.sub, device_id, declared, client, admitted,
+                    )
+                })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
             tracing::warn!(
@@ -606,9 +636,45 @@ async fn handle_socket(
             let mut con_opt = redis_conn;
             // What this connection sent, written once when this task ends or is aborted.
             let mut frames = crate::frame_census::FrameCensus::open(&user_id, &device_id);
+            // Set by a `disconnect` frame: the session is retired and the socket out of routing,
+            // and the loop only waits for the client's Close (see the `"disconnect"` arm).
+            let mut departed = false;
 
             while let Some(msg) = receiver.next().await {
+                // EVERY inbound frame counts toward the minute, not the text ones alone: a pong
+                // refreshes the presence, so an unasked one costs what a heartbeat costs. Text is
+                // counted in its own arm, with its size; a Close ends the socket by itself.
+                if matches!(
+                    msg,
+                    Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))
+                ) && over_frame_rate(&state, frames.note_other(), &user_id, &device_id)
+                {
+                    break;
+                }
                 match msg {
+                    Ok(Message::Pong(_)) if departed => {
+                        // A retired session is not refreshed, and the missed-ping counter is NOT
+                        // reset: the pong only says the client has not yet sent its Close. So a
+                        // client that never sends it is ended by the heartbeat (send task) within
+                        // PING_INTERVAL_SECS * (MAX_MISSED_PONGS + 1) of its `disconnect`.
+                        continue;
+                    }
+                    Ok(Message::Text(text)) if departed => {
+                        // A FRAME AFTER `disconnect` MEANS THE CLIENT DID NOT LEAVE: the socket is
+                        // out of routing, so kept open it would be DEAF - nothing delivered, no
+                        // pong - until the client's own watchdog gave up (4 heartbeats, ~32 s on
+                        // the web). The known way in is a `beforeunload` the page cancelled (a
+                        // "leave this page?" prompt answered "stay"): `disconnect` went out, the
+                        // document stayed. Ending the socket here is the answer the client can act
+                        // on at once - its next heartbeat sees it closed and reconnects.
+                        tracing::warn!(
+                            "[presence] {}:{} sent a {}-byte frame after its disconnect - its client stayed (a cancelled unload?); ending the socket so it reconnects",
+                            user_id,
+                            device_id,
+                            text.len()
+                        );
+                        break;
+                    }
                     Ok(Message::Pong(_)) => {
                         // Client is alive: reset the missed-ping counter and refresh TTL.
                         pong_flag_recv.store(0, Ordering::Relaxed);
@@ -624,7 +690,9 @@ async fn handle_socket(
                         continue;
                     }
                     Ok(Message::Text(text)) => {
-                        frames.note(text.len());
+                        if over_frame_rate(&state, frames.note(text.len()), &user_id, &device_id) {
+                            break;
+                        }
                         // Any inbound data frame proves the client is reachable
                         // end-to-end (not just the nginx TCP layer).
                         pong_flag_recv.store(0, Ordering::Relaxed);
@@ -716,13 +784,18 @@ async fn handle_socket(
 
                         match frame.msg_type.as_str() {
                             "disconnect" => {
-                                // Client is going offline intentionally - DEL presence
-                                // immediately so peers see them offline right away,
-                                // then close the connection cleanly.  conn_id lets the
-                                // handler discount this connection and keep the key when
-                                // another tab of the same device is still connected.
+                                // THE SESSION ENDS NOW; THE SOCKET ENDS ON THE CLIENT'S CLOSE.
+                                // Out of local routing first, so no frame published from here on
+                                // is handed to a socket its client is closing; then the session
+                                // is retired in Redis (`conn_id` keeps a sibling tab's presence).
+                                // The loop then reads on: every client follows `disconnect` with
+                                // its Close, and dropping the TCP connection before reading it
+                                // made the frontend's nginx close with that frame unread - a
+                                // reset at the edge (docs/wiki/services/chat-gateway.md).
+                                state.remove_session(&conn_key_recv, conn_id);
                                 handle_disconnect(&state, &user_id, &device_id, conn_id).await;
-                                break;
+                                departed = true;
+                                continue;
                             }
                             retired if is_retired_frame(retired) => {
                                 handle_retired_frame(&user_id, &device_id, &frame);
@@ -741,8 +814,10 @@ async fn handle_socket(
                         log_routing(&user_id, &device_id, &frame);
                     }
                     Ok(Message::Close(c)) => {
+                        // NOT a break: the next read sends the Close reply tungstenite queued and
+                        // then ends the stream, so the handshake completes before the TCP close.
                         tracing::info!("Client closed connection: {:?}", c);
-                        break;
+                        continue;
                     }
                     Err(e) => {
                         match classify_socket_error(&e) {
@@ -756,8 +831,24 @@ async fn handle_socket(
                             SocketEnd::Fault => {
                                 tracing::error!("WebSocket Error from {}: {}", user_id, e);
                             }
+                            SocketEnd::TooLarge => {
+                                state
+                                    .limit_endings
+                                    .too_large
+                                    .fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(
+                                    "[WS LIMIT] {}:{} sent a frame over the {} bytes a connection may send - ending the socket: {}",
+                                    user_id,
+                                    device_id,
+                                    state.frame_limits.max_frame_bytes,
+                                    e
+                                );
+                            }
                             SocketEnd::Unreadable => tracing::error!(
-                                "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under                                  axum's is not a tungstenite::Error, so this crate's direct                                  tokio-tungstenite dependency no longer unifies with axum's and                                  every ordinary goodbye is being reported here as a fault: {}",
+                                "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under \
+                                 axum's is not a tungstenite::Error, so this crate's direct \
+                                 tokio-tungstenite dependency no longer unifies with axum's and \
+                                 every ordinary goodbye is being reported here as a fault: {}",
                                 user_id,
                                 e
                             ),
@@ -948,6 +1039,18 @@ mod tests {
         // appearing it will be the only ERROR line on the box, which is the whole point.
         assert_eq!(end_of(WsError::ConnectionClosed), SocketEnd::Fault);
         assert_eq!(end_of(WsError::AlreadyClosed), SocketEnd::Fault);
+    }
+
+    #[test]
+    fn a_frame_over_the_size_limit_is_a_refusal_not_a_fault() {
+        use tokio_tungstenite::tungstenite::error::CapacityError;
+        assert_eq!(
+            end_of(WsError::Capacity(CapacityError::MessageTooLong {
+                size: 5_000,
+                max_size: 4_096
+            })),
+            SocketEnd::TooLarge
+        );
     }
 
     /// `end_of` boxes THIS crate's `tungstenite` type, so it passes whatever axum resolves - it
@@ -1241,5 +1344,233 @@ mod tests {
                 .keys()
                 .collect::<Vec<_>>()
         );
+    }
+
+    // ── A `disconnect`, as a client sees it ──────────────────────────────
+
+    /// The reset of 2026-11-13 (docs/wiki/services/chat-gateway.md): the gateway answered
+    /// `disconnect` by dropping the TCP connection, before the Close every client sends next was
+    /// read. Now the socket leaves routing at once and ends on the client's Close: the client's
+    /// first frame back is the Close REPLY, which only a server that read the Close can send.
+    #[tokio::test]
+    async fn a_disconnect_leaves_routing_at_once_and_the_socket_ends_on_the_clients_close() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"disconnect"}"#.into()))
+            .await
+            .unwrap();
+
+        // Bounded by a count of turns, so a socket that never leaves routing FAILS instead of
+        // hanging.
+        let mut left = false;
+        for _ in 0..500 {
+            if state.connected_users.lock().unwrap().is_empty() {
+                left = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(left, "the socket was still routable after its disconnect");
+        assert!(
+            state.session_caps.lock().unwrap().is_empty(),
+            "the session's declaration outlived its disconnect"
+        );
+
+        socket.close(None).await.unwrap();
+
+        match socket.next().await {
+            Some(Ok(Message::Close(_))) => {}
+            other => panic!(
+                "the first frame after a disconnect must be the Close reply (the server read the \
+                 client's Close before ending the connection), got {other:?}"
+            ),
+        }
+        assert!(
+            socket.next().await.is_none(),
+            "the socket must end after the closing handshake"
+        );
+    }
+
+    /// A client that sends a frame after its `disconnect` did not leave (a `beforeunload` the page
+    /// cancelled). Its socket is out of routing, so kept open it would be deaf; the gateway ends it,
+    /// and the client sees the end at once instead of a pong - never the pong of a live socket.
+    #[tokio::test]
+    async fn a_frame_after_a_disconnect_ends_the_deaf_socket() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"disconnect"}"#.into()))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"ping"}"#.into()))
+            .await
+            .unwrap();
+
+        // The next thing the client reads is the end of the connection. A socket kept open would
+        // answer nothing until the heartbeat's first ping (PING_INTERVAL_SECS later), which is a
+        // frame and fails here - the proof is what is read, not how long it took.
+        match socket.next().await {
+            None | Some(Err(_)) => {}
+            Some(Ok(frame)) => {
+                panic!("a departed socket that sent a frame was kept open, it read {frame:?}")
+            }
+        }
+        assert!(state.connected_users.lock().unwrap().is_empty());
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// A gateway whose connections may send what `limits` says, and one open socket to it.
+    async fn socket_under(
+        limits: crate::frame_census::FrameLimits,
+    ) -> (ClientSocket, Arc<AppState>) {
+        let mut state = state();
+        state.frame_limits = limits;
+        let state = Arc::new(state);
+        let url = serve(state.clone()).await;
+        let (socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .expect("the socket opens");
+        (socket, state)
+    }
+
+    /// Sends one application heartbeat and returns the gateway's answer to it.
+    async fn heartbeat(socket: &mut ClientSocket) -> String {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        socket
+            .send(ClientMessage::Text(r#"{"type":"ping"}"#.into()))
+            .await
+            .expect("the heartbeat is sent");
+        loop {
+            match socket.next().await.expect("the socket is open").unwrap() {
+                ClientMessage::Text(text) => return text.to_string(),
+                _ => continue,
+            }
+        }
+    }
+
+    /// Reads until the gateway has ended the socket: the stream is over, or errors, or closes.
+    /// The bound only turns a socket that never ends into a failure instead of a hung run.
+    async fn until_ended(socket: &mut ClientSocket) {
+        use futures::StreamExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let ended = async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_)) | Some(Ok(ClientMessage::Close(_))) => return,
+                    Some(Ok(_)) => continue,
+                }
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), ended)
+            .await
+            .expect("the gateway ends the socket");
+    }
+
+    /// What the gateway counted as ended for each limit: `(too large, over the rate)`.
+    fn endings(state: &AppState) -> (u64, u64) {
+        use std::sync::atomic::Ordering;
+        (
+            state.limit_endings.too_large.load(Ordering::Relaxed),
+            state.limit_endings.over_rate.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Asserts the gateway counted `expected` endings once its task has run: the client may read
+    /// the end of the socket a turn before the server task that ended it is polled again, so the
+    /// runtime is yielded to - a bounded number of turns, no clock.
+    async fn assert_endings(state: &AppState, expected: (u64, u64)) {
+        for _ in 0..10_000 {
+            if endings(state) == expected {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(endings(state), expected);
+    }
+
+    #[tokio::test]
+    async fn a_frame_over_the_size_limit_ends_the_socket_as_too_large() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (mut socket, state) = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 64,
+            max_frames_per_minute: 240,
+        })
+        .await;
+        // The control: a frame under the limit is answered, and nothing is counted.
+        assert_eq!(heartbeat(&mut socket).await, r#"{"type":"pong"}"#);
+        assert_eq!(endings(&state), (0, 0));
+
+        let long = format!(r#"{{"type":"typing","groupId":"{}"}}"#, "g".repeat(200));
+        // The send may itself fail if the gateway has already hung up; the end is what is asserted.
+        let _ = socket.send(ClientMessage::Text(long.into())).await;
+        until_ended(&mut socket).await;
+
+        assert_endings(&state, (1, 0)).await;
+    }
+
+    #[tokio::test]
+    async fn a_burst_over_the_rate_limit_ends_the_socket_as_over_the_rate() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (mut socket, state) = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 4_096,
+            max_frames_per_minute: 5,
+        })
+        .await;
+        // The control: every frame up to the limit is answered, and nothing is counted.
+        for _ in 0..5 {
+            assert_eq!(heartbeat(&mut socket).await, r#"{"type":"pong"}"#);
+        }
+        assert_eq!(endings(&state), (0, 0));
+
+        let _ = socket
+            .send(ClientMessage::Text(r#"{"type":"ping"}"#.into()))
+            .await;
+        until_ended(&mut socket).await;
+
+        assert_endings(&state, (0, 1)).await;
+    }
+
+    #[tokio::test]
+    async fn frames_that_are_not_text_are_held_to_the_same_rate() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (mut socket, state) = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 4_096,
+            max_frames_per_minute: 5,
+        })
+        .await;
+        // Unasked pongs and a binary frame: none is text, each is counted.
+        for _ in 0..5 {
+            let _ = socket.send(ClientMessage::Pong(vec![].into())).await;
+        }
+        let _ = socket.send(ClientMessage::Binary(vec![0].into())).await;
+        until_ended(&mut socket).await;
+
+        assert_endings(&state, (0, 1)).await;
     }
 }

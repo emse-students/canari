@@ -5,6 +5,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import NeutralEventMark from './NeutralEventMark.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
+  import InstitutionReachChip from '$lib/components/posts/InstitutionReachChip.svelte';
   import {
     associationLogoSrc,
     eventIcsAbsoluteUrl,
@@ -168,6 +169,13 @@
         >
           {m.calendar_event_pending_notice()}
         </p>
+      {/if}
+
+      <!-- Who an institution filed it for (owner, 2026-11-13): the posts' chip, same words. -->
+      {#if event.reach}
+        <div class="flex min-w-0">
+          <InstitutionReachChip reach={event.reach} />
+        </div>
       {/if}
 
       {#if identityLinks.length > 0}

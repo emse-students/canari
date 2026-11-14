@@ -62,6 +62,13 @@ The stamp is the moment the deploy STARTED replacing the estate; the archive hol
 it. Lines carry `docker logs --timestamps`. The live container's log is read with `docker logs` as
 before.
 
+**Seen 2026-11-14 on both estates**: the `v1.6.11` deploy logged `archive-logs: 13 container logs
+kept in .../deploy-log-archive/<prod>/20261113T165852Z (0 unreadable)`, the `v1.6.12-alpha.2` one
+12 for dev, each dropping its oldest archive; every Canari container of both projects runs with
+`max-size: 10m`, `max-file: 3`. The archive belongs to the runner account: the operator's own
+account cannot list it (permission denied), so a reading older than a container's live log
+needs that account.
+
 ## Rules
 
 - A service added to a compose file must carry `logging: *logging`; the self-test derives the service
@@ -141,6 +148,12 @@ log; the access log still writes one redacted line per socket, with its status a
 `access-log-redaction.test.mjs` fails a location that forwards `Upgrade` without that level, and
 fails if it finds neither socket. Moving the credential out of the URL is the design improvement
 that makes the level moot ([backlog](../backlog.d/p3-the-socket-credential-moves-out-of-the-url.md)).
+
+**The calendar feed is the same case without the upgrade (2026-11-14).** A calendar app polls
+`/api/associations/calendar/feed.ics?token=...` with a bearer subscription token in the query (the
+URL is the only thing such an app can carry - [D40 re-decided](../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)),
+so its location declares the same `crit` error log, and the same test fails it without one. Its
+upstream errors are in the social-service log and the access log's `ust=` instead.
 
 **A SIZE CAP IS NOT AN AGE CAP.** `max-size: 10m` / `max-file: "3"` bounds the bytes, so the oldest
 line held is the one written 30 MB ago. A busy container rolls that over in minutes

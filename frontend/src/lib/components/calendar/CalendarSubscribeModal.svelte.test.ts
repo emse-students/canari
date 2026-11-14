@@ -12,12 +12,16 @@ import { flushSync, mount, unmount } from 'svelte';
 
 const runtimeOs = vi.hoisted(() => ({ value: 'android' }));
 const navigateExternal = vi.hoisted(() => vi.fn());
+const showConfirm = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/mls-client/mlsPlatform', () => ({
   detectRuntimeDeviceOs: () => runtimeOs.value,
 }));
 vi.mock('$lib/utils/openExternal', () => ({
   navigateExternal: (...args: unknown[]) => navigateExternal(...args),
+}));
+vi.mock('$lib/stores/confirm.svelte', () => ({
+  showConfirm: (...args: unknown[]) => showConfirm(...args),
 }));
 
 import { setLocale } from '$lib/paraglide/runtime';
@@ -28,7 +32,13 @@ const FEED = 'https://canari.emse.fr/api/associations/calendar/feed.ics';
 const mounted: ReturnType<typeof mount>[] = [];
 
 function render(
-  extra: { signing?: 'idle' | 'signing' | 'ready' | 'error' | 'unavailable'; icsUrl?: string } = {}
+  extra: {
+    signing?: 'idle' | 'unasked' | 'signing' | 'ready' | 'error' | 'unavailable';
+    icsUrl?: string;
+    onAsk?: () => void;
+    onRevoke?: () => Promise<void>;
+    revokeStatus?: 'idle' | 'revoking' | 'revoked' | 'failed';
+  } = {}
 ) {
   const component = mount(CalendarSubscribeModal, {
     target: document.body,
@@ -60,6 +70,7 @@ function appButton(): HTMLButtonElement {
 beforeEach(() => {
   setLocale('en', { reload: false });
   navigateExternal.mockReset();
+  showConfirm.mockReset();
 });
 
 afterEach(() => {
@@ -76,13 +87,84 @@ describe('CalendarSubscribeModal', () => {
     expect((input as HTMLInputElement).value).toBe(FEED);
   });
 
-  it('warns that links saved before the signature stopped working (2026-10-06)', () => {
+  it('says the link shows what its holder sees and can be revoked (2026-11-14)', () => {
     runtimeOs.value = 'windows';
     render();
-    expect(document.querySelector('[data-subscribe-old-links]')?.textContent?.trim()).toBe(
-      m.calendar_subscribe_old_links_notice()
+    expect(document.querySelector('[data-subscribe-holder-notice]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_holder_notice()
     );
     expect(document.querySelector('[data-subscribe-sign-failed]')).toBeNull();
+  });
+
+  it('offers no revoke button without a revocation to call', () => {
+    runtimeOs.value = 'windows';
+    render();
+    expect(document.querySelector('[data-subscribe-revoke]')).toBeNull();
+  });
+
+  it('asks nothing on sight: a link is made only when the reader taps "get my link" (2026-11-14)', () => {
+    runtimeOs.value = 'android';
+    const onAsk = vi.fn();
+    render({ signing: 'unasked', icsUrl: '', onAsk });
+    expect(onAsk).not.toHaveBeenCalled();
+    // The explanation is there before the link is.
+    expect(document.querySelector('[data-subscribe-holder-notice]')).not.toBeNull();
+    const ask = document.querySelector('[data-subscribe-ask]') as HTMLButtonElement;
+    expect(ask.textContent?.trim()).toBe(m.calendar_subscribe_ask_button());
+    ask.click();
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ signing: 'ready', onAsk });
+    expect(document.querySelector('[data-subscribe-ask]')).toBeNull();
+  });
+
+  it('revokes only once the reader confirms: one tap ends every calendar on every device', async () => {
+    runtimeOs.value = 'android';
+    const onRevoke = vi.fn(() => Promise.resolve());
+    showConfirm.mockResolvedValue(false);
+    render({ onRevoke });
+    const button = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    button.click();
+    await vi.waitFor(() => expect(showConfirm).toHaveBeenCalledTimes(1));
+    expect(showConfirm).toHaveBeenCalledWith(
+      m.calendar_subscribe_revoke_confirm(),
+      expect.objectContaining({ danger: true })
+    );
+    await Promise.resolve();
+    expect(onRevoke).not.toHaveBeenCalled();
+    showConfirm.mockResolvedValue(true);
+    button.click();
+    await vi.waitFor(() => expect(onRevoke).toHaveBeenCalledTimes(1));
+  });
+
+  it('the revoke button calls the revocation, and the modal says how it went', async () => {
+    runtimeOs.value = 'android';
+    const onRevoke = vi.fn(() => Promise.resolve());
+    showConfirm.mockResolvedValue(true);
+    render({ onRevoke });
+    const button = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    expect(button.textContent?.trim()).toBe(m.calendar_subscribe_revoke_button());
+    button.click();
+    await vi.waitFor(() => expect(onRevoke).toHaveBeenCalledTimes(1));
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'revoking' });
+    const busy = document.querySelector('[data-subscribe-revoke]') as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    expect(busy.textContent?.trim()).toBe(m.calendar_subscribe_revoking());
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'revoked' });
+    expect(document.querySelector('[data-subscribe-revoked]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_revoked()
+    );
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ onRevoke, revokeStatus: 'failed' });
+    expect(document.querySelector('[data-subscribe-revoke-failed]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_revoke_failed()
+    );
   });
 
   it('says it is preparing the link, then that the server refused to sign it', () => {

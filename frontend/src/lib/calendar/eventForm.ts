@@ -10,6 +10,14 @@ import type {
   UpdateAssociationCalendarEventPayload,
 } from '$lib/associations/api';
 import { DAY_STARTS_AT_HOUR } from './feedEvents';
+import {
+  emptyReachDraft,
+  isReachComplete,
+  plainReach,
+  reachDraftFrom,
+  type InstitutionReach,
+  type InstitutionReachDraft,
+} from '$lib/posts/institutionReach';
 
 /**
  * THE ONE SHAPE BEHIND FOUR MODALS.
@@ -55,6 +63,24 @@ export interface EventFormValues {
    * only, so a lost answer narrows the form instead of offering what the write would refuse.
    */
   writeSide: EventWriteSide | 'unknown';
+  /**
+   * THE REACH AN INSTITUTION CHOOSES FOR THE EVENT (owner, 2026-11-13; the posts' model): the
+   * spaces and the public, nothing pre-selected. Drawn and sent only where `canSetReach` (the owner
+   * is an institution) and from the organiser side; a new event seeds it empty, an existing one from
+   * its served `reach`.
+   */
+  reach: InstitutionReachDraft;
+  /**
+   * Whether an incomplete reach blocks the save: a new institution event, or one already carrying a
+   * reach. An event filed before the reach existed (`reach: null`) opens with the picker empty and
+   * saves without a reach until a choice is complete, as a legacy post does.
+   */
+  reachRequired: boolean;
+  /**
+   * The author changed the picker. An edit sends a reach only then: the picker prunes, on its own, a
+   * ticked space the audience no longer holds, and that is not a choice (review of #3314).
+   */
+  reachTouched: boolean;
 }
 
 /** The half of the form that arrives after the rest: the co-organisers (D39) and the side (E2). */
@@ -141,6 +167,29 @@ export interface EventFormCapabilities {
    * agenda (PROPOSE_EVENT in it, or its validator, or a platform admin) - the server's own rule.
    */
   canSetPresentation?: boolean;
+  /**
+   * The event's owner is an INSTITUTION, so it chooses the event's spaces and public (owner,
+   * 2026-11-13) - mandatory on a new event. The server's own rule (`institution_reach_*`).
+   */
+  canSetReach?: boolean;
+}
+
+/** Whether the form, as it stands, draws the reach picker: an institution's event, organiser side. */
+export function offersReach(values: EventFormValues, caps: EventFormCapabilities): boolean {
+  return caps.canSetReach === true && values.writeSide === 'organiser';
+}
+
+/**
+ * Whether the reach keeps the save disabled ("Déposer" stays disabled until the spaces and the
+ * public are chosen, owner 2026-11-13): offered, required, and not complete.
+ */
+export function reachBlocksSave(values: EventFormValues, caps: EventFormCapabilities): boolean {
+  return offersReach(values, caps) && values.reachRequired && !isReachComplete(values.reach);
+}
+
+/** The reach a payload carries, as plain objects (never the picker's `$state` proxies). */
+function reachPayload(values: EventFormValues): { reach: InstitutionReach } | object {
+  return isReachComplete(values.reach) ? { reach: plainReach(values.reach) } : {};
 }
 
 /** Whether the form, as it stands, files a neutral event. */
@@ -162,6 +211,9 @@ export function validateEventForm(
   }
   if (!values.title.trim() || !values.start) {
     return { ok: false, message: m.calendar_error_title_required };
+  }
+  if (reachBlocksSave(values, caps)) {
+    return { ok: false, message: m.event_reach_required };
   }
   return { ok: true };
 }
@@ -193,6 +245,8 @@ export function toCreatePayload(
     coOwnerIds: neutral ? [] : values.coOwnerIds,
     ...(caps.canSetKind ? { kind: values.kind } : {}),
     ...(caps.canSetPresentation ? { presentation: values.presentation } : {}),
+    // An institution's event names its reach at EVERY filing; the save is disabled until it does.
+    ...(offersReach(values, caps) ? reachPayload(values) : {}),
     ...(!neutral && caps.canLinkForm && values.linkedFormId.trim()
       ? { linkedFormId: values.linkedFormId.trim() }
       : {}),
@@ -225,6 +279,10 @@ export function toUpdatePayload(
     ...(caps.canSetPresentation && values.writeSide === 'organiser'
       ? { presentation: values.presentation }
       : {}),
+    // The reach is the organiser's (E2), sent only once the author touched the picker: absent, the
+    // server leaves the stored one alone. Narrower or wider, it never sends the event back to
+    // validation and tells nobody.
+    ...(offersReach(values, caps) && values.reachTouched ? reachPayload(values) : {}),
     // The form link is the organiser's too (D39, E2): a partner's save carries text only.
     ...(!neutral && caps.canLinkForm && values.writeSide === 'organiser'
       ? { linkedFormId: values.linkedFormId.trim() || null }
@@ -263,6 +321,9 @@ export function blankEventFormValues(onDay?: Date | null): EventFormValues {
     coOwnerStates: [],
     targetAssociationId: '',
     writeSide: 'organiser',
+    reach: emptyReachDraft(),
+    reachRequired: true,
+    reachTouched: false,
   };
 }
 
@@ -287,6 +348,9 @@ export function eventFormValuesFrom(ev: SeedableEvent): EventFormValues {
     coOwnerStates: [],
     targetAssociationId: ev.associationId,
     writeSide: 'unknown',
+    reach: ev.reach ? reachDraftFrom(ev.reach) : emptyReachDraft(),
+    reachRequired: !!ev.reach,
+    reachTouched: false,
   };
 }
 
@@ -301,4 +365,6 @@ export interface SeedableEvent {
   presentation?: AssociationCalendarEventPresentation;
   linkedFormId?: string | null;
   coOwners?: { associationId: string }[];
+  /** The reach an institution chose; `null` or absent when it carries none. */
+  reach?: InstitutionReach | null;
 }

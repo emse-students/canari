@@ -135,9 +135,10 @@ export class PartnershipsService {
 
   /**
    * The active cards whose OWNING association is visible to `userId`
-   * (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of the reader's
-   * spaces) - the directory's predicate, so a partnership of another campus is no more listed than
-   * its association is. `associationId` narrows to one association.
+   * (`associationVisibleToViewerSql`: a member of it, D21, its rules reach one of the reader's
+   * spaces, or a nominative read grant of the reader reaches it - owner, 2026-11-14) - the
+   * directory's predicate, so a partnership of another campus is no more listed than its
+   * association is. `associationId` narrows to one association.
    */
   private async activeCardsVisibleTo(
     userId: string,
@@ -476,6 +477,7 @@ export class PartnershipsService {
     );
     // Asked AFTER the review cohort's own refusal, which keeps its typed 403: a card whose
     // association the claimant cannot see answers exactly like a card that does not exist.
+    // Read grants count, as in the listing: a card a named reader is shown is one they may claim.
     if (!(await associationVisibleTo(this.cardRepo.manager, card.associationId, userId))) {
       this.logger.log(
         `[PARTNERSHIP] claim refused: card=${cardId.slice(0, 8)} - association ` +

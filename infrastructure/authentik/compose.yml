@@ -38,9 +38,11 @@ services:
     # old `/var/lib/postgresql/data` even when it is empty (why Dependabot's #2742 never became
     # healthy). So the tag, the mount and the volume name move in ONE commit, and the old volume
     # `database` is left behind untouched as the rollback. Procedure, rehearsal and numbers:
-    # docs/wiki/infrastructure/authentik.md. Pinned to the SAME digest as Canari's own
-    # docker-compose.prod.yml, so the host already holds the image. The next major is the same
-    # operation again: `postgres` stays refused by name in .github/scripts/lib/ceiling.sh.
+    # docs/wiki/infrastructure/authentik.md. Pinned by its OWN digest: it was Canari's until Canari's
+    # docker-compose.prod.yml moved to a newer 18-alpine build on 2026-11-13, so the host is not
+    # assumed to hold this image for Canari's sake. Moving it is a hand step in its own window
+    # (docs/wiki/backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md). The next major is
+    # the same operation again: `postgres` stays refused by name in .github/scripts/lib/ceiling.sh.
     image: docker.io/library/postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
     restart: unless-stopped
     env_file:

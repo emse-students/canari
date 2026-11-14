@@ -92,7 +92,8 @@ describe('the thread follows its own bottom from four triggers', () => {
     expect(read(CHAT_AREA)).toContain('return observeThreadGrowth(');
     expect(read(CHAT_AREA)).toContain('composerBand\n    );');
     const wiring = read(GROWTH);
-    expect(wiring).toContain('const boxes = new ResizeObserver(follow);');
+    // A box change is never an arrival, so it never glides (keyboard-and-send-motion.md).
+    expect(wiring).toContain("const boxes = new ResizeObserver(() => follow('box'));");
     expect(wiring).toContain('boxes.observe(scroller);');
     expect(wiring).toContain('for (const child of scroller.children) boxes.observe(child);');
     expect(wiring).toContain('const mutations = new MutationObserver(');

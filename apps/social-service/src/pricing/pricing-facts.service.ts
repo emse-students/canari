@@ -1,15 +1,25 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { UserTagService } from '../users/user-tag.service';
-import type { PricingFacts } from './audience';
+import { NO_CURSUS, type CursusView, type PricingFacts } from './audience';
 import { coreUrl } from '../internal/service-urls';
 
-/** What core-service's internal profile route answers with. */
+/**
+ * What core-service's internal profile route answers with - the part read here. `cursusViews` is
+ * every cursus the person is priced through (D32), already reconciled by core-service
+ * (`cursusViewsOf`: the well-formed entries plus the legacy pair when no entry carries it), so
+ * nothing is reconciled here. Absent from a core-service older than it.
+ */
 interface InternalPublicProfile {
   id: string;
-  displayName: string | null;
-  promo: number | null;
-  formation: string | null;
+  cursusViews?: CursusView[];
 }
+
+/**
+ * The `code` of the 503 a profile-priced operation gets when core-service answers without
+ * `cursusViews` - a core-service OLDER than this service, which only a ROLLBACK produces (a forward
+ * deploy replaces core-service first; `cicd.md`). Typed so the log and the answer name the cause.
+ */
+export const PRICING_CORE_BEHIND = 'PRICING_CORE_BEHIND';
 
 /**
  * Assembles the facts a price's criteria are evaluated against, once per request.
@@ -18,11 +28,13 @@ interface InternalPublicProfile {
  * is the point: one grid, one bucket predicate, one set of facts. A price that disagreed with
  * itself between the two surfaces would be nobody's bug to report.
  *
- * `promo` and `formation` live in core-service's `users` table and are written ONLY by
- * `findOrCreateFromOidc`, from the identity provider, at every sign-in - `PATCH /api/users/me`
- * accepts `bio` and nothing else. That is what makes them safe to price on: nobody can edit
- * themselves into a cheaper cell. **If `UpdateUserDto` ever gains either field, every price resting
- * on it becomes self-service.**
+ * The cursus (`promo` and `formation` per entry, and the legacy columns derived from it) live in
+ * core-service's `users` table, written by `findOrCreateFromOidc` (from the identity provider, at
+ * every sign-in) and by the platform admin's profile edit (`ProfileEditService.applyEdit`, audited)
+ * - `PATCH /api/users/me` accepts `bio` and nothing else. That is what makes them safe to price on:
+ * nobody can edit themselves into a cheaper cell. Under D32 an admin adding a second cursus can move
+ * that person's price, since the cheapest cursus wins. **If `UpdateUserDto` ever gains `promo`,
+ * `formation` or `cursus`, every price resting on it becomes self-service.**
  *
  * They are fetched over the Docker network from `/api/internal/users/:id/public-profile`, which
  * exists, is `INTERNAL_SECRET`-gated and has no nginx location. Deliberately not obtained by
@@ -60,8 +72,8 @@ export class PricingFactsService {
         ? await this.userTagService.listHeldCotisationTiers(input.userId, input.associationId)
         : [];
 
-    const profile = await this.profileFor(input.userId, input.needProfile);
-    return { ...profile, cotisationTiers, answers };
+    const cursus = await this.cursusFor(input.userId, input.needProfile);
+    return { cursus, cotisationTiers, answers };
   }
 
   /**
@@ -81,33 +93,36 @@ export class PricingFactsService {
    *
    * Split out for a LIST: the boutique prices many products, of many associations, for one person.
    * The cotisation half differs per association and is already loaded in bulk by the caller; the
-   * promo and the formation are one person's and must be fetched ONCE, not once per product - N
-   * calls to core-service to answer the same question is how a listing becomes the slowest page.
+   * cursus are one person's and must be fetched ONCE, not once per product - N calls to
+   * core-service to answer the same question is how a listing becomes the slowest page.
    *
-   * A guest, or a caller whose criteria need no profile, gets both as null without a round trip.
+   * A guest, or a caller whose criteria need no profile, gets `NO_CURSUS` without a round trip.
    */
-  async profileFor(
+  async cursusFor(
     userId: string | undefined,
     needProfile: boolean
-  ): Promise<{ promo: number | null; formation: string | null }> {
-    if (!needProfile || !userId) return { promo: null, formation: null };
-    return this.fetchProfile(userId);
+  ): Promise<readonly CursusView[]> {
+    if (!needProfile || !userId) return NO_CURSUS;
+    return this.fetchCursus(userId);
   }
 
   /**
-   * Fetches promo and formation, or refuses the operation.
+   * Fetches every cursus entry (promo and formation of each), or refuses the operation.
    *
    * Fails CLOSED and loudly. Both silent alternatives are wrong in a way nobody would notice: the
    * "everyone else" cell overcharges a student who qualified for a discount, and a guessed bucket
    * undercharges the association. A transport failure is not an answer, so it produces neither - it
    * produces a 503 saying it is us and to retry.
    *
-   * A 404 IS an answer: core-service has no such user, so there is no promo and no formation, and
-   * the submitter belongs in the "everyone else" bucket. That is the one status treated as data.
+   * A 404 IS an answer: core-service has no such user, so there is no cursus, and the submitter
+   * belongs in the "everyone else" bucket. That is the one status treated as data. So is an EMPTY
+   * cursus (staff, a post only): `NO_CURSUS`, one view with nothing in it.
+   *
+   * A 200 WITHOUT `cursusViews` is a core-service older than D32 (a rollback window): refused with
+   * the typed `PRICING_CORE_BEHIND`, rather than priced as somebody with no cursus - that would
+   * overcharge every student it served.
    */
-  private async fetchProfile(
-    userId: string
-  ): Promise<{ promo: number | null; formation: string | null }> {
+  private async fetchCursus(userId: string): Promise<readonly CursusView[]> {
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
     let res: Response;
     try {
@@ -127,7 +142,7 @@ export class PricingFactsService {
       this.logger.warn(
         `[PRICING] profile MISS user=${userId.slice(0, 8)} - no such user in core-service, priced as "everyone else"`
       );
-      return { promo: null, formation: null };
+      return NO_CURSUS;
     }
     if (!res.ok) {
       this.logger.error(
@@ -138,10 +153,26 @@ export class PricingFactsService {
       );
     }
     const profile = (await res.json()) as InternalPublicProfile;
+    if (!Array.isArray(profile.cursusViews)) {
+      this.logger.error(
+        `[PRICING] ${PRICING_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service older than the ` +
+          'cursus views (a rollback window); refusing rather than pricing on nothing'
+      );
+      throw new ServiceUnavailableException({
+        code: PRICING_CORE_BEHIND,
+        message:
+          'Cannot check your profile right now, so this cannot be priced. Please try again in a moment.',
+      });
+    }
+    const cursus = profile.cursusViews.map((view) => ({
+      promo: view.promo ?? null,
+      formation: view.formation ?? null,
+    }));
     this.logger.debug(
-      `[PRICING] profile user=${userId.slice(0, 8)} promo=${profile.promo ?? 'null'} formation=${profile.formation ?? 'null'}`
+      `[PRICING] profile user=${userId.slice(0, 8)} cursus=` +
+        (cursus.length ? cursus.map((c) => `${c.formation}:${c.promo}`).join(',') : 'none')
     );
-    return { promo: profile.promo ?? null, formation: profile.formation ?? null };
+    return cursus.length ? cursus : NO_CURSUS;
   }
 
   /**

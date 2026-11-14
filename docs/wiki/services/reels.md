@@ -19,7 +19,7 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 | Conversations one "Envoyer à..." press may reach | 15 ([reels-in-chat 15.2](../frontend/modules/reels-in-chat.md#152-the-outbox-one-take-n-sends); served as `chatReelMaxTargets` since RC-14, absent from an older server) | `CHAT_REEL_MAX_TARGETS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
 | Widest reel | `width / height` <= 0.8, i.e. 4:5 (owner, 2026-11-09; served as `maxAspectRatio`, absent from an older server) | `REEL_MAX_ASPECT_RATIO`, same file | same route |
-| Kept for | **365 days** (owner, 2026-11-09; was 30, C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
+| Kept for | **365 days by default** (owner, 2026-11-09; was 30, C6) - **an admin setting since 2026-11-14**, read at each publication and stamped into `expiresAt`, so a change applies to new reels only ([retention-settings](../retention-settings.md)) | `platform_config.retention_reel_days` (core migration 025); `REEL_RETENTION_DAYS` is the year migration 158 used | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
 | Blob ceiling | 50 MB of ciphertext | media-service `MEDIA_MAX_SIZE_MB` | `GET /api/media/limits` (unchanged) |
 
@@ -114,7 +114,8 @@ deleted by this feature.
 `503`, never a reel stored without its blob.
 
 The response is the created post, now carrying `kind`, `durationMs`, `expiresAt`
-(`createdAt + 365 days`, set ONCE at creation; 30 days before 2026-11-09).
+(`createdAt` + the `retention_reel_days` setting in force, 365 by default, set ONCE at creation; 30
+days before 2026-11-09).
 
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a

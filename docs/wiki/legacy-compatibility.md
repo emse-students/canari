@@ -79,6 +79,87 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
   passes the first stable carrying the reach, and this entry is then deleted.
 
+### A tolerated breakage: an institution event from a build older than the event reach (owner, 2026-11-13)
+
+The events twin of the entry above.
+
+- **What.** An institution's calendar event must carry a reach (migration 165,
+  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)):
+  the server answers a create without one `400 institution_reach_required`. A build that predates the
+  event reach sends none, so it **cannot file an event as an institution at all**; an association's
+  event is untouched, and so is an EDIT (absent leaves the stored reach alone).
+- **Who.** Native apps older than the first release carrying the event reach, for the people who
+  file an institution's events only; the web app is always current.
+- **Why accepted knowingly.** The posts' precedent: "no default" - a server that filled one in for
+  an old client would file an event to a reach nobody chose. The refusal is typed, and the old build
+  shows its generic deposit failure; an update or the web files it.
+- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
+  passes the first stable carrying the event reach, and this entry is then deleted.
+
+### A legacy shape at rest: a carte directory line with no roster (2026-11-14)
+
+- **What.** A carte published before the structured roster stores each directory entry as
+  `{ assoId, line }`: the printed names, no account id
+  ([carte-vie-asso](carte-vie-asso.md#rules)). Such a publication is **served as stored until the
+  first account erasure or its map's next publication**. An erasure cannot tell whose name a line
+  holds, so the first one after this change blanks EVERY non-empty line-only entry, in every map
+  (`settleCarteDirectory`, matched by `LEGACY_DIRECTORY_LINE` in `account-erasure.ts`); the map stays
+  live with that roster text withheld. No new one is written: a publish refuses it
+  (`CARTE_ROSTER_UNSTRUCTURED`), and an editor older than the roster is told to reload.
+- **Measured by.** The WARN the social service writes once per map an erasure blanks:
+  `[CARTE] account erasure of user=... withheld N legacy directory line(s) of live map <id> until
+  its next publication`, and the refusal's WARN `[CARTE] publish of map <id> refused:
+  CARTE_ROSTER_UNSTRUCTURED`.
+- **The step that closes the past (owner, 2026-11-14).** An account erased BEFORE this change is
+  still on the live maps - a card with its id, a name in a line - and no later erasure matches its
+  id. So the lead REPUBLISHES EVERY LIVE MAP ONCE, right after the release carrying #3526: a publish
+  by the new editor keeps current members only and stores rosters, so those cards and the legacy
+  lines go (the gesture, step by step:
+  [carte-vie-asso](carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once)).
+  No migration. It is done when both counts below read `0` (cards and roster members whose
+  `userId` has no `users` row) and the line-only count of the removal condition reads `0`:
+
+  ```sql
+  SELECT
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication -> 'units') = 'array'
+                                      THEN p.publication -> 'units' ELSE '[]'::jsonb END) u,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(u.value -> 'cards') = 'array'
+                                      THEN u.value -> 'cards' ELSE '[]'::jsonb END) c
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(c.value ->> 'userId')))
+      AS cards_of_no_account,
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication #> '{directory,zones}') = 'array'
+                                      THEN p.publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(a.value -> 'members') = 'array'
+                                      THEN a.value -> 'members' ELSE '[]'::jsonb END) m
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(m.value ->> 'userId')))
+      AS roster_members_of_no_account;
+  ```
+
+- **Removal condition.** No map stores a line-only entry any more - this count reads `0` - **and no
+  restorable backup predates this change**: a restore brings line-only entries back, and the
+  erasure replay that follows it must still blank them.
+
+  ```sql
+  SELECT count(*) FROM poster_projects
+   WHERE publication IS NOT NULL AND EXISTS (
+     SELECT 1
+       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
+                                      THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
+      WHERE a.value -> 'members' IS NULL
+        AND COALESCE(a.value ->> 'line', '') <> '');
+  ```
+
+- **Then delete.** The blanking branch of `settleCarteDirectory`, its predicate
+  `LEGACY_DIRECTORY_LINE` (and its use in `ERASURE_CARTES_TOUCHED` and `CANDIDATE_CARTES_SQL`), and
+  `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
+  it is the rule, not a shim.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its
@@ -253,6 +334,80 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal when fewer than 10 distinct pair links are seen over 7 days, floor at the token release - the `sig` agenda link (owner, 2026-11-14)
+
+**Site:** the `sig` branch of `GET /api/associations/calendar/feed.ics` and of the anonymous
+`calendar/feed` (`assertAgendaAccess`, `assertAgendaSignature`, `legacySelectionRead` and its
+`DailySightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
+`AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `logDigest`
+(`agenda-signature.ts`).
+**What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
+`?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
+the token link, whose modal still asks `feed-signature` and builds such links. Since 2026-11-14 a link
+is its holder's (`?token=`, [D40 re-decided](profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders));
+a `sig` names no one, so it serves only what EVERY reader who could hold it sees: a PAIR (campus AND
+formation, with or without an association) as before - every legitimate holder was in that space -
+and ANY OTHER SHAPE (a campus alone, a formation alone, an association alone) a valid EMPTY calendar
+(200, no event): the link still resolves, the app keeps it, it shows nothing. `feed-signature` signs
+pairs only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows.
+**The cost while it stands:** a second agenda link that names no holder and cannot be revoked alone
+(only a key rotation ends it).
+**Measured by:** ONE WARN line per distinct link per process per UTC day,
+`[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` - the link is named by the
+first 8 hex characters of SHA-256 of its `sig`, which names no one and cannot be turned back into the
+link. **Count distinct `link=` values, never lines:** N replicas log one link up to N times a day, and
+a calendar app that polls a hundred times a day is still one link.
+**Removal condition:** fewer than 10 distinct `link=` values of `shape=pair` over 7 consecutive days
+(the other shapes already serve nothing, so they do not hold the shim up), AND NOT BEFORE
+`minClientVersion` is at least the store version that ships the token link (the floor rule above).
+Why 10 and not zero: a saved subscription is polled for as long as the calendar app lives, by people
+who never open Canari again, so zero may never come; under 10, ten people re-subscribing once costs
+less than keeping a second, unrevocable link kind alive. Then, in one pull request: the `sig` branch of
+both feeds (a `sig` is then the 403 it was without a signature), `feed-signature`,
+`signAgendaFeedSelection`, `legacySelectionRead`, `DailySightings`, `logDigest`, their
+specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
+
+### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
+
+- **What.** `POST /minesweeper/challenges` answers `426 generator_update_required` to a client that does not
+  say it can make the latest generator (`issuedGeneratorVersion`, `minesweeper.service.ts`;
+  [minesweeper](frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13)). An older build, which sends no
+  `maxGeneratorVersion`, cannot start a ranked game: it falls back to an unranked one (its screen
+  treats any failure to start as "play casual") and shows nothing about why.
+- **Who.** Native apps older than the first release carrying generator 2 (they embed their own engine); the web
+  app is always current.
+- **Why accepted knowingly.** The owner's decision: the ranking compares times, and a time on an easier board
+  is not comparable. Issuing such a build the old generator would have kept it ranked, on boards nobody else
+  plays. It still plays the game; it only is not ranked.
+- **What stays in the code, and its removal.** The engine still replays generator 1, for the challenges
+  issued with it before the deploy and still open (two hours). Two hours after the deploy, with no open row
+  at `"generatorVersion" = 1`, drop the `generator === 1` branch of `placeMinesFor` and its fingerprint test
+  (`placeMines` stays: generator 2 starts from it). The refusal itself is not removed: it is how a future
+  generator 3 closes the ranking to generator 2.
+
+### Removal once no association is left with a historical active account - the Lydia account bridge (owner, 2026-11-13)
+
+**Site:** `apps/social-service/src/associations/lydia-account-bridge.ts` and every caller of its three
+definitions (`managedVendorTokenSql`, `HELD_BUSINESSES_SQL`, `vendorTokensHeldBy`), the bridge branches
+of `AssociationsService.setLydiaReadiness` (`standbyReadinessStep`, `switchBackOnRefusal`), the
+re-issue in `ProductsService.openCheckoutAttempt` and in `FormsService`'s paid submit, the code
+`LYDIA_BUSINESS_PENDING_VALIDATION` (social, core, the contract, the frontend), the admin panel in
+`LydiaBusinessOnboardingForm.svelte`, the `meta.bridge` wording in `NotificationRow.svelte`, the strip
+in `copy-strips.sh`, the historical-account exclusion of the platform's flux
+(`measureLydiaFlux`'s `h` join, `lydia-contract-flux.ts`), and the table `lydia_account_bridges`
+(migration 167).
+**What it humours:** an association that collected through a Lydia account it held before Canari's
+enrolment (the BDE and Le Cercle): it keeps collecting there until Lydia validates the Business the
+enrolment created, then switches by itself
+([payments](frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13)).
+**The cost while it stands:** a second place a Business lives, every row-token lookup through a union,
+and the owner's error-5 re-issue - a path that exists for the bridge alone.
+**Removal condition:** no association left with a historical active account: `SELECT count(*) FROM
+lydia_account_bridges WHERE state = 'historical'` answers 0 on production, AND every switched bridge's
+historical account has nothing left to refund (its rows deleted by an admin, payments page). Then, in
+one pull request: a held migration dropping the table, the module and its callers back to the
+association's columns, the code, the panel, the wording, the strip and this entry.
+
 ### Removal once upstream adminer ships `libpq >= 18.7-r0` - the adminer image this repository builds (owner, 2026-11-13)
 
 **Site:** `infrastructure/local/Dockerfile.adminer`, its two lines in `.github/workflows/build.yml`
@@ -271,6 +426,47 @@ to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of tha
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
+
+### Removal with WP6, once `[PROFILE_CURSUS_BEHIND]` is silent for 7 days - the legacy pair as a cursus view (D32, 2026-11-14)
+
+**Site:** `cursusViewsOf` (`apps/core-service/src/users/miconnect-profile.ts`), served as
+`cursusViews` by `internal/users/:id/public-profile`; the legacy half of `cursusEntryFilter`
+(`users/cursus-filter.ts`, the directory's promo and formation filters) and of `FORMATIONS_SQL`
+(`internal/internal-users.controller.ts`, the criterion editor's formation picker).
+**What it humours:** people whose `users.promo` / `users.formation` columns are set while `cursus` is
+empty or has no entry carrying that pair - the WP3 backfill not applied to them and no sign-in since
+([profiles-and-access](profiles-and-access.md)). Before D32 every price, question condition, audience
+and directory filter read those columns; D32 reads every cursus entry. So the pair stays a VIEW (D32
+only ever adds): nobody is priced higher, refused, shown fewer questions or dropped from the directory
+or the picker than before it. Each time it is added, core-service logs WARN
+`[PROFILE_CURSUS_BEHIND] user=<8-char prefix> legacy promo=.. formation=.. is in no cursus entry`.
+**The cost while it stands:** a second source for one fact on every profile-priced operation, and two
+`OR` branches in two queries.
+**Measured on production, 2026-11-14** (read-only count authorised by the owner, the query in #3530's
+body): `not_array` 0, `legacy_only` 0, `first_entry_disagrees` 0, `multi_cursus` 0 over 563 accounts.
+So that day nobody depended on the legacy pair alone, the first entry agreed with the columns
+everywhere, and nobody had two cursus yet: the shim was a guard, not a rescue.
+`[PROFILE_CURSUS_BEHIND]` stays the witness of any later drift (a write path that sets the columns
+without the cursus).
+**Removal condition:** no `[PROFILE_CURSUS_BEHIND]` line for 7 days, then WITH WP6 - dropping the
+`promo`/`formation` columns is that later chantier, not D32's pull request: delete the legacy half of `cursusViewsOf`, of
+`cursusEntryFilter` and of `FORMATIONS_SQL`, their spec cases and this entry.
+
+### Removal once `minClientVersion` passes the release carrying D32 - the single pricing slice of a fill page (2026-11-14)
+
+**Site:** `pricing` and `productGridPrices` in `FormsService.hasSubmission` (`/forms/:id/check`) and
+`FormsService.getPublic` (`apps/social-service/src/forms/forms.service.ts`), beside `cursusSlices`; and
+on the client, the branch of `cursusSlicesOf` (`frontend/src/lib/forms/fillPricing.ts`) that reads a
+server serving no `cursusSlices`.
+**What it humours:** a fill page older than D32 reads the single slice: it is served the FIRST cursus's
+(what it showed when one cursus was all anybody had), and the server still charges the cheapest, so it
+can only overstate or close what a newer page opens - never undercharge. The other way round, a page
+carrying D32 that reaches a server older than it (a rollback window) reads that server's single slice
+as its one slice, logged `[FORMS] the server serves no cursusSlices`.
+**The cost while it stands:** the first slice sent twice per answer, and one client branch.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying D32, and no
+estate older than it is served. Then delete the two fields from both answers and their types, the
+`cursusSlicesOf` branch, its test and this entry.
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
@@ -522,8 +718,7 @@ tables). They ship behind `BOOKING_NOTIFICATIONS_ENABLED = false`
 `BOOKING_NOTIFICATIONS_LIVE`. A `1.2.9` client draws them as the neutral unknown-type row, shows the
 push's French legacy sentence, and on Android a tap opens the app where it was (no `bookings` host);
 the version CARRYING this pull request draws all of it. That degraded display between `1.2.9` and
-the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
-stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
+the release carrying #2692 was ACCEPTED (2026-10-29); the floor passed that release: both estates read `minClientVersion` 1.6.6 (2026-11-13).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
 
 **Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
@@ -620,6 +815,26 @@ without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
 
+### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
+
+**Site:** `serverFormAnswerEdit()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read through
+`offersAnswerEdit` and `answerEditPayload` (`frontend/src/lib/forms/answerEditGate.ts`) by the fill page
+and both form editors; the server half is `formAnswerEdit: true` in core-service's `GET /api/version`.
+**Why.** A store build reaches phones days before production deploys. A social-service older than
+migration 166 answers `GET /forms/:id/my-answers` and `PUT /forms/:id/submissions/:id/answers` `404`,
+and its validation strips `allowAnswerEdit` from a form's save.
+**What the client does.** Only on an estate that says `formAnswerEdit: true` does the editor draw the
+switch and send it, and the fill page ask for the caller's changeable answers; on any other answer -
+`false`, or no answer yet (`null`) - neither the switch nor "Modifier ma réponse" is offered and
+nothing is asked: the client never learns the feature by a refusal. Pinned by
+`answerEditGate.test.ts` and `appVersion.test.ts`; the server half by `version.service.spec.ts`.
+**The reverse skew** (an editor of 1.6.6 to 1.6.11 saving a form whose switch is on): its save carries
+no `allowAnswerEdit`, and `FormsService.update` keeps a stored value for an absent field, so the
+switch survives - pinned by `forms.service.public.spec.ts` ("the answer-edit switch across an older
+editor"). Nothing to remove there.
+**Removal condition:** when no estate older than the release carrying `formAnswerEdit` is served (both
+estates deployed past 1.6.12), the client branch for `false` may go; the field stays, always `true`.
+
 ### No date yet - Suivis (`feed=followed`) and the client-placed suggested posts, for installed clients older than 1.6.9 (2026-11-10)
 
 **Site:** the `followed` arm of `PostsService.listPostRows` (`followedFeedSql` in
@@ -635,6 +850,21 @@ of `LIST_POST_FEEDS`, its arm and `followedFeedSql`, the `me/suggested-posts` ro
 `PostsService.listSuggestedPosts`; the client's `RETIRED_FOLLOWED_FEED` mapping may go one floor later
 (a preference stored before 1.6.9 then falls back to the default tab).
 **Cost while it stands:** none - one arm nobody new asks, one route.
+
+### No date yet - an event form newer than its server - `eventReach` (2026-11-13)
+
+**Site:** `serverEventReach()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by
+`eventReachOffered` (`frontend/src/lib/calendar/eventReach.ts`) on the global agenda and an
+institution's page; the server half is `eventReach: true` in core-service's `GET /api/version`.
+**Why.** A stable ships both stores before production deploys, so for days a phone build that
+requires an institution event's reach talks to a social-service that answers the options route `404`
+and cannot store a reach: the picker would fail to load and "Déposer" would stay disabled - nobody
+could file an institution's event until production deployed.
+**What the client does.** It draws the reach picker, and requires a choice, only on an estate whose
+`/api/version` says `eventReach: true`; otherwise - an older server, or no answer yet - it files the
+event as before, with no picker and no reach. The `404` is never read as the signal.
+**Removal condition:** when no estate older than the release carrying `eventReach` is served (both
+estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
 
 ### Removal once `minClientVersion` passes `1.6.12` - a form editor that cannot draw a priced grid's "Obligatoire" switch (owner, 2026-11-13)
 
@@ -968,7 +1198,7 @@ challenges, and its sign-in fails against the older server until it reads `/api/
 **Removal condition:** `minClientVersion` at or above the first stable carrying the client half, on
 both estates with both stores serving it, AND the warning silent on production for a week. Then the
 branch becomes a 400, which is what makes PKCE REQUIRED rather than offered. It also needs the
-redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app-2026-10-23)
+redirect hardening in [backlog](backlog.d/p2-the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not.md)
 to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
@@ -1516,11 +1746,13 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
 - **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
   (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
   before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
-  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  subscribes again from `/calendar` or the association's page; the modal said so until 2026-11-14
+  (`calendar_subscribe_old_links_notice`, removed when the link became its holder's).
   The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
   modal builds unsigned links until it updates: they are refused.
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
-  break on purpose (it is the revocation) and needs no code.
+  break on purpose and needs no code. Since 2026-11-14 a holder also revokes their own links alone, and
+  the `sig` link itself is a dated shim (the diary entry above).
 
 ## Nothing to remove - an UNSIGNED single-event calendar link now gets a 403 (2026-11-02)
 

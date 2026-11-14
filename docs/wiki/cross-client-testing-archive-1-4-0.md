@@ -599,7 +599,7 @@ Read [channel-encryption section 21](protocols/channel-encryption.md#21-graine-v
 Read [mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh) first. **Owed by the
 leaf-refresh pull request (#2269) before any stable carries it, and no runner exists yet.** Each row
 is run on a pre-release build, the phone half on a RELEASE build, with the commit's stage-checkpoint
-duration read from the device log ([backlog](backlog.md#owed-a-verification-and-nothing-else)). A
+duration read from the device log ([backlog](plan.md#readings-owed)). A
 refresh is made due by the bench ledger (`mls_leaf_refresh:<userId>:<deviceId>`, an observation one
 interval old), never by moving a clock.
 

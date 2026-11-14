@@ -55,6 +55,7 @@
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Guided help](frontend/guided-help.md) - the welcome tour and first-time hints: one engine, how to declare a help, a missing target decided by an event, the quiet state, and the per-account seen store
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
+- [Keyboard and send motion](frontend/keyboard-and-send-motion.md) - Messenger and Canari measured frame by frame (keyboard rise and fall, a send, the composer bar), the synced IME animation, the keyboard handed to the page before the WebView resizes, the thread's glide
 - [Controls](frontend/controls.md) - one 40 px height, one grey edge, three mandatory components (Button, Input, Select) and the ratchet test that fails a screen drawing its own
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
@@ -98,7 +99,7 @@
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
 - [CanaReels in a conversation](frontend/modules/reels-in-chat.md) — Design study (2026-10-09): an ephemeral E2E video message in DMs, groups and salons, its model, retention, weak network, work packages
-- [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
+- [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left; [Lydia contract and flux](lydia-contract-flux.md) — the platform's contract terms entered by an admin, the yearly flux counter, the payout estimate
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 
@@ -137,6 +138,7 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+- [Retention settings](retention-settings.md) - every retention duration in the code, the four an admin sets (stamped at creation, so a lowered one applies to new content only), and how the privacy policy renders the values in force
 - [Live replays](live-replays.md) - a finished live kept three days as a CanaReel: the measured cost, the live's own segments served as a replay post, the owner's eight decisions of 2026-11-09, the 20 GB cap, WP-R1..WP-R6 (WP-R1 built)
 - [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
 - [Birthdays](birthdays.md) - day and month on the profile, who sees the date, the ring on the day for everyone, the followers' morning notice: the data, the rules, the proofs
@@ -152,9 +154,10 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
-- [Roadmap](roadmap.md) — everything open, with forecast dates and versions, and the log of date changes; updated at every milestone
-- [Backlog](backlog.md) — the scheduled queue behind `CLAUDE.md`: the substance of every queue item, and the table of what only the user can do
-- [backlog.d](backlog.d/README.md) — the backlog entries written since 2026-10-30, one file each, read together with `backlog.md`
+- [Plan](plan.md) — every open backlog entry under the version it is planned for, GENERATED from each entry's `target:` line; the readings owed are its checklist
+- [Roadmap](roadmap.md) — how the plan is ordered, the dated commitments, and the log of every replanning and milestone
+- [Backlog](backlog.md) — the rules every entry follows, and the table of what only the user can do
+- [backlog.d](backlog.d/README.md) — the backlog itself: one file per entry, each with its `target:` version
 - [Open questions](open-questions.md) — questions parked deliberately, with no code until they are answered; an answer becomes a backlog entry or closes the question
 - [Legacy compatibility](legacy-compatibility.md) — every shim kept alive for older clients, and the date or condition at which each may be removed
 - [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist

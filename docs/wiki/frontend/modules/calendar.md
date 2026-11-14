@@ -397,6 +397,12 @@ agenda) were two implementations of the same form under three names, 840 and 732
 same six fields twice - and neither could do what the other could. They are now one component,
 `$lib/components/calendar/EventFormModal.svelte`, over one module, `$lib/calendar/eventForm.ts`.
 
+**An institution's event chooses its reach** (owner, 2026-11-13): when "Au nom de" is an institution,
+the form draws the posts' `InstitutionReachPicker` (`subject="event"`, options from
+`getEventReachOptions`) and "Déposer" stays disabled until a space and a public are chosen
+(`canSetReach`, `offersReach`, `reachBlocksSave`). The model, the predicate and the co-organiser
+rules are in [profiles-and-access](../../profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13).
+
 It draws its own panel rather than the shared `Modal`, and reads the keyboard the way `Modal` does:
 `focusTrap` on the panel (Tab stays inside, the focus goes back when the form is gone), and a
 `keydown` on the panel that stops the key and closes on Escape - one Escape, one dialog
@@ -732,23 +738,28 @@ the same aggregated feed as `GET /api/associations/calendar/feed` (JSON), with a
 `from`/`to` are optional on both routes: a "subscribe by URL" link is saved once by the calendar app
 and re-polled forever with the exact same URL, so the caller can never add parameters to it after the
 fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a rolling
-3-months-back/12-months-forward window - the same window the frontend computes for the link it
-builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
-`AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+3-months-back/12-months-forward window. Since 2026-11-14 the subscription link the frontend builds
+carries NO window (`agendaSubscriptionIcsPath`, the token alone), so a link saved today still shows the
+coming months a year later.
 
 ## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
 
 `feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
 it, and signs only the reader's own spaces (design and codes:
 [profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
-`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
-`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
-`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
-`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+**Since 2026-11-14 the link is its HOLDER's** ([D40 re-decided](../../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)).
+In the frontend: `requestAgendaSubscription` (`associations/api.ts`) calls `POST /api/associations/calendar/subscription`
+and answers the token; `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`) asks ONLY on
+the reader's tap (`ask()`, the modal's "Obtenir mon lien d'abonnement"; opening the modal leaves no
+live bearer row) and for the selection shown at that tap, and holds the token apart from that selection,
+so a URL is never built from the PREVIOUS choice; `/calendar` and the association's calendar section build the URL with
+`agendaSubscriptionIcsAbsoluteUrl(token)` - the token alone. `CalendarSubscribeModal` takes `signing`,
+`onAsk`, `onRevoke` and `revokeStatus`: it says a link shows what its holder sees, and its revoke button,
+once `showConfirm` is answered yes, calls `revokeAgendaSubscriptions` (`DELETE
+/api/associations/calendar/subscriptions`); the next link is asked like the first.
 `AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
 `formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
-The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
+The one-event link (`eventIcsAbsoluteUrl`) carries its own event signature (`icsSig`, 2026-11-02).
 
 ## A post links an event; the event does not link a post
 

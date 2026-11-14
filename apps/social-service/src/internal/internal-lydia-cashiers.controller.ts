@@ -6,7 +6,6 @@ import {
   Headers,
   HttpCode,
   Param,
-  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import { isUUID } from 'class-validator';
@@ -17,6 +16,7 @@ import {
 import type { LydiaCashierNumber, LydiaCashierView } from '../associations/lydia-cashiers-list';
 import { claimTokenOf } from '../associations/lydia-cashier-claim';
 import { assertInternalSecret } from './internal-secret.util';
+import { RouteParams } from '../common/route-params';
 
 /** The text of a body field, trimmed; '' when absent or not a string. */
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -47,6 +47,7 @@ function numberOf(body: { number?: unknown } | undefined): LydiaCashierNumber {
  * `/api/internal/`, which nginx does not route, `X-Internal-Secret` guarded and `no-store`. Phones
  * travel in the BODY (both ways), never a path, and nothing here logs one.
  */
+@RouteParams({ id: 'uuid' })
 @Controller('internal/associations')
 export class InternalLydiaCashiersController {
   constructor(private readonly cashiers: LydiaCashiersService) {}
@@ -57,7 +58,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async addClaim(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { userId?: unknown; phone?: unknown; role?: unknown }
   ): Promise<{ vendorToken: string; claimToken: string }> {
     assertInternalSecret(headerSecret);
@@ -72,7 +73,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async roleClaim(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { cashierId?: unknown; role?: unknown }
   ): Promise<{ vendorToken: string; phone: string; userId: string; claimToken: string }> {
     assertInternalSecret(headerSecret);
@@ -88,7 +89,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async record(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body()
     body: {
       vendorToken?: unknown;
@@ -123,7 +124,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async release(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { claimToken?: unknown }
   ): Promise<{ ok: true; released: boolean }> {
     assertInternalSecret(headerSecret);
@@ -139,7 +140,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async revokeClaim(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { cashierId?: unknown; number?: unknown }
   ): Promise<LydiaCashierRevokeTarget> {
     assertInternalSecret(headerSecret);
@@ -155,7 +156,7 @@ export class InternalLydiaCashiersController {
   @Header('Cache-Control', 'no-store')
   async recordRevoke(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body()
     body: {
       cashierId?: unknown;

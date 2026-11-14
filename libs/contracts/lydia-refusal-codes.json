@@ -24,6 +24,8 @@
     "paymentsBlocked": "PAYMENTS_BLOCKED",
     "enrolmentInFlight": "LYDIA_ENROLMENT_IN_FLIGHT",
     "enrolmentPending": "LYDIA_ENROLMENT_PENDING",
+    "businessPendingValidation": "LYDIA_BUSINESS_PENDING_VALIDATION",
+    "businessHoldsPayments": "LYDIA_BUSINESS_HOLDS_PAYMENTS",
     "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET",
     "responsablePhoneLocked": "LYDIA_RESPONSABLE_PHONE_LOCKED",
     "responsableInFlight": "LYDIA_RESPONSABLE_IN_FLIGHT",

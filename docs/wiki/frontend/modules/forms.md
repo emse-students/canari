@@ -85,6 +85,14 @@ A paid answer can be refunded from Canari, in full or in part, by a payout manag
 (the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
 answer `refunded`, which frees its seat and its single-answer slot.
 
+**A paid answer is never deleted** (owner, 2026-11-14): `deleteSubmission` refuses `paid` and
+`paid_over_capacity` with the typed 409 `FORM_ANSWER_PAID`, and the manager is told to refund or
+cancel it instead - the payment's record keeps its Lydia Business either way
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)). A
+`pending` answer is cancelled first by `cancelSubmission`'s rules, its Lydia request settled, so a
+request left payable never lands on a deleted answer; one that cannot be settled is a 409
+`PREVIOUS_PAYMENT_OPEN`, worded for the manager.
+
 ## Key component: forms/[id]/+page.svelte
 
 The single form submission page handles the three payment flows. Key state:
@@ -568,8 +576,38 @@ Two properties make that work:
 
 `pricing/price-matrix.ts` resolves a subject to a cell, `pricing/validate.ts` refuses an
 incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
-`matchesCondition` plus `PricingFacts` - the promo, formation and cotisation facts assembled by
-`pricing/pricing-facts.service.ts`.
+`matchesCondition` plus `PricingFacts` - EVERY cursus of the person (promo and formation of each
+entry), and the cotisation tiers and answers, assembled by `pricing/pricing-facts.service.ts`.
+
+**Two cursus pay the most favourable price (D32, built 2026-11-14).** `PricingFacts.cursus` is a
+LIST (`NO_CURSUS`, one empty view, for staff, a guest or a 404 - exactly the old behaviour). A
+CONDITION (a question's `showIf`, `submitCondition`, a booking space's audience) holds when it holds
+for at least one cursus, promo and formation read from the SAME entry; a refusal's criterion is the
+first cursus's, `notCotisation` first. A PRICE is computed WHOLE once per cursus and the cheapest
+total wins (`cheapestCursus`; an unavailable cell loses to any price; a tie goes to the first
+cursus). The single-cursus facts a bucket, a cell or a grid tier is read from (`CursusFacts`) are
+branded: only `cursusViews` makes them, so no caller can price on one cursus by passing the
+person's facts. `forms/form-quote.ts` is where a form picks its winner, once per operation:
+`quoteSubmission` at submit (base cell for the visible answers + every product grid's lines;
+option supplements do not depend on the cursus and are left out of the comparison), and
+`displaySlices` for `/check` and the public read: EVERY distinct cursus's slice (`cursusSlices`:
+`pricing` + `productGridPrices`, nothing beyond the viewer's own cursus). The fill page
+(`fillPricing.ts`) totals each slice for the current answers and shows the cheapest with the same
+rule; an option is closed, and "combinaison indisponible" said, only when EVERY slice closes it;
+the label and the grid prices shown are the winning slice's; the form is "not open to you" only when
+every slice's row is entirely unavailable. One table of cases, `libs/contracts/cursus-pricing.cases.json` ([libs](../../libs.md#cursus-pricingcasesjson)),
+is asserted by `form-quote.spec.ts` on the server and `fillPricing.test.ts` on the page, so the two
+cannot drift. `pricing` and `productGridPrices` alone are still served - the FIRST slice - for a page
+older than D32 ([legacy-compatibility](../../legacy-compatibility.md)).
+The cursus come from core-service as `cursusViews`, reconciled THERE (`cursusViewsOf`): every
+well-formed entry, plus the legacy `promo`/`formation` pair when no entry carries it (a person the
+WP3 backfill has not reached, logged `[PROFILE_CURSUS_BEHIND]`), so D32 only ever ADDS a view -
+nobody pays more or sees less than before it. A core-service that serves no `cursusViews` (only a
+rollback produces one) gets every profile-priced operation a typed `503 PRICING_CORE_BEHIND`
+([cicd](../../cicd.md)).
+A boutique product is `cheapestCell`. The winner is logged
+(`describeCursus`: `cursus=2/2 formation=ICM promo=2024`). Stored snapshots are unchanged in
+meaning: `submissions.lines` carries the winning cursus's tier, as charged.
 
 **The module sits at `src/pricing/`, not under `src/forms/`** (moved 2026-08-31). A boutique product
 prices on the same grid, and a shared mechanism kept inside one consumer is a mechanism the second
@@ -697,10 +735,14 @@ Measured on prod 2026-08-23, `auth_db.users`, 221 rows:
 
 Three facts shape the feature:
 
-1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; `promo` and
-   `formation` are written only by `findOrCreateFromOidc`. That is what makes them safe to price on -
-   the payer cannot move themselves into a cheaper cell. **If that DTO ever gains `promo`, this
-   becomes a self-service discount**, which is why the warning is written at the DTO itself.
+1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; the cursus
+   and the `promo`/`formation` columns derived from it are written by `findOrCreateFromOidc` (from
+   the identity provider, at every sign-in) and by the platform admin's profile edit
+   (`ProfileEditService.applyEdit`, audited in `profile_changes`). That is what makes them safe to
+   price on - the payer cannot move themselves into a cheaper cell. Under D32 an admin who ADDS a
+   second cursus to somebody can move that person's price (the cheapest cursus wins), which is the
+   edit's audit trail's business, not the payer's. **If that DTO ever gains `promo` or `cursus`,
+   this becomes a self-service discount**, which is why the warning is written at the DTO itself.
 2. **`formation` is a small OPEN vocabulary, not an enum.** The next value arrives from Authentik with
    no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
 3. **Both can be null**, and five rows on prod are. A null is not an error and must price.
@@ -879,7 +921,10 @@ raw-tag UI that was their only caller.
 
 ### Granting a cotisation needs MANAGE_MEMBERS, pricing on one does not
 
-Creating a form needs nothing but an account. Linking it to an association needs membership. But
+Creating a form needs nothing but an account. Linking it to an association needs MANAGE_FORMS in it
+(owner, 2026-11-14: *"seuls les membres d'association qui avaient la permission 'gerer les
+formulaires' pouvaient gerer les formulaires"* - membership alone used to be enough, never decided,
+an early implementation's `isMember`; see [who manages an association's forms](#who-manages-an-associations-forms-owner-2026-11-14)). But
 `grantsCotisation` hands out association membership, and `UserTagService.grantCotisant` has always
 required `MANAGE_MEMBERS` - so a plain member with `MANAGE_FORMS` could save a form whose grant would
 be refused at payment time, or, worse, use the form as a side door around the flag that guards the
@@ -888,6 +933,20 @@ roster. `assertCotisationConfigValid` now takes the caller and refuses the setti
 
 Dividing a price grid on a cotisation tier is deliberately NOT gated: charging existing cotisants a
 different amount grants nothing and changes no one's membership.
+
+### Who manages an association's forms (owner, 2026-11-14)
+
+ONE predicate, `FormsService.managesForm`: a global admin; for an ASSOCIATION's form, MANAGE_FORMS in
+that association (`mayAct`: a BDE super-admin of it included), whoever created it; for a PERSONAL
+form, its owner. Its creator is no manager by authorship: one who never held MANAGE_FORMS (possible
+until this date, when membership was the creation rule) or no longer does loses the form, and
+"Mes formulaires" (`list`) no longer lists it. A create naming an association, and a draft moved
+from or to one, need MANAGE_FORMS there - else `403 FORM_ASSOCIATION_NOT_YOURS`, typed at the throw
+(`assertManagesAssociationForms`); the builders offer only those associations
+(`formManagedAssociations`). Measured read-only on production that day: 1 of 15 live association
+forms had an owner without MANAGE_FORMS in its association. The fee schedule of the payout
+estimate follows (`mayEditAPrice`, [lydia-contract-flux](../../lydia-contract-flux.md)): a form's
+creator is not a price editor by being its creator.
 
 ## An anonymous form keeps no author (2026-09-30)
 
@@ -969,6 +1028,7 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
 | anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
 | anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| anonymous + "Autoriser la modification de la réponse" | refused | `FORM_ANONYMOUS_ANSWER_EDIT` | an anonymous answer names nobody who could reopen it ([changing an answer](#a-respondent-changes-their-own-answer-owner-2026-11-13)) |
 | public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
 | public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
 | public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
@@ -977,8 +1037,8 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
 | every other pair | allowed | - | |
 
-**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
-promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers
+`NO_CURSUS` and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
 every profile criterion, and `submit` prices the cell from those facts
 (`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
 group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
@@ -1187,6 +1247,132 @@ the price is only as good as the answer it is computed from:
   required, unconditional question whose every option is grouped never reaches it, so a 0 there is
   accepted.
 
+## A respondent changes their own answer (owner, 2026-11-13)
+
+A per-form switch, **"Autoriser la modification de la réponse"** (`forms.allowAnswerEdit`, OFF by
+default, migration 166), lets a respondent WITH AN ACCOUNT reopen their own answer and change it.
+The owner's decisions are final; the reasons below are why the code holds them.
+
+**Who and when.**
+
+- Only the account that wrote the row. A guest's row (`userId` NULL) is nobody's, so a guest is
+  never offered it; on an ANONYMOUS form the switch is shut (`FORM_ANONYMOUS_ANSWER_EDIT`, one row of
+  [the option rule](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), on both
+  sides) and a stored `true` beside `anonymous` is refused at the edit anyway (`FORM_ANSWER_EDIT_OFF`).
+- Only while the form is OPEN: after `opensAt`, before `closesAt`, not closed by hand
+  (`assertFormOpen`, the submit's own check: `FORM_NOT_OPEN_YET` / `FORM_CLOSED`).
+- Only a row that IS an answer (`answerHoldingWhere`: paid, free, a live pending one, pending cash,
+  paid over capacity). A cancelled, expired or refunded row is `FORM_ANSWER_NOT_EDITABLE`.
+- Another person's row answers exactly what an absent one does: 404 `FORM_ANSWER_NOT_FOUND`.
+
+**The price is never moved by an edit - the LOCK RULE** (`apps/social-service/src/forms/answer-edit.ts`,
+`editLockedItemIds`). No top-up and no partial refund exist, ever. So every question that can change
+what is charged is LOCKED:
+
+- a priced grid (`product_grid`): its quantities are the order;
+- a question the price grid divides on (an `answer` criterion of `priceMatrix`);
+- a choice question with an option supplement (`decidesPrice`; the TYPE decides, as at submit);
+- CLOSED UNDER VISIBILITY: every question whose answer shows or hides a locked one (`showIf.answer`
+  or the legacy `dependsOn`), transitively - hiding a priced question drops its supplement or moves
+  the person to the "everyone else" cell, a price change made one question away;
+- **the lead's REVERSIBLE decision (2026-11-13)**: once the answer's cotisation was GRANTED
+  (`cotisationGrantedAt`), the question that decides admission on a granting form (the ANSWER
+  criterion of `submitCondition`) is locked too, like a price. No question chooses the tier itself
+  today (the tier is the form's `cotisationVariantKey`), and every granting form charges, so its
+  priced questions are locked already; this line only closes "change the answer that let me buy".
+  To reverse it, drop the `grantMade` branch in `editLockedItemIds`.
+- **the lead's REVERSIBLE decisions (2026-11-13), what the ROW says**: the lock set of an answer is
+  today's rule UNITED with every question the row recorded of its price (`rowLockedItemIds`, closed
+  under visibility like the rest): the `itemId`s of its stored `lines` (migration 137), and its
+  SNAPSHOT `submissions."priceLockedItemIds"` (migration 166), written by `submit` - and by a retry
+  that re-prices the row - with the questions today's rule says the price depends on at that moment
+  (`priceSnapshot`). So a grid unpriced, or a supplement REMOVED, after answers were priced with it
+  still locks its question on those rows (`answer-edit.integration.spec.ts`, "keeps a question
+  locked on a row priced with its supplement, after the supplement is removed"). **The residual, for
+  rows written before migration 166 only** (snapshot NULL): today's rule and `lines`, so a supplement
+  removed after such a row was priced unlocks that question there - the answer may then disagree
+  with `totalPaid`, never the money with what was charged. To reverse: drop the third argument of
+  `editLockedItemIds` (and stop writing the snapshot).
+
+**When does the lock start - the unpaid-but-requested decision.** The owner preferred "locked as
+soon as a payment request exists". The rule is STRICTER: the price-affecting questions are locked
+on EVERY answer from the moment it is sent - paid, pending online, pending cash, AND free. Why:
+re-pricing a free answer would read TODAY's profile and grid (a promo or a cotisation acquired since,
+a cell the manager changed), and an edit from a 0 EUR cell to a paid one would be a top-up - the one
+thing that may not exist. One rule for every status is also one rule a reader can predict. A free
+answer to a form whose priced questions are all 0 EUR still has them locked; the hint in the editor
+says so.
+
+What an edit therefore NEVER writes: `totalPaid`, `lines`, `priceLockedItemIds`, `paymentStatus`, the payment ids, the
+seat, the cotisation grant. It never reaches the payment provider.
+
+**The server enforces it; the client only draws it.** `FormsService.editAnswer`
+(`PUT /api/forms/:id/submissions/:submissionId/answers`, body `{ answers }`):
+
+1. the switch, anonymity, openness, the answer sizes (`assertAnswerSizes`, the submit's own);
+2. `judgeEdit`, outside the locks (the profile read may call core-service): grid answers normalised;
+   a locked question SENT with a different value is 409 `FORM_ANSWER_LOCKED` naming it (a locked one
+   repeated or omitted is fine - the stored value is carried); then the submit's own checks over the
+   merged answer: the ANSWER half of `submitCondition` only (who the person is - promo, formation,
+   cotisation - was judged when they answered, and a form selling a cotisation with `notCotisation`
+   would otherwise refuse every buyer's edit once they hold it), declared options on the editable
+   questions, `required` on the editable ones (`FORM_ANSWER_MISSING`), and an answer the person
+   cannot see DROPPED as at submit - except a locked one, which is what was priced and stays whatever
+   their profile says today;
+3. the write, in ONE READ COMMITTED transaction: `lockFormSeats` (the form row, `FOR UPDATE`), then
+   the submission row `FOR UPDATE` - the order `submit` and `markPaid` take them. The row is re-read
+   there; ownership and `answerHoldingWhere` are checked again; every locked answer is compared with
+   the row AS IT IS NOW (`sameAnswer`: empty spellings equal, a multiple choice a set, a grid by its
+   non-empty cells), so a retry, a payment or a grant committed meanwhile refuses rather than
+   overwrites; then `answers` and `editedAt = now()` - nothing else.
+
+**Version skew.** The client offers the switch and "Modifier ma réponse", and asks the routes below,
+only on an estate whose `/api/version` says `formAnswerEdit: true`; an editor older than the switch
+saving a form keeps the stored value ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-answer-editor-newer-than-its-server---formansweredit-2026-11-13)).
+
+`GET /api/forms/:id/my-answers` lists the caller's rows that may be changed, newest first, each with
+its `lockedItemIds`; empty when the switch is off, the form anonymous or not open. The fill page
+reads it, offers "Modifier ma réponse" under the sent answer (or a "Vos réponses" list on a form
+taking several answers - each is changed separately), draws the locked questions disabled with one
+line ("Fixe le prix payé : ne peut plus être modifiée."), hides the order bar, the payment choice and
+the total, and sends the visible answers LESS the locked ones (`editedAnswers`, `fillAnswers.ts`) -
+re-sending them through a read-back that might spell them differently would only risk a false 409.
+
+**Capacity.** The model has ONE cap, `maxSubmissions`, counted in answers; there is no per-option
+capacity. An edit keeps the same row, so it keeps its seat and never takes a second one: a full form
+still lets its respondents change their answers, and the form lock is taken anyway so an edit is
+serialised with every submit and payment. Never a second row: the single-answer guard and
+`hasSubmission` read the same row as before.
+
+**Files.** A new file id in a FILE answer is claimed as at submit (`FormFilesService.attach`, which
+checks its uploader); a kept one is not claimed again, so its retention keeps counting from its first
+claim. A REPLACED file stays attached to this answer and goes with the existing purge
+(`fileRetentionDays`): no orphan, no early deletion.
+
+**What managers see.** `submissions.editedAt` (null until a first change; no history kept) is in the
+responses list as "modifiée le <date>" under the answer's date, and in the XLSX export as a "Modifiée
+le" column - present when the form allows changes or any row was changed. No notification.
+
+**The codes** (`libs/contracts/form-answers.json`, exported by `answer-bounds.ts`, worded by
+`formCodeMessage` on the client): `FORM_ANSWER_EDIT_OFF` (403), `FORM_ANSWER_LOCKED` (409, with
+`itemId`), `FORM_ANSWER_NOT_EDITABLE` (409), `FORM_ANSWER_NOT_FOUND` (404); and
+`FORM_ANONYMOUS_ANSWER_EDIT` (400) at the form's save.
+
+**Logs**: `[FORM_EDIT]` at entry, at each refusal (with its reason) and at the write (status, files
+claimed); the fill page logs under `FormView`.
+
+**Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
+`forms."allowAnswerEdit" boolean NOT NULL DEFAULT false`, `submissions."editedAt" timestamptz
+NULL` and `submissions."priceLockedItemIds" jsonb NULL` (the price snapshot above). Reverse: drop the
+three columns (written in the file).
+
+**Tests**: `answer-edit.spec.ts` (the lock rule, the row's own `lines` united with it, and `sameAnswer`), `answerEditGate.test.ts` and `appVersion.test.ts` (the capability gate), `forms.service.public.spec.ts` (an older editor's save keeps the switch), `answer-edit.integration.spec.ts`
+against PostgreSQL (CI's `test-social-integration`): an edit done in place, a locked question refused
+on a paid answer, pending cash locked too, a full form keeping its seat, a hidden answer dropped, a
+closed form, an anonymous form and a switch-off form refused, another person's answer 404, a
+cancelled answer, several answers edited separately, file claims, an edit queued behind a cash
+validation's row lock, and concurrent cash validations and edits with no lost write.
+
 ## The file question (2026-10-15)
 
 A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
@@ -1326,7 +1512,7 @@ draft) and no post or event naming it (`FORM_IS_DRAFT`): nothing is tied to its 
 |---|---|---|
 | nothing (`associationId` absent) | left as it is | left as it is |
 | the stored value (`''` and `null` both mean personal) | no change, no check | no change |
-| another association, or none | moved, when the actor is a MEMBER of the association it leaves AND of the one it joins (the creation rule, `isMember`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
+| another association, or none | moved, when the actor holds MANAGE_FORMS in the association it leaves AND in the one it joins (the creation rule, `mayAct`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
 
 The id must name an association, for a global admin too: one that is no UUID, or names none
 (`forms."associationId"` has no foreign key), is `400 FORM_ASSOCIATION_UNKNOWN` before any
@@ -1765,7 +1951,7 @@ test and the geometry is exported instead of inlined: a retuned radius moves the
 
 ## The paid half: what it needs, scoped 2026-09-30
 
-Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end); the paid half itself is its own work packages):
+Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](payments.md); the paid half itself is its own work packages):
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
@@ -1841,7 +2027,7 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **`declined` and `cancelled-or-expired` are `SETTLED_REFUSED_REQUEST_STATES`**: a retry's settle frees the row on them, and `confirmPayment` releases a `pending` row to `cancelled` on them. `confirmPayment` answers `requestState` (the typed state read on that call), from which `paymentReturnVerdict` (`paymentReturn.ts`) derives `declined` / `ended`: the success page says so (`form_success_declined_*`, `form_success_ended_*`) with a retry link.
 - **The form page asks once on load.** `GET forms/:id/check` now answers the caller's own `submissionId`; when it is `pending` the page calls `confirm-payment` once, and on a dead request it re-enables the pay button (the retry) with `form_view_payment_declined_note` / `form_view_payment_ended_note`. The same mechanism covers an expired or cancelled request whose callback was lost (state 6 while the row still reads `pending`).
 - **A stale state is never answered** (review of #2210): a retry may replace the request between `confirmPayment`'s read and its answer (two tabs, the success page polling while the payer retries). `requestState` is answered only while the row still names the uuid that was read, and the client never derives `declined` / `ended` from a row still `pending`: either would offer a retry that cancels the request being paid.
-- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.md#p2---an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for-up-to-28-minutes-2026-10-21)).
+- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)).
 
 ### The native payer's return: read on resume, and an https return on Android (2026-11-13)
 

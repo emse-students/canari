@@ -25,7 +25,8 @@
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
-  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
@@ -39,7 +40,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
@@ -96,6 +100,10 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 166). */
+  let allowAnswerEdit = $state(false);
+  /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
+  const answerEditAvailable = serverFormAnswerEdit() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -129,10 +137,11 @@
    */
 
   /**
-   * The associations the user belongs to - not every association there is.
+   * The associations whose forms the user manages - not every association there is, nor every
+   * membership.
    *
-   * Creating a form for an association requires MEMBERSHIP of it, so listing all of them offered a
-   * choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
+   * Creating a form for an association requires MANAGE_FORMS in it (owner, 2026-11-14), so listing
+   * any other offered a choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
    * readiness either, because a FREE form may be linked to any association it belongs to; the
    * payment section says so when a chosen association cannot take money yet.
    */
@@ -180,7 +189,7 @@
     }
     try {
       associations = await withRequestedAssociation(
-        await listMyAssociations(),
+        formManagedAssociations(await listMyAssociations()),
         associationId,
         getAssociation
       );
@@ -235,6 +244,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -398,6 +408,7 @@
       items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
+      ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
@@ -644,6 +655,8 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
+      {answerEditAvailable}
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic

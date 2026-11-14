@@ -177,6 +177,21 @@ describe('BaseMlsService.removalEpochs - the departures the MLS layer recorded',
   });
 });
 
+// The sightings are Rust's record (tests/device_binding.rs); the seam hands them back unchanged.
+describe('BaseMlsService.membershipEvidence - what this device saw, never the server', () => {
+  it('asks for exactly that group and user and returns the evidence as recorded', async () => {
+    const evidence = (
+      BaseMlsService.prototype as unknown as {
+        membershipEvidence: (g: string, u: string) => Promise<unknown>;
+      }
+    ).membershipEvidence;
+    const recorded = { firstSeenEpoch: 2, watchedFromEpoch: 1 };
+    const ctx = { membershipEvidenceNative: vi.fn(async () => recorded) };
+    await expect(evidence.call(ctx, 'g1', 'Bob')).resolves.toEqual(recorded);
+    expect(ctx.membershipEvidenceNative).toHaveBeenCalledWith('g1', 'Bob');
+  });
+});
+
 // THE REPAIR OF A LEAF STILL IN THE TREE IS ONE COMMIT (Remove + Add), vetted before anything is
 // staged - the Rust half and its Welcome are tested in tests/device_binding.rs.
 describe('BaseMlsService.replaceMember - one commit, vetted first', () => {

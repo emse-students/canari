@@ -38,6 +38,10 @@ runs:
         # release built at all depended on whether a cache entry had expired. Emptying it here makes
         # the flag scoped to the one command that should carry it, below.
         rustflags: ''
+        # THE SAME TRAP, UNDER A NEW NAME: from v2 this action ALSO exports `CARGO_BUILD_WARNINGS`
+        # (default `deny`) into $GITHUB_ENV. `1.6.12-alpha.1`'s iOS build died on it: the vendored
+        # `wry` patch's upstream warnings became errors. `action-pins.test.mjs` holds both inputs empty.
+        build-warnings: ''
 
     - name: Install wasm-pack
       if: steps.cache.outputs.cache-hit != 'true'

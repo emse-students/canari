@@ -85,6 +85,9 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     // TWICE each: CD may replay them, and every statement is IF NOT EXISTS.
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
+    // The bridge's table (lydia-account-bridge.ts), read by every Lydia path: twice, idempotent.
+    await admin.query(migration('167_lydia_account_bridge.sql'));
+    await admin.query(migration('167_lydia_account_bridge.sql'));
     await admin.query('RESET lock_timeout');
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,

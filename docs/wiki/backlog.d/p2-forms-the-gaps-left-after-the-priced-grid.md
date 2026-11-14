@@ -1,5 +1,7 @@
 ## P2 - forms: the gaps associations hit that the priced grid did not close (audit of 2026-11-06, section 5 from G-DUP down)
 
+target: 1.10.0
+
 The audit's defects and its decided priced grid (`product_grid`, WP-G0..G5) shipped from `1.6.6` on.
 What it ranked AFTER them is not built, in the recommended order: **G-DUP** duplicate a whole form
 (the editor already duplicates a question), **G-VALID** answer formats, **G-EXPORT** accounting

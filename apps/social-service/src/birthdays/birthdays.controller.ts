@@ -6,6 +6,7 @@ import {
   type OwnBirthdayState,
   type ViewedBirthday,
 } from './birthdays.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * BIRTHDAYS ON PROFILES (owner, 2026-11-08; docs/wiki/birthdays.md). Under `/api/posts/...`, beside
@@ -15,6 +16,7 @@ import {
  * - `GET users/:userId/birthday`: another member's, as the caller may read it.
  * - `GET birthdays/today`: whose ring to draw today.
  */
+@RouteParams({ userId: 'opaque' })
 @Controller('posts')
 @UseGuards(NginxAuthGuard)
 export class BirthdaysController {

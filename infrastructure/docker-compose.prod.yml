@@ -111,7 +111,7 @@ services:
     # images are Alpine, so both clusters are musl and the collation does not move under the
     # indexes). The procedure, its numbers and its rollback are in
     # `docs/wiki/infrastructure/databases.md`, the only copy.
-    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
     # Postgres logs every checkpoint by default (several lines an hour, 2026-11-13) and a checkpoint is
     # routine, not an event: `log_checkpoints=off`. Changing a datastore's command recreates it at the
     # next ordinary deploy (docs/wiki/infrastructure/logging.md).
@@ -176,6 +176,10 @@ services:
       - "3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
+      # What one connection may send (docs/wiki/services/chat-gateway.md). Unset means the
+      # gateway's own defaults, 4096 bytes a frame and 240 frames a minute.
+      WS_MAX_FRAME_BYTES: ${WS_MAX_FRAME_BYTES:-}
+      WS_MAX_FRAMES_PER_MINUTE: ${WS_MAX_FRAMES_PER_MINUTE:-}
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
@@ -269,6 +273,10 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # Cloudflare Realtime's SFU app (WP-GC3): chat-delivery-service will proxy its sessions/tracks
+      # API for a group call past the mesh cap. Unset: the Cloudflare SFU leg is unavailable, no boot failure.
+      CLOUDFLARE_SFU_APP_ID: ${CLOUDFLARE_SFU_APP_ID:-}
+      CLOUDFLARE_SFU_APP_SECRET: ${CLOUDFLARE_SFU_APP_SECRET:-}
       # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
       # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
       QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}

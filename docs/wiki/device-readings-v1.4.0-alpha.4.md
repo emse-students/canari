@@ -1,7 +1,7 @@
 # `v1.4.0-alpha.4` read on the Mi 9T, sideloaded, 2026-10-22
 
 Second sideload reading of the 1.4.0 line, after the `alpha.1` reading in
-[backlog](backlog.md#owed-a-verification-and-nothing-else). **A sideload proves the CODE, not the
+[backlog](plan.md#readings-owed). **A sideload proves the CODE, not the
 Play-signed path**: the Play `internal` track is not usable from the bench phone's Google account (the
 tester opt-in is a human click), so the release asset was installed with `adb`.
 

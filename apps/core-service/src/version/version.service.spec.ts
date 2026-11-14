@@ -21,6 +21,12 @@ describe('VersionService', () => {
       livesMode: 'on',
       checkpointSkipMode: 'on',
       liveReplaysMode: 'on',
+      groupCallsMode: 'mesh',
+      callRelay: 'none',
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 14,
+      retentionIdleFileDays: 90,
     }),
   } as unknown as PlatformService;
 
@@ -33,7 +39,7 @@ describe('VersionService', () => {
   it('publishes the calls kill switch, so a client hides what the server would refuse', async () => {
     const out = await service.getVersion();
 
-    expect(out.calls).toEqual({ mode: 'audio' });
+    expect(out.calls).toEqual({ mode: 'audio', groupMode: 'mesh', relay: 'none' });
   });
 
   it('publishes the lives kill switch, so a client hides the live surfaces the server would refuse', async () => {
@@ -52,6 +58,17 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.liveReplays).toEqual({ mode: 'on' });
+  });
+
+  it('publishes the retention durations in force, which the privacy policy renders', async () => {
+    const out = await service.getVersion();
+
+    expect(out.retention).toEqual({
+      reelDays: 365,
+      liveReplayDays: 3,
+      chatReelDays: 14,
+      idleFileDays: 90,
+    });
   });
 
   it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
@@ -77,6 +94,13 @@ describe('VersionService', () => {
 
     expect(out.formDrafts).toBe(true);
     expect(out.rankedFeeds).toBe(true);
+    expect(out.eventReach).toBe(true);
+  });
+
+  it('says its estate lets a respondent change their answer, so a client offers it only then', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formAnswerEdit).toBe(true);
   });
 
   it("says its estate stores each priced grid's own switch, so a form client draws it only then", async () => {

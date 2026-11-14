@@ -1,5 +1,7 @@
 ## Global search (posts, forms, events, associations, people) - to design for the owner's validation after 1.6.9
 
+target: 1.10.0
+
 **Asked by the owner on 2026-11-10, while deciding the 1.6.9 feed tabs.** Not designed, not built:
 the next step is a design note put to the owner for validation, after the `1.6.9` stable.
 

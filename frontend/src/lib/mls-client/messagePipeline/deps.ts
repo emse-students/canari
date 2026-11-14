@@ -168,13 +168,15 @@ export interface MessageHandlerDeps {
   /**
    * A call signal arrived. `at` is when its frame happened (`receivedNoticeTime`: the frame's
    * `sentAt` and the server's acceptance), `null` when neither is known - the call record is dated
-   * by it, never by when this device processed the frame.
+   * by it, never by when this device processed the frame. `group` is true for a GROUP call's
+   * signal (the AppMessage's `group_call` kind, WP-GC2), false for a 1:1 call's (`call`).
    */
   onCallSignal?: (
     senderId: string,
     groupId: string,
     callMsg: unknown,
-    at: EventTime | null
+    at: EventTime | null,
+    group: boolean
   ) => void;
   /**
    * Called when a Welcome is processed successfully and the group is ready: resumes what the outbox

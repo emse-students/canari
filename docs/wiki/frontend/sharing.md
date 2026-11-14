@@ -218,7 +218,7 @@ and the picker still opens**. What differs is only what the platform holds.
   `speakableGroupName` feeds Siri suggestions BEYOND the share sheet: the names may appear in
   Spotlight, the Siri suggestions widget and possibly the lock screen (while Canari's "Show on Lock
   Screen" is on in iOS Settings). The owner kept the Android default (ON) and asked that it be said
-  plainly: the setting's own text (`settings_share_suggestions_desc`), the privacy policy's iPhone
+  plainly: the setting's own text (`settings_share_suggestions_desc_ios` and `_android`, one per platform), the privacy policy's iPhone
   row and register row C22 name those places and say that the setting turns it off. Turning it off
   deletes the donation group (`clear_share_targets`). No behaviour differs from Android's.
 - **What is never donated**: a message. The intent's `content`, `recipients`, `sender` and
@@ -227,7 +227,7 @@ and the picker still opens**. What differs is only what the platform holds.
   `NSError` codes only, through `GalleryLog` (`Logger`, every interpolation `.public` and never a
   label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
 - **Erased at sign-out**, an account switch included (on one install, B signs in only after A
-  signed out, [backlog](../backlog.md#owed-a-verification-and-nothing-else)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
+  signed out, [backlog](../plan.md#readings-owed)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
   (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
   notification extension donates no intent and publishes no shortcut, so there is no second set.
 - **The pick comes back through the Share Extension.** Its `Info.plist` declares

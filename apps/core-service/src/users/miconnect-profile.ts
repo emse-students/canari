@@ -36,9 +36,12 @@ const logger = new Logger('MiconnectProfile');
  * Reads the profile claims into the stored shape. A claim that is absent or malformed yields the
  * EMPTY value, never the previous one: the caller replaces the columns wholesale, so a claim that
  * disappeared at the provider clears here too (WP3). A malformed ENTRY is dropped with a warning,
- * not guessed at - a value the provider should never send is the provider's defect to see.
+ * not guessed at - a value the provider should never send is the provider's defect to see. A
+ * well-formed cursus entry whose FORMATION no space names is kept and said (see below).
+ *
+ * @param who - A short label of the account for the warnings (never the full id).
  */
-export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
+export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'): MiconnectProfile {
   const campus = CAMPUSES.find((c) => c === claims.campus) ?? null;
   if (claims.campus !== undefined && campus === null) {
     logger.warn(`profile claim: unknown campus ${JSON.stringify(claims.campus)} dropped`);
@@ -49,6 +52,17 @@ export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
     for (const entry of claims.cursus as unknown[]) {
       const e = entry as Partial<CursusEntry> | null;
       if (e && typeof e.formation === 'string' && e.formation && Number.isInteger(e.promo)) {
+        // A FORMATION NO SPACE NAMES ('icm', a value the provider gained before Canari did) IS
+        // KEPT, AND SAID (owner, 2026-11-14: "L'ignorer et alerter"). Kept, because the entry is
+        // what tells a student from staff: dropping it would leave a campus and an empty cursus,
+        // which is the definition of staff - and hand the person the staff public and the whole
+        // campus agenda. Ignored, because it matches no space (`isReaderSpaceSql` is an exact
+        // containment). Said, because until now such a person had no space and nothing told why.
+        if (!FORMATIONS.some((f) => f === e.formation)) {
+          logger.warn(
+            `[UNKNOWN_FORMATION] ${who}: cursus formation ${JSON.stringify(e.formation)} matches no space - kept, opens nothing`
+          );
+        }
         cursus.push({ formation: e.formation, promo: e.promo as number });
       } else {
         logger.warn(`profile claim: malformed cursus entry ${JSON.stringify(entry)} dropped`);
@@ -102,6 +116,80 @@ export function legacyColumns(cursus: CursusEntry[]): {
   formation: string | null;
 } {
   return { promo: cursus[0]?.promo ?? null, formation: cursus[0]?.formation ?? null };
+}
+
+/** One cursus as a price, a question or an audience reads it: promo and formation of ONE entry. */
+export interface CursusView {
+  promo: number | null;
+  formation: string | null;
+}
+
+/**
+ * The stable tag of the line saying a person's legacy `promo`/`formation` columns name a pair that
+ * no cursus entry carries (the WP3 backfill not applied to them, no sign-in since). Its RATE is what
+ * says when the columns can go (`legacy-compatibility.md`).
+ */
+export const PROFILE_CURSUS_BEHIND = '[PROFILE_CURSUS_BEHIND]';
+
+/**
+ * EVERY cursus a person is priced, shown questions and admitted through (D32), built in ONE place
+ * for social-service (`internal/users/:id/public-profile`):
+ *
+ * - every WELL-FORMED entry of `users.cursus` (formation a non-empty string, promo an integer), in
+ *   order. A `cursus` that is not a list counts as none (ERROR: the column is `jsonb NOT NULL` of a
+ *   list, so this is a write that broke it); a malformed entry is dropped (WARN);
+ * - PLUS the legacy pair (`users.promo`, `users.formation`) when either is set and that exact pair is
+ *   not among the entries. D32 ONLY EVER ADDS: the legacy pair is exactly what every price read
+ *   before it, so nobody is priced higher or closed out more than before - a person the WP3
+ *   backfill has not reached keeps their price. Logged WARN under `PROFILE_CURSUS_BEHIND`. This
+ *   shim goes with the columns (WP6; `legacy-compatibility.md`).
+ *
+ * Empty for a person with neither (staff, a post only): social-service reads that as one view with
+ * nothing in it.
+ */
+export function cursusViewsOf(user: {
+  id: string;
+  cursus?: unknown;
+  promo?: number | null;
+  formation?: string | null;
+}): CursusView[] {
+  const views: CursusView[] = [];
+  if (Array.isArray(user.cursus)) {
+    for (const entry of user.cursus as unknown[]) {
+      const e = entry as Partial<CursusEntry> | null;
+      if (
+        e &&
+        typeof e === 'object' &&
+        typeof e.formation === 'string' &&
+        e.formation &&
+        Number.isInteger(e.promo)
+      ) {
+        views.push({ promo: e.promo as number, formation: e.formation });
+      } else {
+        logger.warn(
+          `cursus views: malformed cursus entry dropped user=${user.id.slice(0, 8)} ` +
+            JSON.stringify(entry)
+        );
+      }
+    }
+  } else {
+    logger.error(
+      `cursus views: cursus is not a list (${user.cursus === null ? 'null' : typeof user.cursus}) ` +
+        `user=${user.id.slice(0, 8)} - read as none`
+    );
+  }
+  const promo = user.promo ?? null;
+  const formation = user.formation ?? null;
+  const legacyAmong = views.some((v) => v.promo === promo && v.formation === formation);
+  if ((promo !== null || formation !== null) && !legacyAmong) {
+    logger.warn(
+      `${PROFILE_CURSUS_BEHIND} user=${user.id.slice(0, 8)} legacy promo=${promo ?? 'null'} ` +
+        `formation=${formation ?? 'null'} is in no cursus entry (${views.length} entr` +
+        `${views.length === 1 ? 'y' : 'ies'}) - added as a view`
+    );
+    views.push({ promo, formation });
+  }
+  return views;
 }
 
 /** The formations a cursus may name (D4): `Autre` is the one bucket for masters, doctorates, the rest. */

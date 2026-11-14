@@ -71,6 +71,8 @@
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
+    bindSwipeNavTouchListeners,
+    standDownForDndDrag,
     createSwipeNavGestureState,
     isSwipeNavActive,
     isSwipeNavArmed,
@@ -93,6 +95,7 @@
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
+  import { sessionPushAuth } from '$lib/services/sessionPushAuth';
   import { setTabUnread, startTabIndicator } from '$lib/stores/tabIndicator';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
@@ -298,7 +301,7 @@
           // so the production origin that used to stand behind it here was a fallback that could
           // only ever have sent a dev or local build's push registration to production.
           globalSession.historyBaseUrl,
-          globalSession.authToken,
+          sessionPushAuth,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));
       }, 500);
@@ -501,6 +504,17 @@
     if (!isSwipeNavActive(swipeNavContext())) return;
     if (hasActiveTextSelection()) {
       abandonSwipeForSelection();
+      return;
+    }
+
+    const standing = standDownForDndDrag(swipeGesture);
+    if (standing !== swipeGesture) {
+      // A reorder picked the finger up: release whatever the swipe had already claimed.
+      swipeGesture = standing;
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
       return;
     }
 
@@ -724,14 +738,12 @@
     const node = appShell;
     if (!node || !swipeNavArmed) return;
 
-    node.addEventListener('touchstart', handleTouchStart, { passive: true });
-    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    const unbindTouch = bindSwipeNavTouchListeners(node, handleTouchStart, handleTouchMove);
     const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
       stopSelectionWatch();
-      node.removeEventListener('touchstart', handleTouchStart);
-      node.removeEventListener('touchmove', handleTouchMove);
+      unbindTouch();
       releaseGestureEnd?.();
       releaseGestureEnd = null;
       // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have

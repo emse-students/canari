@@ -1,5 +1,7 @@
 ## P2 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
 
+target: 1.10.0
+
 **RAISED FROM P3 ON PRODUCTION NUMBERS (2026-10-30).** One `1.5.1` log of the owner's Pixel: **425
 absent-conversation refusals, and up to 124 unacked frames in ONE boot** - every one a second
 handling, and the gap healer holding later frames of its group until the re-pull lands. Not a dev

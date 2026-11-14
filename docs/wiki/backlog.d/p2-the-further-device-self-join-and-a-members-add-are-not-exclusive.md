@@ -1,5 +1,7 @@
 ## P2 - before D1 opens: a further device's self-join and a member's Add of it are not exclusive on the server
 
+target: 1.10.0
+
 The first condition of lifting `FURTHER_DEVICE_SELF_JOIN_OPEN`
 ([the gate](../protocols/mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client),
 review of #2832). Not reachable while the door is shut.

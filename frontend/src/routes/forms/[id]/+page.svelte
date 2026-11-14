@@ -16,14 +16,21 @@
     getFormDraft,
     submitForm as submitFormService,
     checkSubmission,
-    type PricingView,
+    type CursusSlice,
     getSubmission,
     cancelPendingSubmission,
     confirmSubmissionPayment,
+    editFormAnswer,
+    getMyEditableAnswers,
+    type EditableAnswer,
     type Form,
   } from '$lib/forms/api';
-  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
-  import type { ProductGridPrices } from '$lib/forms/productGridContract';
+  import {
+    cursusSlicesOf,
+    fillPriceState,
+    NO_PRICING_SLICE,
+    optionModifierOf,
+  } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
@@ -48,6 +55,7 @@
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import {
     allRequiredAnswered as allRequiredAnsweredOf,
+    editedAnswers,
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
@@ -73,6 +81,7 @@
     Lock,
     Ban,
     QrCode,
+    Pencil,
   } from '@lucide/svelte';
   import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
@@ -86,6 +95,8 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import { offersAnswerEdit } from '$lib/forms/answerEditGate';
+  import { serverFormAnswerEdit } from '$lib/stores/appVersionCheck.svelte';
   import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
@@ -132,16 +143,16 @@
   let paidOverCapacity = $state(false);
   let formFull = $state(false);
   /**
-   * This submitter's slice of the pricing grid, from the server. Null when the form has one price.
+   * This submitter's slices of the pricing grid, from the server: one per distinct cursus (D32), the
+   * page showing the cheapest (`fillPriceState`). A slice's `pricing` is null when the form has one
+   * price; its `productGridPrices` are this member's prices on each priced grid.
    *
    * The page derives no pricing RULE of its own: everything about who the person is has already been
    * resolved server-side (cotisation, promo, formation - none of which a browser can be trusted
    * with), and what is left is their own answers, which the page resolves as they click. The server
    * recomputes the whole thing at submit and that figure is what gets charged.
    */
-  let pricing = $state<PricingView | null>(null);
-  /** This member's prices on each priced grid (`product_grid`), their category resolved server-side. */
-  let productGridPrices = $state<ProductGridPrices>({});
+  let slices = $state<readonly CursusSlice[]>(NO_PRICING_SLICE);
   /**
    * The required question the last send stopped on: its card says why, until it is answered. Kept
    * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
@@ -157,6 +168,15 @@
    */
   let cotisationHeld = $state(false);
   let submitting = $state(false);
+  /**
+   * The caller's answers they may still change (forms.md, "A respondent changes their own
+   * answer"): empty unless the form allows it, is not anonymous and is open - the server decides.
+   */
+  let editableAnswers = $state<EditableAnswer[]>([]);
+  /** The answer being changed, or null: the questions then draw IT, its price-setting ones locked. */
+  let editing = $state<EditableAnswer | null>(null);
+  /** The locked questions of the answer being changed: drawn read-only, never sent. */
+  const editLocked = $derived(new Set(editing?.lockedItemIds ?? []));
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
@@ -300,8 +320,7 @@
     pendingCheckout = null;
     paidOverCapacity = false;
     formFull = false;
-    pricing = null;
-    productGridPrices = {};
+    slices = NO_PRICING_SLICE;
     missingAnswer = null;
     hiddenItemIds = [];
     maySubmit = true;
@@ -405,18 +424,16 @@
         hasSubmitted,
         paymentStatus,
         formFull: full,
-        pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
         refusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
-      pricing = view;
+      slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
       cotisationHeld = refusalCode === FORM_COTISATION_HELD;
-      productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
         watchCheckout(submission.submissionId, null);
@@ -426,6 +443,7 @@
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
         void reminder.load();
       }
+      if (offersAnswerEdit(f, !!userId, serverFormAnswerEdit())) void loadEditableAnswers(f.id);
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
@@ -457,28 +475,29 @@
   const visibleItems = $derived(
     // Nothing to fill in when the form is not open to this person - the questions would only
     // invite an answer the server is going to refuse.
-    form && maySubmit ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds)) : []
+    form && (maySubmit || editing)
+      ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds))
+      : []
   );
 
   /**
-   * Everything the page shows about the price, from the slice the server sent (`fillPriceState`,
+   * Everything the page shows about the price, from the slices the server sent (`fillPriceState`,
    * shared with the guest's page): the cell their answers land on, whether it is decided or does
    * not exist, the options that would close it, and the total the pay button names.
    */
   const price = $derived(
     fillPriceState({
       basePrice: form?.basePrice ?? 0,
-      pricing,
+      slices,
       items: form?.items ?? [],
       visibleItems,
       selections,
-      productGridPrices,
     })
   );
   /** Whether the form holds a priced grid this member sees: the bar then totals the order. */
   const hasProductGrid = $derived(visibleItems.some(isProductGrid));
   /** The categories this member is charged under, for the read-only line under the header. */
-  const tierLabels = $derived(appliedTierLabels(visibleItems, productGridPrices));
+  const tierLabels = $derived(appliedTierLabels(visibleItems, price.productGridPrices));
   const priceUnavailable = $derived(price.priceUnavailable);
   const appliedPricingLabel = $derived(price.appliedLabel);
 
@@ -588,6 +607,69 @@
     }
   }
 
+  /** Reads which of the caller's answers they may still change; a failure offers no change. */
+  async function loadEditableAnswers(id: string) {
+    try {
+      editableAnswers = await getMyEditableAnswers(id);
+      Log.d('FormView', `editable answers: ${editableAnswers.length}`);
+    } catch (err) {
+      console.warn(
+        `[FormView] editable answers read failed status=${refusalStatus(err) ?? 'transport'}`,
+        err
+      );
+      editableAnswers = [];
+    }
+  }
+
+  /** Opens one of the caller's answers for change: its values drawn, its locked questions shut. */
+  function startEdit(answer: EditableAnswer) {
+    if (!form) return;
+    Log.d('FormView', `edit opened: ${answer.lockedItemIds.length} locked question(s)`);
+    editing = answer;
+    selections = selectionsFromAnswers(form.items, answer.answers as Record<string, any>);
+    error = '';
+    successMessage = '';
+    missingAnswer = null;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /**
+   * Leaves the change: a single-answer form keeps drawing the answer (as saved, or as it was), a
+   * form taking several goes back to a blank answer.
+   */
+  function stopEdit(saved: Record<string, unknown> | null) {
+    if (!form || !editing) return;
+    Log.d('FormView', saved ? 'edit closed after a save' : 'edit cancelled');
+    const shown = saved ?? editing.answers;
+    editing = null;
+    missingAnswer = null;
+    error = '';
+    selections = submitted
+      ? selectionsFromAnswers(form.items, shown as Record<string, any>)
+      : initialSelections(form.items);
+  }
+
+  /** Sends the changed answer; nothing about the price or the payment moves (server-enforced). */
+  async function saveEdit() {
+    if (!form || !editing) return;
+    const answer = editing;
+    error = '';
+    submitting = true;
+    try {
+      const sent = editedAnswers(visibleItems, selections, answer.lockedItemIds);
+      await editFormAnswer(form.id, answer.id, sent);
+      Log.d('FormView', 'answer changed');
+      showToast(m.form_view_edit_saved(), 'info');
+      stopEdit({ ...selections });
+      void loadEditableAnswers(form.id);
+    } catch (e: unknown) {
+      Log.d('FormView', `answer change refused status=${refusalStatus(e) ?? 'transport'}`);
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
+    } finally {
+      submitting = false;
+    }
+  }
+
   /** Lydia's payer page again, for a payer who came back before confirming. */
   async function reopenCheckout(): Promise<void> {
     const url = pendingCheckout?.checkoutUrl;
@@ -648,6 +730,11 @@
       document
         .getElementById(`q-${missing.itemId}`)
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (editing) {
+      // A change neither prices nor pays: the payment steps below are not reached.
+      await saveEdit();
       return;
     }
 
@@ -712,7 +799,8 @@
    * answer, where the form accepts one, is not paused - it never reaches an account.
    */
   const onlinePaymentPaused = $derived(
-    !!form?.paymentsPaused &&
+    !editing &&
+      !!form?.paymentsPaused &&
       calculateTotal() > 0 &&
       !(form.allowCashPayment && paymentMethodChoice === 'cash')
   );
@@ -787,18 +875,17 @@
     variant="primary"
     class="shrink-0"
     disabled={preview ||
-      submitted ||
-      formFull ||
       submitting ||
       isNotOpenYet ||
-      !maySubmit ||
-      priceUnavailable ||
-      onlinePaymentPaused}
+      (!editing &&
+        (submitted || formFull || !maySubmit || priceUnavailable || onlinePaymentPaused))}
     loading={submitting}
     onclick={() => void handleSubmit()}
   >
     {#if preview}
       {m.form_preview_submit_disabled()}
+    {:else if editing}
+      <Check size={16} class="mr-1.5" />{m.form_view_edit_save()}
     {:else if paymentPending}
       <Check size={16} class="mr-1.5" />{m.form_view_pending()}
     {:else if submitted}
@@ -897,7 +984,7 @@
     <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
     <!-- ── Progress bar ── -->
-    {#if !submitted && totalCount > 0}
+    {#if (!submitted || editing) && totalCount > 0}
       <div class="mb-5 flex items-center gap-3">
         <div class="bg-cn-border/60 h-2 flex-1 overflow-hidden rounded-full">
           <div
@@ -984,7 +1071,7 @@
     <!-- The combination they answered their way into does not exist. Separate from the block above
          on purpose: that one is about who they ARE and is fixed for the whole visit, this one moves
          as they answer and is theirs to undo. -->
-    {#if maySubmit && priceUnavailable && !submitted}
+    {#if maySubmit && priceUnavailable && !submitted && !editing}
       <div
         class="border-cn-border bg-cn-border/10 mb-4 flex items-start gap-3 rounded-2xl border px-5 py-4"
       >
@@ -993,6 +1080,41 @@
           <p class="text-text-main text-sm font-bold">{m.form_view_combination_closed_title()}</p>
           <p class="text-text-muted mt-1 text-xs">{m.form_view_combination_closed_desc()}</p>
         </div>
+      </div>
+    {/if}
+
+    <!-- ── Changing an answer: what is changed, and the way out ── -->
+    {#if editing}
+      <div
+        class="border-accent/40 bg-accent/10 mb-4 flex items-start justify-between gap-3 rounded-2xl border px-4 py-3"
+        role="status"
+        data-testid="form-edit-banner"
+      >
+        <p class="text-text-main text-sm font-medium">
+          {form.requiresPayment
+            ? m.form_view_edit_banner({ date: formatFormOpensAt(editing.createdAt) })
+            : m.form_view_edit_banner_free({ date: formatFormOpensAt(editing.createdAt) })}
+        </p>
+        <Button variant="ghost" size="compact" class="shrink-0" onclick={() => stopEdit(null)}>
+          {m.form_view_edit_cancel()}
+        </Button>
+      </div>
+    {:else if form.allowMultipleSubmissions && editableAnswers.length > 0}
+      <!-- A form taking several answers: each is changed separately. -->
+      <div class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-4 py-3">
+        <p class="text-text-main mb-2 text-sm font-bold">{m.form_view_my_answers_title()}</p>
+        <ul class="space-y-1">
+          {#each editableAnswers as answer (answer.id)}
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-text-muted text-sm">
+                {m.form_view_my_answer_row({ date: formatFormOpensAt(answer.createdAt) })}
+              </span>
+              <Button variant="soft" size="compact" onclick={() => startEdit(answer)}>
+                <Pencil size={14} class="mr-1" />{m.form_view_edit_answer_short()}
+              </Button>
+            </li>
+          {/each}
+        </ul>
       </div>
     {/if}
 
@@ -1024,8 +1146,8 @@
             {item}
             grid={item.productGrid}
             bind:value={selections[item.id]}
-            disabled={submitted || isNotOpenYet}
-            prices={productGridPrices[item.id]}
+            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
+            prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
           />
@@ -1034,7 +1156,7 @@
             {item}
             index={qi}
             bind:value={selections[item.id]}
-            disabled={submitted || isNotOpenYet}
+            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
             formId={form.id}
             currency={form.currency}
             fileRetentionDays={form.fileRetentionDays}
@@ -1045,11 +1167,17 @@
               busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
           />
         {/if}
+        <!-- A question that set the price stays as answered: no top-up, no partial refund. -->
+        {#if editLocked.has(item.id)}
+          <p class="text-text-muted -mt-1 flex items-center gap-1.5 px-1 text-xs">
+            <Lock size={12} />{m.form_view_edit_locked_note()}
+          </p>
+        {/if}
       {/each}
     </div>
 
     <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
-    {#if onlinePaymentPaused && !submitted}
+    {#if onlinePaymentPaused && !submitted && !editing}
       <div
         class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text mt-4 rounded-2xl border px-4 py-3 text-sm"
         role="status"
@@ -1060,7 +1188,7 @@
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->
-    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly}
+    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly && !editing}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
     {/if}
 
@@ -1120,7 +1248,7 @@
   >
     <!-- AN ORDER IS TOTALLED WHERE IT IS PAID, from the first item (owner's mockup, 2026-11-06): a
          form with a priced grid keeps the bar stuck from the start, with the order's recap. -->
-    {#if hasProductGrid && !submitted && !priceUnavailable}
+    {#if hasProductGrid && !submitted && !priceUnavailable && !editing}
       <ProductGridOrderBar
         lines={price.gridLines}
         totalCents={calculateTotal()}
@@ -1133,10 +1261,27 @@
         class="border-cn-border/60 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg"
       >
         <div class="min-w-0 flex-1">
-          {#if submitted}
-            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
-              ><Check size={16} /> {m.form_view_response_sent()}</span
-            >
+          {#if editing}
+            <span class="text-text-main text-sm font-semibold">{m.form_view_edit_answer()}</span>
+          {:else if submitted}
+            <!-- ONE LINE when it fits, wraps when it does not (owner, 2026-11-14): status and short edit action share a row; the sent button already carries the check, so neither text carries an icon. -->
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span class="text-green-ok text-sm font-bold whitespace-nowrap"
+                >{m.form_view_response_sent()}</span
+              >
+              <!-- One answer to this form: it is reopened from here (several: the list above). -->
+              {#if !form.allowMultipleSubmissions && editableAnswers.length > 0}
+                <Button
+                  variant="link"
+                  size="compact"
+                  class="whitespace-nowrap"
+                  data-testid="form-edit-open"
+                  onclick={() => startEdit(editableAnswers[0])}
+                >
+                  {m.form_view_edit_answer_short()}
+                </Button>
+              {/if}
+            </div>
           {:else if priceUnavailable}
             <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
           {:else if calculateTotal() > 0}
@@ -1189,7 +1334,7 @@
           ? m.form_view_payment_declined_note()
           : m.form_view_payment_ended_note()}
       </p>
-    {:else if formFull && !submitted}
+    {:else if formFull && !submitted && !editing}
       <p class="text-text-muted mt-2 text-center text-sm font-medium">
         {m.form_view_form_full_note()}
       </p>

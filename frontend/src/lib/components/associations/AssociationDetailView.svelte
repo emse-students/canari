@@ -606,6 +606,8 @@
           canEdit={canProposeEvent}
           {canDeclareBreak}
           canPresentNeutral={asso.isBDE && canProposeEvent}
+          associationName={asso.name}
+          associationType={asso.type}
         />
       </div>
     {:else if activeSection === 'members'}

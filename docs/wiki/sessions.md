@@ -494,7 +494,7 @@ it stays queued, and no drain-waiter line. A Decline that wins the race against 
 only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
 
 **The cases this record does not reach** are a design limit, listed with what covers them in
-[the verification table](backlog.md#owed-a-verification-and-nothing-else). Tests:
+[the readings owed](plan.md#readings-owed). Tests:
 `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,
 `auth.deviceRevoked.test.ts` (the named body, an HTML and an edge 401), `BaseMlsService.revokedFrame.test.ts`,
 `session/revokedDeviceReset.test.ts` (both orderings, the offline return, a late discoverer, a

@@ -107,14 +107,14 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,
+        noteLydiaRequestIssued: async () => undefined,
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       // The cotisant holds the base tier; anybody else none.
       {
         build: async (input: { userId?: string; answers: Record<string, string[]> }) => ({
-          promo: null,
-          formation: null,
+          cursus: [{ promo: null, formation: null }],
           cotisationTiers: input.userId === COTISANT ? [null] : [],
           answers: input.answers,
         }),

@@ -1,5 +1,7 @@
 ## P3 - Lydia's payer page inside the app, not in the system browser (owner's question, 2026-11-13)
 
+target: 1.10.0
+
 The owner asked whether a payment could stay inside Canari. Today "Payer" hands Lydia's payer page to the system browser (`navigateExternal`, the opener plugin), and the payer comes back by hand ([forms](../frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
 
 - **An app switch cannot be removed for a Lydia-account payment**: Lydia's page asks the payer to confirm in a Lydia-compatible app (Lydia / Sumeria), so the payer leaves Canari for that app whatever shows the page.

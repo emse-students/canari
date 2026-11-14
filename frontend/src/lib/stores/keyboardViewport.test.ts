@@ -5,6 +5,7 @@ import {
   isDoubleReport,
   keyboardFreeViewportHeight,
   keyboardInsetBottom,
+  keyboardRevealOnUpdate,
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
   pinSafeAreaBottom,
@@ -447,5 +448,20 @@ describe('keyboardFreeViewportHeight - a picture does not shrink because someone
     expect(css).toContain(
       '--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6);'
     );
+  });
+});
+
+describe('keyboardRevealOnUpdate - an opening reveals at once, both halves of the Android hand-off (review of #3490, S3)', () => {
+  const base = { isOpen: true, openedNow: false, targetSpent: false, hasFocus: true };
+
+  it('is instant on the opening, and on the real resize that spends the announced target', () => {
+    expect(keyboardRevealOnUpdate({ ...base, openedNow: true })).toBe('auto');
+    expect(keyboardRevealOnUpdate({ ...base, targetSpent: true })).toBe('auto');
+  });
+
+  it('is smooth on a later update with a focused field, and nothing with the keyboard down', () => {
+    expect(keyboardRevealOnUpdate(base)).toBe('smooth');
+    expect(keyboardRevealOnUpdate({ ...base, hasFocus: false })).toBeNull();
+    expect(keyboardRevealOnUpdate({ ...base, isOpen: false, targetSpent: true })).toBeNull();
   });
 });

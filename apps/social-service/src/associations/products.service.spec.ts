@@ -269,13 +269,20 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
       revertLydiaReadinessAfterRefusal: jest.fn(() => Promise.resolve()),
+      noteLydiaRequestIssued: jest.fn(() => Promise.resolve()),
+      // No bridge in these tests: a routing change is never a switch back (the 409 stands).
+      countReissueAfterSwitchBack: jest.fn(() => Promise.resolve(false)),
     };
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {
       build: jest.fn(() =>
-        Promise.resolve({ promo: null, formation: null, cotisationTiers: [], answers: {} })
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
       ),
-      profileFor: jest.fn(() => Promise.resolve({ promo: null, formation: null })),
+      cursusFor: jest.fn(() => Promise.resolve([{ promo: null, formation: null }])),
     };
 
     const checkouts = makeCheckoutStore(productRepo, assoRepo);
@@ -2900,7 +2907,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         priceMatrix: { dimensions: [], cells: [] } as any,
       });
       const made = buyer(gridded, [avecAlcool(), gridded], []);
-      jest.spyOn(made.service as any, 'resolveGridPrice').mockReturnValue(700);
+      jest.spyOn(made.service as any, 'resolveGridPrice').mockReturnValue({
+        view: { promo: null, formation: null },
+        index: 0,
+        of: 1,
+        quote: 700,
+        cents: 700,
+      });
       const result = await resolvePurchase(made.service, 'asso1', 'prod-grid', 'user1');
       expect(result.amountCents).toBe(700);
     });
@@ -3660,7 +3673,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       userTagService.hasActiveTag.mockResolvedValue(true);
       // The profile is fetched before the tier lock, the cotisation half under it.
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: 'ICM' });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: 'ICM' }]);
 
       const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(9000);
@@ -3683,7 +3696,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
         'PURCHASE_PRICING_CHANGED'
       );
-      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+      expect(pricingFacts.cursusFor).toHaveBeenCalledWith('user1', false);
     });
 
     it('CONTROL: a grid that needed the profile from the start is priced from it', async () => {
@@ -3692,7 +3705,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(
         product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
       );
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2025, formation: null });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2025, formation: null }]);
 
       const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(7000);
@@ -3705,7 +3718,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         made.productRepo.findOne.mockResolvedValue(
           product({ amountCents: 1000, amountCentsMember: 500, priceMatrix: promoGrid(cells) })
         );
-        made.pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
+        made.pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: null }]);
         made.productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
         made.purchaseRecordService.create.mockImplementation((x: unknown) =>
           Promise.resolve({
@@ -3743,6 +3756,27 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
     });
 
+    // D32: two cursus pay the most favourable price - the grid read through each, the cheapest cell.
+    it('charges the promo bucket of the SECOND cursus when it is the cheaper, at checkout and at the till', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
+      );
+      pricingFacts.cursusFor.mockResolvedValue([
+        { promo: 2022, formation: 'ICM' },
+        { promo: 2025, formation: 'Autre' },
+      ]);
+
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(7000);
+      await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+        kind: 'priced',
+        amountCents: 7000,
+        preferential: false,
+      });
+    });
+
     it('prices an unrecognised promo from the generated "everyone else" cell', async () => {
       const { service, productRepo, assoRepo, pricingFacts } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
@@ -3751,8 +3785,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       // A promo nobody named, and a null promo, are the same answer: nobody is ever unpriced.
       pricingFacts.build.mockResolvedValue({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: {},
       });
@@ -3772,7 +3805,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           priceMatrix: promoGrid({ b1: 7000, b2: null, _others: 12000 }),
         })
       );
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: null }]);
 
       await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
         BadRequestException
@@ -3805,7 +3838,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The point of the flag: a grid resting only on cotisation must not be blocked by, or wait
       // on, a service it does not need.
       expect(pricingFacts.build).not.toHaveBeenCalled();
-      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+      expect(pricingFacts.cursusFor).toHaveBeenCalledWith('user1', false);
     });
 
     it('refuses a grid that prices on a question, which only a form has', async () => {
@@ -4420,6 +4453,56 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
         expect(t.checkouts.rows).toEqual([]);
+        // Asked of the bridge with BOTH routings, typed; no bridge here, so the 409 stood.
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledWith(
+          expect.objectContaining({ connectAccountId: 'acct_1' }),
+          expect.objectContaining({ connectAccountId: 'acct_2' })
+        );
+      });
+
+      /** The account moves from acct_1 to each of `accounts` in turn, once per routing fetched. */
+      function accountMovesWhileFetched(t: ReturnType<typeof cercleBuyer>, accounts: string[]) {
+        const fetchProvider = (t.service as any).activePaymentProvider.bind(t.service);
+        const next = [...accounts];
+        jest.spyOn(t.service as any, 'activePaymentProvider').mockImplementation(() => {
+          const account = next.shift();
+          if (account) {
+            t.assoRepo.findOne.mockResolvedValue(
+              asso({ slug: 'cercle', cotisationMode: 'lifetime', lydiaAccountId: account })
+            );
+          }
+          return fetchProvider();
+        });
+      }
+
+      it('a routing change the bridge proves to be ITS switch back re-enters ONCE: issued once, on the account read under the lock', async () => {
+        const t = cercleBuyer();
+        (t.associationsService.countReissueAfterSwitchBack as jest.Mock).mockResolvedValue(true);
+        accountMovesWhileFetched(t, ['acct_2']);
+        const opened = await t.open('prod-avec');
+        const issued = t.calls.filter((c) => c.route === 'create-checkout-session');
+        expect(issued.map((c) => c.body.connectAccountId)).toEqual(['acct_2']);
+        expect(t.checkouts.rows).toHaveLength(1);
+        expect(t.checkouts.rows[0]).toMatchObject({ id: opened.checkoutId, vendorToken: 'acct_2' });
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+      });
+
+      it('a second routing change during the re-entry is the 409, never a third attempt', async () => {
+        const t = cercleBuyer();
+        (t.associationsService.countReissueAfterSwitchBack as jest.Mock).mockResolvedValue(true);
+        accountMovesWhileFetched(t, ['acct_2', 'acct_3']);
+        const err = await t.open('prod-avec').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'PAYMENT_ROUTING_CHANGED'
+        );
+        // The re-entry does not ask the bridge again: one re-entry, whatever it would answer.
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toEqual([]);
       });
 
       // EVERY field of the routing is compared, not only the account and the receiving association:
@@ -4733,6 +4816,53 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       }
     );
 
+    it('a bridge switch back re-issues the SAME purchase ONCE on the account that collects now', async () => {
+      const t = setup();
+      const error5 = () =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: {
+              status: 400,
+              data: { code: 'LYDIA_BUSINESS_NOT_VALIDATED', providerCode: '5' },
+            },
+          })
+        );
+      // The revert answers true: error 5 on a bridge's just-switched Business, switched back.
+      (t.associationsService.revertLydiaReadinessAfterRefusal as jest.Mock).mockResolvedValue(true);
+      (t.httpService.post as jest.Mock).mockImplementationOnce(error5);
+      const opened = await t.checkout();
+      // The first attempt released (nothing was issued), the second issued and open.
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'open']);
+      expect(opened.checkoutId).toBe(t.checkouts.rows[1].id);
+      expect(t.associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledTimes(1);
+    });
+
+    it('a re-issued purchase that meets a second switch back is refused, never issued a third time', async () => {
+      const t = setup();
+      const error5 = () =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: {
+              status: 400,
+              data: { code: 'LYDIA_BUSINESS_NOT_VALIDATED', providerCode: '5' },
+            },
+          })
+        );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      (t.associationsService.revertLydiaReadinessAfterRefusal as jest.Mock).mockResolvedValue(true);
+      (t.httpService.post as jest.Mock)
+        .mockImplementationOnce(error5)
+        .mockImplementationOnce(error5);
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_NOT_ACTIVATED',
+      });
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'cancelled']);
+      expect(t.associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledTimes(2);
+      expect(error.mock.calls.flat().join('|')).toContain('never issued a third time');
+      error.mockRestore();
+    });
+
     it('any other refusal, or a LOST request, reverts nothing', async () => {
       const t = setup();
       (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
@@ -4770,6 +4900,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
       expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
       expect(t.checkouts.rows).toHaveLength(0);
+    });
+
+    it('a product WITHHELD by a revert committed before the purchase: the typed not-ready 409, never "not found"', async () => {
+      // A switch back onto a historical account that is not ready withholds the products; the
+      // re-issue, or the payer's retry, is owed the reason, as `decidePurchase` answers it.
+      const t = setup({ isActive: false, activationWithheld: true } as any);
+      t.assoRepo.findOne.mockResolvedValue(
+        asso({ lydiaOnboardingComplete: false, lydiaReadinessCause: 'request-refused' })
+      );
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_NOT_ACTIVATED',
+      });
+      expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+      expect(t.checkouts.rows).toHaveLength(0);
+    });
+
+    it('a product a manager took off sale stays "not found", whatever the readiness; a withheld one of a ready association too', async () => {
+      for (const [overrides, ready] of [
+        [{ isActive: false, activationWithheld: false }, false],
+        [{ isActive: false, activationWithheld: false }, true],
+        [{ isActive: false, activationWithheld: true }, true],
+      ] as const) {
+        const t = setup(overrides as any);
+        t.assoRepo.findOne.mockResolvedValue(asso({ lydiaOnboardingComplete: ready }));
+        await expect(t.checkout()).rejects.toBeInstanceOf(NotFoundException);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toHaveLength(0);
+      }
     });
 
     describe('an attempt whose request/do was LOST (no answer) is read by its order_ref', () => {

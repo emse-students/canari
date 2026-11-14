@@ -159,6 +159,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
+    // The grants table (migration 078), with the columns the visibility predicate reads.
+    await q(
+      `CREATE TABLE read_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         user_id varchar(255) NOT NULL, campus varchar(32) NOT NULL, formation varchar(16) NULL)`
+    );
     await q(MIGRATION);
     // Applied twice, as a deploy may replay it.
     await q(MIGRATION);
@@ -176,7 +181,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         flag === AssociationPermissionFlag.MANAGE_BOOKINGS &&
         grants.has(`${userId}:${associationId}`),
     } as unknown as AssociationsService;
-    const pricingFacts = { build: async () => ({}) } as unknown as PricingFactsService;
+    const pricingFacts = {
+      build: async () => ({
+        cursus: [{ promo: null, formation: null }],
+        cotisationTiers: [],
+        answers: {},
+      }),
+    } as unknown as PricingFactsService;
     const formFiles = {
       storeBlob: async (data: Buffer, owner: string) => {
         const mediaId = randomUUID();

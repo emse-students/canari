@@ -902,7 +902,7 @@ GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 **What neither closes.** An older client keeps pushing and answering by broadcast until
 `minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
-received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
+received cannot be taken back. Tracked in [backlog](../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md).
 
 **Every road to a newcomer, read on 2026-10-31** (with #2791, which adds a member's new device by
 itself and asks only about a new person):
@@ -3106,7 +3106,7 @@ it is not that. On a phone this is a minute of an empty conversation.
 
 ## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
 
-The open line is in [backlog](../backlog.md#p1---the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is-identical-either-way-and-a-peer-21-messages-behind-was-told-same-state---nothing-to-do-measured-2026-09-08-ten-runs-across-three-builds). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+The open line is in [backlog](../backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
 
 **What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
 

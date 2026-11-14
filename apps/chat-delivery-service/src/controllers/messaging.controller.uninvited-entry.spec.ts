@@ -58,13 +58,60 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
         epoch: 7,
         keyFingerprint: '00ff11ee',
         kind: 'new-person',
+        watchedFromEpoch: 4,
       })
     ).resolves.toEqual({ recorded: true });
 
     expect(isGroupMember).toHaveBeenCalledWith('g-1234', 'alice');
     expect(warn).toHaveBeenCalledWith(
-      '[UNINVITED_ENTRY] kind=new-person reporter=alice:web-alice-1 group=g-1234 entrant=mallory:dev1 epoch=7 key=00ff11ee'
+      '[UNINVITED_ENTRY] kind=new-person reporter=alice:web-alice-1 group=g-1234 entrant=mallory:dev1 epoch=7 key=00ff11ee watched_from=4'
     );
+  });
+
+  it('prints where the device record starts: `none` when it holds none, `unstated` from an older build', async () => {
+    const entry = {
+      groupId: 'g-1234',
+      entrant: 'mallory:dev1',
+      keyFingerprint: '00',
+      kind: 'new-person',
+    };
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      ...entry,
+      epoch: 7,
+      watchedFromEpoch: null,
+    });
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', { ...entry, epoch: 8 });
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      ...entry,
+      epoch: 9,
+      watchedFromEpoch: '3\n[SEND] forged',
+    });
+
+    expect(warn.mock.calls[0][0]).toContain('watched_from=none');
+    expect(warn.mock.calls[1][0]).toContain('watched_from=unstated');
+    expect(warn.mock.calls[2][0]).toContain('watched_from=invalid');
+  });
+
+  it('prints `-` for a kind the device decides without its record, never `unstated`', async () => {
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'carol:dev2',
+      epoch: 3,
+      kind: 'direct-peer',
+    });
+
+    expect(warn.mock.calls[0][0]).toContain('watched_from=-');
+  });
+
+  it('prints each kind members disagree on for one entry: a device that proves a return, one that cannot', async () => {
+    const entry = { groupId: 'g-1234', entrant: 'mallory:dev1', epoch: 7, keyFingerprint: '00' };
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', { ...entry, kind: 'returning' });
+    await controller.reportUninvitedEntry('bob', 'web-bob', { ...entry, kind: 'new-person' });
+    await controller.reportUninvitedEntry('carol', 'web-carol', { ...entry, kind: 'new-person' });
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0][0]).toContain('kind=returning');
+    expect(warn.mock.calls[1][0]).toContain('kind=new-person');
   });
 
   it('prints no full user id for the reporter or the entrant, each device kept apart', async () => {

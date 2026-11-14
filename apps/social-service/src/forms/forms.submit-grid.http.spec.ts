@@ -99,8 +99,7 @@ function makeService(saved: Record<string, unknown>[]) {
   const pricingFacts: any = {
     build: jest.fn((input: { answers?: Record<string, string[]> }) =>
       Promise.resolve({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: input.answers ?? {},
       })

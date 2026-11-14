@@ -14,6 +14,140 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-11-14
+
+### Fixed - a deleted private conversation is no longer carried into a new one with the same person
+
+The Welcome of a new DM adopted the retired one the peer had deleted and moved its messages over, where they read "non verifie"; the retired conversation now keeps its own entry and the new one starts empty, one rule shared with the startup merge ([chat](docs/wiki/frontend/modules/chat.md#a-deleted-dm-is-not-carried-into-the-next-one)).
+
+### Fixed - a quick reply resent after a lost answer reaches nobody twice
+
+The server stores one message per sender device and `messageId` (migration 048): a native resend
+after a late answer is answered with the first copy's time, with no second row, history entry or
+push ([chat-delivery](docs/wiki/services/chat-delivery.md#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)).
+
+### Fixed - MinoWiki sign-in survives a stable deploy
+
+MiConnect's blueprint now carries MinoWiki's Wiki.js 3 callbacks and its `minoGroups` claim. The
+`1.6.11` deploy re-applied the Wiki.js 2 callbacks over the live provider, so `mino.emse.fr` refused
+sign-ins (400) and the wiki lost its groups until both were restored by hand
+([mino-access](docs/wiki/infrastructure/mino-access.md)).
+
+### Changed - every backlog entry names the version it is planned for, and the plan is generated
+
+Each `docs/wiki/backlog.d/` entry carries `target: <version>`; `docs/wiki/plan.md` is generated from
+those lines and checked by `backlog-plan.test.mjs`. The entries and readings of `backlog.md` moved
+to `backlog.d/`, four of them closed with evidence ([roadmap log](docs/wiki/roadmap.md#log-of-replannings-and-milestones)).
+
+### Added - the viewer of a conversation's image or video moves to the previous and next one
+
+Left and right (arrows on a wide screen, a swipe on a phone, the keyboard) walk the conversation's images and videos already on the device, oldest to newest, without closing the viewer ([chat](docs/wiki/frontend/modules/chat.md#the-media-viewer-of-a-conversation-walks-its-images-and-videos-2026-11-13)).
+
+### Fixed - a picture in a message no longer shrinks and crops when the keyboard opens
+
+In the app the keyboard shrinks the WebView, so the `60svh` media ceiling fell from 567 to 353 px on the Mi 9T and a tall screenshot lost its top and bottom; the ceiling now holds the keyboard-free height while a keyboard is up ([chat](docs/wiki/frontend/modules/chat.md#a-picture-keeps-its-height-when-the-keyboard-opens-2026-11-13)).
+
+### Fixed - an iOS release build died on a lint level the Rust setup action exported
+
+Pinning `setup-rust-toolchain` (#3440) moved it to v2, which exports `CARGO_BUILD_WARNINGS=deny` to every later step of the job. `1.6.12-alpha.1`'s iOS build then refused the vendored `wry` patch's upstream warnings. Both exported inputs are now held empty, and `action-pins.test.mjs` asserts it ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - the connection ring hugs the header's avatar
+
+The ring sits on the avatar itself instead of floating around its tap area, and is thinner
+([slow-link chantier](docs/wiki/backlog.d/slow-link-local-first-chantier.md)).
+
+### Fixed - A new-device alert no longer outlives its device
+
+Opening the notifications list drops the alert of a device the server says is revoked; a failed read drops nothing ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a payer back from Lydia on a phone sees where the payment stands
+
+The form page says the payment is in progress, offers Lydia's page again and reads the answer once each time the app comes back on screen; Android returns on an https App Link, and a browser landing says the payment went to Lydia instead of "introuvable" ([forms](docs/wiki/frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
+
+### Added - a form may let a respondent change their own answer
+
+A per-form switch, off by default: a signed-in respondent reopens their answer while the form is open; the questions that set the price stay locked, and nothing is re-priced or refunded ([forms](docs/wiki/frontend/modules/forms.md#a-respondent-changes-their-own-answer-owner-2026-11-13)).
+
+### Added - an institution chooses the spaces and the public of each calendar event
+
+The posts' reach picker, refusals and chip now apply to an institution's events, editable both ways after validation, through one event predicate (migration 165). See [profiles-and-access](docs/wiki/profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13).
+
+### Fixed - a Canari form link in a post or a chat previews as the form
+
+A form shared by its guest address (`/f/<id>`) showed the generic "Lien" card; it now shows its title, banner or association logo, the association and whether it is open. Lists previewed like associations, profiles carry their avatar, and a transport failure is no longer remembered as an answer ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Fixed - a signed-out iOS cold start no longer asks for a refresh that cannot succeed
+
+Where no cookie can carry the session (iOS), an empty carried credential is the answer, so no recovery
+refresh is sent ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)).
+
+### Changed - production log noise: typing frames, heartbeat closes, nginx spooling, Garage, Postgres, and two mislabelled lines
+
+The gateway logs a typing frame at DEBUG (the member list is gone from `[ROUTE]`) and a missed-pong close at INFO; nginx keeps 128k bodies of `/api/mls/` and `/api/channels` in memory; Garage logs warnings only and Postgres no checkpoints (both recreated at the next deploy); "No message queued" with no recipients is a LOG and the `addressed_unsupported` refusal names offline or did-not-declare per device. `/apple-touch-icon-precomposed.png` is served, and the GIF picker offers a rendition the relay carries and never retries a 413 ([logging](docs/wiki/infrastructure/logging.md), [chat-gateway](docs/wiki/services/chat-gateway.md), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Added - a historical Lydia account collects until the enrolled Business is validated
+
+An association enrolling through Canari while an older Lydia account collects keeps collecting there
+until Lydia validates the new Business, then switches by itself; a forged validation costs one switch
+back and one re-issued payment ([payments](docs/wiki/frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13)).
+
+### Added - a daily upload bound per member
+
+One member may upload 2 GB per rolling 24 hours across every class and route; past it the upload is
+refused with a typed answer the app explains in the thread
+([entry](docs/wiki/services/media-service.md#the-daily-upload-bound-per-member-2026-11-13)).
+
+### Fixed - chat-delivery's hourly MLS health reports accuse each item once instead of every hour
+
+A commit-log hole, a conversation with too few holders, a stranded device or a stale base is printed at ERROR or WARN on the run that first finds it in its state, again only when that state changes, and counted otherwise by one daily LOG line per report; the ledger is migration 049 ([chat-delivery](docs/wiki/services/chat-delivery.md#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)).
+
+### Changed - one forms-management list, on `/forms` and in an association's Formulaires tab
+
+Both screens draw the same list: "Modifier" and "Reponses" with their words, everything else (view, link, QR code, export, delete) in one "..." menu, cash validation, price and the same draft and unpublished-changes states on every row; the tab scopes it to its association, `/forms` names each row's association. See [forms](docs/wiki/frontend/modules/forms.md#one-list-for-forms-and-for-an-associations-tab-owner-2026-11-13).
+
+### Security - Canari's PostgreSQL moves to upstream's newest 18-alpine build (18.7)
+
+The `postgres:18-alpine` digest moves in the three compose files and CI, a minor release on the same cluster and volume; the identity provider's pin moves by hand in its own window ([databases](docs/wiki/infrastructure/databases.md), [backlog](docs/wiki/backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)). A pinned image the host does not hold yet is now pulled before any container is replaced, through the registry retry ([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+
+### Changed - each priced grid has its own "Obligatoire" switch, off by default; no rule spans the order
+
+A grid switched on demands one unit of its own, held on its card; the rule over the whole order is
+gone, so a form whose grids are all optional is sent with no article. Migration 164 turns every stored
+grid off; an app keeps the old behaviour until its server's `/api/version` says `gridRequiredSwitch`
+([forms](docs/wiki/frontend/modules/forms.md), [legacy](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - the push registration no longer retries a refused token
+
+Each attempt reads the session's current token; a 401 is renewed once, a second 401 or any other 4xx
+ends the ladder, and only a 5xx or a transport failure is retried
+([chat-delivery](docs/wiki/services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all)).
+
+### Changed - the session's server-event callbacks are declared once
+
+`ChatSessionCallbacks` picks twelve callbacks from `MessageHandlerDeps` instead of repeating them (about 60 duplicated lines, two typed `any`), with a compile-time test pinning the equality ([architecture](docs/wiki/frontend/architecture.md)).
+
+### Fixed - a shared form's link preview carries the form's title, description and image
+
+The server-side preview read the member route, which answered 401 to the renderer, so every shared form link showed the generic card. It now reads the public route, which serves public forms only ([seo](docs/wiki/frontend/seo.md)).
+
+### Fixed - a buyer back from Lydia on a phone sees where the payment stands
+
+The association shop follows a paid purchase like paid forms: after Lydia's page opens in the browser, the purchase button says the payment is in progress and reads it once each time the app comes back, and Android returns on the https `/shop` link. The public form has no server read to use and is not covered ([forms](docs/wiki/frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
+
+### Changed - the member directory is open to every signed-in member, and redrawn
+
+It was linked to staff only though the server always answered any member. It is now a dashboard row for everyone, with one search field, the filters behind a sheet and shown as removable chips, skeleton rows, "Voir plus", and the reader's own class before any search ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Changed - third-party GitHub Actions are named by a commit
+
+Every action published outside GitHub's own organisations is pinned to a commit with its version
+beside it, and a guard fails on one that is not ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
+
+### Changed - the error log of a WebSocket location records no request line
+
+The access log's redaction does not reach nginx's error log, so `/api/ws` and `/api/call` set their
+own error log to `crit` ([logging](docs/wiki/infrastructure/logging.md#the-error-log-of-a-websocket-location-2026-11-13)).
+
 ## [1.6.11] - 2026-11-13
 
 ### Security - production's adminer runs upstream's image with Alpine's `libpq` upgraded to 18.7
@@ -29,7 +163,7 @@ Debian fixed them in libpq5 17.12, which only a rebuilt authentik release can ca
 A comment, reply or mention row in the bell now opens the post scrolled to that comment, as its push
 already did ([mobile](docs/wiki/frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08)).
 The backlog's twelve oldest entries were re-read against the code: what was left of them is now a
-row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a
+row of [the readings owed](docs/wiki/plan.md#readings-owed) or a
 fragment of its own. Stale items deleted: the Android manifest now declares every page host a push
 writes; the iPhone's front-lens full-bleed camera and its feed and associations scroll were read on
 the iPhone 12 (2026-10-05, 2026-10-06, 2026-10-11); the push join for a shut phone was decided and
@@ -77,7 +211,7 @@ its own entry ([roadmap](docs/wiki/roadmap.md)).
 An iPhone with no VoIP token now hears Canari's own ring on its incoming-call banner, as CallKit
 already played it, instead of the system tone ([sounds](docs/wiki/frontend/sounds.md#the-incoming-ring---c1-owners-choice-2026-11-01)).
 The backlog entries of 2026-10-09 to 2026-10-11 were re-read against the code: the readings they
-owed are rows of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+owed are rows of [the readings owed](docs/wiki/plan.md#readings-owed),
 the media/call-service release gap is a fragment of its own, and the weak-network attachment path
 joined the slow-link chantier. Stale or duplicated items deleted: the decisions of 2026-10-11 (each
 already in `durable-rules.md`, `device-verification.md` or its module page), the queued decisions of
@@ -88,7 +222,7 @@ the CanaReels-in-chats fragment (section 21 of `reels-in-chat.md` carries the fl
 ### Changed - the backlog entries of 2026-11-02 triaged
 
 The replica-list fix of `v1.6.3` owes only a production reading, so it is now a row of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), and the owner's
+[the readings owed](docs/wiki/plan.md#readings-owed), and the owner's
 decisions of 2026-11-02 keep only what is not yet carried out ([roadmap](docs/wiki/roadmap.md)).
 
 ### Changed - the backlog entries of 2026-11-03 triaged
@@ -102,19 +236,19 @@ that phase 1 shipped in `1.6.3` before its cold-avatar reading was taken
 The owner's decisions of 2026-11-04 are all carried out, and their one standing rule - a stable ships
 only once every reading of its pre-release passes - now lives in
 [durable-rules](docs/wiki/durable-rules.md); the "Entre étudiants" switch owes only readings, now rows
-of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+of [the readings owed](docs/wiki/plan.md#readings-owed).
 
 ### Changed - the backlog entries of 2026-11-06 triaged
 
 Two iPhone follow-ups of #3075 owe only readings and are now rows of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else); the video sync
+[the readings owed](docs/wiki/plan.md#readings-owed); the video sync
 entry records that its fix shipped in `1.6.6` before its phone readings
 ([roadmap](docs/wiki/roadmap.md)).
 
 ### Changed - the backlog entries of 2026-11-07 triaged
 
 The live titles and preview card and the seed-mirror residue owe only readings, now rows of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else); the owner's
+[the readings owed](docs/wiki/plan.md#readings-owed); the owner's
 decisions of 2026-11-07 and the list of what was in flight at that day's pause keep only what is
 still open ([roadmap](docs/wiki/roadmap.md)).
 
@@ -122,7 +256,7 @@ still open ([roadmap](docs/wiki/roadmap.md)).
 
 The entries of 2026-11-07 still open and those of 2026-11-08 onward, re-read against the releases:
 what shipped and owes only a reading moves to the
-[verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+[readings owed](docs/wiki/plan.md#readings-owed).
 
 ### Changed - the backlog entries of 2026-10-12 to 2026-10-15 triaged, and a price grid can no longer split a multiple-choice question
 
@@ -131,7 +265,7 @@ could tick options from two groups, and the price then depended on the order of 
 already storing such a grid stays editable
 ([forms](docs/wiki/frontend/modules/forms.md)). The next twelve oldest backlog entries were re-read
 against the code. What they still owe is now a row of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a fragment of
+[the readings owed](docs/wiki/plan.md#readings-owed) or a fragment of
 its own. The background-join fix (PK2) moved to
 [mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md#a-group-joined-in-the-background-before-its-row-existed-pk2-2026-10-14).
 
@@ -150,7 +284,7 @@ Deleted as stale or duplicated:
 
 The next oldest backlog entries were re-read against the code (the two GDPR entries are the owner's
 and were left alone). What they still owe is now a row of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a fragment of
+[the readings owed](docs/wiki/plan.md#readings-owed) or a fragment of
 its own. Deleted:
 - the stale Tauri callback id after a text-size reload, proven gone on `v1.2.9-alpha.7`;
 - the calls blocker entry, stale since production calls opened (the blocker list lives in
@@ -160,7 +294,7 @@ its own. Deleted:
 
 The next oldest backlog entries were re-read against the code. Shipped work came out of the two
 decision lists of 2026-10-18, and the readings still owed are now rows of
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else). The
+[the readings owed](docs/wiki/plan.md#readings-owed). The
 Android bridge hardening has its own entry. The iOS factory wipe entry now names every App Group copy
 it leaves behind.
 
@@ -169,7 +303,7 @@ it leaves behind.
 The weekly vendored-fork watch now covers `tauri-plugin-system-components` too
 ([cicd](docs/wiki/cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)). The next
 oldest backlog entries were re-read against the code. Two readings moved to
-[the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+[the readings owed](docs/wiki/plan.md#readings-owed).
 
 ### Changed - the vendored-fork watch compares a fork of a pre-release with upstream's newest release
 
@@ -1260,7 +1394,7 @@ The server's push deregistration raced the revocation and came back `HTTP 401` (
 
 ### Fixed - the live picker only offers associations the server accepts, three iPhone clippings and a leftover screen-reader line
 
-The composer's live chip is offered only for an association where the member holds `POST_AS_ASSO` themselves (a global admin no longer gets a `403 LIVE_ASSOCIATION_FORBIDDEN`); the live viewer's name truncates before the report flag, the Formulaires actions wrap, the Settings device id breaks, and a dismissed guidance card no longer leaves "Étape 1 sur 1" in the accessibility tree ([readings](docs/wiki/backlog.d/what-the-readings-of-1-6-7-alpha-3-filed.md)).
+The composer's live chip is offered only for an association where the member holds `POST_AS_ASSO` themselves (a global admin no longer gets a `403 LIVE_ASSOCIATION_FORBIDDEN`); the live viewer's name truncates before the report flag, the Formulaires actions wrap, the Settings device id breaks, and a dismissed guidance card no longer leaves "Étape 1 sur 1" in the accessibility tree ([readings](docs/wiki/frontend/modules/calls.md#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop)).
 
 ## [1.6.7] - 2026-11-08
 
@@ -1500,7 +1634,7 @@ The settings device count, the device panel, the new-device notices and the Welc
 
 ### Changed - the wiki no longer says Lydia is not live in production
 
-The owner confirmed on 2026-11-06 that Lydia is active in production, and the production core's startup log reads `Lydia configured: yes (https://lydia-app.com)`. The notes that waited on it now name only what is still owed ([WP-LYDIA-1](docs/wiki/backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)).
+The owner confirmed on 2026-11-06 that Lydia is active in production, and the production core's startup log reads `Lydia configured: yes (https://lydia-app.com)`. The notes that waited on it now name only what is still owed ([WP-LYDIA-1](docs/wiki/frontend/modules/payments.md)).
 
 ### Fixed - a prepared video's sound no longer runs ahead of its picture
 
@@ -3408,11 +3542,11 @@ Scripts run only from the app itself or by hash: no `'unsafe-inline'` or `'unsaf
 
 ### Documented - the user's decisions of 2026-10-23
 
-Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stable are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---bookings-redesign-sharing-reels-calls-payments-miconnect-release) and [bookings-chantier](docs/wiki/bookings-chantier.md#redesign-decided-2026-10-23).
+Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stable are recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md) and [bookings-chantier](docs/wiki/bookings-chantier.md#redesign-decided-2026-10-23).
 
 ### Documented - the user's decisions on the open pull requests of 2026-10-23
 
-Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/plan.md#readings-owed).
 
 ### Fixed - a declined joiner no longer gets the conversation back as a removed one
 
@@ -4149,11 +4283,11 @@ chat-gateway and call-service now check the token's kind at the upgrade, as core
 
 ### Documented - `v1.4.0-alpha.1`: the gestures read on the Mi 9T, the iPhone updated but blocked at its PIN
 
-Seven swipe variants behave as designed; the iPhone holds the 1.4.0 TestFlight build behind a PIN gate no bench account PIN has opened, and the dev DM reading waits on that mapping. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+Seven swipe variants behave as designed; the iPhone holds the 1.4.0 TestFlight build behind a PIN gate no bench account PIN has opened, and the dev DM reading waits on that mapping. See [backlog](docs/wiki/plan.md#readings-owed).
 
 ### Documented - `v1.4.0-alpha.1` read on the Mi 9T (sideloaded)
 
-Sign-in on dev, the main pages and the comments sheet read with no console error and no native crash; a DM and a community open were not readable on that account. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+Sign-in on dev, the main pages and the comments sheet read with no console error and no native crash; a DM and a community open were not readable on that account. See [backlog](docs/wiki/plan.md#readings-owed).
 
 ### Changed - docs: the deleted-account mention left the backlog
 
@@ -4221,7 +4355,7 @@ A commit, foreground or background, is bound to its authenticated committer and 
 device, must come from a member (or, for an external commit, a person on the roster), and must name
 its own group and base epoch; its fan-out skips only devices new to the group. A conversation's
 Welcome reaches only a device of someone on its roster, and never ends a kick. A device id belongs
-to one account ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+to one account ([backlog](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 
 ### Changed - chat-delivery: a key group's external join is asked of social-service
 
@@ -4229,7 +4363,7 @@ An external commit into a community's key group, and a Welcome addressed to a ke
 accepted only for a person social-service entitles to that workspace or channel; when social-service
 does not answer, the commit is refused with `503` and retried, never accepted
 ([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live),
-[backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+[backlog](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 
 ### Changed - chat-delivery: reporting a device `active` promotes an existing seat only
 
@@ -4245,7 +4379,7 @@ The two encryption systems side by side, with the 2026-08-17 sizing premises re-
 
 ### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
 
-Recorded in [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+Recorded in [backlog](docs/wiki/plan.md#readings-owed).
 
 ### Changed - the double tap that likes now logs what reached the card
 
@@ -4428,7 +4562,7 @@ A replay's stream cursor now waits for a checkpoint that started after the repla
 
 ### Changed - the rig forgives a reloaded page's own startup decisions, and nothing wider
 
-Nine startup lines join `PAGE_BOOT_NARRATION`, two composer and overlay lines join `BENIGN`, each pinned with a control. The 2026-10-22 GRAINE and GRP passes also left a P1, a P2 and five P3s in the [backlog](docs/wiki/backlog.md#the-harness-itself).
+Nine startup lines join `PAGE_BOOT_NARRATION`, two composer and overlay lines join `BENIGN`, each pinned with a control. The 2026-10-22 GRAINE and GRP passes also left a P1, a P2 and five P3s in the [backlog](docs/wiki/plan.md).
 
 ### Fixed - a blind salon notification no longer shows an author or a mention
 
@@ -4440,7 +4574,7 @@ The rows a salon draws from its stored copy now belong to the salon, so the load
 
 ### Fixed - a live salon frame without a ciphertext is refused, never rendered
 
-A salon message's author is proven only by opening it, so a frame with no ciphertext is refused at error level rather than shown under the author it names ([backlog](docs/wiki/backlog.md#the-harness-itself)).
+A salon message's author is proven only by opening it, so a frame with no ciphertext is refused at error level rather than shown under the author it names ([backlog](docs/wiki/plan.md)).
 
 ### Added - Canari in the Android share sheet
 
@@ -4893,7 +5027,7 @@ original URL for older clients
 
 ### Changed - the rig's sign-in answers the MiConnect terms page
 
-`login.mjs` recognises the terms page that blueprint `45-consent.yaml` will add after the password and ticks its one box, so a harness login no longer stalls on it; the stage logic moved to `tools/cross-client-harness/idpform.mjs` with a self-test ([backlog](docs/wiki/backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16)).
+`login.mjs` recognises the terms page that blueprint `45-consent.yaml` will add after the password and ticks its one box, so a harness login no longer stalls on it; the stage logic moved to `tools/cross-client-harness/idpform.mjs` with a self-test ([backlog](docs/wiki/backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
 
 ### Fixed - a community whose answerer holds nothing is no longer asked for its history at every launch
 
@@ -5351,7 +5485,7 @@ The ten-minute deadline cut the one re-apply that rescues a 30/31 boot; it now b
 
 ### Changed - the MiConnect terms-of-use stage is held out of production
 
-By the user's decision, this release does not apply the terms stage to MiConnect: the blueprint waits in `blueprints/held/`, is named at every apply, and every service keeps the implicit-consent flow; the `/legal/miconnect` page stays ([backlog](docs/wiki/backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16)).
+By the user's decision, this release does not apply the terms stage to MiConnect: the blueprint waits in `blueprints/held/`, is named at every apply, and every service keeps the implicit-consent flow; the `/legal/miconnect` page stays ([backlog](docs/wiki/backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
 
 ### Fixed - a focused field in a modal no longer settles under its submit button
 
@@ -6112,7 +6246,7 @@ The server now computes `canRepublish` and the new `canVote` with the same grant
 
 ### Verified - the nominative read grants pass their eight dev checks
 
-Read, react and comment through a grant; no vote, no republication, no personal post; a revoke restores the baseline; a star reads its own campus only. Two P3 client defects were found ([profiles-and-access](docs/wiki/profiles-and-access.md#the-eight-dev-checks-2026-10-09-devcanari-emsefr-on-121-alpha1-same-code-as-v121), [backlog](docs/wiki/backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120)).
+Read, react and comment through a grant; no vote, no republication, no personal post; a revoke restores the baseline; a star reads its own campus only. Two P3 client defects were found ([profiles-and-access](docs/wiki/profiles-and-access.md#the-eight-dev-checks-2026-10-09-devcanari-emsefr-on-121-alpha1-same-code-as-v121), [backlog](docs/wiki/backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)).
 
 ### Added - a CanaReel received in a conversation is drawn as a tile and played in the reel viewer; every reel can be saved
 
@@ -6182,7 +6316,7 @@ The report reads the Portail-etu host, where the runner lives; one check cannot 
 
 ### Changed - the lockfile-superseding mechanism for Dependabot is recorded, parked on one decision
 
-Designed and tested on 2026-10-09; arming a bot-opened pull request is the user's call ([backlog](docs/wiki/backlog.md#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix)).
+Designed and tested on 2026-10-09; arming a bot-opened pull request is the user's call ([backlog](docs/wiki/backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)).
 
 ### Fixed - the native app no longer reads its key groups as epoch 0 and re-joins them all, and a refused seal names its cause
 
@@ -7139,7 +7273,7 @@ The reply icon grows and turns solid with one haptic tick once the drag crosses 
 
 ### Added - the client answers its MLS epochs to the rig, and the rig sees a socket reopen
 
-`window.__canariMlsEpochs()` completes the epoch-fork reader, `report()` records socket handshakes beside closes, `wda-daemon.py` refuses a held port before its tunnel, and the run preflight prints which `canari-harness` it reads ([backlog](docs/wiki/backlog.md#the-harness-itself)).
+`window.__canariMlsEpochs()` completes the epoch-fork reader, `report()` records socket handshakes beside closes, `wda-daemon.py` refuses a held port before its tunnel, and the run preflight prints which `canari-harness` it reads ([backlog](docs/wiki/plan.md)).
 
 ### Changed - the HEAL rungs count the server as an observer, and a full account is an INVALID everywhere a device is minted
 
@@ -7492,7 +7626,7 @@ Four findings of the first iPhone pass, three fixed at their cause and the launc
 
 ### Documented - iOS push fails on the development-signed bench build, and the iOS rig's first live runs
 
-The backlog now records what was measured on 2026-10-01: `Invalid APNs credential` for sandbox tokens only, the Firebase slot that is owed to the user, and what the rig has and has not run ([backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else)).
+The backlog now records what was measured on 2026-10-01: `Invalid APNs credential` for sandbox tokens only, the Firebase slot that is owed to the user, and what the rig has and has not run ([backlog](docs/wiki/plan.md#readings-owed)).
 
 ### Added - the cross-client rig can address the iPhone (`CANARI_PHONE=ios`, device `I1`)
 
@@ -7597,7 +7731,7 @@ Every client now reads a video sealed in 1 MiB authenticated segments (STREAM), 
 
 ### Changed - the session state and the backlog match the repository of 2026-10-01
 
-What `v0.18.32` and `0.18.33-alpha.1` carry, the `301`, today's owed readings and four new durable rules, each re-derived from a tag or a measurement ([backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), [durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
+What `v0.18.32` and `0.18.33-alpha.1` carry, the `301`, today's owed readings and four new durable rules, each re-derived from a tag or a measurement ([backlog](docs/wiki/plan.md#readings-owed), [durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
 
 ### Fixed - a message answered from the notification shade no longer comes back as a new notification
 

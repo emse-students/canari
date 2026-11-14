@@ -1288,12 +1288,18 @@ async function handleKnownGroup({
         authorship,
         deliveryMeta?.queuedCreatedAt
       );
-    } else if (msg.call) {
+    } else if (msg.call || msg.groupCall) {
+      // A GROUP call's signal travels under its own kind (`group_call`, WP-GC2), which a build
+      // older than group calls drops as a kind it does not know; this build hands both to the call
+      // service, saying which one it is.
+      // The call service logs the arrival (`[Call] signal from ...`), naming the kind.
+      const group = !msg.call;
       onCallSignal?.(
         sender,
         groupId,
-        msg.call,
-        receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt)
+        msg.call ?? msg.groupCall,
+        receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt),
+        group
       );
     } else if (msg.system) {
       const event = msg.system.event ?? '';

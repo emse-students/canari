@@ -1,7 +1,12 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type {
+  DeviceEvent,
+  DevicePin,
+  KeyPackageVerdict,
+  MembershipEvidence,
+} from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import type { GatewaySocketOpen } from '$lib/mls-client/gatewaySocketOpen';
@@ -1333,6 +1338,14 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - `removal_epochs`, a `Float64Array` of epochs. */
   protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
     return Array.from(this.client.removal_epochs(groupId, userId));
+  }
+
+  /** WASM client wrapper - `membership_evidence`, JSON from Rust (`MembershipEvidence`, camelCase). */
+  protected async membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence> {
+    return JSON.parse(this.client.membership_evidence(groupId, userId)) as MembershipEvidence;
   }
 
   /** WASM client wrapper - `take_device_events`, JSON from Rust (`DeviceEvent`, camelCase). */

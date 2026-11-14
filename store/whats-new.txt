@@ -1,3 +1,3 @@
 version: 1.6.12
 
-Après un paiement Lydia, l'app indique où il en est dès qu'on y revient. Les photos des articles s'affichent dans les formulaires sur téléphone, et un post montre l'aperçu de chacun de ses liens. On peut modifier sa réponse à un formulaire tant qu'il est ouvert, et chaque grille d'articles choisit si elle est obligatoire. Dans une conversation, la visionneuse passe d'une photo ou vidéo à la suivante. Les formulaires d'une association se gèrent depuis une seule liste.
+Après un paiement Lydia, l'app indique où il en est dès qu'on y revient. On peut modifier sa réponse à un formulaire tant qu'il est ouvert, et chaque grille d'articles choisit si elle est obligatoire. L'annuaire est ouvert à tous les membres, avec une recherche par nom, promo ou association. Un post montre l'aperçu de chacun de ses liens, et les photos des articles s'affichent sur téléphone. Dans une conversation, la visionneuse passe d'une photo à la suivante.

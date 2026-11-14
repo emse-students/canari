@@ -161,7 +161,7 @@ export interface LiveArrivalRow {
 /**
  * The seat member of one viewer on one live. The live id is LOWER-CASED: the take is keyed by the
  * row's id (PostgreSQL's spelling), while a leave or a removal carries the id as the client spelled
- * it in the URL, which `ParseUUIDPipe` accepts in upper case - and a release that names another
+ * it in the URL, which the route guard accepts in upper case - and a release that names another
  * member frees nothing. ONE SEAT PER ACCOUNT, not per device (lives.md, "The viewer cap"): the
  * request carries no device id, and an account is what a removal or a block names.
  */

@@ -21,8 +21,7 @@
     hasPermissionFlag,
     findBdeAssociationWithFlag,
     AssociationPermissionFlag,
-    aggregatedCalendarFeedIcsAbsoluteUrl,
-    icsSubscriptionRangeISO,
+    agendaSubscriptionIcsAbsoluteUrl,
     type AssociationCalendarFeedEvent,
     type Association,
     ensureAssociationSuperAdmin,
@@ -51,7 +50,7 @@
     type AgendaReader,
     type AgendaSelection,
   } from '$lib/calendar/agendaSelection';
-  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
+  import { createSubscriptionLink } from '$lib/calendar/subscriptionLink.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -82,6 +81,7 @@
     FileDown,
   } from '@lucide/svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { eventReachOffered } from '$lib/calendar/eventReach';
   import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -299,30 +299,23 @@
   });
 
   /**
-   * The server signs the selection - only the reader's own spaces, or one association - and the link
-   * carries that signature (2026-10-06). Asked while the modal is open, for nothing else.
+   * The reader's own subscription link for the selection (2026-11-14): the server binds it to their
+   * account and serves what they see - only their own spaces, or one association, may be asked.
+   * Made when the reader asks for it in the modal, never on sight; the URL carries the token alone.
    */
-  const feedSigner = createFeedSigner(() => {
+  const subscriptionLink = createSubscriptionLink(() => {
     if (!showSubscribeModal) return null;
     if (filterAssociationId) return { associationId: filterAssociationId };
     if (!isAgendaSelected(feedSelection)) return null;
     return { campus: feedSelection.campus, formation: feedSelection.formation };
   });
 
-  /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
+  /** https:// URL to the reader's `.ics` link; `CalendarSubscribeModal` derives webcal/Google variants. */
   const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
     if (!filterAssociationId && !isAgendaSelected(feedSelection)) return '';
-    if (!feedSigner.sig) return '';
-    const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({
-      from,
-      to,
-      associationId: filterAssociationId || undefined,
-      campus: filterAssociationId ? undefined : feedSelection.campus || undefined,
-      formation: filterAssociationId ? undefined : feedSelection.formation || undefined,
-      sig: feedSigner.sig,
-    });
+    if (!subscriptionLink.token) return '';
+    return agendaSubscriptionIcsAbsoluteUrl(subscriptionLink.token);
   });
 
   const sortedEvents = $derived(
@@ -459,6 +452,9 @@
    * `PROPOSE_EVENT` on that association. That is knowable here, from the list already loaded, so
    * the control appears only where the request would succeed instead of being sent to find out.
    */
+  /** The association the event is filed in the name of (or belongs to, when editing). */
+  const reachOwner = $derived(associations.find((a) => a.id === depositValues.targetAssociationId));
+
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
     canSetKind: mayValidateFor(depositValues.targetAssociationId),
@@ -469,6 +465,8 @@
     // NEUTRAL ("Campus", owner 2026-11-08): the target is a BDE and the viewer manages its agenda -
     // files its events or validates them - which is what the server checks (`event-presentation.ts`).
     canSetPresentation: mayPresentNeutralOn(depositValues.targetAssociationId),
+    // AN INSTITUTION'S EVENT CHOOSES ITS REACH (owner, 2026-11-13): "Au nom de" is an institution.
+    canSetReach: eventReachOffered(reachOwner?.type),
   });
 
   /** Whether the viewer may file a neutral event on `associationId`: a BDE whose agenda they manage. */
@@ -863,7 +861,10 @@
       open={showSubscribeModal}
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
-      signing={feedSigner.status}
+      signing={subscriptionLink.status}
+      onAsk={subscriptionLink.ask}
+      revokeStatus={subscriptionLink.revokeStatus}
+      onRevoke={subscriptionLink.revoke}
       intro={m.calendar_subscribe_intro()}
     >
       {#snippet selector()}
@@ -894,5 +895,6 @@
   submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_submit()}
   savingLabel={editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_submitting()}
   onSubmit={submitEvent}
+  ownerName={reachOwner?.name ?? editingOwnerName}
   onClose={() => (depositModalOpen = false)}
 />
