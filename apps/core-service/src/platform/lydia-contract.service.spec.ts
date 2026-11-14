@@ -163,7 +163,9 @@ describe('counter', () => {
         fluxCents: 130_000,
         excludedCents: 7_000,
         excludedCount: 2,
+        untraceableCents: 0,
         untraceableCount: 0,
+        byAssociation: [],
       },
     });
     const counter = await service.counter(now);

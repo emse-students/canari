@@ -4,6 +4,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import { formatAmount } from '$lib/forms/fillAnswers';
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -13,6 +14,7 @@
     emptyLydiaBand,
     fetchLydiaContract,
     fetchLydiaContractCounter,
+    fluxSharePercent,
     fromLydiaContractForm,
     saveLydiaContract,
     toLydiaContractForm,
@@ -96,6 +98,12 @@
   });
 
   const eur = (cents: number) => formatAmount(cents, 'eur');
+  const percentFormat = new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 1 });
+  /** "12,3" - the share of the total, or null when the total is not positive. */
+  function sharePercent(cents: number): string | null {
+    const p = counter?.flux ? fluxSharePercent(cents, counter.flux.fluxCents) : null;
+    return p === null ? null : percentFormat.format(p);
+  }
   const progress = $derived(
     counter?.flux && counter.targetCents
       ? Math.max(0, Math.min(100, (counter.flux.fluxCents / counter.targetCents) * 100))
@@ -188,6 +196,50 @@
               })}
             {/if}
           </p>
+        {/if}
+        {#if counter.flux.byAssociation.length > 0}
+          <div class="space-y-2" data-testid="lydia-flux-breakdown">
+            <h5 class="text-text-main text-xs font-bold">{m.admin_lydia_breakdown_title()}</h5>
+            <ul class="space-y-2">
+              {#each counter.flux.byAssociation as share (share.associationId)}
+                {@const percent = sharePercent(share.fluxCents)}
+                <li class="border-cn-border rounded-lg border px-3 py-2 text-xs">
+                  <p class="text-text-main font-semibold">
+                    {share.name ?? m.admin_lydia_breakdown_deleted()}
+                    {#if share.type === 'list'}
+                      <span class="text-text-muted font-normal"
+                        >({m.admin_lydia_breakdown_list()})</span
+                      >
+                    {/if}
+                  </p>
+                  <p class="text-text-main">
+                    {percent === null
+                      ? eur(share.fluxCents)
+                      : m.admin_lydia_breakdown_flux({
+                          flux: eur(share.fluxCents),
+                          share: percent,
+                        })}
+                  </p>
+                  <p class="text-text-muted">
+                    {m.admin_lydia_breakdown_detail({
+                      paid: eur(share.paidCents),
+                      refunded: eur(share.refundedCents),
+                    })}
+                  </p>
+                  {#if share.excludedCount > 0}
+                    <p class="text-text-muted">
+                      {m.admin_lydia_breakdown_excluded({ amount: eur(share.excludedCents) })}
+                    </p>
+                  {/if}
+                  {#if share.untraceableCount > 0}
+                    <p class="text-red-500">
+                      {m.admin_lydia_breakdown_untraceable({ amount: eur(share.untraceableCents) })}
+                    </p>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
         {/if}
         <p class="text-text-muted text-xs">{m.admin_lydia_counter_in_person_note()}</p>
       {:else if counter.missing.indexOf('anniversary') === -1}

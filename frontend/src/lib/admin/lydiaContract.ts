@@ -35,20 +35,47 @@ export interface LydiaContractSettings {
   bands: LydiaBand[];
 }
 
+/** The figures of a contract year's flux, whole or for one association, cents TTC. */
+export interface LydiaFluxFigures {
+  paidCents: number;
+  paymentCount: number;
+  refundedCents: number;
+  refundCount: number;
+  fluxCents: number;
+  excludedCents: number;
+  excludedCount: number;
+  untraceableCents: number;
+  untraceableCount: number;
+}
+
+/** One association's part of the flux (social-service `measureLydiaFlux`). */
+export interface LydiaFluxShare extends LydiaFluxFigures {
+  associationId: string;
+  /** NULL when the association no longer exists. */
+  name: string | null;
+  /** `association`, `list` or `institution`; NULL when it no longer exists. */
+  type: string | null;
+}
+
+/**
+ * The percentage of the total flux one association brings, or `null` when the total is not
+ * positive (no share of nothing). Not rounded: the caller formats it.
+ */
+export function fluxSharePercent(shareCents: number, totalCents: number): number | null {
+  if (totalCents <= 0) return null;
+  return (shareCents / totalCents) * 100;
+}
+
 /** The counter of the current contract year. */
 export interface LydiaContractCounter {
   today: string;
   year: { start: string; end: string; daysTotal: number; daysLeft: number } | null;
-  flux: {
-    paidCents: number;
-    paymentCount: number;
-    refundedCents: number;
-    refundCount: number;
-    fluxCents: number;
-    excludedCents: number;
-    excludedCount: number;
-    untraceableCount: number;
-  } | null;
+  flux:
+    | (LydiaFluxFigures & {
+        /** One row per association (or list), sorted by flux descending; the totals are their sums. */
+        byAssociation: LydiaFluxShare[];
+      })
+    | null;
   targetCents: number | null;
   band: (LydiaBand & { index: number }) | null;
   nextBand: (LydiaBand & { index: number }) | null;

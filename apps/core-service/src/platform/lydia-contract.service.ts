@@ -46,6 +46,24 @@ export interface LydiaFluxMeasure {
   fluxCents: number;
   excludedCents: number;
   excludedCount: number;
+  untraceableCents: number;
+  untraceableCount: number;
+  /** The same, per association (or list), sorted by flux descending; the totals are their sums. */
+  byAssociation: Array<
+    LydiaFluxShareFields & { associationId: string; name: string | null; type: string | null }
+  >;
+}
+
+/** The figures a whole measure and one association's share have in common. */
+interface LydiaFluxShareFields {
+  paidCents: number;
+  paymentCount: number;
+  refundedCents: number;
+  refundCount: number;
+  fluxCents: number;
+  excludedCents: number;
+  excludedCount: number;
+  untraceableCents: number;
   untraceableCount: number;
 }
 

@@ -1,4 +1,5 @@
 import {
+  fluxSharePercent,
   LydiaContractFormInvalid,
   decimalToHundredths,
   emptyLydiaBand,
@@ -69,5 +70,13 @@ describe('lydiaContract form', () => {
     form.bands[0].from = '10';
     form.vat = 'twenty';
     expect(() => fromLydiaContractForm(form)).toThrow(/vatBps/);
+  });
+});
+
+describe('fluxSharePercent', () => {
+  it('is the share of the total, and nothing of a total that is not positive', () => {
+    expect(fluxSharePercent(2_500, 10_000)).toBe(25);
+    expect(fluxSharePercent(100, 0)).toBeNull();
+    expect(fluxSharePercent(100, -50)).toBeNull();
   });
 });

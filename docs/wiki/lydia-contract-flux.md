@@ -79,6 +79,15 @@ contract year `[anniversary, next anniversary)`, its flux against the target wit
 days left, and the band the flux falls in with the next one up - the regularization risk at a
 glance.
 
+**Which association the total comes from** (owner, 2026-11-14: *"L'admin devrait aussi voir, si
+possible, quel montant sur le total vient de quelle association"*): under the total, one row per
+association - a list has its own row - with its payments, its refunds, its net flux and its share of
+the total, sorted by flux descending, and what of its payments is NOT counted and why (on a Business
+Canari did not enrol, a historical account; or with no identifiable Business). A payment belongs to
+the association its record was written for (`purchase_records."associationId"`), a refund to its
+`lydia_refunds."associationId"`. `measureLydiaFlux` measures BY association and the totals are the
+SUMS of those rows - one query, one definition of the flux, asserted by both specs.
+
 **The contract year** is the one the anniversary puts today in, in Paris (`contractYearOf`,
 `parisDate`): from the last anniversary on or before today to the next one. A 29 February
 anniversary falls on the 28th in a common year. Before the first anniversary there is no year.

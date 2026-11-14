@@ -139,7 +139,7 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
     await others.initialize();
     await others.destroy();
     await admin.query(
-      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL,
+      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, type varchar NOT NULL DEFAULT 'association', "lydiaAccountId" varchar NULL,
          "lydiaDashboardUrl" varchar NULL)`
     );
     await admin.query(migration('120_lydia_refunds.sql'));
@@ -304,6 +304,40 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       [id]
     );
     expect(await measure()).toMatchObject({ paidCents: 800, untraceableCount: 0 });
+  });
+
+  it('splits the flux by association, and the total is the sum of the rows', async () => {
+    const plain = await boutique(6_000, T_PLAIN, '2031-06-01T10:00:00Z');
+    await refund(plain, T_PLAIN, 1_000, '2031-06-02T10:00:00Z');
+    const other = await form(3_000, T_SWITCHED_NEW, '2031-06-03T10:00:00Z');
+    const hist = await boutique(4_000, T_WAITING_HIST, '2031-06-04T10:00:00Z');
+    await ds.query(`UPDATE purchase_records SET "associationId" = $2 WHERE id = $1`, [
+      other,
+      SWITCHED,
+    ]);
+    await ds.query(`UPDATE purchase_records SET "associationId" = $2 WHERE id = $1`, [
+      hist,
+      WAITING,
+    ]);
+    const m = await measure();
+    expect(m.byAssociation.map((s) => [s.name, s.fluxCents, s.excludedCents])).toEqual([
+      ['Plain', 5_000, 0],
+      ['Switched', 3_000, 0],
+      ['Waiting', 0, 4_000],
+    ]);
+    for (const k of [
+      'paidCents',
+      'paymentCount',
+      'refundedCents',
+      'refundCount',
+      'fluxCents',
+      'excludedCents',
+      'excludedCount',
+      'untraceableCount',
+    ] as const) {
+      expect(m.byAssociation.reduce((n, s) => n + s[k], 0)).toBe(m[k]);
+    }
+    expect(m).toMatchObject({ fluxCents: 8_000, excludedCents: 4_000 });
   });
 
   it('a bridge historical account never counts, even if a ledger row names it by mistake', async () => {

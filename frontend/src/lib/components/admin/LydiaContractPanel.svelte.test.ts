@@ -33,7 +33,9 @@ const COUNTER_UNSET = {
     fluxCents: 0,
     excludedCents: 0,
     excludedCount: 0,
+    untraceableCents: 0,
     untraceableCount: 0,
+    byAssociation: [] as unknown[],
   },
   targetCents: null,
   band: null,
@@ -115,6 +117,50 @@ describe('LydiaContractPanel', () => {
     );
     expect(document.body.textContent).toContain(m.admin_lydia_counter_in_person_note());
     expect(document.body.textContent).toMatch(/150,00/);
+  });
+
+  it('lists the part of the flux each association brings, its share, and what is not counted', async () => {
+    const share = (over: Record<string, unknown>) => ({
+      ...COUNTER_UNSET.flux,
+      byAssociation: undefined,
+      associationId: 'a',
+      name: 'Alpha',
+      type: 'association',
+      ...over,
+    });
+    route(EMPTY, {
+      ...COUNTER_UNSET,
+      flux: {
+        ...COUNTER_UNSET.flux,
+        paidCents: 40_000,
+        fluxCents: 40_000,
+        excludedCents: 7_000,
+        excludedCount: 1,
+        byAssociation: [
+          share({ associationId: 'a', name: 'Alpha', paidCents: 30_000, fluxCents: 30_000 }),
+          share({
+            associationId: 'b',
+            name: 'Beta',
+            type: 'list',
+            paidCents: 10_000,
+            fluxCents: 10_000,
+          }),
+          share({ associationId: 'c', name: 'Gamma', excludedCents: 7_000, excludedCount: 1 }),
+        ],
+      },
+    });
+    await render();
+
+    const rows = [...document.querySelectorAll('[data-testid="lydia-flux-breakdown"] li')].map(
+      (li) => li.textContent ?? ''
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain('Alpha');
+    expect(rows[0]).toContain('75');
+    expect(rows[1]).toContain('Beta');
+    expect(rows[1]).toContain(m.admin_lydia_breakdown_list());
+    expect(rows[1]).toContain('25');
+    expect(rows[2]).toContain('70,00');
   });
 
   it('saves the whole set in cents and basis points', async () => {

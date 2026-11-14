@@ -42,7 +42,48 @@ export interface LydiaFluxMeasure {
   excludedCount: number;
   /** Lydia payments in the window whose Business no row names: counted nowhere, reported. */
   untraceableCount: number;
+  untraceableCents: number;
+  /**
+   * The same measure, one row per association (or list) the payment was recorded for
+   * (`purchase_records."associationId"`; a refund's `lydia_refunds."associationId"`), sorted by
+   * `fluxCents` descending (owner, 2026-11-14: which association the total comes from). The totals
+   * above are the SUMS of these rows - one query, one definition of the flux.
+   */
+  byAssociation: LydiaFluxShare[];
 }
+
+/** One association's part of a window's flux, cents TTC (`LydiaFluxMeasure.byAssociation`). */
+export interface LydiaFluxShare {
+  associationId: string;
+  /** NULL when the association no longer exists. */
+  name: string | null;
+  /** `association`, `list` or `institution`; NULL when it no longer exists. */
+  type: string | null;
+  paidCents: number;
+  paymentCount: number;
+  refundedCents: number;
+  refundCount: number;
+  fluxCents: number;
+  /** Its payments on a Business Canari did not enrol (a historical account): not counted. */
+  excludedCents: number;
+  excludedCount: number;
+  /** Its payments no row ties to a Business: counted nowhere. */
+  untraceableCents: number;
+  untraceableCount: number;
+}
+
+/** The numeric fields a share and the whole measure have in common, summed share by share. */
+const SUMMED = [
+  'paidCents',
+  'paymentCount',
+  'refundedCents',
+  'refundCount',
+  'fluxCents',
+  'excludedCents',
+  'excludedCount',
+  'untraceableCents',
+  'untraceableCount',
+] as const;
 
 /** A `YYYY-MM-DD` calendar date. */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -69,6 +110,7 @@ const WINDOW_END_SQL = `($2::date::timestamp AT TIME ZONE 'Europe/Paris')`;
  */
 const PAYMENTS_SQL = `
   SELECT r."amountCents" AS amount,
+         r."associationId" AS "associationId",
          (r."lydiaVendorToken" IS NOT NULL) AS "onRecord",
          COALESCE(r."lydiaVendorToken",
            CASE WHEN r.source = 'product' THEN (
@@ -91,8 +133,8 @@ const PAYMENTS_SQL = `
 const ENROLLED_SQL = `e."vendorToken" IS NOT NULL AND h."historicalVendorToken" IS NULL`;
 
 /**
- * Measures the flux of `[from, to)` (two `YYYY-MM-DD` dates, Paris midnights). Two reads, whatever
- * the volume. A refund counts on the date Lydia executed it - its answer, or the manager's
+ * Measures the flux of `[from, to)` (two `YYYY-MM-DD` dates, Paris midnights), association by
+ * association; the totals are the sums of those rows. Three reads, whatever the volume. A refund counts on the date Lydia executed it - its answer, or the manager's
  * declaration after checking Lydia (the date the statement prints) - and only once Lydia refunded:
  * `confirmed`, or `pending` with Lydia's own `refunded-unrecorded` answer.
  */
@@ -103,24 +145,27 @@ export async function measureLydiaFlux(
   logger: Logger = new Logger('LydiaContractFlux')
 ): Promise<LydiaFluxMeasure> {
   logger.debug(`${LYDIA_FLUX_LOG_TAG} measuring [${from}, ${to})`);
-  const [payments] = (await query(
-    `SELECT
+  const paymentRows = (await query(
+    `SELECT p."associationId",
        COALESCE(SUM(p.amount) FILTER (WHERE ${ENROLLED_SQL}), 0)::bigint AS "paidCents",
        COUNT(*) FILTER (WHERE ${ENROLLED_SQL})::int AS "paymentCount",
        COALESCE(SUM(p.amount) FILTER (WHERE p.token IS NOT NULL AND NOT (${ENROLLED_SQL})), 0)::bigint
          AS "excludedCents",
        COUNT(*) FILTER (WHERE p.token IS NOT NULL AND NOT (${ENROLLED_SQL}))::int AS "excludedCount",
+       COALESCE(SUM(p.amount) FILTER (WHERE p.token IS NULL), 0)::bigint AS "untraceableCents",
        COUNT(*) FILTER (WHERE p.token IS NULL)::int AS "untraceableCount",
        COUNT(*) FILTER (WHERE p.token IS NOT NULL AND NOT p."onRecord")::int AS "recordWithoutToken",
        COUNT(*) FILTER (WHERE e."vendorToken" IS NOT NULL AND h."historicalVendorToken" IS NOT NULL)::int
          AS "contradictionCount"
        FROM (${PAYMENTS_SQL}) p
        LEFT JOIN lydia_enrolled_businesses e ON e."vendorToken" = p.token
-       LEFT JOIN lydia_account_bridges h ON h."historicalVendorToken" = p.token`,
+       LEFT JOIN lydia_account_bridges h ON h."historicalVendorToken" = p.token
+      GROUP BY p."associationId"`,
     [from, to]
   )) as Array<Record<string, string | number>>;
-  const [refunds] = (await query(
-    `SELECT COALESCE(SUM(f."amountCents"), 0)::bigint AS "refundedCents",
+  const refundRows = (await query(
+    `SELECT f."associationId",
+            COALESCE(SUM(f."amountCents"), 0)::bigint AS "refundedCents",
             COUNT(*)::int AS "refundCount"
        FROM lydia_refunds f
        LEFT JOIN lydia_enrolled_businesses e ON e."vendorToken" = f."vendorToken"
@@ -128,10 +173,56 @@ export async function measureLydiaFlux(
       WHERE ${ENROLLED_SQL}
         AND (f.status = 'confirmed' OR (f.status = 'pending' AND f.outcome = 'refunded-unrecorded'))
         AND COALESCE(f."answeredAt", f."resolvedAt", f."calledAt", f."requestedAt") >= ${WINDOW_SQL}
-        AND COALESCE(f."answeredAt", f."resolvedAt", f."calledAt", f."requestedAt") < ${WINDOW_END_SQL}`,
+        AND COALESCE(f."answeredAt", f."resolvedAt", f."calledAt", f."requestedAt") < ${WINDOW_END_SQL}
+      GROUP BY f."associationId"`,
     [from, to]
   )) as Array<Record<string, string | number>>;
-  const contradictions = Number(payments?.contradictionCount ?? 0);
+  const byId = new Map<string, LydiaFluxShare>();
+  const shareOf = (associationId: string): LydiaFluxShare => {
+    let share = byId.get(associationId);
+    if (!share) {
+      share = { associationId, name: null, type: null } as LydiaFluxShare;
+      for (const k of SUMMED) share[k] = 0;
+      byId.set(associationId, share);
+    }
+    return share;
+  };
+  for (const row of paymentRows) {
+    const share = shareOf(String(row.associationId));
+    for (const k of [
+      'paidCents',
+      'paymentCount',
+      'excludedCents',
+      'excludedCount',
+      'untraceableCents',
+      'untraceableCount',
+    ] as const) {
+      share[k] = Number(row[k] ?? 0);
+    }
+  }
+  for (const row of refundRows) {
+    const share = shareOf(String(row.associationId));
+    share.refundedCents = Number(row.refundedCents ?? 0);
+    share.refundCount = Number(row.refundCount ?? 0);
+  }
+  if (byId.size > 0) {
+    const names = (await query(
+      `SELECT id, name, type FROM associations WHERE id = ANY($1::uuid[])`,
+      [[...byId.keys()]]
+    )) as Array<{ id: string; name: string; type: string }>;
+    for (const n of names) {
+      const share = byId.get(n.id);
+      if (share) Object.assign(share, { name: n.name, type: n.type });
+    }
+  }
+  const byAssociation = [...byId.values()]
+    .map((share) => ({ ...share, fluxCents: share.paidCents - share.refundedCents }))
+    .sort((x, y) => y.fluxCents - x.fluxCents || y.paidCents - x.paidCents);
+  const payments = {
+    contradictionCount: paymentRows.reduce((n, r) => n + Number(r.contradictionCount ?? 0), 0),
+    recordWithoutToken: paymentRows.reduce((n, r) => n + Number(r.recordWithoutToken ?? 0), 0),
+  };
+  const contradictions = payments.contradictionCount;
   if (contradictions > 0) {
     // Two durable facts disagree: the ledger says Canari enrolled the Business, a bridge says it is
     // an association's historical account. The bridge wins (never counted), and this accuses the
@@ -142,17 +233,9 @@ export async function measureLydiaFlux(
         `as enrolled AND held as a bridge's historical account - excluded`
     );
   }
-  const measure: LydiaFluxMeasure = {
-    paidCents: Number(payments?.paidCents ?? 0),
-    paymentCount: Number(payments?.paymentCount ?? 0),
-    refundedCents: Number(refunds?.refundedCents ?? 0),
-    refundCount: Number(refunds?.refundCount ?? 0),
-    fluxCents: 0,
-    excludedCents: Number(payments?.excludedCents ?? 0),
-    excludedCount: Number(payments?.excludedCount ?? 0),
-    untraceableCount: Number(payments?.untraceableCount ?? 0),
-  };
-  measure.fluxCents = measure.paidCents - measure.refundedCents;
+  // ONE definition of the flux: the whole is the sum of its shares, never a second query.
+  const measure = { byAssociation } as LydiaFluxMeasure;
+  for (const k of SUMMED) measure[k] = byAssociation.reduce((n, share) => n + share[k], 0);
   if (measure.untraceableCount > 0) {
     // A Lydia payment no row ties to a Business is counted NOWHERE - neither in the flux nor as
     // excluded - so the counter under-reads by exactly these. Accusing: since migration 120 every
@@ -162,7 +245,7 @@ export async function measureLydiaFlux(
         `Business and are counted nowhere`
     );
   }
-  const recordWithoutToken = Number(payments?.recordWithoutToken ?? 0);
+  const recordWithoutToken = payments.recordWithoutToken;
   if (recordWithoutToken > 0) {
     // Migration 169 backfilled every record and the settlement writes the token since: a record
     // without it was written by an older image during a rollout, or by a writer that skipped it.
@@ -175,7 +258,7 @@ export async function measureLydiaFlux(
   logger.log(
     `${LYDIA_FLUX_LOG_TAG} [${from}, ${to}): flux=${measure.fluxCents} paid=${measure.paidCents}` +
       ` (${measure.paymentCount}) refunded=${measure.refundedCents} (${measure.refundCount})` +
-      ` excluded=${measure.excludedCents} (${measure.excludedCount})`
+      ` excluded=${measure.excludedCents} (${measure.excludedCount}) associations=${byAssociation.length}`
   );
   return measure;
 }
