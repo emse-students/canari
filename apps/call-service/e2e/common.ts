@@ -21,6 +21,18 @@ export function setFault(why: string) {
   fault ??= why;
 }
 
+/**
+ * Sends one signalling frame on `ws`, or records a fault naming the frame when the socket is not
+ * open - the one implementation both pages use (`page.ts`, `group-page.ts`).
+ */
+export function sendFrame(ws: WebSocket | null, frame: Record<string, unknown>) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    setFault(`could not send ${String(frame.type)}: the socket is not open`);
+    return;
+  }
+  ws.send(JSON.stringify(frame));
+}
+
 /** The first fault this page recorded, or null while it may still succeed. */
 export function currentFault(): string | null {
   return fault;

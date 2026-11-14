@@ -30,6 +30,7 @@ import {
   legStats,
   log,
   note,
+  sendFrame,
   setFault,
   startWorker,
   transform,
@@ -78,11 +79,7 @@ let signalChain: Promise<void> = Promise.resolve();
 const earlyCandidates: RTCIceCandidateInit[] = [];
 
 function send(frame: Record<string, unknown>) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    setFault(`could not send ${String(frame.type)}: the socket is not open`);
-    return;
-  }
-  ws.send(JSON.stringify(frame));
+  sendFrame(ws, frame);
 }
 
 /** The app worker, keyed as `CallService.ensureWorkerKeyReady` keys it, BEFORE the first track. */
