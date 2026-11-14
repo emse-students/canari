@@ -135,7 +135,9 @@ import {
   EVERY_EVENT_STEWARDSHIP,
   eventStewardshipOf,
   isNeutralEvent,
+  neutralColourOfRow,
   NO_EVENT_STEWARDSHIP,
+  CALENDAR_NEUTRAL_ERROR_CODES,
   presentEventsForReader,
   type EventStewardship,
   type PresentableEventRow,
@@ -1312,6 +1314,25 @@ export class AssociationsService {
     }
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
+    }
+    if (dto.neutralEventColor !== undefined) {
+      // The colour of neutral events is a BDE's setting (owner, 2026-11-14): another association
+      // owns no neutral event, so a value stored there would be dead and misleading. Clearing is
+      // refused too - nothing to clear - so the refusal is one rule, typed at the throw.
+      if (!asso.isBDE) {
+        this.logger.warn(
+          `[ASSO] association=${id.slice(0, 8)} refused neutralEventColor: not a BDE`
+        );
+        throw new ForbiddenException({
+          code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_NOT_A_BDE,
+          message: 'Only a BDE chooses the colour of neutral events',
+        });
+      }
+      const colour = dto.neutralEventColor?.trim() ?? '';
+      patch.neutralEventColor = colour === '' ? null : colour;
+      this.logger.log(
+        `[ASSO] association=${id.slice(0, 8)} neutralEventColor=${patch.neutralEventColor ?? 'default'}`
+      );
     }
     if (
       dto.contactEmail !== undefined &&
@@ -2669,6 +2690,7 @@ export class AssociationsService {
         associationSlug: owner?.slug ?? '',
         associationColor: owner?.color ?? null,
         associationLogoUrl: owner?.logoUrl ?? null,
+        neutralEventColor: neutralColourOfRow(e, owner?.neutralEventColor),
       };
     });
     // THIS association's own agenda: a neutral event of it is not listed to a non-steward at all.
@@ -2730,12 +2752,24 @@ export class AssociationsService {
    */
   private async batchLoadEventOwners(
     associationIds: string[]
-  ): Promise<Map<string, Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl'>>> {
+  ): Promise<
+    Map<
+      string,
+      Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl' | 'neutralEventColor'>
+    >
+  > {
     const unique = [...new Set(associationIds)];
     if (unique.length === 0) return new Map();
     const owners = await this.assoRepo.find({
       where: { id: In(unique) },
-      select: { id: true, name: true, slug: true, color: true, logoUrl: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        color: true,
+        logoUrl: true,
+        neutralEventColor: true,
+      },
     });
     return new Map(owners.map((a) => [a.id, a]));
   }
@@ -3568,6 +3602,7 @@ export class AssociationsService {
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .addSelect(opts?.isGlobalAdmin ? 'true' : governs, 'canValidate')
       .getRawMany();
@@ -3603,6 +3638,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
         // `=== true` and nothing looser: a driver answering 't' must not widen the button.
         canValidate: r.canValidate === true,
       };
@@ -3769,6 +3808,7 @@ export class AssociationsService {
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .getRawMany();
 
@@ -3811,6 +3851,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
       };
     });
     // The anonymous `.ics` passes no viewer and so reads every neutral event masked; a filter on one

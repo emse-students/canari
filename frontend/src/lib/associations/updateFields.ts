@@ -27,6 +27,7 @@ export const UPDATE_FIELD_RIGHTS: Record<UpdateField, UpdateFieldRight> = {
   bioMarkdown: AssociationPermissionFlag.EDIT_PROFILE,
   logoUrl: AssociationPermissionFlag.EDIT_PROFILE,
   color: AssociationPermissionFlag.EDIT_PROFILE,
+  neutralEventColor: AssociationPermissionFlag.EDIT_PROFILE,
   contactEmail: AssociationPermissionFlag.EDIT_PROFILE,
   promo: AssociationPermissionFlag.EDIT_PROFILE,
   name2: AssociationPermissionFlag.EDIT_PROFILE,

@@ -881,6 +881,35 @@ it serves; (3) the pending queue (`GET calendar/pending`) lists an association's
 its own members who may open it, so a BDE member there who is no steward receives a neutral row
 MASKED, yet knows it is the BDE's by the queue it came in.
 
+### The colour of neutral events is the BDE's choice (owner, 2026-11-14)
+
+Every neutral event used to wear one accent derived from the fixed key `campus`, which rendered an
+ugly yellow on the month grid. Each BDE now chooses it ("Réglage du BDE"):
+
+- **Stored** on the association: `associations."neutralEventColor"` varchar(7), nullable, migration
+  171 (additive, idempotent, a `#rrggbb` CHECK added NOT VALID then validated). NULL is the derived
+  accent, so nothing changes until a BDE chooses.
+- **Written** through `PATCH /associations/:id` as the field `neutralEventColor`, placed in the ONE
+  table `UPDATE_FIELD_RIGHTS` (server and client mirror) under `EDIT_PROFILE` - the right that already
+  edits the association's colour and logo, so a non-holder is refused by the existing per-field
+  check. The service refuses it on a non-BDE (`CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE`, 403), accepts
+  `#rrggbb` only (the association colour's `@Matches`), clears on `""`/`null`, logs `[ASSO]` on a
+  change. The field is in the association projection so the settings form reads it back.
+- **Carried** on each neutral row as `neutralEventColor` (`neutralColourOfRow`: the owner's value on a
+  neutral row, `null` on every other row so an association event never discloses it). It SURVIVES
+  `maskNeutralEvent`, deliberately: it is the one thing a reader needs to paint the event.
+- **Painted** by `eventOwners`' neutral identity, the single list every surface reads (month grid,
+  day panel, schedule list, detail modal chip, PDF/PNG export), so there is no per-surface copy.
+- **UI**: `EditProfileTab` shows "Couleur des événements Campus" (presets, `ColorPicker`, reset) on a
+  BDE only.
+
+**Accepted limit of the owner's choice (masking)**: the colour is a per-BDE value readable by every
+reader of a neutral event. On a campus with TWO BDEs that chose different colours, a distinctive
+colour is a fingerprint of which BDE filed an event. This sits beside the limits above (the audience
+already tells a reader the BDE's spaces; one BDE per campus is unmasked by the `.ics`) and adds
+nothing on a campus with one BDE. The `.ics` carries no colour. Readers learn the colour, never the
+BDE's id, name, slug or logo.
+
 ### Every surface that names an organiser, checked
 
 | Surface | What it shows for a neutral event |

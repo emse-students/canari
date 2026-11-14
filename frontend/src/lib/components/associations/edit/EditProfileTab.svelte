@@ -49,6 +49,8 @@
   let editBioMarkdown = $state(initial.bioMarkdown ?? '');
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state(initial.color ?? '');
+  /** A BDE's colour for its neutral ("Campus") events, or "" for the derived default. */
+  let editNeutralColor = $state(initial.neutralEventColor ?? '');
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
 
@@ -125,6 +127,8 @@
         description: editDescription.trim(),
         bioMarkdown: editBioMarkdown.trim(),
         color: editColor.trim() || null,
+        // Only a BDE has the setting (the server refuses it on any other association).
+        ...(asso.isBDE ? { neutralEventColor: editNeutralColor.trim() || null } : {}),
         contactEmail: editContactEmail.trim() || null,
         ...(isList
           ? {
@@ -140,6 +144,7 @@
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
+      editNeutralColor = updated.neutralEventColor ?? '';
       editContactEmail = updated.contactEmail ?? '';
       editPromo = updated.promo ?? '';
       editName2 = updated.name2 ?? '';
@@ -326,6 +331,42 @@
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
+  {#if asso.isBDE}
+    <div class="flex flex-col gap-3" data-testid="neutral-event-color">
+      <span class="text-text-main ml-1 block text-sm font-bold"
+        >{m.asso_edit_neutral_color_label()}</span
+      >
+      <p class="text-text-muted ml-1 text-xs">{m.asso_edit_neutral_color_hint()}</p>
+      <div class="flex flex-wrap gap-1.5">
+        {#each PRESET_COLORS as c (c)}
+          <button
+            type="button"
+            onclick={() => (editNeutralColor = c)}
+            title={c}
+            class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
+ {editNeutralColor === c
+              ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
+              : 'border-transparent hover:border-white/60'}"
+            style="background:{c};"
+            aria-label={c}
+          ></button>
+        {/each}
+      </div>
+      <div class="ml-0.5 flex items-center gap-2">
+        <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
+        <ColorPicker bind:value={editNeutralColor} label={m.asso_edit_color_picker_label()} />
+        {#if editNeutralColor}
+          <button
+            type="button"
+            onclick={() => (editNeutralColor = '')}
+            class="text-text-muted hover:text-text-main text-xs underline"
+          >
+            {m.asso_edit_neutral_color_reset()}
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>

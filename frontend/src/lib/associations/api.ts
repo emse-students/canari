@@ -238,6 +238,8 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
+  /** A BDE's chosen colour for its neutral ("Campus") agenda events, or null (derived accent). */
+  neutralEventColor?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
@@ -312,6 +314,8 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
+  /** A BDE only: the colour of its neutral ("Campus") agenda events; `""` or `null` clears it. */
+  neutralEventColor?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -410,6 +414,11 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationSlug: string;
   /** Hex color set on the association, or null (frontend falls back to generateAvatarColor). */
   associationColor: string | null;
+  /**
+   * The colour the owning BDE chose for its NEUTRAL ("Campus") events (owner, 2026-11-14): present
+   * on a neutral row only, kept even when the owner is masked; null/absent -> the derived accent.
+   */
+  neutralEventColor?: string | null;
   /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
   associationLogoUrl: string | null;
   /**

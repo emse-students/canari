@@ -38,6 +38,7 @@ const ASSOCIATION_FIELDS = [
   'isBDE',
   'documentQuotaBytes',
   'color',
+  'neutralEventColor',
   'type',
   'promo',
   'parentAssociationId',

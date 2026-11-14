@@ -30,6 +30,8 @@ export const NEUTRAL_EVENT_LABEL = 'Campus';
 export const CALENDAR_NEUTRAL_ERROR_CODES = {
   /** Only a BDE files a neutral event. */
   NOT_A_BDE: 'CALENDAR_NEUTRAL_NOT_A_BDE',
+  /** The colour of neutral events is a BDE's setting; any other association is refused it. */
+  COLOUR_NOT_A_BDE: 'CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE',
   /** A neutral event has no co-organiser. */
   NO_PARTNERS: 'CALENDAR_NEUTRAL_NO_PARTNERS',
   /** A neutral event links no registration form. */
@@ -41,6 +43,20 @@ export const CALENDAR_NEUTRAL_ERROR_CODES = {
 /** Whether a row is presented as "Campus" rather than as its owner. */
 export function isNeutralEvent(row: { presentation?: string | null }): boolean {
   return row.presentation === AssociationCalendarEventPresentation.Neutral;
+}
+
+/**
+ * The colour a row carries for its NEUTRAL presentation (owner, 2026-11-14): the owning BDE's
+ * `neutralEventColor` on a neutral row, `null` on every other row so an association event never
+ * discloses it. Survives the masking on purpose - it is the one thing a reader needs to paint the
+ * event - at the accepted cost documented in calendar.md (a distinctive colour is a fingerprint of
+ * which BDE filed it, on a campus with two).
+ */
+export function neutralColourOfRow(
+  row: { presentation?: string | null },
+  ownerColour: string | null | undefined
+): string | null {
+  return isNeutralEvent(row) ? (ownerColour ?? null) : null;
 }
 
 /** What a write would make of the event, read before anything is saved. */
@@ -116,6 +132,8 @@ export interface PresentableEventRow {
   associationSlug?: string;
   associationColor?: string | null;
   associationLogoUrl?: string | null;
+  /** Kept by the mask: see {@link neutralColourOfRow}. */
+  neutralEventColor?: string | null;
 }
 
 /**
