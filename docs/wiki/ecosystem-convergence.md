@@ -1233,7 +1233,12 @@ positive evidence that it sends the mutation). It also fails if no active rulese
 requires `CI passed` on its default branch any more, since that leaves the same merge unjudged.
 A refused API, a missing field or a repository with no ruleset is red too, and the same token must
 see Canari's own bypass (the control) before a "never" is believed. Classic branch protection is
-not read: none of the four uses it. The day it goes red, the answer is to port Canari's whole
+not read: none of the four uses it. **First real run, 2026-11-14** (run 43645795532, by hand
+dispatch): one token of the App was minted for the four repositories, and it read `always` on
+Canari's ruleset and `never` on the three others' - so GitHub does fill `current_user_can_bypass`
+for an App installation token, which its documentation does not say, and the same script run with
+an admin identity reads `always` everywhere. The red path has only been seen in the self-test.
+The day it goes red, the answer is to port Canari's whole
 step to that sibling or to take the App out of its bypass actors - not to quiet the job.
 
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
