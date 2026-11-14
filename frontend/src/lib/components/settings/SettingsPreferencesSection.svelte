@@ -33,7 +33,7 @@
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
-  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
   import ActivitySharingSetting from './ActivitySharingSetting.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
@@ -189,7 +189,9 @@
           <div>
             <p class="text-text-main text-sm font-bold">{m.settings_share_suggestions()}</p>
             <p class="text-text-muted mt-0.5 text-xs font-medium">
-              {m.settings_share_suggestions_desc()}
+              {isIosTauriRuntime()
+                ? m.settings_share_suggestions_desc_ios()
+                : m.settings_share_suggestions_desc_android()}
             </p>
           </div>
         </div>
