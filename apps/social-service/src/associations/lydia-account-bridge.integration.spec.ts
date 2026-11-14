@@ -140,6 +140,8 @@ maybe(
       // TWICE: CD may replay it, and every statement is IF NOT EXISTS.
       await admin.query(migration('167_lydia_account_bridge.sql'));
       await admin.query(migration('167_lydia_account_bridge.sql'));
+      // The ledger the link writes (lydia-contract-flux.ts).
+      await admin.query(migration('168_lydia_enrolled_businesses.sql'));
       await admin.query('RESET lock_timeout');
       await admin.query(
         `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
@@ -285,6 +287,13 @@ maybe(
       );
       expect(await active()).toEqual({ token: HISTORICAL, ready: true });
       expect(await bridge()).toMatchObject({ state: 'historical', enrolled: ENROLLED });
+      // The PENDING Business is recorded as Canari-enrolled at its link (the platform's Lydia flux,
+      // lydia-contract-flux.ts). This fixture installed the historical account through the same
+      // link, which no production path does - the flux excludes it by its bridge anyway.
+      const ledger = (await ds.query(`SELECT "vendorToken" FROM lydia_enrolled_businesses`)) as {
+        vendorToken: string;
+      }[];
+      expect(ledger.map((r) => r.vendorToken)).toContain(ENROLLED);
       await expect(associations.isLydiaBusinessKeySet(BDE)).resolves.toBe(true);
 
       // The managers see the new Business only, not validated; the historical one is invisible.

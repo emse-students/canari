@@ -79,6 +79,38 @@ too, with a `warn` naming its kind. [call-service](call-service.md) carries the 
 4. Set Redis `user:online:{userId}:{deviceId}` (TTL 90s, `PRESENCE_TTL_SECS`, above the ~75 s dead-socket detection window).
 5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
 6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
+7. **End.** A client Close is answered, not dropped: the read loop does not break on
+   `Message::Close`, so its next read sends the Close reply tungstenite queued and the stream ends -
+   the handshake completes before the TCP close. A `{"type":"disconnect"}` frame ends the SESSION at
+   once and the SOCKET on the client's Close (below).
+
+### `disconnect` ends the session at once and the socket on the client's Close (2026-11-14)
+
+On `disconnect` the gateway takes the connection out of `connected_users` (`remove_session`, so the
+pub/sub loop hands nothing more to it), retires its session in Redis (`handle_disconnect`), and then
+keeps READING: every client follows `disconnect` with its Close (web: `pausePlatformSocket` sends it
+then `ws.close()`; the identity rotation closes the old socket as it reopens; Tauri: `ws.disconnect()`;
+`beforeunload`: the page's own unload). Until the Close, a pong refreshes nothing and does NOT reset
+the missed-ping counter, and any other frame ENDS the socket with a WARN: a frame after `disconnect`
+means the client did not leave (a `beforeunload` the page cancelled - the carte editor's "leave this
+page?" prompt answered "stay"), and a socket out of routing kept open would be deaf until the
+client's own watchdog gave up (~32 s on the web); ended, the client's next heartbeat sees it closed
+and reconnects (`a_frame_after_a_disconnect_ends_the_deaf_socket`). The termination is the Close,
+that frame, or the socket ending; a client that sends none of them (an app suspended between its
+`disconnect` and its Close, a half-open network) is ended by the existing heartbeat within
+`DEAD_SOCKET_DETECTION_SECS` (75 s) of its `disconnect`, the same bound as any silent socket - no
+timer of its own. A departed socket is out of `connected_users`, so it no longer counts toward the
+admission limits while it waits; that window is bounded by the same 75 s.
+
+**Why.** Until 2026-11-14 the loop broke on `disconnect`, dropping the TCP connection before
+the client's Close was read. The frontend's nginx then closed the browser side with that frame
+unread, which is a TCP reset, and the production edge logged `recv() failed (104: Connection reset by
+peer) while proxying and reading from upstream` (three on 2026-11-13; the one still readable was an
+identity-rotation socket of 0.3 s: open, `disconnect`, closed having sent 0 frames). It was not an
+upstream keepalive race: the edge is layer 4 and the host's nginx pools no upstream connection.
+`a_disconnect_leaves_routing_at_once_and_the_socket_ends_on_the_clients_close` (handlers.rs) holds
+it: the client's first frame after `disconnect` is the Close reply; on the old loop the same test
+reads a connection reset.
 
 ## Admission: one step, two limits (2026-11-12)
 
@@ -411,9 +443,9 @@ Two paths delete it, and both ask that question through `AppState`:
   `remove_session`; on `true` it logs `[presence] Skipping DEL for {conn_key} - another session is
   still active` and returns.
 - `handle_disconnect` - the app's own `{"type":"disconnect"}` frame, sent at `beforeunload` so
-  peers see the user offline without waiting out the TTL. The sending connection is still
-  registered at that moment, so it calls `has_other_sessions` and logs `[presence] Explicit
-  disconnect from {conn_key} (conn_id=N) - skipping DEL, another session is still active`.
+  peers see the user offline without waiting out the TTL. Since 2026-11-14 the sending connection
+  leaves `connected_users` first (`remove_session`), and the shared sessions hash decides the
+  presence key ([above](#disconnect-ends-the-session-at-once-and-the-socket-on-the-clients-close-2026-11-14)).
 
 Until 2026-08-16 the second path deleted unconditionally, so a tab navigating away marked the whole
 device offline; `drop` then ran, saw the survivor, and took the skip branch, so the guard written to

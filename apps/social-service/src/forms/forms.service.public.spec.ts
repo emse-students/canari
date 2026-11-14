@@ -67,6 +67,8 @@ describe('FormsService - public forms', () => {
       { get: jest.fn() } as any,
       {
         isMember: jest.fn(() => Promise.resolve(true)),
+        // The editor manages the association's forms (MANAGE_FORMS, owner 2026-11-14).
+        mayAct: jest.fn(() => Promise.resolve(true)),
         collectsNow: jest.fn(() => Promise.resolve(opts.collectsNow ?? true)),
         // An edit that starts charging asks what kind the association is: one that sells.
         collectionSubjectOf: jest.fn(() => Promise.resolve(null)),

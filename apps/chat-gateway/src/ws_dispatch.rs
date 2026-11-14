@@ -80,9 +80,10 @@ impl WsFrame {
 /// the shared hash rather than decided here - a sibling tab, here or on another process, keeps the
 /// device online.
 ///
-/// `conn_id` identifies the connection sending the frame. The caller should break out of the recv
-/// loop after this returns, which drops `ConnectionGuard`; its own retirement of the same session
-/// is then a no-op.
+/// `conn_id` identifies the connection sending the frame. The caller has already taken the socket
+/// out of local routing (`AppState::remove_session`) and keeps reading until the client's Close,
+/// which ends the socket and drops `ConnectionGuard`; the guard's retirement of the same session is
+/// then a no-op.
 pub async fn handle_disconnect(
     state: &std::sync::Arc<crate::state::AppState>,
     user_id: &str,

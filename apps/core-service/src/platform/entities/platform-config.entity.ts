@@ -110,6 +110,21 @@ export class PlatformConfig {
     default: 'none',
   })
   callRelay!: CallRelay;
+
+  /**
+   * The date every Lydia contract year starts on (migration 024), `YYYY-MM-DD`; NULL = not
+   * configured. Read by `LydiaContractService` only, never published (docs/wiki/lydia-contract-flux.md).
+   */
+  @Column({ name: 'lydia_contract_anniversary', type: 'date', nullable: true })
+  lydiaContractAnniversary!: string | null;
+
+  /**
+   * The rest of the Lydia contract terms (migration 024): `LydiaContractTerms`, validated by
+   * `parseLydiaContractTerms` on every write and read; NULL = nothing entered. Confidential: read by
+   * `LydiaContractService` only, never published.
+   */
+  @Column({ name: 'lydia_contract', type: 'jsonb', nullable: true })
+  lydiaContract!: unknown;
 }
 
 /**

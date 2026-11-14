@@ -451,7 +451,7 @@ of the association its `vendor_token` names (read from social-service's internal
 fulfillment as a trigger, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`) - a form only: a `product:` confirm fulfils nothing until a boutique checkout
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
+[backlog](../frontend/modules/payments.md), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
 requires. The `business/create` webhook is described in
 [payments](../frontend/modules/payments.md).
 

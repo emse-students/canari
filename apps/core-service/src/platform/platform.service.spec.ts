@@ -88,6 +88,8 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
       callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
     });
 
     await service.ensureDefaults();
@@ -166,6 +168,8 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
       callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -220,6 +224,8 @@ describe('PlatformService', () => {
         liveReplaysMode: 'off',
         groupCallsMode: 'off',
         callRelay: 'none',
+        lydiaContractAnniversary: null,
+        lydiaContract: null,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -296,6 +302,8 @@ describe('PlatformService', () => {
         liveReplaysMode: 'off',
         groupCallsMode: 'off',
         callRelay: 'none',
+        lydiaContractAnniversary: null,
+        lydiaContract: null,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -357,6 +365,8 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
       callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -382,6 +392,8 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
       callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);

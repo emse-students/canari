@@ -1,5 +1,0 @@
-## Reading owed - the zero-tap restore from one Android phone to another
-
-target: 1.7.0
-
-The principle is accepted (user, 2026-08-26) and **DECIDED 2026-10-18: planned NOW, independent of the campaign** ([WP-RESTORE-1](decided-by-the-user-on-2026-10-18-every-design-question-answered.md)); the Block Store exemption date of 30 September 2026 has passed and enforcement begins April 2027. **MERGED as #2065 (2026-10-24), and kept out of a stable until it is read on a phone: the design and what each claim is verified by are on [account-restore](../account-restore.md).** What closes it is a device reading, never more code: a real restore A -> B on the Mi 9T and a second Android phone (zero tap, the old phone signed out), the UP/UV flags a real key carries, and the platform replacing the consumed key at the new phone's first start. The GitHub secret `DEV_ANDROID_APP_LINK_SHA256` (the same value as production's, without which dev answers every restore route 503) exists since 2026-10-18. The requirement and the three traps: [mobile](../frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-built-2026-10-18).

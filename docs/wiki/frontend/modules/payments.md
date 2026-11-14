@@ -73,8 +73,9 @@ paiement" / "payment provider"; the neutral contract (`ConnectAccountStatusRespo
 interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the unmapped columns,
 the `stripe` deep-link host) are listed with
 their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
-`PayoutFeeHint.svelte` shows the Lydia fee (0,10 EUR + 1 %, `lydiaFees.ts`) only once
-`GET /api/payments/provider` has answered `lydia`.
+`PayoutFeeHint.svelte` shows the estimate only once `GET /api/payments/provider` has answered
+`lydia`, with the fees a global admin entered as the platform's Lydia contract terms, VAT included
+([lydia-contract-flux](../../lydia-contract-flux.md#the-payout-estimate)).
 
 ## Product purchase flow
 
@@ -1472,6 +1473,10 @@ every readiness write, cashier claim and purchase decision already takes - the a
   decision is the typed 409 `PAYMENT_ROUTING_CHANGED`, no row and no request - the payer retries and
   the retry goes to the new Business. Every request issued names the Business its row names.
 
+**The platform's Lydia flux never counts a historical account's payments** - they belong to the
+association's earlier contract - and counts the enrolled Business's from its link
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)).
+
 **After the switch** the historical account's tokens are KEPT, sealed, ONLY to refund the payments
 taken on it and to verify their callbacks: a refund resolves the key by the ROW's vendor token
 (`vendorTokensHeldBy`, `lydiaCallbackKey`). No new payment goes to it, except the error-5 re-issue.
@@ -1493,7 +1498,11 @@ that button names the enrolled Business); then `INSERT INTO lydia_account_bridge
 outside a live enrolment can be put PENDING directly: `UPDATE lydia_account_bridges SET
 "enrolledVendorToken" = <token>, "standbyKeyCiphertext" = <its sealed key, bound to <id>:<token>>,
 "standbyDashboardUrl" = <url>, "standbyReady" = false WHERE "associationId" = <id> AND state =
-'historical' AND "enrolledVendorToken" IS NULL`, and its cashier rows re-inserted under its token.
+'historical' AND "enrolledVendorToken" IS NULL`, its cashier rows re-inserted under its token, and,
+in the same transaction, its row in the platform's flux ledger (`INSERT INTO lydia_enrolled_businesses
+("vendorToken", "associationId") VALUES (<token>, <id>) ON CONFLICT DO NOTHING`, migration 168,
+[lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)) - the link
+writes it for an enrolment, a hand edit must.
 **Removing the historical account**, later, by an admin: `DELETE FROM lydia_account_bridges WHERE
 "associationId" = <id> AND state = 'switched'`, once no payment it took can still be refunded. A copy
 of production empties the table (`copy-strips.sh`).

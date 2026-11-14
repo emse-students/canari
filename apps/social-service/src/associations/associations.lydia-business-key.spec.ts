@@ -35,6 +35,7 @@ type Row = {
 /** The association table as the raw SQL of `setLydiaAccountId` & co. reads and writes it. */
 function makeService(rows: Row[]) {
   const table = rows.map((r) => ({ ...r }));
+  const enrolled: Array<{ vendorToken: string; associationId: string }> = [];
   const byId = (id: string) => table.find((r) => r.id === id);
   const assoRepo = {
     findOne: jest.fn(async ({ where }: { where: { id: string } }) => {
@@ -52,6 +53,11 @@ function makeService(rows: Row[]) {
         row.dashboardUrl = params[2] ?? row.dashboardUrl ?? null;
         row.sealed = params[3];
         return [[{ id: row.id }], 1];
+      }
+      if (sql.includes('INSERT INTO lydia_enrolled_businesses')) {
+        // The ledger of Businesses Canari's enrolment created (migration 168), in the link's transaction.
+        enrolled.push({ vendorToken: params[0], associationId: params[1] });
+        return [];
       }
       if (sql.includes('FOR UPDATE OF a')) {
         // The link's lock: no bridge here (lydia-account-bridge.ts), so the active Business alone.
@@ -97,7 +103,7 @@ function makeService(rows: Row[]) {
     logger: new Logger('AssociationsService'),
     redis: { deleteByPattern: jest.fn(async () => 0) },
   }) as unknown as AssociationsService;
-  return { service, table };
+  return { service, table, enrolled };
 }
 
 /** Every string any logger received during `run`, to prove the key never reached one. */
@@ -190,10 +196,15 @@ describe('AssociationsService.setLydiaAccountId - only an association holds a Bu
 
 describe('AssociationsService.setLydiaAccountId - the key captured at business/create', () => {
   it('links the Business and stores its key encrypted, opening for core, never logged', async () => {
-    const { service, table } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    const { service, table, enrolled } = makeService([
+      { id: ASSO_A, lydiaAccountId: null, sealed: null },
+    ]);
     const logs = await loggedDuring(() =>
       service.setLydiaAccountId(ASSO_A, 'vendor-a', 'https://lydia.example/d', KEY_A)
     );
+    // The link records the Business as one Canari's enrolment created (migration 168): the fact the
+    // platform's Lydia flux counter reads.
+    expect(enrolled).toEqual([{ vendorToken: 'vendor-a', associationId: ASSO_A }]);
     expect(table[0]).toMatchObject({
       lydiaAccountId: 'vendor-a',
       dashboardUrl: 'https://lydia.example/d',
