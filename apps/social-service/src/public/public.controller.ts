@@ -152,10 +152,10 @@ export class PublicController {
    * space, archived ones included - which the showcase lists in its archived section
    * (`spaces/public-space.ts`). EVERY TYPE since 2026-11-14 (owner: "Filtrer comme les assos"): a
    * list or an institution that does not address the space is left out like an association.
-   * Without the parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap
-   * and SEO read it too - AND BECAUSE THE PORTAIL-ETU SHOWCASE DID NOT SEND IT for the directory
-   * until its `v1.0.9` (measured 2026-11-14: only its carte named a space), a shim
-   * `docs/wiki/legacy-compatibility.md` dates. A malformed `space` is a typed 400
+   * Without the parameter the answer is the COMPLETE list, unchanged and FOR GOOD: Canari's own
+   * sitemap and SEO read it that way, so it is not a shim. The portail-etu showcase names its space
+   * for the directory from its `v1.0.9` only (measured 2026-11-14: its `v1.0.8` named it for the
+   * carte alone, and so listed every campus). A malformed `space` is a typed 400
    * (`PUBLIC_SPACE_INVALID`).
    */
   @Get('associations')

@@ -444,14 +444,17 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     await db.end();
   });
 
-  it("the directory's space filter and the carte share ONE definition: the carte's ids are the directory's living ones", async () => {
+  it("the directory's space filter and the carte share ONE definition: the carte's ids are the directory's living ASSOCIATIONS", async () => {
     const carte = (await db.query(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).rows.map((r) => r.id);
     const directory = (await db.query(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).rows.map(
       (r) => r.id
     );
-    const { rows } = await db.query(`SELECT id FROM associations WHERE archived`);
-    const archived = new Set(rows.map((r) => r.id));
-    expect(directory.filter((id: string) => !archived.has(id))).toEqual(carte);
+    // The directory holds every type since 2026-11-14; the carte draws associations only.
+    const { rows } = await db.query(
+      `SELECT id FROM associations WHERE archived OR type <> 'association'`
+    );
+    const notOfTheCarte = new Set(rows.map((r) => r.id));
+    expect(directory.filter((id: string) => !notOfTheCarte.has(id))).toEqual(carte);
     expect(carte.length).toBeGreaterThan(0);
     // a3 addresses FSSS only: not of ICM, in either.
     expect(directory).not.toContain(ID.a3);
@@ -484,11 +487,14 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     );
     const idsOf = async (sql: string, params: unknown[]) =>
       (await db.query(sql, params)).rows.map((r) => r.id);
-    expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).toContain(list);
-    expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['FSSS', 'saint-etienne'])).not.toContain(list);
-    expect(await idsOf(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).not.toContain(list);
-    await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [list]);
-    await db.query(`DELETE FROM associations WHERE id = $1`, [list]);
+    try {
+      expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).toContain(list);
+      expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['FSSS', 'saint-etienne'])).not.toContain(list);
+      expect(await idsOf(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).not.toContain(list);
+    } finally {
+      await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [list]);
+      await db.query(`DELETE FROM associations WHERE id = $1`, [list]);
+    }
     expect(carte).not.toContain(ID.archived);
     expect(directory).not.toContain(offSpace);
     await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [offSpace]);

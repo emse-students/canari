@@ -8,7 +8,7 @@ import {
 } from './space.entity';
 
 /**
- * A SPACE NAMED BY AN ANONYMOUS CONSUMER, AND THE ASSOCIATIONS IT OFFERS (owner, 2026-11-08).
+ * A SPACE NAMED BY AN ANONYMOUS CONSUMER, AND THE ENTITIES IT OFFERS (owner, 2026-11-08).
  *
  * The portail-etu showcase is the portail of ONE space (`ICM:saint-etienne` in production) and names
  * it in its own configuration; Canari hard-codes no space. Two public reads take that name - the
