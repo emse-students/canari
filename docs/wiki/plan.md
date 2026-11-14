@@ -43,6 +43,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [DEFECT read - a new-device alert is NOT dropped on the Mi 9T once its device is revoked](backlog.d/p3-a-new-device-alert-is-not-dropped-on-the-mi-9t-once-its-device-is-revoked.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
+- [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 - [Root Back finishes the activity and tao exits the process (read on the Mi 9T 2026-11-14) - DECIDED: Back goes to the background](backlog.d/root-back-exits-the-process-through-tao.md)
 
 **P2 - correctness**
@@ -125,7 +126,6 @@ earliest version, as a checklist.
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [CanaReels "Voir plus" clears the seek line](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)](backlog.d/camera-keeps-its-layout-and-volume-shutter.md)
-- [ ] [the background Welcome's warm-process refusal rate](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 - [ ] [a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage...](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the...](backlog.d/reading-owed-a-call-that-loses-the-audio-focus-holds-its-microphone-and-never.md)
@@ -135,8 +135,6 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [WebKit opens each participant's frames with that participant's key in a group call](backlog.d/reading-owed-webkit-receiver-transforms-per-peer-in-a-group-call.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
-- [ ] [the audiences chantier (#1582, #1584, #1606, #1608)](backlog.d/reading-owed-the-audiences-chantier-1582-1584-1606-1608.md)
-- [ ] [two community settings panels](backlog.d/reading-owed-two-community-settings-panels.md)
 - [ ] [WP-REGRANT-2, a re-granted member's seed by distribution, never by repair](backlog.d/reading-owed-wp-regrant-2-a-re-granted-member-s-re-join.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
