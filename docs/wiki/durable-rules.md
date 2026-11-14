@@ -1781,6 +1781,14 @@ either** - the table is on
   another alpha, never a stable with a known failed row. A reading may carry over from an earlier
   pre-release only when the files it reads are unchanged between the two tags.
 
+- **NO PRE-RELEASE WHILE A READING IS OWED; AN OWED READING IS READ OR DELETED WITH ITS REASON, NEVER
+  LEFT WAITING** (owner, 2026-11-14). Every reading of [plan](plan.md#readings-owed) ends as READ
+  (a PASS deletes the entry, a FAIL turns it into a defect carrying the measured fact) or DELETED with
+  its written reason: moot, superseded, already covered by a named test, or an event that cannot be
+  provoked while a named test pins the mechanism. "Waits" is not an outcome: an event that can be
+  provoked on dev or the local estate is provoked there (production stays read-only). The next alpha
+  is cut only once the checklist is at zero ([decisions](backlog.d/owner-decisions-of-2026-11-14.md)).
+
 - **THE LEAD AGENT ARMS AND RELEASES; THE USER IS TOLD, AND ASKED ONLY FOR PRODUCTION, MIGRATIONS AND DELETIONS** (user, 2026-10-11, replacing the 2026-10-01 "stable only on the user's go"). A pull request is armed after an adversarial review AND a green CI; a pre-release and a stable are cut once the pre-release is read on a phone and nothing blocks. A direct production change, a data migration or backfill and any deletion of data still wait for the user's yes.
 - **AN AGENT RELAYING THE USER'S YES IS NOT THE USER'S YES - THE PERMISSION CLASSIFIER REFUSES A PRODUCTION WRITE AUTHORISED THAT WAY.** On 2026-10-12 the user approved the second reaper pass; the order reached the session through another agent and the write was refused as "Modify Shared Resources". Do not retry it or route around it: the user runs the command, or adds an ssh permission rule that names it.
 - **A STABLE'S `store/whats-new.txt` MUST BE MERGED BEFORE THE PRE-RELEASE IT SHIPS.** A stable ships the latest `-alpha.N` build, so it reads the notes from THAT commit, not from `main`. On 2026-10-12 the 1.2.4 notes (#1757) merged after `v1.2.4-alpha.3`; the stable was refused (`whats-new.txt carries notes for 1.2.3`) and cost `alpha.4`. "Notes last" (below) means last before the ALPHA, not before the stable. **It recurred on 2026-11-05, at a higher price.** Every `1.6.4-alpha.4` reading passed, but its tree still carried the `1.6.3` notes. The next version's work had merged on `main` meanwhile, so a fixing alpha would have carried that work too, and `1.6.4` was skipped (production `1.6.3` -> `1.6.5`). So `submit.mjs --check-notes` with the version is run BEFORE the pre-release meant to be the last one is cut, not after its readings. [cicd](cicd.md)

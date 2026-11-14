@@ -1,4 +1,4 @@
-## Reading owed - a device with no push token now says so
+## P2 - native devices with no push token stay silent: a fifth cause
 
 target: 1.7.0
 
@@ -13,3 +13,5 @@ this entry's "silence" case, but one device cannot separate a fifth cause from t
 an app closed inside the four-minute registration ladder reports nothing
 (`PushNotificationService.ts`). Owed: the same read after the next stable; the same device silent
 across days, or more than one, is the fifth cause.
+
+**Read again 2026-11-14, after the `1.6.12` deploy (read-only):** of the 194 native devices that fetched from chat-delivery since the deploy, TWO hold no `push_token` row - an Android `1.6.10` and an iOS `1.6.7` device, both with a KeyPackage of 2026-11-12/13, neither revoked, both already seen in the first read - and still not ONE `[PUSH_UNAVAILABLE]` line on production. More than one device, silent across two deploys: by this entry's own rule that is a FIFTH cause, a token lost after registration (or never asked) on a path that reports nothing. Next: read each device's own log for its `[Push]` lines (the Mi 9T reproduces the Android shape if a token row can be removed on dev), and find which writer deletes a `push_token` row without the device learning it.

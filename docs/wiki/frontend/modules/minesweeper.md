@@ -308,4 +308,4 @@ needs replaying ([legacy-compatibility](../../legacy-compatibility.md#a-tolerate
 a worker would keep the interface alive for the ~0.3 s a phone spends, and is not built. The one board in 600 that
 stops short is unexplained beyond "the budget ended". The boards were rated on ONE phone, and the first
 Challenge-sized game of a player who has only met generator 1 is the real reading
-([the reading](../../backlog.d/reading-owed-minesweeper-generator-2-on-a-real-phone.md), [the worker](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
+(written as a reading once generator 2 ships in a stable; [the worker](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
