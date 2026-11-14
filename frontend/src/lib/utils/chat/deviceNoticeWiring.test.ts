@@ -145,9 +145,13 @@ describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
       JSON.stringify({ pending: [{ key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: 1 }] })
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await dropAlertsOfRevokedDevices();
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('deferred'))).toBe(true);
+    // The expected path on a cold start: said as a decision, never as a warning.
+    expect(log.mock.calls.some((c) => String(c[0]).includes('deferred'))).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+    log.mockRestore();
 
     const isDeviceRevoked = vi.fn(async () => true);
     const mls = {
@@ -166,6 +170,39 @@ describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
     await vi.waitFor(() => expect(pendingDeviceNotices()).toEqual([]));
     expect(isDeviceRevoked).toHaveBeenCalledTimes(1);
     unregisterDeviceNotices();
+    localStorage.clear();
+  });
+
+  it('an owed check does not leak across an account switch', async () => {
+    unregisterDeviceNotices();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await dropAlertsOfRevokedDevices();
+    unregisterDeviceNotices();
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('bob'),
+      JSON.stringify({ pending: [{ key: 'bob:laptop-9|cc', deviceId: 'laptop-9', at: 1 }] })
+    );
+    const isDeviceRevoked = vi.fn(async () => true);
+    registerDeviceNotices(
+      {
+        setDeviceEventConsumer: vi.fn(),
+        listUserDevices: vi.fn(async () => []),
+        fetchDeviceSignatureKeys: vi.fn(async () => ({ kind: 'unanswered', detail: 'x' })),
+        isDeviceRevoked,
+      } as unknown as IMlsService,
+      {
+        getUserId: () => 'bob',
+        getMyDeviceId: () => 'phone-b',
+        conversations: new SvelteMap(),
+        storedConversation: vi.fn(async () => null),
+        addMessageToChat: vi.fn(),
+      }
+    );
+    await Promise.resolve();
+    expect(isDeviceRevoked).not.toHaveBeenCalled();
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['laptop-9']);
+    unregisterDeviceNotices();
+    vi.restoreAllMocks();
     localStorage.clear();
   });
 });

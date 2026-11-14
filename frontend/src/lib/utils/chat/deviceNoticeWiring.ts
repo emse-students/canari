@@ -74,7 +74,7 @@ export async function dropAlertsOfRevokedDevices(): Promise<void> {
     // on it directly): the check is owed, and `registerDeviceNotices` runs it once the account is
     // there. Read on the Mi 9T 2026-11-14: without this the alert of a revoked device stayed.
     dropOwedAtRegistration = true;
-    console.warn(
+    console.log(
       '[DEVICE_NOTICE] revoked-device check deferred: no account registered yet, it runs at registration'
     );
     return;
