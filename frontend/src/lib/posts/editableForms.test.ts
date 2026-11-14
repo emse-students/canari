@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withAttachedForm } from './editableForms';
+import { attachableForms, withAttachedForm } from './editableForms';
 import type { Form } from '$lib/forms/api';
 
 const form = (id: string): Form => ({ id, title: `form ${id}`, items: [] }) as unknown as Form;
@@ -41,5 +41,20 @@ describe('withAttachedForm', () => {
     expect(out).toBe(list);
     expect(err).toHaveBeenCalledOnce();
     err.mockRestore();
+  });
+});
+
+describe('attachableForms', () => {
+  const of = (id: string, associationId?: string): Form =>
+    ({ id, title: id, items: [], associationId }) as unknown as Form;
+  const forms = [of('a1', 'A'), of('b1', 'B'), of('mine')];
+
+  it("offers an association's post only that association's forms (the server's rule)", () => {
+    expect(attachableForms(forms, 'A').map((f) => f.id)).toEqual(['a1']);
+    expect(attachableForms(forms, 'C')).toEqual([]);
+  });
+
+  it('offers a personal post every form the reader manages', () => {
+    expect(attachableForms(forms, null)).toBe(forms);
   });
 });

@@ -2626,7 +2626,35 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 
 ## The edit picker always lists the attached form (2026-10-21)
 
-`GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form) and who may attach a form they do not manage (the server still decides).
+`GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form). Who may attach which form is decided by the server since 2026-11-14 ([a post attaches its own entity's form](#a-post-attaches-its-own-entitys-form-2026-11-14)).
+
+## A post attaches its own entity's form (2026-11-14)
+
+An agenda event already linked only its association's forms; a post attached ANY form id, so an
+association's post could present another association's form (or a personal one) as its own, and a
+personal post anyone's. The server now applies one rule, `apps/social-service/src/forms/form-ownership.ts`,
+shared with the events (`assertFormOfAssociation`):
+
+| The post | May attach |
+|---|---|
+| an association's, institution's or list's post (`associationId` set) | that association's forms only - the events' rule, 400 `FORM_NOT_OF_ENTITY` otherwise |
+| a personal or anonymous post | a form its AUTHOR manages (`managesForm`: a personal form they own, or a form of an association where they hold MANAGE_FORMS; a global admin any) - exactly what `GET /api/forms` offers the composer. **Taken by default, to confirm with the owner** |
+
+- **When**: at create - the `attachedFormId` and every id of the legacy `forms` list an older client
+  may still send (a non-uuid id is `Linked form not found`) - and at an edit that CHANGES the form.
+  An edit that resends the form the post carries is never judged again, so a post written before
+  the rule stays editable. A personal post's form is judged for its author, whoever edits.
+- **The picker follows it** (`attachableForms`, `$lib/posts/editableForms.ts`): the composer offers
+  an association's post that association's forms only, and drops a choice the identity can no longer
+  attach (the readiness check then asks for a form again) rather than send one the server refuses;
+  the edit picker lists the identity's forms plus the one the post carries.
+- **At read, nothing changes, on purpose**: a post serves only the form's id (and, for the legacy
+  list, the title its author stored); everything else the card shows is read through
+  `GET /api/forms/:id` and its own gate (a draft or a form of an archived association is a 404 to a
+  non-manager). So a stored post naming a foreign form serves no more than the form's own link
+  does. No row was rewritten. How many stored posts carry a foreign form was not measured.
+- Proof: `posts.service.attached-form.spec.ts` (each post kind, the legacy list, an edit changing,
+  keeping and a personal post's author), `editableForms.test.ts` (`attachableForms`).
 
 ### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
 

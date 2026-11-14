@@ -32,3 +32,22 @@ export async function withAttachedForm(
     return managed;
   }
 }
+
+/**
+ * The forms a post may attach for the identity it is published under - the server's rule
+ * (`form-ownership.ts`, 2026-11-14), so the picker never offers what the publish would refuse:
+ * an association's, institution's or list's post only that association's forms (as an agenda
+ * event); a personal or anonymous post every form the reader manages (`forms` is `GET /forms`,
+ * exactly those).
+ *
+ * @param forms The reader's own list (`getForms`), already reduced to published ones.
+ * @param associationId The association the post speaks for, or null for a personal post.
+ */
+export function attachableForms(forms: Form[], associationId: string | null): Form[] {
+  if (!associationId) return forms;
+  const own = forms.filter((f) => f.associationId === associationId);
+  if (own.length < forms.length) {
+    Log.d('POSTS', `form picker: ${forms.length - own.length} form(s) of another entity left out`);
+  }
+  return own;
+}

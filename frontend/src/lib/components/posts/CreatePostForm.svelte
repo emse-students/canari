@@ -39,6 +39,7 @@
   import { getForms, type Form } from '$lib/forms/api';
   // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
   import { publishedForms } from '$lib/forms/publish';
+  import { attachableForms } from '$lib/posts/editableForms';
   import {
     ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
@@ -265,6 +266,18 @@
 
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
+  /** The forms THIS identity may attach (the server's rule): an association's post, its own only. */
+  const formsForIdentity = $derived(
+    attachableForms(availableForms, isAssociationSelected ? selectedAssociationId : null)
+  );
+  /**
+   * The chosen form while the identity may still attach it, else none: an identity changed after
+   * the choice drops it from the publish (and the readiness check asks for a choice again) rather
+   * than send a form the server would refuse.
+   */
+  const attachableFormId = $derived(
+    formsForIdentity.some((f) => f.id === selectedFormId) ? selectedFormId : ''
+  );
 
   /**
    * The broadcaster's screen is open (WP-L5; the chip is offered only where `livesAvailable` says so -
@@ -601,7 +614,9 @@
         markdown,
         fileCount: selectedFiles.length,
         poll: pollDraft,
-        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
+        form: includeForm
+          ? { selectedFormId: attachableFormId, availableCount: formsForIdentity.length }
+          : null,
       });
       pollIssue = blocker?.pollIssue ?? null;
       if (blocker) {
@@ -640,7 +655,7 @@
           },
         ];
       }
-      if (includeForm) payload.attachedFormId = selectedFormId;
+      if (includeForm) payload.attachedFormId = attachableFormId;
 
       Object.assign(payload, postIdentityFields(selectedAssociationId));
       // Sent only where it is offered: a switch left on before the identity changed is not a choice.
@@ -936,7 +951,7 @@
       <div class="mt-3" transition:slide={{ duration: 250 }}>
         <FormSection
           bind:selectedFormId
-          {availableForms}
+          availableForms={formsForIdentity}
           createFormHref={buildCreateFormHref()}
           onBeforeCreateForm={persistComposerDraft}
           onRemove={() => (includeForm = false)}
