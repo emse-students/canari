@@ -132,6 +132,76 @@ these conditions:
    read on a debug sideload on the Mi 9T with frames counted. The phone is restored afterwards.
 6. It merges only once the readings rule allows.
 
+### The build, as specified after the inventory (2026-11-14)
+
+**What the inventory found** (26 files with viewport units, 24 elements fixed or sticky at the
+bottom; the checklist goes into the PR body):
+
+- `--keyboard-layout-inset-bottom` is ALWAYS 0 while the keyboard is open. `computeSnapshot`'s
+  `isOpen` implies its `layoutShrunk`, so every rule that adds it (composer footer, thread padding,
+  `.keyboard-aware-*`, `[data-keyboard-aware-actions]`) adds nothing.
+- The only lift any screen gets today is the SHELL HEIGHT, `--app-viewport-height` (the visual
+  viewport, or the announced target), plus what the WebView's own resize does to every `fixed`
+  element.
+
+**Why the shell must not shrink under the chat during a ride.** A shell shrunk in one frame clips the
+thread's box at once. Riding the rows from where they stood then shows a blank band between the
+clipped thread and the composer still riding up: the crop again, in CSS. The thread's box keeps its
+height, and its room for the keyboard is its bottom PADDING. That is the overlay layout the CSS was
+written for (`--keyboard-layout-inset-bottom`) and that no screen ever received.
+
+**The contract:**
+
+1. **Native (`MainActivity`).**
+   - The content is never padded for the IME. The navigation bar inset is still zeroed while the
+     keyboard is up.
+   - The insets callback (`DISPATCH_MODE_STOP` stays) keeps the IME animation from `onPrepare`: its
+     duration, and its interpolator sampled at 24 points, `[0..1]`, with a null interpolator meaning
+     linear.
+   - The listener announces each change of the IME inset once:
+     `window.canariImeTarget({ px, durationMs, curve })`. `px` is in CSS px. `durationMs` and `curve`
+     are absent for a change with no animation.
+   - A page that answers anything but `true` is said at WARN and nothing else happens. There is no
+     padding fallback.
+   - `pageReady` re-announces the current inset.
+   - `ImeHandoff`, `imeStep`, `postVisualStateCallback`, `handOffIme` and `setImePadding` are
+     deleted, with their tests. `imeCssPx` stays.
+2. **The page, ONE module (`keyboardViewport.svelte.ts` and the pure `imeTarget.ts` /
+   `keyboardRide.ts`).**
+   - A native target is an OVERLAY measurement: the layout keeps the baseline, and the visual
+     viewport is `baseline - px`.
+   - The snapshot then exposes, for every screen:
+     - `--keyboard-layout-inset-bottom = px` (non-zero at last);
+     - `--app-viewport-height = baseline` (the shell does NOT shrink);
+     - a new `--keyboard-occlusion-bottom = px`: what the keyboard hides of the WINDOW's bottom, for
+       `fixed` elements. It is 0 where the WebView itself was resized: the web, iOS, and an older
+       shell.
+   - No screen computes its own value.
+   - iOS and the web are unchanged: their measurements never come from an overlay target, so
+     everything they read is the same.
+3. **The ride.**
+   - `canariImeTarget` with a duration captures every `[data-keyboard-ride]` piece, applies the
+     layout, and rides each piece from where it stood. It uses the existing `captureKeyboardRide` /
+     `afterLayoutReactions` / `startKeyboardRide`, generalised to both directions (`rideDistancePx`
+     signed).
+   - The easing is `linear(<points>)`, built by the page from the numbers. No CSS string ever
+     crosses the bridge.
+   - A `last-row` piece (the thread) rides its ROWS, the scroller's children as `createThreadGlide`
+     moves them, never its box. A held glide is taken off first.
+   - The iOS fall (`canariKeyboardFall`) keeps its own path and is unchanged.
+4. **Every screen in the inventory is moved onto the module's variables.**
+   - Shell-dependent screens read the layout inset where they relied on the shell shrinking.
+   - `fixed` bottom elements with a field add `--keyboard-occlusion-bottom`: `ModalOverlay`,
+     `CommentsDrawer`, the live, camera and reel overlays, `.side-panel`, the Sidebar drawer,
+     `MessageMobileActions`, `ToastContainer`.
+   - Two dead rules found on the way are deleted: `[data-keyboard-aware-toast]` and `Modal`'s
+     `fullViewport` branch.
+5. **Readings** (debug sideload on the Mi 9T, frames counted as in the study):
+   - the chat, a salon, the comments drawer (post and reel), a form, the PIN dialog, the
+     search, a `ModalOverlay` prompt, the live chat;
+   - rise and fall;
+   - the GIF panel swap.
+
 ### iOS, measured on the iPhone 12 (2026-11-14)
 
 Read from WebDriverAgent's MJPEG stream (`mjpegServerFramerate` 60 asked, ~25 frames/s delivered, a
