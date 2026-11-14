@@ -120,6 +120,18 @@ contract on Android:
   search). It is reversible (the shell and the page ship in one APK), so it is a lead's call
   during the owner's absence.
 
+**Decided by the lead 2026-11-14** (the owner's goal: Messenger-smooth both ways): build it, on
+these conditions:
+1. ONE source of truth for the keyboard room on Android: one module exposes the variables, and no
+   screen computes its own.
+2. The PR body carries a checklist of every viewport-unit file and fixed-bottom element, each
+   ticked with how it was verified.
+3. `ImeHandoff`, `imeStep`, `postVisualStateCallback` and the resize path go in the same PR.
+4. iOS is untouched unless the same module serves it unchanged.
+5. A draft PR, an adversarial review by an agent that did not write it, and every keyboard screen
+   read on a debug sideload on the Mi 9T with frames counted. The phone is restored afterwards.
+6. It merges only once the readings rule allows.
+
 ### iOS, measured on the iPhone 12 (2026-11-14)
 
 Read from WebDriverAgent's MJPEG stream (`mjpegServerFramerate` 60 asked, ~25 frames/s delivered, a
