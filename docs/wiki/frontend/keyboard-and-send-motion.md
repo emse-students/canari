@@ -284,12 +284,18 @@ contract, because no ride can hide a WebView resize (above).
   `window.canariImeTarget({ px, durationMs, curve })` (`imeAnnouncementScript`), `px` in CSS px
   (`imeCssPx`), `durationMs` and `curve` absent for a change with no animation (a rotation). One logcat
   line each: `IME inset: <px> px -> page told <css> (<ms> | no animation; <why>)`.
-- An inset counts as told only once the page answered `true` for it (`ImeAnnouncements`): a refusal is
-  a WARN (`the page REFUSED the keyboard`) and the next insets pass with the same inset announces it
-  again; an announcement in flight is not sent twice (a second one would end the first one's ride).
-  It used to be marked told BEFORE `evaluateJavascript` ran, so a refused value was never re-sent.
-- `window.canariIme.pageReady()` (a new document) forgets what the old one held and re-announces the
-  current inset, without animation.
+- An inset counts as told only once the page TOOK it (`ImeAnnouncements`); an announcement in flight
+  is not sent twice (a second one would end the first one's ride). It used to be marked told BEFORE
+  `evaluateJavascript` ran, so a refused value was never re-sent. The script answers which of three it
+  is (`ImeAnswer`, classified by `imeAnswerOf`): `taken`; `not-ready` (no hook yet - `pageReady`
+  announces); `refused` (anything else, a script error included): a broken contract, `Log.e`, and NOT
+  re-sent by the next insets pass (the same page refuses the same way, and with a steady keyboard no
+  pass came, so the page stayed desynced - second review). It is re-sent on the page's next ready
+  signal: the page calls `pageReady` right after refusing an ANIMATED announcement, and is told the
+  inset without one, which it always takes - so it asks at most once per refusal.
+- `window.canariIme.pageReady()` (a new document, or the page after a refusal) forgets what the page
+  held and re-announces the current inset, without animation. An answer from before it is stale
+  (`ImeTicket.page`) and changes nothing, whichever reaches the UI thread first.
 - The insets are passed on UNTOUCHED, the navigation bar's included (review D2, below). Kept:
   `canariTheme.setGround` still paints the page's ground under the transparent WebView (no band opens
   any more; the readings say whether a transparent strip ever shows it).
@@ -336,8 +342,11 @@ ride started 60-75 ms later (the frame the layout reactions run in) and then ran
 the keyboard at 62% of its rise with the thread unmoved, the composer under the keys for 4 frames; on
 the fall the keyboard gone (180 ms) before the thread moved, a band of nothing, then the thread alone.
 So `takeImeTarget` records the arrival (`now()`, the Android object path only) in the capture
-(`announcedAt`), and each ride animation starts with `delay: -(now - announcedAt)` (`ridePhaseMs`): its
-first frame is the keyboard's phase and both end together. A ride that could only start after the
+(`announcedAt`), and each ride animation's `startTime` IS that arrival (`document.timeline` shares
+`performance.now`'s origin): whatever frame first draws it draws the keyboard's phase there, and both
+end together. A negative `delay` measured when the ride was created landed up to a frame late - a
+pending animation starts on the NEXT frame, from 0 plus the delay (second review). `ridePhaseMs` only
+says where the first frame is, and whether the keyboard has already landed. A ride that could only start after the
 keyboard landed does not animate - the pieces stand at their place. This is phase alignment to an
 animation whose duration and curve are known, not a timeout: the animation's own end still ends it.
 The iOS fall has no arrival time and starts at 0, as before.
@@ -353,7 +362,11 @@ ride. Now: the shell passes the insets on untouched; the page pins `--safe-area-
 announcement's own task; the footer's floor is ONE custom property, `--chat-composer-floor`, which
 the thread's padding composes in CSS (`composer height without its floor + floor + keyboard room`), so
 the floor and the padding change in the same style pass, and a keyboard move changes nothing the
-publisher sees. And `keyboardChangeResponse` no longer scrolls a reader who was at the bottom: the
+publisher sees. No component reads `env(safe-area-inset-bottom)` but `app.css`'s definition of the
+variable (the media viewer's info sheet and the video controls did, and kept the bar's strip under the
+keyboard; `safeAreaBottomPin.test.ts` guards it, second review). The shell's half is guarded by
+`androidWindowLayout.test.ts`, which reads the insets listener's own balanced block, not a lazy match
+that could end in a later one. And `keyboardChangeResponse` no longer scrolls a reader who was at the bottom: the
 thread's observer pins that reader in the keyboard's own layout, before the ride reads where the rows
 went; the ChatArea effect answers only for a reader ABOVE the bottom whose composer the rising keyboard
 is for (the Android "field still focused after Back" case of 2026-10-29), which the observer leaves
@@ -385,9 +398,11 @@ brings no arrival leaves the ride alone.
 
 **The baseline follows the window width, not a timer (review F1).** The 400 ms timer after
 `orientationchange` that reset the baseline is gone: the overlay no longer reads the baseline at all,
-and for iOS and a phone browser a new `innerWidth` IS a new window - the update that sees it takes its
-height as the baseline, from the same reading (not while pinch-zoomed: WebKit's `innerWidth` follows the
-zoom). A keyboard never changes the width.
+and for iOS and a phone browser a new `innerWidth` IS a new window (not while pinch-zoomed: WebKit's
+`innerWidth` follows the zoom). A keyboard never changes the width. The new baseline is a SETTLED
+reading's height (second review): each update at the new width replaces it until the layout and the
+visual viewport agree on the size, width and height (`isSettledWindow`), and from then on only `max()`
+raises it. Taken from the first update, a transient taller post-rotation `innerHeight` stuck for good.
 
 **Every keyboard screen is on the module's variables** (the inventory of 2026-11-14 is the PR's
 checklist): inside the shell, the chat's composer is placed by the layout inset and its thread padded
@@ -414,9 +429,15 @@ jumps rather than rides (N2), are the stacked follow-up's.
 **Two fixes from that reading.** N3: the Android WebView fires a window `resize` and a visual-viewport
 `resize`, with no size changed, ~15 ms after every overlay announcement. Each one re-ran `update()`,
 which revealed the focused field again (`smooth`): three reveals per rise. A later update now reveals
-only when it moved the keyboard's inset (`keyboardRevealOnUpdate`'s `insetMoved`). N4: the comments
+only when the keyboard MOVED (`keyboardMoved`): its inset OR the visible height changed. The inset alone
+regressed iOS and resizes-content browsers (second review): there the WebView is resized, `insetBottom`
+is always 0 (the hand-off included), and a keyboard changing height while open (the emoji keyboard, the
+predictive bar) no longer revealed a modal's field. The Android no-op resizes change neither. N4: the comments
 drawer is a riding piece (`data-keyboard-ride="box"`), where it used to jump 68 ms (rise) and 138 ms
-(fall) after the announcement. `.keyboard-aware-bottom` lost its 180 ms `ease` transition: the sheet's
+(fall) after the announcement. It rides by its BOTTOM edge, like every rider (`rideEdgeOf`, second review): its cap subtracts the
+keyboard, so it also shrinks (~567 to ~510 px on the Mi), and ridden by its top its bottom stood ~57 px
+above the keys at the rise's start. For a piece that keeps its height (the composer band, the newest
+row) both edges ride the same distance. `.keyboard-aware-bottom` lost its 180 ms `ease` transition: the sheet's
 inline `transition: none` overrode it, and a clock of its own could only disagree with the keyboard's.
 The sheet also rides the iOS fall, through the same `canariKeyboardFall` capture as the composer band.
 
