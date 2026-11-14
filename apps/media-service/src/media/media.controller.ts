@@ -99,6 +99,7 @@ import { subjectOfAccessToken } from './access-token';
 import { fetchLivesMode } from './lives-mode';
 import { mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
+import { RouteParams } from '../common/route-params';
 
 const POLICY_MAX_MEDIA_MB = 100;
 const CONFIGURED_MAX_MB = parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10);
@@ -164,6 +165,7 @@ export function clientRetentionClass(value: unknown): RetentionClass | undefined
   return isRetentionClass(value) ? value : undefined;
 }
 
+@RouteParams({ id: 'opaque', index: 'opaque', liveId: 'opaque', name: 'opaque', userId: 'opaque' })
 @Controller('media')
 export class MediaController {
   private readonly logger = new Logger(MediaController.name);
