@@ -463,8 +463,10 @@ jobs:
           # Actions' own check run, the NEWEST of them on the head - not any app's, not any one of
           # several. A draft is refused here too: the event said ready, but it may be a draft again.
           seen="$(gh pr view "$PR" --repo "$REPO" --json state,isDraft,mergeStateStatus,headRefOid \
-            --jq '[.state, (.isDraft | tostring), .mergeStateStatus, .headRefOid] | @tsv')"
-          IFS=$'\t' read -r pr_state pr_draft merge_state head_now <<<"$seen"
+            --jq '[.state, (.isDraft | tostring), .mergeStateStatus, .headRefOid] | map(. // "") | join("|")')"
+          # `|` and not a tab: a tab is whitespace to `read`, so an empty field would be swallowed
+          # and every later one read under its neighbour's name.
+          IFS='|' read -r pr_state pr_draft merge_state head_now <<<"$seen"
           if [ "$pr_state" = 'MERGED' ]; then
             echo "#$PR is merged; nothing to arm."
             exit 0
@@ -488,9 +490,9 @@ jobs:
 
           # A RETRY IS OWED A REASON, AND THE ONLY ONE IS A BASE SEEN TO MOVE: the pull request is
           # still open, ready and on the judged head, and the tip of its base is not the one read
-          # before the attempt. Each further attempt therefore answers one observed merge on the
-          # base, and the count is finite - a base that moves under every attempt ends in the
-          # failure below, which names it. Nothing here waits: a refusal with the base where it was
+          # before the attempt. Each further attempt therefore answers one observed change of that
+          # tip, and the count is finite (four attempts) - a base that moves under every attempt
+          # ends in the failure below, which names it. Nothing here waits: a refusal with the base where it was
           # is an answer, and asking again would only repeat it.
           attempts=4
           tried=1
@@ -500,11 +502,11 @@ jobs:
             attempt
             base_after="$(base_tip)"
             if [ "$base_after" = "$base_before" ]; then
-              base_note="its base $BASE_REF did not move during the attempt ($base_after)"
+              base_note="its base $BASE_REF did not move during the last attempt ($base_after)${moves:+, after moving under the earlier one(s): $moves}"
               break
             fi
-            moves="$moves $base_before->$base_after"
-            base_note="its base $BASE_REF moved under every one of $tried attempt(s) ($moves )"
+            moves="${moves:+$moves, }$base_before->$base_after"
+            base_note="its base $BASE_REF moved under every one of $tried attempt(s) ($moves)"
             if [ "$pr_state" != 'OPEN' ] || [ "$pr_draft" != 'false' ] || [ "$head_now" != "$HEAD_SHA" ]; then
               base_note="its base $BASE_REF moved ($base_before -> $base_after), which is not why"
               break

@@ -583,8 +583,14 @@ merge_case() { # <state> <check runs json> -> $out, $st
   st=$?
 }
 merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
+# A refusal is the step's own VERDICT, not any way of ending red: a crash before the gate (a read
+# that failed, a broken fake) also exits non-zero and merges nothing, and would pass for one.
 refused() { # <name>
-  if [ "$st" != 0 ] && ! merged_now; then pass "$1"; else fail "$1 (merged, or the step passed)" "$out"; fi
+  if [ "$st" != 0 ] && ! merged_now && grep -qF 'Could not arm auto-merge on #5 after 1 attempt(s), and it is not armed: state ' <<<"$out"; then
+    pass "$1"
+  else
+    fail "$1 (merged, or the step passed, or it never reached its verdict)" "$out"
+  fi
 }
 for state in CLEAN UNSTABLE; do
   merge_case "$state" "$GREEN"
@@ -633,15 +639,28 @@ else
   fail "B35 a base that moved under the immediate merge did not get a second attempt" "$out"
 fi
 
+# The immediate merge is the one the App makes past the ruleset: what it adds to its gate is pinned.
+FAKE_HEAD="$M1" merge_case CLEAN "$GREEN"
+refused "B35 a pull request whose head moved is never merged now, even CLEAN and green on the judged head"
+FAKE_PR_STATE=CLOSED merge_case CLEAN "$GREEN"
+refused "B35 a pull request that is closed is never merged now, even CLEAN and green"
+
+FAKE_BASES='b0 b1 b1 b1' merge_case BLOCKED "$NONE"
+if [ "$st" != 0 ] && [ "$(armings)" = 2 ] && says 'after 2 attempt(s)' && says 'did not move during the last attempt (b1), after moving under the earlier one(s): b0->b1'; then
+  pass "B35 a base that moved once and then stood still is asked twice, and the failure keeps the move"
+else
+  fail "B35 the failure after a single move does not say it, or the attempts are not two" "$out"
+fi
+
 merge_case BLOCKED "$NONE"
-if [ "$st" != 0 ] && [ "$(armings)" = 1 ] && says 'after 1 attempt(s)' && says 'merge state BLOCKED' && says 'its base main did not move during the attempt (b0)'; then
+if [ "$st" != 0 ] && [ "$(armings)" = 1 ] && says 'after 1 attempt(s)' && says 'merge state BLOCKED' && says 'its base main did not move during the last attempt (b0).'; then
   pass "B35 a refusal with the base where it was is asked once, and the failure names what was read"
 else
   fail "B35 a refusal with an unmoved base was retried, or its failure names no observed cause" "$out"
 fi
 
 FAKE_BASES='b0 b1 b2 b3 b4 b5 b6' merge_case BLOCKED "$NONE"
-if [ "$st" != 0 ] && [ "$(armings)" = 4 ] && says 'after 4 attempt(s)' && says 'moved under every one of 4 attempt(s)' && says 'b3->b4'; then
+if [ "$st" != 0 ] && [ "$(armings)" = 4 ] && says 'after 4 attempt(s)' && says 'moved under every one of 4 attempt(s) (b0->b1, b1->b2, b2->b3, b3->b4)'; then
   pass "B35 a base that moves under every attempt ends after four, and the failure names each move"
 else
   fail "B35 the attempts are not bounded at four, or the failure does not name the moves" "$out"
