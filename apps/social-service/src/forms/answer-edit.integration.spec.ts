@@ -133,7 +133,8 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
         canTakePaymentsNow: async () => true,
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
-        mayAct: async () => false,
+        // The owner manages the association's forms (MANAGE_FORMS, owner 2026-11-14).
+        mayAct: async (userId: string) => userId === OWNER,
         noteLydiaRequestIssued: async () => undefined,
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,

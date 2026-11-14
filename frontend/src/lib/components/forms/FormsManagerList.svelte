@@ -44,6 +44,9 @@
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
+  import { formCodeMessage } from '$lib/forms/answerBounds';
+  import { PREVIOUS_PAYMENT_OPEN } from '$lib/associations/paymentRefusal';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
@@ -245,8 +248,18 @@
         submissionsData = { ...submissionsData, [formId]: current.filter((s) => s.id !== sub.id) };
       }
     } catch (e) {
-      console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
-      showToast(m.form_list_error_delete());
+      // A paid answer is refused with a typed code (FORM_ANSWER_PAID), and a pending one whose Lydia
+      // request could not be settled first with PREVIOUS_PAYMENT_OPEN: expected answers, said to the
+      // manager, never an error.
+      const code = refusalCode(e);
+      const coded =
+        code === PREVIOUS_PAYMENT_OPEN ? m.form_list_delete_payment_open() : formCodeMessage(code);
+      if (coded) {
+        Log.w('FormsManagerList', `deleting answer ${sub.id.slice(0, 8)} refused: ${code}`);
+      } else {
+        console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
+      }
+      showToast(coded ?? m.form_list_error_delete());
     } finally {
       deletingSubmissionId = null;
     }

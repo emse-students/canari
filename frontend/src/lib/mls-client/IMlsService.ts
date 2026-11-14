@@ -2013,10 +2013,11 @@ export interface IMlsService {
    *
    * IT DOES NOT NEED A COMPANION THAT CLOSES AT UNLOAD. One was added on 2026-08-15 (`closeForUnload`,
    * spending `1001 - going away` so a dying document would stop reporting `1006`) and removed the
-   * same day, measured inert on both sides at once: the gateway matches `disconnect` with
-   * `handle_disconnect(...); break`, leaving its read loop before any close frame can be read - 0
+   * same day, measured inert on both sides at once: the gateway then matched `disconnect` with
+   * `handle_disconnect(...); break`, leaving its read loop before any close frame could be read - 0
    * `Client closed connection` lines against 12 explicit disconnects over 25 minutes of production
-   * traffic - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
+   * traffic (since 2026-11-14 it reads on until the Close and answers it, but a close code still
+   * tells it nothing the frame has not) - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
    * needs a reply from the server and the document is gone before one can arrive. The `1006` a
    * browser console shows at a navigation is a property of unloading, not a defect to be fixed.
    */
@@ -2026,8 +2027,9 @@ export interface IMlsService {
    * Sends the `disconnect` frame, then lets go of the socket WITHOUT reporting a disconnection -
    * what `pauseConnectionImpl` asks of a backgrounded app.
    *
-   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` with `handle_disconnect(...);
-   * break`, so it stops reading the socket the moment the frame lands. Keeping the client half
+   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` by taking the socket out of
+   * routing (until 2026-11-14 it also stopped reading; it now reads on only to answer the Close,
+   * and ends the socket on any other frame). Keeping the client half
    * alive after that, which is what a bare `sendDisconnect` used to do here, kept its heartbeat too:
    * every ping went unanswered, and 32 s later the zombie watchdog closed it and reported a
    * disconnection - which the reconnect ladder answered by reconnecting a BACKGROUNDED app. Measured

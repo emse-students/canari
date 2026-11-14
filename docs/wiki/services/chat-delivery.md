@@ -1536,7 +1536,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 `auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
 and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
 guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
-Lydia payment errors ([WP-LYDIA-1](../backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)), and anything in social-service, account
+Lydia payment errors ([WP-LYDIA-1](../frontend/modules/payments.md)), and anything in social-service, account
 erasure, lives or reels.
 
 ## No platform-admin bypass on conversation data (owner, 2026-11-02)

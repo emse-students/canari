@@ -194,6 +194,23 @@ describe('ChannelService - the community distribution group', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('logs neither the name nor the slug of the community it creates', async () => {
+      const { service } = makeService();
+
+      await service.createWorkspace({
+        name: 'Les Canaris Secrets',
+        slug: 'les-canaris-secrets',
+        createdBy: USER,
+      });
+
+      const lines = (service['logger'].log as jest.Mock).mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes('[WORKSPACE] create'))).toBe(true);
+      for (const line of lines) {
+        expect(line).not.toContain('Canaris');
+        expect(line).not.toContain('canaris');
+      }
+    });
+
     it.each([
       ['a name', { name: ' ', slug: 'test' }, 'COMMUNITY_NAME_INVALID'],
       ['a slug', { name: 'Test', slug: 'Te st' }, 'COMMUNITY_SLUG_INVALID'],

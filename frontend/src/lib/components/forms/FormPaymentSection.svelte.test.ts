@@ -13,6 +13,11 @@ vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   fetchActivePaymentProvider: () => Promise.resolve('lydia'),
 }));
+// The payout hint's fee schedule (docs/wiki/lydia-contract-flux.md): not configured here.
+vi.mock('$lib/payments/lydiaFees', async (orig) => ({
+  ...(await orig<typeof import('$lib/payments/lydiaFees')>()),
+  fetchLydiaFeeSchedule: () => Promise.resolve(null),
+}));
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
   activePaymentProvider: { current: 'lydia' },
   loadActivePaymentProvider: () => Promise.resolve(),

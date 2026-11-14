@@ -84,3 +84,8 @@ apps/social-service/src/migrations/152_opening_reminders_copy_form_reminders.sql
 # passed 2026-11-13 (version skew fixed by the gridRequiredSwitch gate). It merges first and runs on dev
 # (with a backup) through the next pre-release before any stable. Any edit to the file holds it again.
 apps/social-service/src/migrations/164_product_grid_required_off.sql 10be65fd7ff47a5372435e3567abdd078a3a80745eb62a40e69d60dd96b5ca61
+# 168 (#3506, the platform's Lydia flux ledger and its backfill): approved by the OWNER on 2026-11-14,
+# relayed by the lead in session, for this exact content - the backfill reworked by the adversarial
+# review to take only Businesses carrying the business/create dashboard URL (an allowlist; read-only
+# on production: 3 associations taken, the 2 historical accounts left out). Any edit holds it again.
+apps/social-service/src/migrations/168_lydia_enrolled_businesses.sql 9c1494e18681f7539d03f7b27266140eb4f1903d05975722be8611a9252bc8f1

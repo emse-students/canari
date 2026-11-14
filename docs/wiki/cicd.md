@@ -659,6 +659,15 @@ its 300 reloads. On the targets with an address for the take-out: 0 failures in 
 300. On the targets with a container name and the API switch: 0 failures in 37 018 POSTs across
 300. Case 2 alone crosses four such reloads, which is why the window showed once in 58 runs.
 
+**Read in production (2026-11-14, the `v1.6.12` deploy, read-only).** Across the deploy job
+(about 09:07-09:14Z) and the six minutes after it, the production edge - the one proxy that stays up
+through a release - logged 0 `no live upstreams`, 0 `connect() failed`, 0 resets and 0 lines of
+error class, through 5 clean reloads while the `frontend` and `frontend-ssr` replicas were recreated.
+Said with its limit: it is the edge's log, read after the fact; the retired replicas' own logs went
+with them. An earlier attempt had found the `v1.6.11` window unreadable (the edge was recreated by
+that deploy, and the archive is taken before the first `up -d`), which is why this one was taken on
+a deploy that kept the edge.
+
 **The load cases run the fixture frontend, not the real image** - a gap, said. The real
 `Dockerfile.frontend` needs every service it routes to; the fixture (`rolling-fixture/frontend.conf`)
 carries what decides a reload's behaviour: the `auth_request` every API location makes before choosing
