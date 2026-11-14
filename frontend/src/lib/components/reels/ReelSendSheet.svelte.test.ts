@@ -107,7 +107,13 @@ async function settle() {
 }
 
 async function open(
-  props: Partial<{ clip: object; cap: number; chatCapMs: number; sending: boolean }> = {}
+  props: Partial<{
+    clip: object;
+    cap: number;
+    chatCapMs: number;
+    rule: object | null;
+    sending: boolean;
+  }> = {}
 ): Promise<void> {
   mounted.push(
     mount(ReelSendSheet, {
@@ -117,6 +123,7 @@ async function open(
         host,
         cap: 2,
         chatCapMs: 60_000,
+        rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 180_000 },
         onclose,
         onsend,
         ...props,
@@ -241,6 +248,28 @@ describe('ReelSendSheet', () => {
     await open({ clip: { blob: video(), source: 'camera', durationMs: 75_000 } });
     expect(row('g-old').disabled).toBe(true);
     expect(document.querySelector('[data-reel-send-too-long]')?.textContent).toContain('60');
+  });
+
+  it('a 45 s landscape pick is a feed reel but no chat: the chat rows are disabled, with the reason', async () => {
+    await open({
+      clip: { blob: video(), source: 'gallery', durationMs: 45_000, width: 1920, height: 1080 },
+    });
+    expect(row('g-old').disabled).toBe(true);
+    expect(document.querySelector('[data-reel-send-not-vertical]')?.textContent).toBe(
+      m.reel_sendto_not_vertical_for_chats()
+    );
+    expect(document.querySelector('[data-reel-send-too-long]')).toBeNull();
+    feed().click();
+    await settle();
+    expect(feed().getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('a vertical take within the chat cap keeps the chats open', async () => {
+    await open({
+      clip: { blob: video(), source: 'gallery', durationMs: 45_000, width: 1080, height: 1920 },
+    });
+    expect(row('g-old').disabled).toBe(false);
+    expect(document.querySelector('[data-reel-send-not-vertical]')).toBeNull();
   });
 
   it('a take whose length is unknown keeps the chats open: the outbox still refuses a long one', async () => {

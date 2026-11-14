@@ -12,6 +12,7 @@ import {
   longestReelMs,
   reelCapForFrame,
   reelDeclarationFor,
+  reelDeclaredDurationMs,
   reelLifetimeLabel,
   reelPickRefusal,
   reelPickRefusalText,
@@ -74,7 +75,8 @@ describe('isReelFrame', () => {
 describe('isReelVideo', () => {
   it('needs a known length from 1 ms to the cap', () => {
     expect(isReelVideo({ width: 720, height: 1280, durationMs: 90_000 }, rule)).toBe(true);
-    expect(isReelVideo({ width: 720, height: 1280, durationMs: 90_001 }, rule)).toBe(false);
+    expect(isReelVideo({ width: 720, height: 1280, durationMs: 90_500 }, rule)).toBe(true);
+    expect(isReelVideo({ width: 720, height: 1280, durationMs: 90_501 }, rule)).toBe(false);
     expect(isReelVideo({ width: 720, height: 1280, durationMs: 0 }, rule)).toBe(false);
     expect(isReelVideo({ width: 720, height: 1280 }, rule)).toBe(false);
   });
@@ -84,10 +86,11 @@ describe('isReelVideo - vertical OR short (owner, 2026-11-14)', () => {
   it.each([
     ['a short landscape video, drawn with bars', 1920, 1080, 30_000, true],
     ['a landscape video of 90 s exactly', 1920, 1080, 90_000, true],
-    ['a landscape video one ms longer', 1920, 1080, 90_001, false],
+    ['a landscape video within the half-second grace', 1920, 1080, 90_500, true],
+    ['a landscape video past the grace', 1920, 1080, 90_501, false],
     ['a long vertical video', 1080, 1920, 150_000, true],
     ['a vertical video at its cap', 1080, 1920, 180_000, true],
-    ['a vertical video past its cap', 1080, 1920, 180_001, false],
+    ['a vertical video past its cap and grace', 1080, 1920, 180_501, false],
     ['a short square video', 1080, 1080, 10_000, true],
     ['a short video with no frame', undefined, undefined, 10_000, true],
   ])('%s', (_label, width, height, durationMs, expected) => {
@@ -211,5 +214,36 @@ describe('reelLifetimeLabel', () => {
     expect(reelLifetimeLabel(1)).toBe(m.reels_lifetime_days({ count: 1 }));
     expect(reelLifetimeLabel(730)).toBe(m.reels_lifetime_years({ count: 2 }));
     expect(reelLifetimeLabel(30)).toBe(m.reels_lifetime_days({ count: 30 }));
+  });
+});
+
+describe('reelDeclaredDurationMs - one decision on a length for the camera and the composer', () => {
+  it('rounds to whole milliseconds', () => {
+    expect(reelDeclaredDurationMs(41_250.4, 90_000)).toBe(41_250);
+  });
+
+  it('declares the cap for a take inside the half-second grace past it', () => {
+    expect(reelDeclaredDurationMs(90_040, 90_000)).toBe(90_000);
+    expect(reelDeclaredDurationMs(90_500, 90_000)).toBe(90_000);
+  });
+
+  it('is not a reel past the grace, with no cap, or with no length', () => {
+    expect(reelDeclaredDurationMs(90_501, 90_000)).toBeNull();
+    expect(reelDeclaredDurationMs(30_000, null)).toBeNull();
+    expect(reelDeclaredDurationMs(undefined, 90_000)).toBeNull();
+    expect(reelDeclaredDurationMs(0, 90_000)).toBeNull();
+  });
+
+  it('never declares zero', () => {
+    expect(reelDeclaredDurationMs(0.1, 90_000)).toBe(1);
+  });
+
+  it('the composer declares what the camera declares, grace included', () => {
+    const declared = reelDeclarationFor(
+      {},
+      [{ type: 'video/mp4', width: 1920, height: 1080, durationMs: 90_300 }],
+      orRule
+    );
+    expect(declared).toEqual({ kind: 'reel', durationMs: reelDeclaredDurationMs(90_300, 90_000) });
   });
 });

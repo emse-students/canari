@@ -28,6 +28,7 @@
   import type { ReelSendHost } from '$lib/reels/reelSendBridge';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import type { ReelClip } from '$lib/reels/reelCapture';
+  import { reelPickRefusal, type ReelRule } from '$lib/reels/reelRule';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -38,6 +39,11 @@
     cap: number;
     /** The longest take a conversation accepts (`chatMaxDurationMs`): a longer one can only be posted. */
     chatCapMs: number;
+    /**
+     * The server's reel rule (`reelRuleOf`), or `null` on an estate that serves none. A conversation
+     * keeps vertical AND within its cap, whatever the feed's OR (`reelPickRefusal`, review of #3528).
+     */
+    rule: ReelRule | null;
     /** Back to the take. */
     onclose: () => void;
     /** The press: whether CanaReels is ticked, and the conversation keys, in tick order. */
@@ -46,7 +52,7 @@
     sending?: boolean;
   }
 
-  let { clip, host, cap, chatCapMs, onclose, onsend, sending = false }: Props = $props();
+  let { clip, host, cap, chatCapMs, rule, onclose, onsend, sending = false }: Props = $props();
 
   let query = $state('');
   let feedTicked = $state(false);
@@ -66,8 +72,26 @@
 
   /** A silenced take cannot reach a chat: the audio track is dropped only by the feed's publish. */
   const silenced = $derived(clip.soundRemoved === true);
-  const tooLong = $derived(clip.durationMs !== undefined && clip.durationMs > chatCapMs);
-  const chatsBlocked = $derived(silenced || tooLong || blocksState !== 'read');
+  /**
+   * Whether a conversation refuses this take, by the chat rule (vertical AND within `chatCapMs`) - the
+   * function the camera's chat pick uses, so the sheet never offers a chat the pick would refuse. A
+   * length or a frame that is not known refuses nothing: the outbox still refuses a long one.
+   */
+  const chatRefusal = $derived(
+    reelPickRefusal(
+      {
+        durationMs: clip.durationMs ?? null,
+        width: clip.width ?? null,
+        height: clip.height ?? null,
+      },
+      rule,
+      chatCapMs,
+      'chat'
+    )
+  );
+  const tooLong = $derived(chatRefusal?.reason === 'too-long');
+  const notVertical = $derived(chatRefusal?.reason === 'not-vertical');
+  const chatsBlocked = $derived(silenced || chatRefusal !== null || blocksState !== 'read');
   const feedMuted = $derived(muted === true);
   /** The feed row waits for the mute answer; a tick made before it never survives (`feedSend`). */
   const feedUnknown = $derived(muted === null);
@@ -240,6 +264,10 @@
     {:else if tooLong}
       <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-too-long>
         {m.reel_sendto_too_long_for_chats({ seconds: Math.round(chatCapMs / 1000) })}
+      </p>
+    {:else if notVertical}
+      <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-not-vertical>
+        {m.reel_sendto_not_vertical_for_chats()}
       </p>
     {/if}
 

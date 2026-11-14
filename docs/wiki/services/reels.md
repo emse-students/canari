@@ -66,8 +66,8 @@ square** video, or a vertical one past 3 minutes, stays an ordinary post video.
   a take outside the rule as a post with a WARN. **The camera's own cap is unchanged** (90 s, C4): the
   rule decides what a video IS, not how long the camera films. A take for a conversation keeps the
   2026-11-09 rule and the 60 s chat cap.
-- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 170
-  (`170_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
+- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 172
+  (`172_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
   whose ONLY content is one video into a reel expiring **one year after its publication** - so a
   video older than a year is deleted at the reel worker's next tick, which the owner accepted. **A
   post with several media (a video beside photos, two videos) STAYS A POST** (owner, 2026-11-14:
@@ -79,7 +79,7 @@ square** video, or a vertical one past 3 minutes, stays an ordinary post video.
   the owner's, not written here.
 
 The rule of 2026-11-09, as it stood until then (the "Existing posts are not converted" line is
-superseded by migration 170, and "every other video stays a post" by the OR above):
+superseded by migration 172, and "every other video stays a post" by the OR above):
 
 **Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
 the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
@@ -118,7 +118,7 @@ YEAR** (was C6's month); the reels already published were moved to the year by m
   - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
   capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
   publish the video as a post from "Nouvelle publication".
-- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 170, above.
+- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 172, above.
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 

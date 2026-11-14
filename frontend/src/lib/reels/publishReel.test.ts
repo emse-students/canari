@@ -9,7 +9,6 @@ import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { MediaService } from '$lib/media';
 import {
   defaultPublishReelDeps,
-  declaredReelDurationMs,
   publishCameraPhoto,
   publishReel,
   ReelPublishError,
@@ -305,20 +304,6 @@ describe('publishCameraPhoto', () => {
       markdown: 'a photo',
       media: [expect.objectContaining({ type: 'image' })],
     });
-  });
-});
-
-describe('declaredReelDurationMs', () => {
-  it('rounds to whole milliseconds', () => {
-    expect(declaredReelDurationMs(41.2504, 90_000)).toBe(41250);
-  });
-
-  it('declares the cap for a take inside the grace past it', () => {
-    expect(declaredReelDurationMs(90.04, 90_000)).toBe(90_000);
-  });
-
-  it('never declares zero', () => {
-    expect(declaredReelDurationMs(0.0001, 90_000)).toBe(1);
   });
 });
 

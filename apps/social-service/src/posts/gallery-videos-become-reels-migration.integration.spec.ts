@@ -1,5 +1,5 @@
 /**
- * Held migration 170 (owner, 2026-11-14: "Toute vidéo verticale et/ou inférieure à 90 s est un
+ * Held migration 172 (owner, 2026-11-14: "Toute vidéo verticale et/ou inférieure à 90 s est un
  * CanaReel, y compris depuis la galerie" - and for the videos already posted, "Oui, toutes") against a
  * REAL PostgreSQL: every post whose ONLY content is one video becomes a reel expiring one year after
  * its publication, with no declared length; a post with several media, a poll, a form, an attached
@@ -23,7 +23,7 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(
-  join(__dirname, '..', 'migrations', '170_gallery_videos_become_reels.sql'),
+  join(__dirname, '..', 'migrations', '172_gallery_videos_become_reels.sql'),
   'utf8'
 );
 const STATEMENT = MIGRATION.slice(MIGRATION.indexOf('UPDATE posts p\n'));
@@ -34,7 +34,7 @@ const allowlist = STATEMENT.split('\n')
   .filter((line) => /^(WHERE|AND) /.test(line))
   .map((line) => line.replace(/^(WHERE|AND) /, '').replace(/;$/, ''));
 
-describe('migration 170 - the file itself', () => {
+describe('migration 172 - the file itself', () => {
   it('is HELD for the owner: the marker opens the file', () => {
     expect(MIGRATION.split('\n')[0]).toMatch(/^-- canari:hold-for-owner - DESTRUCTIVE/);
   });
@@ -59,7 +59,7 @@ describe('migration 170 - the file itself', () => {
   });
 });
 
-maybe('migration 170 against PostgreSQL', () => {
+maybe('migration 172 against PostgreSQL', () => {
   const schema = `gallery_reels_it_${Math.random().toString(36).slice(2, 10)}`;
   let client: Client;
 

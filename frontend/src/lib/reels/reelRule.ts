@@ -22,6 +22,7 @@
 import type { CreatePostPayload, ReelLimits } from '$lib/posts/api';
 import { durationLabel } from '$lib/legal/retentionLabel';
 import { m } from '$lib/paraglide/messages';
+import { VIDEO_DURATION_GRACE_SECONDS } from '$lib/video/prepareVideoForUpload';
 
 /** The numbers the rule reads, as the server served them. */
 export interface ReelRule {
@@ -183,15 +184,43 @@ export interface ReelVideoShape {
 }
 
 /**
- * Whether ONE video, on its own, is a CanaReel: 1 ms or longer, and within its frame's cap
- * (`reelCapForFrame`) - vertical or short under the OR rule, vertical and short under the older one.
+ * THE ONE DECISION ON A LENGTH, for every path that makes a reel - the CanaReels camera's publish
+ * (`publishReel`) and the composer's queue (`reelDeclarationFor`) - so a take of one length is a reel
+ * on both or on neither (review of #3528, 2026-11-14): the length the reel DECLARES, in whole ms
+ * within `[1, capMs]`, or `null` when it is not a reel (no length, none above zero, no cap for its
+ * frame, or past the cap's grace).
+ *
+ * The grace is `prepareVideoForUpload`'s half second (`VIDEO_DURATION_GRACE_SECONDS`): a recorder
+ * told to stop at the cap writes a container ending a few hundredths later. That clip IS a reel of
+ * the cap's length, and the server refuses a declaration over the cap, so it declares the cap.
+ */
+export function reelDeclaredDurationMs(
+  durationMs: number | undefined,
+  capMs: number | null
+): number | null {
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs <= 0)
+    return null;
+  if (capMs === null || durationMs > capMs + VIDEO_DURATION_GRACE_SECONDS * 1000) return null;
+  const ms = Math.round(durationMs);
+  if (ms > capMs) {
+    console.debug(`[reel-rule] ${ms} ms is within the grace; declared as ${capMs}`);
+  }
+  return Math.min(capMs, Math.max(1, ms));
+}
+
+/** The length `video` declares as a reel under `rule`, or `null` when it is not one. */
+function reelDeclaredDurationOf(video: ReelVideoShape, rule: ReelRule): number | null {
+  const cap = reelCapForFrame(rule, isReelFrame(video.width, video.height, rule));
+  return reelDeclaredDurationMs(video.durationMs, cap);
+}
+
+/**
+ * Whether ONE video, on its own, is a CanaReel: a length within its frame's cap and its grace
+ * (`reelCapForFrame`, `reelDeclaredDurationMs`) - vertical or short under the OR rule, vertical and
+ * short under the older one.
  */
 export function isReelVideo(video: ReelVideoShape, rule: ReelRule): boolean {
-  const { durationMs } = video;
-  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return false;
-  if (durationMs < 1) return false;
-  const cap = reelCapForFrame(rule, isReelFrame(video.width, video.height, rule));
-  return cap !== null && durationMs <= cap;
+  return reelDeclaredDurationOf(video, rule) !== null;
 }
 
 const present = (value: unknown): boolean =>
@@ -225,8 +254,8 @@ export function reelDeclarationFor(
     console.debug(`[reel-rule] the post carries ${carries}: it stays a post`);
     return null;
   }
-  if (!isReelVideo(video, rule)) return null;
-  return { kind: 'reel', durationMs: Math.round(video.durationMs!) };
+  const durationMs = reelDeclaredDurationOf(video, rule);
+  return durationMs === null ? null : { kind: 'reel', durationMs };
 }
 
 /**

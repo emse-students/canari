@@ -1,5 +1,5 @@
 -- canari:hold-for-owner - DESTRUCTIVE: every single-video post becomes a CanaReel expiring one year after its publication, so a video published more than a year ago is DELETED at the reel worker's next tick.
--- Migration 170 : the videos already posted become CanaReels (owner, 2026-11-14).
+-- Migration 172 : the videos already posted become CanaReels (owner, 2026-11-14).
 --
 -- THE DECISION, verbatim: "Toute vidéo verticale et/ou inférieure à 90 s est un CanaReel, y compris
 -- depuis la galerie", and asked whether the videos already posted follow: "Oui, toutes" - each one a
@@ -30,8 +30,12 @@
 -- WHAT FOLLOWS, WITHOUT THIS FILE: the hourly `ReelRetentionScheduler` deletes every converted row
 -- whose year has passed - the post, its comments, reactions and notifications, and its video
 -- (`purgeReelBlobs`, the uploader's own file only); social-service's next boot claims the rest's
--- blobs as `reel` (`PostMediaRetentionService.backfillReels`). The converted posts leave the feed
--- (`kind = 'post'`) and join the CanaReels list, newest first.
+-- blobs as `reel` (`PostMediaRetentionService.backfillReels`) - a blob not credited to the post's
+-- author is REFUSED there, keeps its class and is never purged with its reel: the `refused` count of
+-- that first boot's `Reel backfill:` line is owed. The converted posts leave every view reading
+-- `kind = 'post'` (the feed, a pin, Suivis, the feed's republications) and join the CanaReels list,
+-- newest first. No filter on association, anonymous, studentsOnly, reach or moderation: the create
+-- door takes a reel with each, and the row keeps its columns, so its audience is unchanged.
 --
 -- HOW MANY, BEFORE IT RUNS - the read-only count by age band, the same allowlist. Read on 2026-11-14:
 -- dev 2 (all under 30 days), production 39 under 30 days and 1 from 30 to 180 days, NONE over a year
@@ -61,14 +65,22 @@
 --      AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.images) m
 --                   WHERE m->>'type' = 'video' OR lower(m->>'mimeType') LIKE 'video/%');
 --
--- Idempotent for CD: DROP CONSTRAINT IF EXISTS before the re-create; a second run finds no `post`
--- that matches (every match is a `reel` now) and writes nothing. LOCKS: ACCESS EXCLUSIVE on `posts`
--- for the constraint swap (NOT VALID: a catalogue change, no scan), then SHARE UPDATE EXCLUSIVE for
--- the VALIDATE scan (blocks neither reads nor writes), then row locks on the converted posts; gives
--- up after 5 s rather than queue behind a long transaction (the re-run is safe).
+-- Numbered 172, not 170: social 170 is on main (minesweeper) and 171 is taken by an open PR.
 --
--- ROLLBACK, for the rows the worker has not yet deleted (a deleted one is gone - THAT is the
--- destruction this file is held for; restoring it means the backup of the day before):
+-- Idempotent for CD: DROP CONSTRAINT IF EXISTS before the re-create; a second run finds no `post`
+-- that matches (every match is a `reel` now) and writes nothing. THREE TRANSACTIONS, and LOCKS, in
+-- order (the shape of migrations 156 and 162):
+--   1. the constraint swap, alone: ACCESS EXCLUSIVE on `posts` for a catalogue change (NOT VALID, no
+--      scan), released at its COMMIT;
+--   2. the VALIDATE, its own statement: SHARE UPDATE EXCLUSIVE for the scan, which blocks neither
+--      reads nor writes;
+--   3. the conversion: ROW EXCLUSIVE on `posts` and row locks on the converted posts only.
+-- Each gives up after 5 s rather than queue behind a long transaction. A failure after step 1 leaves
+-- the widened constraint and no row converted; the re-run is safe from any step.
+--
+-- ROLLBACK - of the DATABASE only, for the rows the worker has not yet deleted (a deleted one is
+-- gone - THAT is the destruction this file is held for; restoring it means the backup of the day
+-- before; moot on the counts above, nothing is deleted before 2027):
 --
 --   UPDATE posts SET kind = 'post', "expiresAt" = NULL
 --    WHERE kind = 'reel' AND "durationMs" IS NULL;
@@ -90,7 +102,12 @@ ALTER TABLE posts ADD CONSTRAINT posts_kind_shape CHECK (
   OR (kind = 'replay' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
       AND "liveId" IS NOT NULL)
 ) NOT VALID;
+
+COMMIT;
+
 ALTER TABLE posts VALIDATE CONSTRAINT posts_kind_shape;
+
+BEGIN;
 
 UPDATE posts p
    SET kind = 'reel',

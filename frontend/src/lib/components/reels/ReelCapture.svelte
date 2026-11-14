@@ -663,11 +663,13 @@
     }
     const poster = takePoster;
     takePoster = null;
+    // The frame the canvas drew, read before `stopFraming` drops it: "Envoyer a..." decides on it.
+    const size = framed?.size ?? null;
     try {
       const blob = await ending.stop();
       send({
         type: 'stopped',
-        clip: { blob, source: 'camera', poster, durationMs: elapsedMs },
+        clip: { blob, source: 'camera', poster, durationMs: elapsedMs, ...size },
       });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';
@@ -788,7 +790,12 @@
     }
     send({
       type: 'picked',
-      clip: { blob: file, source: 'gallery', ...(durationMs !== null ? { durationMs } : {}) },
+      clip: {
+        blob: file,
+        source: 'gallery',
+        ...(durationMs !== null ? { durationMs } : {}),
+        ...(width !== null && height !== null ? { width, height } : {}),
+      },
     });
   }
 
@@ -987,6 +994,7 @@
         host={sendHost}
         cap={sendTargetCap}
         {chatCapMs}
+        rule={limits ? reelRuleOf(limits) : null}
         onclose={() => (sendOpen = false)}
         sending={sendingTake}
         onsend={(choice) => void sendTakeTo(choice)}

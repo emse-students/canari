@@ -355,7 +355,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
       const kind = r.kind ?? 'post';
       if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt) && !given(r.liveId);
       const timed = typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt);
-      // A reel may carry no length: the posts held migration 170 converted (nobody declared one).
+      // A reel may carry no length: the posts held migration 172 converted (nobody declared one).
       if (kind === 'reel') {
         const length = !given(r.durationMs) || (typeof r.durationMs === 'number' && r.durationMs > 0);
         return length && given(r.expiresAt) && !given(r.liveId);
