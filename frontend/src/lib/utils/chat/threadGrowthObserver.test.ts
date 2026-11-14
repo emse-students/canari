@@ -33,6 +33,7 @@ interface Layout {
 function makeThread(heights: number[], box: number) {
   const scroller = document.createElement('div');
   const layout: Layout = { rows: [], heights: [...heights], box, scrollTop: 0 };
+  // A row's place is read from where it stands NOW, so a prepend moves every row below it.
   const topOf = (i: number) => layout.heights.slice(0, i).reduce((a, b) => a + b, 0);
   const scrollHeight = () => layout.heights.reduce((a, b) => a + b, 0);
   const reach = () => Math.max(0, scrollHeight() - layout.box);
@@ -47,12 +48,17 @@ function makeThread(heights: number[], box: number) {
     },
   });
   scroller.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
-  layout.heights.forEach((_, i) => {
+  const makeRow = (id: string) => {
     const row = document.createElement('div');
-    row.id = `msg-${i}`;
-    Object.defineProperty(row, 'offsetTop', { get: () => topOf(i) });
+    row.id = `msg-${id}`;
+    const index = () => layout.rows.indexOf(row);
+    Object.defineProperty(row, 'offsetTop', { get: () => topOf(index()) });
     row.getBoundingClientRect = () =>
-      ({ bottom: topOf(i) + layout.heights[i] - layout.scrollTop }) as DOMRect;
+      ({ bottom: topOf(index()) + layout.heights[index()] - layout.scrollTop }) as DOMRect;
+    return row;
+  };
+  layout.heights.forEach((_, i) => {
+    const row = makeRow(String(i));
     scroller.appendChild(row);
     layout.rows.push(row);
   });
@@ -62,7 +68,14 @@ function makeThread(heights: number[], box: number) {
     layout.scrollTop = Math.min(layout.scrollTop, reach());
     fireResize();
   };
-  return { scroller, layout, relayout, reach };
+  /** Older rows land ABOVE the first one, as a store page does; `scrollTop` is left where it was. */
+  const prepend = (older: number[]) => {
+    const rows = older.map((_, i) => makeRow(`old-${layout.rows.length}-${i}`));
+    layout.rows.unshift(...rows);
+    layout.heights.unshift(...older);
+    scroller.prepend(...rows);
+  };
+  return { scroller, layout, relayout, reach, prepend };
 }
 
 /** Text rows of 60 px, a photo of 567 px (60svh of a 945 px WebView) at index 10. */
@@ -178,6 +191,60 @@ describe('observeThreadGrowth - a conversation being entered', () => {
     expect(scroller.scrollTop).toBe(reach());
     expect(isPinnedToBottom(scroller)).toBe(true);
     expect(newestVisible()).toBe(true);
+    stop();
+  });
+});
+
+/**
+ * AN OLDER PAGE LANDING WHILE THE PANE CHANGED UNDER IT (the photo DM of 2026-11-14,
+ * backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md).
+ * `loadOlderGroups` used to restore `scrollTop` itself, from offsets captured BEFORE awaiting the
+ * store: a keyboard rising meanwhile (and the thread taken to its end for it) was undone by that
+ * write, and the reader landed one keyboard height up, on older messages. The observer's row anchor
+ * is what keeps the reader's place across a prepend - the window-step prepend never had any other -
+ * so the store's page is left to it too.
+ */
+describe('observeThreadGrowth - an older page prepended', () => {
+  const loading = () => ({ wasNearBottom: true, isLoadingOlder: true, isEntering: false });
+
+  it('keeps the reader on the rows they were reading', () => {
+    const { scroller, layout, prepend } = makeThread(rowsWithPhoto(), 711);
+    scroller.scrollTop = 300;
+    const stop = observeThreadGrowth(scroller, loading);
+    const reading = layout.rows[8];
+    const before = reading.getBoundingClientRect().bottom;
+    prepend([60, 60, 60, 60, 60]);
+    // The prepend is a DOM mutation: the observer runs from its MutationObserver, in a microtask.
+    return Promise.resolve().then(() => {
+      expect(reading.getBoundingClientRect().bottom).toBe(before);
+      stop();
+    });
+  });
+
+  it('a keyboard rise during the load: the reader at the end follows it, and stays there', async () => {
+    const { scroller, layout, relayout, reach, prepend } = makeThread(rowsWithPhoto(), 711);
+    scroller.scrollTop = reach();
+    const stop = observeThreadGrowth(scroller, loading);
+    // The keyboard rises while the store is read: the box alone moved, and the reader follows it.
+    layout.box -= KEYBOARD;
+    relayout();
+    expect(scroller.scrollTop).toBe(reach());
+    prepend([60, 60, 60, 60, 60]);
+    await Promise.resolve();
+    expect(scroller.scrollTop).toBe(reach());
+    stop();
+  });
+
+  it('a keyboard rise landing in the same change as the prepend: the reader at the end stays there', async () => {
+    const { scroller, layout, relayout, reach, prepend } = makeThread(rowsWithPhoto(), 711);
+    scroller.scrollTop = reach();
+    const stop = observeThreadGrowth(scroller, loading);
+    layout.box -= KEYBOARD;
+    prepend([60, 60, 60, 60, 60]);
+    // One delivery for both: the mutation's microtask runs after the box has already changed.
+    await Promise.resolve();
+    relayout();
+    expect(scroller.scrollTop).toBe(reach());
     stop();
   });
 });

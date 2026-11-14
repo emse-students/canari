@@ -9,7 +9,7 @@ a new USER still rotates. What was built is what this page describes; the review
 [below](#the-adversarial-review-of-the-first-draft-and-what-it-changed).
 
 It answers the P2
-[Graine rotates on every key-group epoch](../backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21).
+[Graine rotates on every key-group epoch](../backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md).
 The measurement and the comparison with DMs are in
 [dm-vs-community-encryption](dm-vs-community-encryption.md#communities).
 

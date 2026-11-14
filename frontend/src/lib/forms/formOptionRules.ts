@@ -45,6 +45,8 @@ export interface FormOptionState {
   restrictsAudience: boolean;
   /** A question asks for a file. */
   hasFileQuestion: boolean;
+  /** A respondent may change their own answer while the form is open (`forms.allowAnswerEdit`). */
+  allowsAnswerEdit: boolean;
 }
 
 /** One option, by its key in `FormOptionState`. */
@@ -52,8 +54,9 @@ export type FormOption = keyof FormOptionState;
 
 /**
  * Every pair of options that cannot both be on, with the code a refusal carries. Read as "a ... has
- * no ...": an anonymous form keeps no identity, which a payment, a grant or a file would reveal; a
- * guest has no account and no profile, which a restricted audience, a grant or a file would need.
+ * no ...": an anonymous form keeps no identity, which a payment, a grant or a file would reveal, and
+ * names nobody who could reopen an answer to change it; a guest has no account and no profile, which
+ * a restricted audience, a grant or a file would need.
  *
  * A price grid on promo, formation or cotisation is NOT here beside `isPublic`: a guest falls in the
  * "everyone else" group of each such criterion and pays that tier (owner, 2026-11-06).
@@ -62,6 +65,7 @@ export const FORM_OPTION_CONFLICTS = {
   FORM_ANONYMOUS_PAYMENT: ['anonymous', 'takesPayment'],
   FORM_ANONYMOUS_COTISATION_GRANT: ['anonymous', 'grantsCotisation'],
   FORM_ANONYMOUS_FILE: ['anonymous', 'hasFileQuestion'],
+  FORM_ANONYMOUS_ANSWER_EDIT: ['anonymous', 'allowsAnswerEdit'],
   FORM_PUBLIC_AUDIENCE: ['isPublic', 'restrictsAudience'],
   FORM_PUBLIC_COTISATION_GRANT: ['isPublic', 'grantsCotisation'],
   FORM_PUBLIC_FILE: ['isPublic', 'hasFileQuestion'],

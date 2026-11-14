@@ -7,6 +7,7 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import { pollPaymentReturn, type PaymentReturnOutcome } from '$lib/forms/paymentReturnPoll';
   import { SocialApiError } from '$lib/associations/api';
+  import { isConfirmThrottled } from '$lib/forms/checkoutReturn';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
 
@@ -74,7 +75,7 @@
         }
       );
     } catch (err) {
-      if (err instanceof SocialApiError && err.status === 429) {
+      if (isConfirmThrottled(err)) {
         // The per-receipt limit on asking Lydia (a reload after a full poll): an answer, not a
         // failure - the callback still decides, and the page says it is awaited.
         console.info('[f/receipt] confirmation limit reached, waiting on the callback');

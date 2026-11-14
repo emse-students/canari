@@ -38,6 +38,9 @@ use crate::commands::at_rest_key::{
 use crate::commands::background_flush::{begin_background_flush, end_background_flush};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
+use crate::commands::conversation_nicknames::{
+    forget_conversation_nicknames, store_conversation_nicknames,
+};
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
@@ -52,9 +55,9 @@ use crate::commands::mls::{
     graine_verify_signatures, groupe_actif, groupes_commit_en_attente, initialiser_mls,
     key_package_a_clef_privee, lister_groupes, lister_identites_membres,
     mls_external_join_is_a_further_device, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    prendre_constats_fork, prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
-    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
-    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
+    prendre_constats_fork, prendre_evenements_appareils, preuves_appartenance, rafraichir_feuille,
+    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
+    recuperer_cle_session_mls, rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
     soumission_en_attente, terminer_session_mls, trailer_welcome, verifier_key_package,
     welcome_remis, welcomes_dus,
@@ -1737,6 +1740,7 @@ pub fn run() {
             cles_signature_epinglees,
             remplacer_appareil,
             epoques_departs,
+            preuves_appartenance,
             prendre_evenements_appareils,
             lister_identites_membres,
             definir_politique_admission,
@@ -1832,6 +1836,8 @@ pub fn run() {
             notifier_message_natif,
             store_avatar_mirror,
             store_display_names,
+            store_conversation_nicknames,
+            forget_conversation_nicknames,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store

@@ -170,6 +170,22 @@ export class Submission {
   @Column({ type: 'varchar', length: 254, nullable: true })
   guestEmail: string | null;
 
+  /**
+   * When the respondent last changed this answer (migration 166, `FormsService.editAnswer`); NULL
+   * for an answer never changed. Not `updatedAt`, which every payment status move rewrites: the
+   * managers read this one as "modifiee le".
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  editedAt: Date | null;
+
+  /**
+   * The questions the price depended on WHEN THIS ANSWER WAS PRICED (migration 166): written by
+   * `submit` (and its retry that re-prices the row), read by `rowLockedItemIds`, so a supplement
+   * removed from the form later still locks its question here. NULL on a row older than 166.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  priceLockedItemIds: string[] | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

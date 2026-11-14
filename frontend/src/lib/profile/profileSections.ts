@@ -19,6 +19,7 @@ import {
   Info,
   NotebookPen,
   RotateCcwClock,
+  SlidersHorizontal,
   Tag,
   UserCheck,
   UserRound,
@@ -124,7 +125,14 @@ export function associationsSummary(memberships: UserMembershipRow[]): string {
   return parts.join(' · ');
 }
 
-/** The hub's rows, in order, with a count where one is already loaded. */
+/** The key of the hub's last row: the app's settings, a page of its own and not a profile section. */
+export const PROFILE_SETTINGS_ROW_KEY = 'settings';
+
+/**
+ * The hub's rows, in order, with a count where one is already loaded, then ONE row to the app's
+ * settings. It closes the list: the rows above are about the person, the settings are about the app
+ * (owner, 2026-11-14: it was a bordered card of its own above the list).
+ */
 export function profileHubRows(facts: ProfileHubFacts): HubRow[] {
   const summary = (section: ProfileSection): string | undefined => {
     if (section === 'associations' && facts.memberships !== null) {
@@ -135,13 +143,24 @@ export function profileHubRows(facts: ProfileHubFacts): HubRow[] {
     }
     return undefined;
   };
-  return PROFILE_SECTIONS.filter((key) => mayOpenProfileSection(key, facts)).map((key) => ({
+  const sections: HubRow[] = PROFILE_SECTIONS.filter((key) =>
+    mayOpenProfileSection(key, facts)
+  ).map((key) => ({
     key,
     href: profileSectionHref(key),
     label: ENTRIES[key].label(),
     icon: ENTRIES[key].icon,
     summary: summary(key),
   }));
+  return [
+    ...sections,
+    {
+      key: PROFILE_SETTINGS_ROW_KEY,
+      href: '/settings',
+      label: m.settings_page_title(),
+      icon: SlidersHorizontal,
+    },
+  ];
 }
 
 /**

@@ -76,7 +76,7 @@ would be impersonation). One seam: `src/lib/seo/internalApi.ts`, shared with the
 |---|---|---|
 | `/posts/{id}` | social-service `GET /api/public/posts/:id/preview` | `Article` + `BreadcrumbList` |
 | `/associations/{slug}` | social-service `GET /api/public/associations/slug/:slug` | `Organization` + `BreadcrumbList` |
-| `/forms/{id}` | social-service `GET /api/forms/:id` | — |
+| `/forms/{id}` | social-service `GET /api/public/forms/:id` (the member route needs an identity the renderer has not: it answered 401 and every shared link was generic; a non-public form answers 404 and stays generic) | — |
 | `/c/join/{token}` | social-service internal invite preview | — (`noindex`) |
 | `/g/join/{token}` | chat-delivery internal invite preview | — (`noindex`) |
 | `/`, `/posts` | — | `Organization` + `WebSite` |
@@ -105,6 +105,9 @@ states now that the set is derived.
 `http://localhost:3011` when `window` is undefined — which is exactly the SSR case, so using it here
 would advertise a localhost URL to every unfurler. The absolute URL is composed from the request's
 own origin instead.
+
+**Read on production, 2026-11-14:** 6 payments completed in the 15.5 hours of social-service log
+after the `v1.6.11` deploy, and 0 `invalid input syntax for type uuid` of any value.
 
 ### A shared post, and the ten days it previewed as nothing
 

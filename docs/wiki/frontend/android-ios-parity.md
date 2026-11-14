@@ -85,7 +85,7 @@ in the `system` preference the iOS app takes the phone's theme at START and does
 live switch made while it runs - the pinned override already hid every such switch from the page
 since 2026-09-30; only the app's own echoes ever arrived. Following it live needs the OS's style
 from something the override does not touch (the screen's trait collection, posted to the page by
-native) - a P3 in [backlog](../backlog.md#p3---ios-the-system-theme-does-not-follow-a-live-switch-of-the-phones-theme-2026-10-19).
+native) - a P3 in [backlog](../backlog.d/p3-ios-the-system-theme-does-not-follow-a-live-switch-of-the-phone-s-theme-2026.md).
 
 **The form accessory bar is removed** (up/down arrows and a check, ~45 pt above every keyboard):
 `CanariHideKeyboardAccessoryBar` swaps the WebKit content view's class for a subclass whose

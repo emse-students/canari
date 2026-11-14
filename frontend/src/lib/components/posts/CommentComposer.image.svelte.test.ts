@@ -17,6 +17,7 @@ afterAll(adoptTransitionAnimations());
 const env = vi.hoisted(() => ({
   encryptAndUpload: vi.fn(),
   compressImage: vi.fn(),
+  readImageDimensions: vi.fn(),
 }));
 
 vi.mock('$lib/media', () => ({
@@ -24,6 +25,7 @@ vi.mock('$lib/media', () => ({
     encryptAndUpload = env.encryptAndUpload;
   },
   compressImage: env.compressImage,
+  readImageDimensions: env.readImageDimensions,
   IMAGE_COMPRESS_PRESETS: { comment: { maxWidth: 1280, maxHeight: 1280, quality: 0.9 } },
 }));
 vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn(async () => 'fresh-token') }));
@@ -165,6 +167,14 @@ describe('the image button', () => {
     await pick(target, new File([new Uint8Array([1])], 'a.gif', { type: 'image/gif' }));
     expect(env.compressImage).not.toHaveBeenCalled();
     expect(env.encryptAndUpload).toHaveBeenCalledOnce();
+  });
+
+  it('sends a GIF with its own size, so the comment draws it uncropped', async () => {
+    env.readImageDimensions.mockResolvedValue({ width: 480, height: 270 });
+    env.encryptAndUpload.mockResolvedValue({ ...REF, mimeType: 'image/gif' });
+    const { target } = mountComposer();
+    await pick(target, new File([new Uint8Array([1])], 'a.gif', { type: 'image/gif' }));
+    expect(env.encryptAndUpload.mock.calls[0][2]).toEqual({ width: 480, height: 270 });
   });
 
   it('refuses a file that is not an image, and uploads nothing', async () => {

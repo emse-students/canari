@@ -18,9 +18,66 @@ import {
   klipyPageUrl,
   mapKlipyItems,
 } from './klipy';
+import { GIF_MEDIA_MAX_BYTES } from './gif-media';
 
 const sized = (url: string, width: number, height: number) => ({ gif: { url, width, height } });
 const U = (name: string) => `https://static.klipy.com/ii/${name}.gif`;
+
+describe('mapKlipyItems - the relay ceiling', () => {
+  const withBytes = (url: string, width: number, bytes: number) => ({
+    gif: { url, width, height: 100, size: bytes },
+  });
+  const OVER = GIF_MEDIA_MAX_BYTES + 1;
+
+  it('carries the byte size KLIPY declared, and none it did not', () => {
+    const { gifs } = mapKlipyItems([
+      { id: 1, file: { sm: withBytes(U('s'), 220, 90_000), md: sized(U('m'), 498, 280) } },
+    ]);
+    expect(gifs[0].preview.bytes).toBe(90_000);
+    expect(gifs[0].full).not.toHaveProperty('bytes');
+  });
+
+  it('offers the small rendition to send when the medium one is over the relay ceiling', () => {
+    const { gifs, oversized } = mapKlipyItems([
+      { id: 1, file: { sm: withBytes(U('s'), 220, 90_000), md: withBytes(U('m'), 498, OVER) } },
+    ]);
+    expect(gifs[0].full.url).toBe(U('s'));
+    expect(gifs[0].preview.url).toBe(U('s'));
+    expect(oversized).toBe(1);
+  });
+
+  it('keeps a rendition exactly at the ceiling, and never reads a missing size as too big', () => {
+    const { gifs, oversized } = mapKlipyItems([
+      {
+        id: 1,
+        file: {
+          sm: sized(U('s'), 220, 124),
+          md: withBytes(U('m'), 498, GIF_MEDIA_MAX_BYTES),
+        },
+      },
+    ]);
+    expect(gifs[0].full.url).toBe(U('m'));
+    expect(oversized).toBe(0);
+  });
+
+  it('leaves a result out when nothing it has fits, and never offers a tiny one over the ceiling', () => {
+    const { gifs, dropped, oversized } = mapKlipyItems([
+      { id: 1, file: { sm: withBytes(U('s'), 220, OVER), md: withBytes(U('m'), 498, OVER) } },
+      {
+        id: 2,
+        file: {
+          xs: withBytes(U('x2'), 90, OVER),
+          sm: withBytes(U('s2'), 220, 50_000),
+          md: withBytes(U('m2'), 498, 80_000),
+        },
+      },
+    ]);
+    expect(gifs.map((g) => g.id)).toEqual(['2']);
+    expect(gifs[0].tiny).toBeUndefined();
+    expect(dropped).toBe(0);
+    expect(oversized).toBe(2);
+  });
+});
 
 describe('mapKlipyItems', () => {
   it('keeps the declared size of the preview and of the sent rendition, and nothing else', () => {

@@ -348,8 +348,9 @@ export class CreatePostDto {
   @Type(() => PostMediaDto)
   images?: PostMediaDto[];
 
-  @IsString()
+  /** The form the post carries: a uuid or nothing, refused with a 400 otherwise (as on update). */
   @IsOptional()
+  @IsUUID()
   attachedFormId?: string;
 
   @IsArray()
@@ -364,8 +365,13 @@ export class CreatePostDto {
   @Type(() => FormInputDto)
   forms?: FormInputDto[];
 
-  @IsString()
+  /**
+   * Publish AS this association (`canPostAs` decides whether the author may). A uuid or nothing: a
+   * malformed id is the request's error, refused here with a 400 before it is compared to a uuid
+   * column.
+   */
   @IsOptional()
+  @IsUUID()
   associationId?: string;
 
   /**

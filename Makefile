@@ -317,6 +317,7 @@ test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/workflow-expressions.test.sh
+	@bun .github/scripts/tests/action-pins.test.mjs
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
@@ -378,11 +379,13 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/backlog-fragments.test.mjs
+	@bun .github/scripts/tests/backlog-plan.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/api-error-cors.test.mjs
+	@bun .github/scripts/tests/nginx-body-buffer.test.mjs
 	@bun .github/scripts/tests/live-segments-route.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
@@ -412,6 +415,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun test tools/store-screenshots
 	@bun test tools/call-audio-fidelity
 	@bun test tools/video-av-sync
+	@bun test tools/sfu-e2ee-probe
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and
@@ -486,6 +490,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/usability-selftest.mjs
 	@bun tools/cross-client-harness/archive/sourcestamp-selftest.mjs
 	@bun tools/cross-client-harness/archive/selector-selftest.mjs
+	@bun tools/cross-client-harness/archive/purgedevices-selftest.mjs
 	@bun tools/cross-client-harness/archive/caption-selftest.mjs
 	@bun tools/cross-client-harness/archive/picker-selftest.mjs
 	@bun tools/cross-client-harness/archive/names-selftest.mjs

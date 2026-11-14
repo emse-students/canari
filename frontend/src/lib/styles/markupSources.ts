@@ -31,7 +31,7 @@
  * Test-only, deliberately: no runtime code reads its own source tree.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 
 /**
  * Every `.svelte` file under `dir`, recursively.
@@ -53,14 +53,28 @@ export function svelteFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * The GENERATED trees under `src/lib`, never written by hand and not in git: the Paraglide message
+ * modules (some 5 600 `.ts` files, nine in ten of the whole tree), the WASM binding and the
+ * protobuf module. A gate about what the code declares has nothing to read there.
+ */
+const GENERATED_LIB_DIRS = new Set(['paraglide', 'wasm', 'proto']);
+
+/**
  * Every shipped source file under `dir`, recursively: `.svelte` and `.ts`, tests excluded (a test
  * may quote the very idiom a gate forbids). For the gates that read CODE as well as markup.
+ *
+ * THE GENERATED TREES ARE SKIPPED ({@link GENERATED_LIB_DIRS}). Read, they were nine files in ten of
+ * every sweep: `accentTokens.test.ts` read and comment-stripped some 6 500 files per test, ran
+ * 10-21 s each under the full suite and timed out three tests while asserting nothing wrong.
  */
 export function shippedSourceFiles(dir: string, out: string[] = []): string[] {
+  const inLib = basename(dir) === 'lib';
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) shippedSourceFiles(full, out);
-    else if (/\.(svelte|ts)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) out.push(full);
+    if (entry.isDirectory()) {
+      if (!(inLib && GENERATED_LIB_DIRS.has(entry.name))) shippedSourceFiles(full, out);
+    } else if (/\.(svelte|ts)$/.test(entry.name) && !entry.name.endsWith('.test.ts'))
+      out.push(full);
   }
   return out;
 }

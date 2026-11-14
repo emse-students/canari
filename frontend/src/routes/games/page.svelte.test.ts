@@ -11,12 +11,14 @@ const api = vi.hoisted(() => ({
   board: vi.fn(),
   me: vi.fn(),
   promos: vi.fn(),
+  stats: vi.fn(),
 }));
 vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   fetchMinesweeperLeaderboard: api.board,
   fetchMinesweeperMe: api.me,
   fetchMinesweeperPromos: api.promos,
+  fetchMinesweeperStats: api.stats,
 }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u-1' }));
 vi.mock('$lib/components/settings/MinesweeperModal.svelte', () => ({
@@ -57,6 +59,17 @@ beforeEach(() => {
       { promo: 2026, players: 12 },
     ],
     mine: 2026,
+  });
+  api.stats.mockResolvedValue({
+    played: 5,
+    won: 3,
+    lost: 2,
+    winRate: 0.6,
+    bestMs: 61_000,
+    averageMs: 70_000,
+    medianMs: 69_000,
+    rank: 3,
+    recent: [],
   });
   api.board.mockImplementation(async (_limit: number, _offset: number, promo?: number) => ({
     entries: promo === undefined ? [entry(1), entry(2)] : [entry(1, 'u-1')],
@@ -110,5 +123,26 @@ describe('the games page', () => {
       ?.click();
     await settle();
     expect(document.body.textContent).toContain(m.games_promo_none());
+  });
+
+  it('dates every record', async () => {
+    component = mount(Page, { target: document.body });
+    await settle();
+    const dates = [...document.querySelectorAll('[data-testid="games-date"]')];
+    expect(dates).toHaveLength(2);
+    expect(dates[0].textContent).toContain('2026');
+  });
+
+  it('carries the Stats tab, which loads the reader record only when opened', async () => {
+    component = mount(Page, { target: document.body });
+    await settle();
+    expect(api.stats).not.toHaveBeenCalled();
+    [...document.querySelectorAll<HTMLElement>('button, [role="tab"]')]
+      .find((b) => b.textContent?.trim() === m.minesweeper_tab_stats())
+      ?.click();
+    await settle();
+    expect(api.stats).toHaveBeenCalledOnce();
+    expect(document.querySelector('[data-testid="games-stats"]')?.textContent).toContain('60 %');
+    expect(document.querySelector('[data-testid="games-ranking"]')).toBeNull();
   });
 });

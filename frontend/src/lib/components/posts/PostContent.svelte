@@ -10,7 +10,7 @@
   import { ReelStream } from '$lib/reels/reelStream.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
-  import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
+  import { extractPreviewUrls } from '$lib/utils/chat/messageDisplay';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount, tick } from 'svelte';
@@ -119,7 +119,8 @@
     lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
 
-  const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
+  /** One preview per distinct link of the post, in the order of the text (owner, 2026-11-13). */
+  const previewLinks = $derived(post.markdown ? extractPreviewUrls(post.markdown) : []);
 
   /**
    * Which attachments have come near the viewport, by media id.
@@ -249,9 +250,9 @@
         </button>
       {/if}
     </div>
-    {#if firstLink}
-      <LinkPreviewCard url={firstLink} />
-    {/if}
+    {#each previewLinks as url (url)}
+      <LinkPreviewCard {url} />
+    {/each}
   </div>
 {/if}
 

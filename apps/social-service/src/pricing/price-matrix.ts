@@ -1,8 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   bucketFor,
+  cheapestCursus,
   findOverlappingBuckets,
   OTHERS_BUCKET_ID,
+  type CursusChoice,
+  type CursusFacts,
   type Dimension,
   type PricingFacts,
 } from './audience';
@@ -79,8 +82,11 @@ export function allCellKeys(dimensions: Dimension[]): string[] {
   );
 }
 
-/** Which cell a submitter falls in. Exactly one, always - `others` in each dimension that misses. */
-export function cellKeyFor(matrix: PriceMatrix, facts: PricingFacts): string {
+/**
+ * Which cell a submitter falls in, through ONE cursus. Exactly one, always - `others` in each
+ * dimension that misses.
+ */
+export function cellKeyFor(matrix: PriceMatrix, facts: CursusFacts): string {
   return cellKey(matrix.dimensions.map((d) => bucketFor(d, facts)));
 }
 
@@ -94,7 +100,7 @@ export function cellKeyFor(matrix: PriceMatrix, facts: PricingFacts): string {
  */
 export function resolveCellPrice(
   matrix: PriceMatrix,
-  facts: PricingFacts,
+  facts: CursusFacts,
   subject: PricedSubject = 'form'
 ): CellValue {
   const key = cellKeyFor(matrix, facts);
@@ -102,6 +108,23 @@ export function resolveCellPrice(
     throw new BadRequestException(NO_CELL_MESSAGE[subject](key));
   }
   return matrix.cells[key];
+}
+
+/**
+ * The cell a PERSON pays when the grid is the whole price (a boutique product): the cheapest cell
+ * over their cursus (D32), `null` only when every cursus lands on an unavailable one. The returned
+ * view is the one the price came from, for the log.
+ */
+export function cheapestCell(
+  matrix: PriceMatrix,
+  facts: PricingFacts,
+  subject: PricedSubject = 'form'
+): CursusChoice<CellValue> {
+  return cheapestCursus(
+    facts,
+    (view) => resolveCellPrice(matrix, view, subject),
+    (cell) => cell
+  );
 }
 
 /**
@@ -243,13 +266,14 @@ export interface PricingView {
 }
 
 /**
- * Resolves the profile dimensions for one submitter and returns what is left.
+ * Resolves the profile dimensions for one submitter, through ONE cursus - the winner the caller
+ * chose - and returns what is left.
  *
  * `others` is included in every answer dimension, exactly as `allCellKeys` does, so "the person has
  * not answered yet" is a priced state rather than a gap - which is what lets the page show a total
  * from the first render.
  */
-export function pricingViewFor(matrix: PriceMatrix, facts: PricingFacts): PricingView {
+export function pricingViewFor(matrix: PriceMatrix, facts: CursusFacts): PricingView {
   const answerDims: { index: number; dimension: Extract<Dimension, { kind: 'answer' }> }[] = [];
   const resolved: (string | null)[] = matrix.dimensions.map((d, index) => {
     if (d.kind === 'answer') {

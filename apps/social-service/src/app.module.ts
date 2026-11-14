@@ -24,6 +24,7 @@ import { LivesModule } from './lives/lives.module';
 import { BirthdaysModule } from './birthdays/birthdays.module';
 import { HealthController } from './health.controller';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
@@ -81,5 +82,7 @@ import { typeormSynchronize } from './typeorm-synchronize';
     BirthdaysModule,
   ],
   controllers: [HealthController],
+  // The one global guard: it validates declared path parameters before any other guard runs.
+  providers: [ROUTE_PARAMS_GUARD],
 })
 export class AppModule {}

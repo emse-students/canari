@@ -13,7 +13,14 @@
 // does, rather than opening one per request.
 //
 // Usage: bun client.mjs <url> <stop-file> [concurrency] [keepalive|close] [bound-ms]
+//
+// IT ENDS WITH ITS TEST, WHICHEVER WAY THE TEST ENDS. The stop file is one ending; the stop file's
+// DIRECTORY disappearing is the other - the test's cleanup removes it on every exit, a failure
+// included, and a client that waited only for the file looped on for hours after a failed run,
+// keeping every transport error it met (13 GB across three leaked clients, 2026-11-14). So the loop
+// also ends when the directory is gone, and `failed` keeps only what it prints.
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const [url, stopFile, concurrencyArg, mode, boundArg] = process.argv.slice(2);
 const concurrency = Number(concurrencyArg ?? 4);
@@ -29,9 +36,14 @@ let maxMs = 0;
 const failed = [];
 let lastFailedSent = null;
 let lastOkSent = null;
+/** The first FAILED_KEPT failures are printed; the rest are counted, never held. */
+const FAILED_KEPT = 20;
+const testDir = dirname(stopFile);
+/** The test is over: its stop file exists, or its directory - and so the test - is gone. */
+const testOver = () => existsSync(stopFile) || !existsSync(testDir);
 
 async function worker() {
-  while (!existsSync(stopFile)) {
+  while (!testOver()) {
     const started = Date.now();
     let key;
     try {
@@ -56,13 +68,12 @@ async function worker() {
       key = `transport:${e?.code ?? e?.message ?? e}`;
     }
     maxMs = Math.max(maxMs, Date.now() - started);
+    const sent = new Date(started).toISOString();
     if (key !== '200') {
-      const sent = new Date(started).toISOString();
-      failed.push({ key, sent, ms: Date.now() - started });
+      if (failed.length < FAILED_KEPT) failed.push({ key, sent, ms: Date.now() - started });
       if (lastFailedSent === null || sent > lastFailedSent) lastFailedSent = sent;
-    } else {
-      const sent = new Date(started).toISOString();
-      if (lastOkSent === null || sent > lastOkSent) lastOkSent = sent;
+    } else if (lastOkSent === null || sent > lastOkSent) {
+      lastOkSent = sent;
     }
     statuses.set(key, (statuses.get(key) ?? 0) + 1);
   }
@@ -74,7 +85,7 @@ console.log(
     statuses: Object.fromEntries(statuses),
     versions: Object.fromEntries(versions),
     maxMs,
-    failed: failed.slice(0, 20),
+    failed,
     lastFailedSent,
     lastOkSent,
   })

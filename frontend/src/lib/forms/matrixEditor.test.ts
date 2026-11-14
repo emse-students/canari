@@ -84,7 +84,8 @@ describe('a new question, and where it goes', () => {
     const matrix = newQuestion('matrix_single');
     expect(matrix.rows).toHaveLength(1);
     expect(matrix.options).toHaveLength(1);
-    expect(newQuestion('product_grid').required).toBe(true);
+    // A grid's "Obligatoire" switch starts off (owner, 2026-11-13).
+    expect(newQuestion('product_grid').required).toBe(false);
     expect(newQuestion('product_grid').productGrid).toBeTruthy();
     expect(newQuestion('linear_scale').scale).toEqual({ min: 1, max: 5 });
     expect(newQuestion('single_choice').options).toHaveLength(1);

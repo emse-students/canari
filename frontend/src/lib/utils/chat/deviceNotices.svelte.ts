@@ -11,6 +11,7 @@ import {
   isNewToItsOwner,
   type DeviceEvent,
   type KeyFirstSight,
+  type MembershipEvidence,
 } from '$lib/mls-client/deviceTrust';
 import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
@@ -102,10 +103,13 @@ export interface DeviceNoticeContext {
     }
   >;
   /**
-   * The epochs at which this device saw `userId` leave the group's tree (`IMlsService.removalEpochs`)
-   * - a self-admitted entry after one is a member coming back, not a new person.
+   * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`
+   * (`IMlsService.membershipEvidence`): the first epoch it saw the user hold a leaf of a tree it
+   * accepted, unless another member's commit removed every leaf of theirs since (retired is not
+   * proven) - a self-admitted entry after such a sighting is a member coming back. Never the
+   * server's word.
    */
-  removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
+  membershipEvidence: (groupId: string, userId: string) => Promise<MembershipEvidence>;
   /**
    * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
    * commitAcceptedAt`, the commit log's `createdAt`), as a {@link ServerInstant}; throws when the
@@ -394,6 +398,70 @@ export function dismissDeviceNotice(key: string): void {
   if (!boundAccount || !pending.delete(key)) return;
   console.log('[DEVICE_NOTICE] new-device alert seen');
   writeStored(boundAccount);
+}
+
+/**
+ * Drops every pending alert whose device the server says is REVOKED: a device that has left the
+ * account through a revocation - "Ce n'est pas moi" or the device list, on any device of the account
+ * - leaves no alert behind to act on (Mi 9T, 2026-10-28: a reinstall listed devices long gone).
+ *
+ * THE FACT IS THE REVOCATION ROW, never the device list: that list is read from published key
+ * packages, so a device that is still enrolled but has none usable right now is absent from it, and
+ * reading its absence as a departure would hide the one alert that can still revoke it. `isRevoked`
+ * answers `true` only on the server's answer; a failure is `false` (`IMlsService.isDeviceRevoked`),
+ * so an unreachable server drops nothing.
+ *
+ * @param account the account `isRevoked` asks for; nothing is dropped when it is not the bound one
+ * @returns how many alerts were dropped
+ */
+export async function dropNoticesOfRevokedDevices(
+  account: string,
+  isRevoked: (deviceId: string) => Promise<boolean>
+): Promise<number> {
+  if (!account || boundAccount !== account) {
+    console.warn(
+      `[DEVICE_NOTICE] revoked-device check skipped: the asked account is ${account ? 'not the bound one' : 'empty'} (${boundAccount ? 'an account is bound' : 'none bound'})`
+    );
+    return 0;
+  }
+  const deviceIds: string[] = [];
+  for (const n of pending.values()) if (!deviceIds.includes(n.deviceId)) deviceIds.push(n.deviceId);
+  if (deviceIds.length === 0) return 0;
+  const revoked: string[] = [];
+  for (const deviceId of deviceIds) {
+    try {
+      if (await isRevoked(deviceId)) revoked.push(deviceId);
+    } catch (e) {
+      console.warn(
+        `[DEVICE_NOTICE] whether ${deviceId.slice(0, 8)}... is revoked could not be read - its alert stays: ${String(e).slice(0, 120)}`
+      );
+    }
+  }
+  // Re-read after the awaits: the account may have changed, or the alert been dismissed, meanwhile.
+  if (boundAccount !== account) {
+    console.warn(
+      '[DEVICE_NOTICE] revoked-device check abandoned: the account changed while it was asked'
+    );
+    return 0;
+  }
+  if (revoked.length === 0) {
+    console.log(
+      `[DEVICE_NOTICE] revoked-device check: ${deviceIds.length} alerted device(s), none revoked`
+    );
+    return 0;
+  }
+  let dropped = 0;
+  // Deleting the entry being visited is safe while iterating a Map.
+  for (const n of pending.values()) {
+    if (!revoked.includes(n.deviceId)) continue;
+    pending.delete(n.key);
+    dropped += 1;
+    console.log(
+      `[DEVICE_NOTICE] alert dropped: ${n.deviceId.slice(0, 8)}... is revoked, it is no longer on the account`
+    );
+  }
+  if (dropped > 0) writeStored(account);
+  return dropped;
 }
 
 /** Records an alert for the bound account unless that device and key were announced before. */
@@ -817,7 +885,7 @@ async function noteUninvitedEntries(
         continue;
       }
       if (decided.kind !== 'new-person' && decided.kind !== 'unvouched-device') {
-        reportUninvitedEntry(event, decided.kind);
+        reportUninvitedEntry(event, decided.kind, decided.evidence);
         continue;
       }
       // THE TIME FIRST, THEN THE ACCUSATION. The report logs at ERROR, and an entry that stays owed
@@ -830,7 +898,7 @@ async function noteUninvitedEntries(
         owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
         continue;
       }
-      reportUninvitedEntry(event, decided.kind);
+      reportUninvitedEntry(event, decided.kind, decided.evidence);
       if (dating !== 'settled') {
         await writeUninvitedLine(event, decided.kind, messageId, dating, ctx);
       }
@@ -851,13 +919,31 @@ type NoticeConversation =
  * Whether an entry no member made is said, and as what ({@link UninvitedEntryKind}).
  *
  * A LEGITIMATE REJOIN IS NOT WRITTEN: the other person of a 1:1 conversation (`direct-peer`), or a
- * user this device SAW leave the tree before the entering epoch (`returning`, from the departures the
- * MLS layer recorded - `removalEpochs`). Both are reported with their kind, so the count still says
- * how often they happen. Anything else is a `new-person` and is written. A departure this device
- * never saw cannot be known here, so a returning member reads as `new-person` on such a device.
+ * member coming back whom THIS DEVICE PROVES was a member (`returning`). Both are reported with their
+ * kind, so the count still says how often they happen. Anything else is a `new-person` and is
+ * written.
  *
- * A departure read that fails throws: the entry stays owed to the next delivery rather than being
- * guessed either way.
+ * `returning` IS PROVEN ON THIS DEVICE, NEVER TAKEN FROM THE SERVER (owner, 2026-11-14: the proof is
+ * on the device). The proof is `membershipEvidence`: the first epoch at which this device saw the
+ * entrant's USER hold a leaf of a tree of this group that it accepted itself - a Welcome or GroupInfo
+ * it joined by (signed by a member's leaf), a commit it merged (signed by a member), a tree it held
+ * at a load - and that no other member's commit RETIRED since (every leaf of theirs removed by
+ * another user: owner, 2026-11-14, "retired is not proven"). Kept per user in the sealed MLS
+ * state, so any device of the member, a reinstall
+ * included, is the member, and SCOPED TO THE LINEAGE this device holds: a forget or a fresh join of
+ * the group starts an empty record, so a sighting from another copy of the group (one the server
+ * may have fabricated) never carries over. A sighting BEFORE the entering epoch is `returning`.
+ *
+ * NO SIGHTING BEFORE THE ENTRY IS `new-person`: NOT PROVEN, and said so - written in the
+ * conversation, logged at ERROR, reported with `watchedFromEpoch` (where this device's record of the
+ * group starts), so the count separates "this device was not there yet when the person left" from
+ * "it watched and never saw them". There is NO FALLBACK to the delivery service's roster: a server
+ * that let an outsider in can seat them on the roster it serves, and a verdict it could flip is the
+ * one this line exists to keep from it. The failure direction is an accusation of a member the
+ * device could not vouch for (noise, measured), never a silent pass.
+ *
+ * A read of the evidence that fails throws: the entry stays owed to the next delivery rather than
+ * being guessed either way.
  *
  * `not-self-admitted`: the event is no longer an entry no member made ({@link isSelfAdmittedEntry}).
  * The predicate is enforced HERE, where the decision is acted on, because an entry retried from the
@@ -872,7 +958,7 @@ async function decideUninvitedEntry(
   | 'owed'
   | 'not-a-conversation'
   | 'not-self-admitted'
-  | { kind: UninvitedEntryKind; convo: NoticeConversation }
+  | { kind: UninvitedEntryKind; convo: NoticeConversation; evidence?: MembershipEvidence }
 > {
   if (!isSelfAdmittedEntry(event)) return 'not-self-admitted';
   // A key group, when this session already knows it as one: every member enters it this way.
@@ -895,9 +981,19 @@ async function decideUninvitedEntry(
   if (type === 'direct' && convo.directPeerId && canonicalUserId(convo.directPeerId) === userId) {
     return { kind: 'direct-peer', convo };
   }
-  const departures = await ctx.removalEpochs(event.groupId, userId);
-  if (departures.some((epoch) => epoch < event.epoch)) return { kind: 'returning', convo };
-  return { kind: 'new-person', convo };
+  const evidence = await ctx.membershipEvidence(event.groupId, userId);
+  if (evidence.firstSeenEpoch !== null && evidence.firstSeenEpoch < event.epoch) {
+    console.info(
+      `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): a member - this device saw them at epoch ${evidence.firstSeenEpoch}`
+    );
+    return { kind: 'returning', convo, evidence };
+  }
+  // NOT PROVEN, and no fallback. What accuses is the report (`reportUninvitedEntry`, ERROR), which
+  // carries where this device's record starts; this line says why the device could not vouch.
+  console.warn(
+    `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): NOT PROVEN a member on this device - first seen ${evidence.firstSeenEpoch ?? 'never'}, record from epoch ${evidence.watchedFromEpoch ?? 'none'}`
+  );
+  return { kind: 'new-person', convo, evidence };
 }
 
 /** Writes the uninvited-entry line, dated by the commit that let the entrant in. */

@@ -1,0 +1,3 @@
+### Fixed - the section swipe works from a channel row of a community you manage; a Wi-Fi cut is no longer "slow, not unreachable"
+
+The drag-and-drop library stopped the `touchstart` of managed channel rows, so the shell never saw a swipe starting there (#84): it now listens in the capture phase (`frontend/src/lib/utils/swipeNavigation.ts`, [section-navigation](docs/wiki/frontend/section-navigation.md)). A request whose deadline expired after the link went quiet was logged "answers arrived meanwhile" because of an answer from before the cut; an answer must now be fresh (`connectivity.svelte.ts`).

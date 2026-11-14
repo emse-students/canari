@@ -18,8 +18,9 @@ const SECOND_FILE = Buffer.alloc(1024, 7);
 
 type Internals = {
   uploadLocks: Map<string, Promise<void>>;
-  logger: { log: jest.Mock; warn: jest.Mock };
+  logger: { log: jest.Mock; warn: jest.Mock; debug: jest.Mock };
   storage: { putFileStream: jest.Mock };
+  meta: { items: Record<string, unknown> };
   setAccess: jest.Mock;
   persistMetadata: jest.Mock;
   chunkTempPath: (id: string) => string;
@@ -29,10 +30,12 @@ function service(putDelayMs = 0) {
   const svc = Object.create(MediaService.prototype) as MediaService;
   const internals = svc as unknown as Internals;
   internals.uploadLocks = new Map();
-  internals.logger = { log: jest.fn(), warn: jest.fn() };
+  internals.logger = { log: jest.fn(), warn: jest.fn(), debug: jest.fn() };
   internals.storage = {
     putFileStream: jest.fn(() => new Promise<void>((resolve) => setTimeout(resolve, putDelayMs))),
   };
+  // An empty index: the member's daily bound reads it at assembly.
+  internals.meta = { items: {} };
   internals.setAccess = jest.fn();
   internals.persistMetadata = jest.fn().mockResolvedValue(undefined);
   return { svc, internals };

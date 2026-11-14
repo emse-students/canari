@@ -11,13 +11,25 @@ import { Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import {
   PlatformConfig,
+  type CallRelay,
   type CallsMode,
   type CheckpointSkipMode,
+  type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
   type PushMode,
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
+import { RETENTION_SETTINGS, type RetentionDays } from './retention';
+import {
+  notifyMediaRetentionChanged,
+  readMediaRetentionHeld,
+  retentionAppliedState,
+  type MediaHeldRetention,
+  type MediaRefusalReason,
+  type MediaRetentionReport,
+  type RetentionAppliedState,
+} from './retention-notice';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
 import { describeHttpError } from '../common/http-error-log';
@@ -26,6 +38,18 @@ import {
   providerActivatedUrl,
 } from '../payment/social-internal-client';
 import type { PaymentProviderId } from '../payment/payment-provider.interface';
+
+/** Whether media-service stamps the durations the platform holds, for the admin page. */
+export type RetentionApplied = {
+  state: RetentionAppliedState;
+  /** Why media-service answered without its durations (`state: 'refused'`), or null. */
+  refusal: { status: number; reason: MediaRefusalReason } | null;
+  configured: MediaHeldRetention;
+  /** What media-service holds, null before its first read or when it did not say. */
+  media: MediaHeldRetention | null;
+  /** When media-service read what it holds (ISO), or null. */
+  mediaReadAt: string | null;
+};
 
 export type PlatformConfigPublic = {
   maintenanceEnabled: boolean;
@@ -37,7 +61,9 @@ export type PlatformConfigPublic = {
   pushMode: PushMode;
   checkpointSkipMode: CheckpointSkipMode;
   liveReplaysMode: LiveReplaysMode;
-};
+  groupCallsMode: GroupCallsMode;
+  callRelay: CallRelay;
+} & RetentionDays;
 
 /**
  * Typed codes in the body of the platform-admin refusals, so the admin screen maps a refusal by
@@ -70,7 +96,19 @@ const DEFAULT_ROW: PlatformConfig = {
   pushMode: 'full',
   checkpointSkipMode: 'off',
   liveReplaysMode: 'off',
+  groupCallsMode: 'off',
+  callRelay: 'none',
+  lydiaContractAnniversary: null,
+  lydiaContract: null,
+  ...retentionDefaults(),
 };
+
+/** Every retention setting at the value its column is created with (migration 025). */
+function retentionDefaults(): RetentionDays {
+  return Object.fromEntries(
+    RETENTION_SETTINGS.map((setting) => [setting.key, setting.defaultDays])
+  ) as RetentionDays;
+}
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
 @Injectable()
@@ -102,6 +140,69 @@ export class PlatformService implements OnModuleInit {
    * told: it may answer a pre-write value for the time of one query it started before the write.
    */
   private configInFlight: Promise<PlatformConfigPublic> | null = null;
+
+  /**
+   * The last retention-applied state this process LOGGED (`state` plus what distinguishes it), so a
+   * page view logs only a CHANGE - an admin reloading the page while media-service is behind writes
+   * one line, not one per load. Null before the first check.
+   */
+  private lastRetentionApplied: string | null = null;
+
+  /**
+   * Whether media-service stamps new conversation files with the durations the platform holds -
+   * compared from the columns and what media-service reports holding, never remembered here, so a
+   * lost notice is SEEN on the admin page until it is re-sent (docs/wiki/retention-settings.md).
+   */
+  async retentionApplied(): Promise<RetentionApplied> {
+    const row = await this.repo.findOneOrFail({ where: { id: 1 } });
+    const configured = {
+      chatReelDays: row.retentionChatReelDays,
+      idleFileDays: row.retentionIdleFileDays,
+    };
+    const media = await readMediaRetentionHeld();
+    const state = retentionAppliedState(configured, media);
+    this.logRetentionAppliedChange(state, configured, media);
+    return {
+      state,
+      refusal: media.kind === 'refused' ? { status: media.status, reason: media.reason } : null,
+      configured,
+      media: media.kind === 'held' ? media.held : null,
+      mediaReadAt: media.kind === 'held' ? media.readAt : null,
+    };
+  }
+
+  /** One line per CHANGE of the retention-applied state, at the level its new state deserves. */
+  private logRetentionAppliedChange(
+    state: RetentionAppliedState,
+    configured: MediaHeldRetention,
+    media: MediaRetentionReport
+  ): void {
+    const detail =
+      media.kind === 'held'
+        ? media.held
+          ? `media holds ${media.held.chatReelDays} / ${media.held.idleFileDays}`
+          : 'media holds nothing yet'
+        : media.kind === 'refused'
+          ? `media answered ${media.status} (${media.reason})`
+          : `media unreachable (${media.cause})`;
+    const key = `${state}:${detail}`;
+    if (key === this.lastRetentionApplied) return;
+    const previous = this.lastRetentionApplied;
+    this.lastRetentionApplied = key;
+    const line = `[RETENTION] retention applied to files: ${state} - configured chat reels ${configured.chatReelDays} / idle files ${configured.idleFileDays} days, ${detail}`;
+    if (state === 'applied') {
+      if (previous !== null) this.logger.log(line);
+      return;
+    }
+    this.logger.warn(line);
+  }
+
+  /** Sends the notice again (the admin's "Renvoyer"), then answers the state it left. */
+  async resendRetentionNotice(by: string): Promise<RetentionApplied> {
+    this.logger.log(`[RETENTION] notice to media-service re-sent by=${by}`);
+    await notifyMediaRetentionChanged(this.logger);
+    return this.retentionApplied();
+  }
 
   /**
    * Returns current platform settings for public version endpoint and auth guards.
@@ -239,6 +340,35 @@ export class PlatformService implements OnModuleInit {
       }
       changes.liveReplaysMode = dto.liveReplaysMode;
     }
+    if (dto.groupCallsMode !== undefined) {
+      // Whether a group conversation may start a call - a peer-to-peer mesh that shows members'
+      // network addresses to each other - so who moved it, and when, is a warn line like callsMode's.
+      if (dto.groupCallsMode !== row.groupCallsMode) {
+        this.logger.warn(`groupCallsMode ${row.groupCallsMode} -> ${dto.groupCallsMode} by=${by}`);
+      }
+      changes.groupCallsMode = dto.groupCallsMode;
+    }
+    if (dto.callRelay !== undefined) {
+      // Which relay carries a group call - with `call-service`, every group call's media crosses our
+      // server (encrypted end to end) - so who moved it, and when, is a warn line like callsMode's.
+      if (dto.callRelay !== row.callRelay) {
+        this.logger.warn(`callRelay ${row.callRelay} -> ${dto.callRelay} by=${by}`);
+      }
+      changes.callRelay = dto.callRelay;
+    }
+    let retentionMoved = false;
+    for (const setting of RETENTION_SETTINGS) {
+      const wanted = dto[setting.key];
+      if (wanted === undefined) continue;
+      // How long members' content is kept turns on it - a duration the register and the privacy
+      // policy state - so who moved it, and when, is a warn line. It applies to content created from
+      // now on: each service stamps the expiry of a new item from the value in force.
+      if (wanted !== row[setting.key]) {
+        this.logger.warn(`${setting.key} ${row[setting.key]} -> ${wanted} days by=${by}`);
+        retentionMoved = true;
+      }
+      changes[setting.key] = wanted;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -254,8 +384,11 @@ export class PlatformService implements OnModuleInit {
     this.configInFlight = null;
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay} retention=${RETENTION_SETTINGS.map((setting) => `${setting.key}:${saved[setting.key]}`).join(',')}`
     );
+    // Media-service HOLDS the durations it stamps (it has no database): told after the save, it
+    // re-reads them. Best-effort and logged; the save stands either way.
+    if (retentionMoved) await notifyMediaRetentionChanged(this.logger);
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
         this.logger.warn(`paymentProvider -> disabled by=${by}`);
@@ -347,5 +480,11 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     pushMode: row.pushMode,
     checkpointSkipMode: row.checkpointSkipMode,
     liveReplaysMode: row.liveReplaysMode,
+    groupCallsMode: row.groupCallsMode,
+    callRelay: row.callRelay,
+    retentionReelDays: row.retentionReelDays,
+    retentionLiveReplayDays: row.retentionLiveReplayDays,
+    retentionChatReelDays: row.retentionChatReelDays,
+    retentionIdleFileDays: row.retentionIdleFileDays,
   };
 }

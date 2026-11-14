@@ -3,11 +3,18 @@
  * THE COMPACT QUESTION EDITOR: one line per question, one card open at a time, the settings in one
  * icon row. Mounted through a parent that owns the bound list, as the admin pages do.
  */
-import { describe, it, expect, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, beforeEach, vi } from 'vitest';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { flushSync, mount, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import Harness from './FormQuestionsSectionHarness.test.svelte';
+
+/** Whether the estate stores each priced grid's own switch (`/api/version`), per test. */
+const gate = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/forms/gridRequiredGate', () => ({ gridRequiredSwitchOn: () => gate.on }));
+beforeEach(() => {
+  gate.on = true;
+});
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -352,20 +359,25 @@ describe('the type menus', () => {
     expect(menuItem('product_grid')).toBeNull();
   });
 
-  it('add a priced grid stored required, with its definition, opened, and tell the page', () => {
+  it('add a priced grid with its switch off, its definition, opened, and tell the page', () => {
     let told = 0;
     const { target, state } = render(three(), { onPricedGridAdded: () => (told += 1) });
     addThroughWizard(target, 'product_grid');
     const added = state.items[3];
     expect(added.type).toBe('product_grid');
-    expect(added.required).toBe(true);
+    expect(added.required).toBe(false);
     expect(added.productGrid.rows).toHaveLength(1);
     expect(added.productGrid.maxPerCell).toBe(5);
     expect(told).toBe(1);
     expect(target.querySelector('[data-testid="product-grid-editor"]')).not.toBeNull();
-    // A grid is never required on its own (the ORDER is): no required switch, no asterisk.
-    expect(byLabel(target, m.form_builder_required_label())).toBeNull();
-    expect(target.querySelectorAll('[data-testid="required-mark"]').length).toBe(1);
+    // Its own "Obligatoire" switch, as every question's, off (owner, 2026-11-13); the folded row
+    // of a required grid wears the asterisk, like any required question's.
+    const toggle = byLabel(target, m.form_builder_required_label())!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    toggle.click();
+    flushSync();
+    expect(state.items[3].required).toBe(true);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('tell the page when a grid is removed or becomes another type', () => {
@@ -403,6 +415,50 @@ describe('the type menus', () => {
     flushSync();
     cardAction(target, 'remove');
     expect(gone).toHaveLength(2);
+  });
+
+  it('mark a folded grid switched "Obligatoire" with the asterisk, and only that one', () => {
+    const grid = (id: string, required: boolean) => ({
+      id,
+      type: 'product_grid',
+      label: id,
+      required,
+      productGrid: {
+        rows: [{ id: 'r1', label: 'Vert' }],
+        columns: [{ id: 'c1', label: 'M' }],
+        maxPerCell: 5,
+        closedCells: [],
+        pricing: { mode: 'single', tiers: null, prices: { _all: { '*': 2800 } } },
+      },
+    });
+    const { target } = render([grid('on', true), grid('off', false)]);
+    const marks = target.querySelectorAll('[data-testid="required-mark"]');
+    expect(marks.length).toBe(1);
+    expect(marks[0].closest('[data-row-button]')!.textContent).toContain('on');
+  });
+
+  // [LEGACY] An estate older than the switch stores every grid required and means nothing by it:
+  // the editor draws no switch on a grid, and no asterisk on its folded row.
+  it('before the switch, draw no "Obligatoire" on a grid, and keep it on any other question', () => {
+    gate.on = false;
+    const grid = {
+      id: 'g',
+      type: 'product_grid',
+      label: 'Sweat',
+      required: true,
+      productGrid: {
+        rows: [{ id: 'r1', label: 'Vert' }],
+        columns: [{ id: 'c1', label: 'M' }],
+        maxPerCell: 5,
+        closedCells: [],
+        pricing: { mode: 'single', tiers: null, prices: { _all: { '*': 2800 } } },
+      },
+    };
+    const { target } = render([grid, three()[0]], { reveal: { id: 'g' } });
+    const marks = target.querySelectorAll('[data-testid="required-mark"]');
+    expect(marks.length).toBe(1);
+    expect(marks[0].closest('[data-row-button]')!.textContent).toContain('First');
+    expect(byLabel(target, m.form_builder_required_label())).toBeFalsy();
   });
 
   it('draw a refused save under the grid it is about', () => {

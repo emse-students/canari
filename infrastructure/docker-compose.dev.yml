@@ -111,7 +111,11 @@ services:
     # drifting. The automatic refusal in `.github/scripts/lib/ceiling.sh` stays: what made this safe
     # was a procedure and a window, never a green suite. Moving this line is a deliberate migration
     # with its own written rollback, never a dependency bump.
-    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
+    # Postgres logs every checkpoint by default (several lines an hour, 2026-11-13) and a checkpoint is
+    # routine, not an event: `log_checkpoints=off`. Changing a datastore's command recreates it at the
+    # next ordinary deploy (docs/wiki/infrastructure/logging.md).
+    command: ["postgres", "-c", "log_checkpoints=off"]
     restart: always
     expose:
       - "5432"
@@ -158,6 +162,10 @@ services:
       - "3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
+      # What one connection may send (docs/wiki/services/chat-gateway.md). Unset means the
+      # gateway's own defaults, 4096 bytes a frame and 240 frames a minute.
+      WS_MAX_FRAME_BYTES: ${WS_MAX_FRAME_BYTES:-}
+      WS_MAX_FRAMES_PER_MINUTE: ${WS_MAX_FRAMES_PER_MINUTE:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REDIS_URL: redis://redis:6379
       # Every call to another of our services goes through `mesh`, as in production - the
@@ -274,6 +282,10 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # Cloudflare Realtime's SFU app (WP-GC3): chat-delivery-service will proxy its sessions/tracks
+      # API for a group call past the mesh cap. Unset: the Cloudflare SFU leg is unavailable, no boot failure.
+      CLOUDFLARE_SFU_APP_ID: ${CLOUDFLARE_SFU_APP_ID:-}
+      CLOUDFLARE_SFU_APP_SECRET: ${CLOUDFLARE_SFU_APP_SECRET:-}
       # The iOS VoIP ring (APNs, direct): rendered from the DEV_APNS_VOIP_* secrets (env-manifest.tsv),
       # never production's names. Unset, a locked or killed iPhone is NOT rung and the service logs
       # `APNS_VOIP_* is not configured`. SANDBOX and TOPIC are deliberately NOT rendered on dev: a
@@ -343,6 +355,9 @@ services:
       # volumes), so this is not what isolates it - but a shared name is how a copy-paste of an
       # endpoint, a tool invocation or a support answer ends up pointed at the wrong one.
       GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
+      # Garage logs every S3 request and every health check at INFO (~53k lines a day on production,
+      # 2026-11-13) and nothing else worth keeping: warn and above only (docs/wiki/infrastructure/logging.md).
+      RUST_LOG: warn
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -381,6 +396,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # What one member may upload per rolling 24 hours, in bytes; unset = the service's default (2 GB).
+      MEDIA_MEMBER_DAILY_UPLOAD_BYTES: ${MEDIA_MEMBER_DAILY_UPLOAD_BYTES:-}
       # The estate's exact origin list, the one chat-gateway reads: it names the dev-server pair,
       # which this service accepts on no other ground (cors-origins.ts). Production passes none.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}

@@ -19,6 +19,8 @@ export interface SharedMediaItem {
   timestamp: number;
   media: MediaRef;
   caption?: string;
+  /** When this device met the blob's `410` (`mediaPurgedAt`): the viewer's sequence skips it. */
+  purgedAt?: number;
 }
 
 export interface SharedLinkItem {
@@ -44,6 +46,8 @@ export interface AggregatableMessage {
   timestamp: number;
   content: string;
   isDeleted?: boolean;
+  /** When this device met the media's `410`, as the stored row records it. */
+  mediaPurgedAt?: number;
   /** The server's acceptance, when the row has it: the instant shown and sorted by (`messageTime`). */
   serverTimestamp?: number;
 }
@@ -96,6 +100,7 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
         timestamp,
         media: env.media,
         caption: env.caption,
+        ...(m.mediaPurgedAt ? { purgedAt: m.mediaPurgedAt } : {}),
       };
       if (env.media.type === 'image' || env.media.type === 'video') media.push(item);
       else files.push(item);

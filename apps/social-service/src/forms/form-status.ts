@@ -40,8 +40,8 @@ export async function assertFormNotDraft(
   formId: string | null | undefined,
   what: string
 ): Promise<void> {
-  // A post's `attachedFormId` is a bare string: one that is not a uuid names no form row, and
-  // asking PostgreSQL would be a 22P02 rather than an answer.
+  // Asked by callers that do not all validate their id: one that is not a uuid names no form row,
+  // and asking PostgreSQL would be a 22P02 rather than an answer. (A post's DTOs refuse it first.)
   if (!formId || !UUID_RE.test(formId)) return;
   const rows: { status: FormStatus }[] = await manager.query(
     'SELECT status FROM forms WHERE id = $1',

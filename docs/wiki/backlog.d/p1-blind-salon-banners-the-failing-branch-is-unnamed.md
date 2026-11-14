@@ -1,4 +1,6 @@
-## P1 - blind salon banners on production: the background seed-frame open works on the bench, and the branch that fails in the field is not named yet (2026-11-04)
+## P1 - blind salon banners: the seed is absent when the push lands
+
+target: 1.7.0
 
 Production, one day of chat-delivery logs (2026-11-04): 16 `[PUSH_BLIND]` lines from 3 accounts,
 all `missing=seed`, Android `held=true`, iOS `held=false`.
@@ -40,3 +42,16 @@ cycles add a commit each. (3) The iPhone as the receiver: the same two runs with
 The frames a newcomer received sealed before its own join (the other half of the 2026-11-04 report,
 `past-epoch-application` right after an external join) are withheld by chat-delivery since
 2026-11-04 ([chat-delivery](../services/chat-delivery.md#who-a-frame-is-queued-for-and-who-owns-the-gateways-routing-set)).
+
+**Step (1) read on production 2026-11-14** (15.5 hours after the `v1.6.11` deploy, a day was not
+readable - [logging](../infrastructure/logging.md#reading-an-archive)): 6 `[PUSH_BLIND]` lines, 3
+accounts, ONE salon, all within 15 minutes; every one `missing=seed refused=none` (5 iOS
+`held=false`, 1 Android `held=true`). `refused=none` means no open ran: the seed was not there to
+open, so the failing branch is the seed's absence, not a refusal by the open. Steps (2) and (3) stay
+owed.
+
+**Step (1) again, 2026-11-14, 09:11-10:40 UTC after the `1.6.12` deploy:** 2 `[PUSH_BLIND]` lines,
+both iOS, `missing=seed held=false refused=none`, same shape as the 6 above. Still no `refused=`
+value other than `none` on production: the failing branch remains the seed's absence.
+
+**Re-triaged 2026-11-14 (owner: every owed reading is read or deleted, never left waiting).** Step (1) is read and answers the title's question: every `[PUSH_BLIND]` line on production since the `refused=` report shipped says `missing=seed refused=none` (8 lines over two windows on 2026-11-14, iOS and Android), so the failing branch is the seed's ABSENCE on the phone, never a refused open. This is a defect to find, not a reading: steps (2) and (3) are its investigation (the rig's real-size key group, then the iPhone's NSE as receiver).

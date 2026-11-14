@@ -673,7 +673,7 @@ count alone would have hidden.
 **This page's DE1-DE9 are the Graine subsystem's own dead ends and carry their own numbering.** They
 are nine of the items a four-subsystem audit produced, and that whole set was swept against `main`
 on 2026-09-12 - eight of its counts came back LARGER than claimed, so **work to the swept numbers,
-never to the audit's**: [backlog](../backlog.md#the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026-09-12).
+never to the audit's**: [backlog](../backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md).
 Two of this page's own entries moved in that sweep: the seed minted against an unsettled group can
 no longer lose the publish race (`unsettledDistributionGroups` holds it across creation), and
 `SCOPE_HAS_NO_DISTRIBUTION_GROUP` is now two codes, `WORKSPACE_`- and `CHANNEL_`-prefixed.
@@ -935,7 +935,8 @@ every line noise. The shipped predicate requires `>= 2` user-level members, and 
 conversations, one of them at epoch 284 with six devices sitting `pending` on it**.
 
 `reportSingleHolderGroups` runs hourly beside the other three reports. It WARNs at one holder, where
-there is still something to do, and ERRORs at zero, where there is not. **It repairs nothing,
+there is still something to do, and ERRORs at zero, where there is not - each conversation once per
+holder count since 2026-11-13 ([each item is accused once](../services/chat-delivery.md#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)). **It repairs nothing,
 because nothing can**: DE2 - no holder while the base is stale or absent - is terminal by RFC 9420
 construction, so the only useful moment is before it, and the only thing a server can contribute is to say which conversations are near it.
 

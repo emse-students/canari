@@ -1,5 +1,7 @@
 ## P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)
 
+target: 1.7.0
+
 Recorded from the owner's sovereignty philosophy ([durable-rules](../durable-rules.md#product-philosophy---sovereignty)).
 Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default, deterministic like
 `calls_mode` - no timer, no fallback.

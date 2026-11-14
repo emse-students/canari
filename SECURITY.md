@@ -31,9 +31,14 @@ Please report security vulnerabilities by opening a [GitHub Security Advisory](h
 
 ## What the Server Knows
 
-Canari is end-to-end encrypted: **the server never holds a message body, a media file or a
-reaction in clear.** All of it is MLS (RFC 9420) or Graine ciphertext, and media is sealed with a
+Canari is end-to-end encrypted: **the server never holds a message body or a media file in
+clear, and a reaction only in one narrow case (below).** All of it is MLS (RFC 9420) or Graine ciphertext, and media is sealed with a
 content key the client generates before upload. No server-side key can open any of it.
+
+**Known limitation, scheduled for removal:** the push notification sent for a reaction in a
+direct conversation still carries the emoji (and the reactor's display name) in clear through the
+server on its way to the push provider. The reaction itself, as stored and relayed in the
+conversation, is ciphertext.
 
 That guarantee covers CONTENT. It does not cover everything, and the exposures below are accepted
 deliberately rather than overlooked - each exists because a named feature cannot work without it.
@@ -55,7 +60,8 @@ and `[RENAME_GROUP]` until 2026-09-16; they are now printed as a byte count, the
 already used for the identical value. **Any new log line touching a column in the table above owes
 the same treatment.**
 
-What the server does NOT have, and cannot obtain: message content, media content, reactions, the
+What the server does NOT have, and cannot obtain: message content, media content, reactions (bar
+the push limitation above), the
 MLS group secrets, or any key that would open them.
 
 ## Security Best Practices

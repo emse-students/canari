@@ -25,12 +25,18 @@
 
   let near = $state(false);
 
-  const reserved = $derived(reservesAspectRatio(resolveMediaType(media)));
+  /** A picture or a video, drawn at the comment's picture width. */
+  const visual = $derived(reservesAspectRatio(resolveMediaType(media)));
+  /**
+   * The box takes the picture's shape only when its size is KNOWN: a comment GIF sent before
+   * 2026-11-13 carries none, and the 4:3 fallback cropped it. Unsized, the picture keeps its own.
+   */
+  const reserved = $derived(visual && !!media.width && !!media.height);
 </script>
 
 <div
   data-comment-media
-  class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
+  class="relative mt-1.5 w-full overflow-hidden rounded-xl {visual
     ? `${compact ? 'max-w-24' : 'max-w-56'} bg-black/5 dark:bg-white/5`
     : compact
       ? 'max-w-24'
