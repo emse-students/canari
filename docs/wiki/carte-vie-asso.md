@@ -680,9 +680,10 @@ serve from one row.
 
 ## After the release that carries #3526: republish every live carte once
 
-**PREREQUISITE: the release the republication is made on must carry #3542 as well as #3526.**
-Before #3542, a publish made from a platform admin account is not safe to make; from #3542 on, the
-server drops from a publication the accounts no public roster may carry ([rules](#rules)).
+**PREREQUISITE: the release the republication is made on must carry #3542 as well as #3526.** From
+#3542 on, the server drops from a publication every account no public roster may carry, whoever
+publishes ([rules](#rules)). A carte published before that release keeps its stored document until it
+is republished, so the republication is also what brings every live carte under that rule.
 
 **Owed by the lead, once, right after the stable carrying #3526 is in production** (owner,
 2026-11-14, [decisions](backlog.d/owner-decisions-of-2026-11-14.md)). Delete this section when the
@@ -726,11 +727,14 @@ checks of step 4 read zero on production.
      marks those rosters stale, names them in its alert with a retry each; retry, then publish. If it
      repeats, the social service's WARN `[CARTE] publish of map <id> refused: CARTE_ROSTER_MISSING`
      carries the association ids.
-4. **Verify.** The anonymous document, `GET /api/public/carte?space=<the space's id>`, carries no
-   `members` key anywhere (it never does: `publicCarte` strips it) and, after the republish, the
-   stored row has no line-only entry: the two counts of the
+4. **Verify.** The anonymous document, `GET /api/public/carte?space=<formation>:<campus>` (the
+   space's natural key, as above), carries no `members` key anywhere (it never does: `publicCarte`
+   strips it) and, after the republish, the stored row has no line-only entry: the two counts of the
    [legacy-compatibility entry](legacy-compatibility.md) (no card or roster member without a
-   `users` row; no non-empty line-only entry) read `0` on production.
+   `users` row; no non-empty line-only entry) read `0` on production. And the stored publication
+   names no account outside the current public rosters: every `userId` of its cards and its
+   directory rosters appears on the roster of its association as a non-admin member reads it
+   (`GET /api/associations/<id>/members`).
 
 ## Rendering traps
 

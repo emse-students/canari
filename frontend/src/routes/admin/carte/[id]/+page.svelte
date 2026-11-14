@@ -347,9 +347,18 @@
   /**
    * Whether a publish or an export was refused for {@link currentBlock}. Its message is DERIVED from
    * the block, kept apart from `error`, so it goes by itself once the block lifts and a retry never
-   * wipes an unrelated error.
+   * wipes an unrelated error. Cleared where the block can lift ({@link settleBlockRefusal}), so a
+   * later failure does not bring the notice back without a new click.
    */
   let blockRefused = $state(false);
+
+  /** Forgets the refusal once nothing blocks any more; called after each change that can lift it. */
+  function settleBlockRefusal(): void {
+    if (blockRefused && !currentBlock) {
+      Log.d('admin.carte.id.settleBlockRefusal: the block lifted');
+      blockRefused = false;
+    }
+  }
   const blockNotice = $derived.by(() => {
     if (!blockRefused || !currentBlock) return null;
     if (currentBlock.rosters.length > 0) {
@@ -367,6 +376,7 @@
     rosterLoads = { ...rosterLoads, [associationId]: { state: 'loading' } };
     const load = await loadRoster(associationId, listMembers);
     rosterLoads = { ...rosterLoads, [associationId]: load };
+    settleBlockRefusal();
     if (load.state !== 'loaded') return;
     rebuildModel();
     void refreshPublishFingerprint();
@@ -446,6 +456,7 @@
   async function loadData() {
     loading = true;
     error = null;
+    blockRefused = false;
     try {
       // The map's own associations are read FRESH: the shared catalogue is cached for minutes, and
       // an association offered since would be missing from the map with nothing to say so.
@@ -525,6 +536,7 @@
     error = null;
     try {
       mergeEntries(await setPosterEntries(project.id, rows));
+      settleBlockRefusal();
       rebuildModel();
       void refreshPublishFingerprint();
       Log.d('admin.carte.id.writeEntries', { count: rows.length });
