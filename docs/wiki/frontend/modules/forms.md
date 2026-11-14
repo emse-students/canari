@@ -1917,7 +1917,7 @@ test and the geometry is exported instead of inlined: a retuned radius moves the
 
 ## The paid half: what it needs, scoped 2026-09-30
 
-Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md); the paid half itself is its own work packages):
+Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](payments.md); the paid half itself is its own work packages):
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.

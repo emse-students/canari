@@ -40,6 +40,7 @@ earliest version, as a checklist.
 - ["Envoyer a..." to several targets and CanaReels in chats: the 13 readings, then the production flip](backlog.d/envoyer-a-and-canareels-in-chats-the-readings-then-the-production-flip.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
+- [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 
 **P2 - correctness**
 
@@ -56,7 +57,6 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [the zero-tap restore from one Android phone to another](backlog.d/p2-wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april.md)
 - [ ] [the login button that took a press and showed nothing](backlog.d/reading-owed-the-login-button-that-took-a-press-and-showed-nothing.md)
 - [ ] [a security advisory now has an ACTOR](backlog.d/reading-owed-a-security-advisory-now-has-an-actor.md)
 - [ ] [the resume reload and the send-side rewind on the Mi 9T](backlog.d/p1-the-resume-reload-and-the-receive-ratchet-fixed-owed-one-device-reading-a.md)
@@ -148,7 +148,6 @@ earliest version, as a checklist.
 - [ ] [Swift log lines in clear on a store build (R1a, R1b on the iPhone 12)](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)
 - [ ] [`push_context.json` follows every edit into the App Group](backlog.d/reading-owed-push-context-json-follows-every-edit-into-the-app-group.md)
 - [ ] [the NSE's boot proof by continuous uptime, replacing `kern.bootsessionuuid`](backlog.d/reading-owed-the-nse-s-boot-proof-by-continuous-uptime-replacing-kern.md)
-- [ ] [Lydia in production: the read-table rows and a validated Business seen through a form](backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)
 - [ ] [live titles and the preview card](backlog.d/reading-owed-live-titles-and-the-preview-card.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a follower tab's commits are run by the leader](backlog.d/reading-owed-a-follower-tab-s-commits-are-run-by-the-leader.md)
@@ -172,7 +171,6 @@ earliest version, as a checklist.
 - [ ] [a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the...](backlog.d/reading-owed-a-call-that-loses-the-audio-focus-holds-its-microphone-and-never.md)
 - [ ] [a new-device alert is dropped once its device is revoked](backlog.d/reading-owed-a-new-device-alert-is-dropped-once-its-device-is-revoked.md)
 - [ ] [an institution chooses the reach of each calendar event (owner, 2026-11-13)](backlog.d/institution-event-reach.md)
-- [ ] [the historical-account bridge: the BDE's and Le Cercle's switch readings](backlog.d/lydia-historical-account-bridge-switch-readings.md)
 - [ ] [the daily upload bound's refusal rate a week after its release](backlog.d/p2-a-daily-upload-bound-per-member.md)
 - [ ] [a message resent under one `messageId` is stored once](backlog.d/reading-owed-a-message-resent-under-one-messageid-is-stored-once.md)
 - [ ] [a picture in a message keeps its height when the keyboard opens](backlog.d/reading-owed-a-picture-in-a-message-keeps-its-height-when-the-keyboard-opens.md)
@@ -184,7 +182,6 @@ earliest version, as a checklist.
 - [ ] [the auto-merge ceiling refuses a major](backlog.d/reading-owed-the-auto-merge-ceiling-refuses-a-major.md)
 - [ ] [the CORRUPT-2 rig row on a build since `v1.3.0`](backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)
 - [ ] [the KeyPackage minting loop on a handset across background and resume](backlog.d/p1-the-minting-loop-has-never-been-observed-on-the-handset-and-a-blob-s-size.md)
-- [ ] [whether the deleted placeholder left a leaf in its conversation's MLS tree](backlog.d/p1-the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is.md)
 - [ ] [one ring on dev with a pending joiner, the waiting seat not rung](backlog.d/p3-calls-the-waiting-seat-exclusion-is-built-and-has-never-run-against-a-live.md)
 - [ ] [a burst of Welcomes costs two restores](backlog.d/reading-owed-a-burst-of-welcomes-costs-two-restores.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
@@ -218,7 +215,6 @@ earliest version, as a checklist.
 - [ ] [the notification quick reply's 403](backlog.d/reading-owed-the-notification-quick-reply-s-403.md)
 - [ ] [the `\[PENDING\]` line that called a routine race "Non-recoverable"](backlog.d/reading-owed-the-pending-line-that-called-a-routine-race-non-recoverable.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
-- [ ] [the release build no longer enables WebView debugging](backlog.d/reading-owed-the-release-build-no-longer-enables-webview-debugging.md)
 - [ ] [the row a push creates carries the GROUP's name](backlog.d/reading-owed-the-row-a-push-creates-carries-the-group-s-name.md)
 - [ ] [the signed calendar subscription's 503 path](backlog.d/reading-owed-the-signed-calendar-subscription-s-503-path.md)
 - [ ] [two community settings panels](backlog.d/reading-owed-two-community-settings-panels.md)

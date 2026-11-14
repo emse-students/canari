@@ -12,3 +12,7 @@ target: 1.7.0
 (`201`) and a media upload (`201`) in the 12 hours of access log. **Left: one call**, on dev or
 production - no `/api/call` connection was in either access log, so call-service's runtime under
 `nobody` is not yet seen carrying a call.
+
+**Again 2026-11-14, after the `1.6.12` deploy (read-only):** the production containers were
+recreated at 09:11 UTC and are healthy; 0 `EACCES` and 0 `permission denied` since; still no call
+in either estate's call-service or edge log, so the one call stays owed.

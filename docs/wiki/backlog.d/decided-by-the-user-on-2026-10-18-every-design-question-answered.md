@@ -10,7 +10,7 @@ the nicknames (#3177: "Defini par", a nickname kept when its setter leaves). Fiv
 entries, which carry their state:
 - WP-PRESENCE's push half: [the presence poll](p3-the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02.md);
 - WP-CHECKPOINT-SKIP: [open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below);
-- WP-RESTORE-1: [its entry](p2-wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april.md);
+- WP-RESTORE-1: [its design](../account-restore.md); the entry is closed (owner, 2026-11-14);
 - WP-MIGALLERY-OFFSITE: [the offsite](p2-migallery-s-only-offsite-still-lands-on-the-old-canari-vm.md);
 - WP-SECOND-CAMPAIGN-VENUE: [the second campaign](a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md).
 
