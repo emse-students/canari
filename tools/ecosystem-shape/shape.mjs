@@ -250,8 +250,9 @@ function codeOnly(raw) {
  * right above Canari's own: the comparison reads the declared line in its place. Three lines use it
  * since 2026-11-01, all for the guard on the owner's files (reviews of #2873): `types:` gains
  * `auto_merge_enabled`, so an arming made by hand is judged; the concurrency group gains that
- * event, so the run it raises cannot cancel the run that armed; and the arming gains
- * `--match-head-commit`, so it arms only the head the guard judged. A region cannot carry them: a
+ * event, so the run it raises cannot cancel the run that armed; and the arming is the
+ * `enablePullRequestAutoMerge` mutation with `expectedHeadOid` (2026-11-14), so it arms only the
+ * head the guard judged and can never merge by itself. A region cannot carry them: a
  * YAML key is not repeatable, and a command is one line, so the line must be REPLACED, not added.
  */
 const SHARED_MARKER = '# canari-only:shared ';
