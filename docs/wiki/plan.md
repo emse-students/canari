@@ -177,7 +177,7 @@ earliest version, as a checklist.
 - [P2 - a crash between a top-up's purchase commit and its Cercle dispatch loses the top-up silently (review of #2218, 2026-10-21)](backlog.d/p2-a-crash-between-a-top-up-s-purchase-commit-and-its-cercle-dispatch-loses-the.md)
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
-- [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
+- [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 
 **P3 - hygiene**
 
