@@ -167,7 +167,9 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
     relayAnswers(500, {});
     await expect(fetchMediaRetention()).rejects.toBeInstanceOf(ServiceUnavailableException);
     global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
-    await expect(fetchMediaRetention()).rejects.toThrow(/ECONNREFUSED/);
+    const refused = fetchMediaRetention();
+    await expect(refused).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(refused).rejects.toThrow(/ECONNREFUSED/);
   });
 
   it.each([0, 1.5, '30', null])('THROWS on an unusable value %p, never a default', async (bad) => {
@@ -190,7 +192,7 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
 
     expect(() => holder.require()).toThrow(ServiceUnavailableException);
     expect(() => holder.require()).toThrow(ServiceUnavailableException);
-    await holder.refresh('notice');
+    await holder.refresh('demand');
     expect(read).toHaveBeenCalledTimes(1);
     expect(holder.require()).toEqual(values(30, 90));
   });
@@ -241,6 +243,52 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
     );
   });
 
+  it('a notice never joins a read already running: it gets a fresh one, and the new values', async () => {
+    const answers: Array<(v: MediaRetentionDays) => void> = [];
+    const read = jest.fn(() => new Promise<MediaRetentionDays>((r) => answers.push(r)));
+    const holder = new MediaRetentionHolder(read, logs());
+
+    // A demand read is running; it asked social-service BEFORE the admin's update committed.
+    const demand = holder.refresh('demand');
+    const notice = holder.refresh('notice');
+    const second = holder.refresh('notice');
+    expect(read).toHaveBeenCalledTimes(1);
+    answers[0](values(30, 90));
+    await demand;
+    await Promise.resolve();
+    // The notices' read starts only now, after the running one - and both notices share it.
+    expect(read).toHaveBeenCalledTimes(2);
+    answers[1](values(7, 90));
+    await expect(notice).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(holder.require()).toEqual(values(7, 90));
+  });
+
+  it('a refusal during the boot read is a WARN and is not counted into a later outage', async () => {
+    let now = 1_000_000;
+    let answer!: (v: MediaRetentionDays) => void;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockImplementationOnce(() => new Promise((r) => (answer = r)))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockResolvedValue(values(30, 90));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger, () => now);
+
+    const boot = holder.refresh('boot');
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('first read still running'));
+    answer(values(30, 90));
+    await boot;
+
+    await holder.refresh('notice'); // fails: an outage opens, with values held
+    now += 10_000;
+    await holder.refresh('notice'); // succeeds: it closes
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('after 10 s: 0 upload(s) refused meanwhile')
+    );
+  });
+
   it('applies a changed value from the notice on', async () => {
     const read = jest
       .fn<Promise<MediaRetentionDays>, []>()
@@ -253,12 +301,12 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
     expect(holder.require().chatReelDays).toBe(7);
   });
 
-  it('shares one read between notices that arrive while it runs', async () => {
+  it('shares one read between the uploads that ask for one while it runs', async () => {
     let resolve!: (v: MediaRetentionDays) => void;
     const read = jest.fn(() => new Promise<MediaRetentionDays>((r) => (resolve = r)));
     const holder = new MediaRetentionHolder(read, logs());
-    const a = holder.refresh('notice');
-    const b = holder.refresh('notice');
+    const a = holder.refresh('demand');
+    const b = holder.refresh('demand');
     resolve(values(30, 90));
     await Promise.all([a, b]);
     expect(read).toHaveBeenCalledTimes(1);

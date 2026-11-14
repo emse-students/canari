@@ -586,21 +586,30 @@ describe('PlatformService', () => {
     row.retentionChatReelDays = 7;
     repo.findOneOrFail.mockResolvedValue(row);
     const held = jest.mocked(readMediaRetentionHeld);
-    held.mockResolvedValueOnce({
+    const behind = {
+      kind: 'held',
       held: { chatReelDays: 30, idleFileDays: 90 },
       readAt: '2026-11-14T12:00:00.000Z',
-    });
+    } as const;
+    held.mockResolvedValueOnce(behind).mockResolvedValueOnce(behind);
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     await expect(service.retentionApplied()).resolves.toMatchObject({
       state: 'behind',
+      refusal: null,
       configured: { chatReelDays: 7, idleFileDays: 90 },
       media: { chatReelDays: 30, idleFileDays: 90 },
     });
+    // A second page view in the same state logs nothing more: one WARN per CHANGE.
+    await service.retentionApplied();
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('retention applied'))).toHaveLength(
+      1
+    );
 
     const notify = jest.mocked(notifyMediaRetentionChanged);
     notify.mockClear();
     held.mockResolvedValueOnce({
+      kind: 'held',
       held: { chatReelDays: 7, idleFileDays: 90 },
       readAt: '2026-11-14T12:05:00.000Z',
     });
@@ -608,6 +617,21 @@ describe('PlatformService', () => {
       state: 'applied',
     });
     expect(notify).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('a refusal by media-service is reported as an answer, with its status and reason', async () => {
+    const row = rowWithMin('0.13.0');
+    repo.findOneOrFail.mockResolvedValue(row);
+    jest
+      .mocked(readMediaRetentionHeld)
+      .mockResolvedValueOnce({ kind: 'refused', status: 404, reason: 'route' });
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(service.retentionApplied()).resolves.toMatchObject({
+      state: 'refused',
+      refusal: { status: 404, reason: 'route' },
+      media: null,
+    });
     warn.mockRestore();
   });
 

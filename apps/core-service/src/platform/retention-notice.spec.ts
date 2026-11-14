@@ -41,29 +41,36 @@ describe('notifyMediaRetentionChanged', () => {
 /** What media-service holds, compared with the columns: the admin page's "pas encore appliqué". */
 describe('retentionAppliedState - the values are the version', () => {
   const configured = { chatReelDays: 7, idleFileDays: 90 };
+  const held = (chatReelDays: number, idleFileDays: number) =>
+    ({ kind: 'held', held: { chatReelDays, idleFileDays }, readAt: null }) as const;
 
   it('is applied only when media-service holds exactly the configured values', () => {
-    expect(retentionAppliedState(configured, { held: { chatReelDays: 7, idleFileDays: 90 } })).toBe(
-      'applied'
-    );
+    expect(retentionAppliedState(configured, held(7, 90))).toBe('applied');
   });
 
   it('is behind when the notice was lost (the old value held) or nothing is held yet', () => {
-    expect(
-      retentionAppliedState(configured, { held: { chatReelDays: 30, idleFileDays: 90 } })
-    ).toBe('behind');
-    expect(retentionAppliedState(configured, { held: null })).toBe('behind');
+    expect(retentionAppliedState(configured, held(30, 90))).toBe('behind');
+    expect(retentionAppliedState(configured, { kind: 'held', held: null, readAt: null })).toBe(
+      'behind'
+    );
   });
 
-  it('says unreachable when media-service could not be asked', () => {
-    expect(retentionAppliedState(configured, 'unreachable')).toBe('unreachable');
+  it('keeps an ANSWER (refused) apart from a transport failure (unreachable)', () => {
+    expect(
+      retentionAppliedState(configured, { kind: 'refused', status: 401, reason: 'secret' })
+    ).toBe('refused');
+    expect(retentionAppliedState(configured, { kind: 'unreachable', cause: 'ECONNREFUSED' })).toBe(
+      'unreachable'
+    );
   });
 });
 
 describe('readMediaRetentionHeld', () => {
   const answering = (status: number, body: unknown) =>
     jest.fn(() =>
-      Promise.resolve(new Response(JSON.stringify(body), { status }))
+      Promise.resolve(
+        new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })
+      )
     ) as unknown as typeof fetch;
 
   it('reads what media-service holds, behind the internal secret', async () => {
@@ -72,7 +79,8 @@ describe('readMediaRetentionHeld', () => {
       held: { chatReelDays: 30, idleFileDays: 90 },
       readAt: '2026-11-14T12:00:00.000Z',
     });
-    await expect(readMediaRetentionHeld({ warn: jest.fn() }, fetchImpl)).resolves.toEqual({
+    await expect(readMediaRetentionHeld(fetchImpl)).resolves.toEqual({
+      kind: 'held',
       held: { chatReelDays: 30, idleFileDays: 90 },
       readAt: '2026-11-14T12:00:00.000Z',
     });
@@ -81,16 +89,43 @@ describe('readMediaRetentionHeld', () => {
     expect(init.headers).toEqual({ 'x-internal-secret': 'shh' });
   });
 
-  it('reports nothing held, and unreachable on a refusal or a dead service, without throwing', async () => {
-    const warn = jest.fn();
+  it('reports nothing held as held: null', async () => {
     await expect(
-      readMediaRetentionHeld({ warn }, answering(200, { held: null, readAt: null }))
-    ).resolves.toEqual({ held: null, readAt: null });
-    await expect(readMediaRetentionHeld({ warn }, answering(401, {}))).resolves.toBe('unreachable');
+      readMediaRetentionHeld(answering(200, { held: null, readAt: null }))
+    ).resolves.toEqual({ kind: 'held', held: null, readAt: null });
+  });
+
+  it.each([
+    [401, 'secret'],
+    [403, 'secret'],
+    [404, 'route'],
+    [500, 'status'],
+  ] as const)('a %i is an ANSWER: refused, %s', async (status, reason) => {
+    await expect(readMediaRetentionHeld(answering(status, {}))).resolves.toEqual({
+      kind: 'refused',
+      status,
+      reason,
+    });
+  });
+
+  it('a 2xx whose body is not the shape is refused as malformed', async () => {
+    await expect(readMediaRetentionHeld(answering(200, 'not json'))).resolves.toEqual({
+      kind: 'refused',
+      status: 200,
+      reason: 'malformed',
+    });
+    await expect(
+      readMediaRetentionHeld(answering(200, { held: { chatReelDays: '30' } }))
+    ).resolves.toMatchObject({ kind: 'refused', reason: 'malformed' });
+  });
+
+  it('a transport failure is unreachable, with its cause, and never throws', async () => {
     const down = jest.fn(() =>
       Promise.reject(new Error('ECONNREFUSED'))
     ) as unknown as typeof fetch;
-    await expect(readMediaRetentionHeld({ warn }, down)).resolves.toBe('unreachable');
-    expect(warn).toHaveBeenCalledTimes(2);
+    await expect(readMediaRetentionHeld(down)).resolves.toEqual({
+      kind: 'unreachable',
+      cause: 'ECONNREFUSED',
+    });
   });
 });

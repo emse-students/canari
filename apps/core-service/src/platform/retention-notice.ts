@@ -46,45 +46,69 @@ export async function notifyMediaRetentionChanged(
 export type MediaHeldRetention = { chatReelDays: number; idleFileDays: number };
 
 /**
- * What media-service HOLDS right now (`GET /api/media/internal/retention`): its values and when it
- * read them, `held: null` before its first successful read, or `'unreachable'` when it could not be
- * asked (logged at warn). Never throws.
+ * Why media-service ANSWERED without the durations it holds - an answer, never a transport failure
+ * (CLAUDE.md: a status code is an answer): `secret` a 401/403 (the internal secret is misconfigured),
+ * `route` a 404 (an older media-service without the route, during a deploy), `malformed` a 2xx whose
+ * body is not the shape, `status` any other refusal.
+ */
+export type MediaRefusalReason = 'secret' | 'route' | 'malformed' | 'status';
+
+/** What asking media-service for the durations it holds gave. */
+export type MediaRetentionReport =
+  /** It answered: its values (`null` before its first read) and when it read them. */
+  | { kind: 'held'; held: MediaHeldRetention | null; readAt: string | null }
+  /** It answered, and the answer is not the durations: the status and why. */
+  | { kind: 'refused'; status: number; reason: MediaRefusalReason }
+  /** No answer: the request did not complete (connection, DNS, timeout). */
+  | { kind: 'unreachable'; cause: string };
+
+/** The reason a non-2xx status from media-service names. */
+function refusalReason(status: number): MediaRefusalReason {
+  if (status === 401 || status === 403) return 'secret';
+  if (status === 404) return 'route';
+  return 'status';
+}
+
+/**
+ * Asks media-service which durations it HOLDS (`GET /api/media/internal/retention`). It logs
+ * nothing: the caller logs a CHANGE of the state it derives, never each ask. Never throws.
  */
 export async function readMediaRetentionHeld(
-  logger: Pick<Logger, 'warn'>,
   fetchImpl: typeof fetch = fetch
-): Promise<{ held: MediaHeldRetention | null; readAt: string | null } | 'unreachable'> {
+): Promise<MediaRetentionReport> {
+  let res: Response;
   try {
-    const res = await fetchImpl(mediaUrl('media/internal/retention'), {
+    res = await fetchImpl(mediaUrl('media/internal/retention'), {
       headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
       signal: AbortSignal.timeout(RETENTION_NOTICE_TIMEOUT_MS),
     });
-    if (!res.ok) {
-      logger.warn(`[RETENTION] media-service answered ${res.status} for the durations it holds`);
-      return 'unreachable';
-    }
-    const body = (await res.json()) as {
-      held?: { chatReelDays?: unknown; idleFileDays?: unknown } | null;
-      readAt?: unknown;
-    };
-    const held = body?.held;
-    const readAt = typeof body?.readAt === 'string' ? body.readAt : null;
-    if (held === null || held === undefined) return { held: null, readAt };
-    if (typeof held.chatReelDays !== 'number' || typeof held.idleFileDays !== 'number') {
-      logger.warn('[RETENTION] media-service reported durations that are not numbers');
-      return 'unreachable';
-    }
-    return { held: { chatReelDays: held.chatReelDays, idleFileDays: held.idleFileDays }, readAt };
   } catch (e) {
-    logger.warn(
-      `[RETENTION] media-service could not be asked which durations it holds: ${e instanceof Error ? e.message : String(e)}`
-    );
-    return 'unreachable';
+    return { kind: 'unreachable', cause: e instanceof Error ? e.message : String(e) };
   }
+  if (!res.ok) return { kind: 'refused', status: res.status, reason: refusalReason(res.status) };
+  const body = (await res.json().catch(() => undefined)) as
+    | { held?: { chatReelDays?: unknown; idleFileDays?: unknown } | null; readAt?: unknown }
+    | undefined;
+  const malformed = { kind: 'refused', status: res.status, reason: 'malformed' } as const;
+  if (!body || typeof body !== 'object' || !('held' in body)) return malformed;
+  const readAt = typeof body.readAt === 'string' ? body.readAt : null;
+  const { held } = body;
+  if (held === null) return { kind: 'held', held: null, readAt };
+  if (!held || typeof held.chatReelDays !== 'number' || typeof held.idleFileDays !== 'number') {
+    return malformed;
+  }
+  return {
+    kind: 'held',
+    held: { chatReelDays: held.chatReelDays, idleFileDays: held.idleFileDays },
+    readAt,
+  };
 }
 
-/** Whether new conversation files are stamped with the durations the platform holds. */
-export type RetentionAppliedState = 'applied' | 'behind' | 'unreachable';
+/**
+ * Whether new conversation files are stamped with the durations the platform holds: `refused` and
+ * `unreachable` say only that media-service could not tell, each for its own reason.
+ */
+export type RetentionAppliedState = 'applied' | 'behind' | 'refused' | 'unreachable';
 
 /**
  * THE VERSION IS THE VALUES THEMSELVES: media-service is up to date exactly when the durations it
@@ -95,9 +119,9 @@ export type RetentionAppliedState = 'applied' | 'behind' | 'unreachable';
  */
 export function retentionAppliedState(
   configured: MediaHeldRetention,
-  media: { held: MediaHeldRetention | null } | 'unreachable'
+  media: MediaRetentionReport
 ): RetentionAppliedState {
-  if (media === 'unreachable') return 'unreachable';
+  if (media.kind !== 'held') return media.kind;
   const { held } = media;
   if (
     held &&

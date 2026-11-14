@@ -88,9 +88,15 @@ export type RetentionReadReason = 'boot' | 'notice' | 'demand';
 /**
  * The durations media-service stamps, HELD IN MEMORY (see the file comment for when it reads).
  *
- * `require` is the upload path: synchronous, no network. `refresh` is single-flight - a notice
- * arriving while a read runs shares it - and never throws: a success replaces the values, a failure
- * keeps them.
+ * `require` is the upload path: synchronous, no network. `refresh` never throws: a success replaces
+ * the values, a failure keeps them.
+ *
+ * A NOTICE NEVER JOINS A READ ALREADY RUNNING (adversarial review of #3554): that read may have asked
+ * social-service before the admin's UPDATE committed, and joining it would answer `refreshed: true`
+ * with the OLD values. A `notice` (or `boot`) arriving while a read runs gets a FRESH read started
+ * after it - one queued read, shared by every notice that arrives before it starts (core's
+ * `updateConfig` drops `configInFlight` after its write for the same reason). A `demand` only needs
+ * SOME value, so it joins whatever runs.
  *
  * AN OUTAGE IS LOGGED TWICE, by STATE, never per upload (re-review of #3521): the first failed read
  * opens it - WARN naming the age of the values kept, or ERROR when nothing is held and conversation
@@ -102,7 +108,9 @@ export class MediaRetentionHolder {
   private inFlight: Promise<boolean> | null = null;
   /** When the current run of failed reads began, or null while reads succeed. */
   private outageSince: number | null = null;
-  /** The uploads refused (nothing held) since {@link outageSince}. */
+  /** The read queued to start after {@link inFlight}, shared by the notices waiting for it. */
+  private queued: Promise<boolean> | null = null;
+  /** The uploads refused (nothing held) while {@link outageSince} is set; reset by every success. */
   private refusedInOutage = 0;
 
   constructor(
@@ -122,20 +130,43 @@ export class MediaRetentionHolder {
    */
   require(): MediaRetentionDays {
     if (this.held) return this.held.values;
-    this.refusedInOutage += 1;
-    this.logger.debug(
-      '[RETENTION] no retention durations held yet: upload refused (503), a read is asked'
-    );
+    if (this.outageSince !== null) {
+      // Inside an outage already logged: counted for its end line, one debug line each.
+      this.refusedInOutage += 1;
+      this.logger.debug(
+        '[RETENTION] no retention durations held (outage): upload refused (503), a read is asked'
+      );
+    } else {
+      // No outage is open - the boot read is still running, or none has failed yet - so nothing
+      // has said why a member's upload is refused: this line does.
+      this.logger.warn(
+        '[RETENTION] no retention durations held yet (first read still running): upload refused (503), a read is asked'
+      );
+    }
     void this.refresh('demand');
     throw new ServiceUnavailableException();
   }
 
-  /** Reads the durations again; resolves true when they were read. Never rejects. */
+  /**
+   * Reads the durations; resolves true when they were read. Never rejects. A `demand` joins the read
+   * running; a `notice` or `boot` gets one that STARTS after this call (see the class comment).
+   */
   refresh(reason: RetentionReadReason): Promise<boolean> {
-    this.inFlight ??= this.readOnce(reason).finally(() => {
-      this.inFlight = null;
+    if (!this.inFlight) return this.start(reason);
+    if (reason === 'demand') return this.inFlight;
+    this.queued ??= this.inFlight.then(() => {
+      this.queued = null;
+      return this.start(reason);
     });
-    return this.inFlight;
+    return this.queued;
+  }
+
+  private start(reason: RetentionReadReason): Promise<boolean> {
+    const read: Promise<boolean> = this.readOnce(reason).finally(() => {
+      if (this.inFlight === read) this.inFlight = null;
+    });
+    this.inFlight = read;
+    return read;
   }
 
   private async readOnce(reason: RetentionReadReason): Promise<boolean> {
@@ -148,8 +179,8 @@ export class MediaRetentionHolder {
           `[RETENTION] the retention durations are readable again (${reason}) after ${Math.round((this.now() - this.outageSince) / 1000)} s: ${this.refusedInOutage} upload(s) refused meanwhile`
         );
         this.outageSince = null;
-        this.refusedInOutage = 0;
       }
+      this.refusedInOutage = 0;
       this.logger.log(
         `[RETENTION] read (${reason}): chat reels ${values.chatReelDays} days, idle files ${values.idleFileDays} days` +
           (before &&
