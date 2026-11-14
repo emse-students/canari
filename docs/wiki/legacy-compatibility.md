@@ -114,7 +114,9 @@ The events twin of the entry above.
   still on the live maps - a card with its id, a name in a line - and no later erasure matches its
   id. So the lead REPUBLISHES EVERY LIVE MAP ONCE, right after the release carrying #3526: a publish
   by the new editor keeps current members only and stores rosters, so those cards and the legacy
-  lines go. No migration. It is done when both counts below read `0` (cards and roster members whose
+  lines go (the gesture, step by step:
+  [carte-vie-asso](carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once)).
+  No migration. It is done when both counts below read `0` (cards and roster members whose
   `userId` has no `users` row) and the line-only count of the removal condition reads `0`:
 
   ```sql
