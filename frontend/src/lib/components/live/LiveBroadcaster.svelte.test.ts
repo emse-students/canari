@@ -10,11 +10,13 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import LiveBroadcaster from './LiveBroadcaster.svelte';
 import LiveOverlay from './LiveOverlay.svelte';
 import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
+import LiveOverlayHandle from './LiveOverlayHandle.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
 import { shareLiveLink } from '$lib/live/shareLive';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
+import { FakeMediaStream, studioOn } from '$lib/live/liveStudio.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import {
@@ -551,11 +553,18 @@ describe('LiveOverlay', () => {
   });
 });
 
-describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
-  /** A preview on a desktop browser (can share a screen) or on a phone (cannot). */
-  function sheet(canShare: boolean) {
+describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => {
+  /** A preview on a desktop browser (a real studio on fakes) or on a phone (no studio). */
+  function sheet(desktop: boolean) {
+    vi.stubGlobal('MediaStream', FakeMediaStream);
     const f = fakeDeps();
-    f.deps.screenShareAvailable.mockReturnValue(canShare);
+    let made: ReturnType<typeof studioOn> | null = null;
+    if (desktop) {
+      f.deps.createStudio.mockImplementation((camera) => {
+        made = studioOn(camera);
+        return made.studio;
+      });
+    }
     const cam = fakeCamera();
     const broadcast = new LiveBroadcast(cam.session, null, f.deps);
     const target = document.createElement('div');
@@ -566,27 +575,173 @@ describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
         props: { broadcast, onclose: vi.fn(), readBattery: () => Promise.resolve(null) },
       })
     );
-    return { ...f, cam, broadcast };
+    return { ...f, cam, broadcast, s: made as ReturnType<typeof studioOn> | null };
   }
 
-  it('a phone keeps the camera: no choice is drawn', async () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a phone draws no scene bar, and offers the microphone and camera switches', async () => {
     sheet(false);
     await settle();
-    expect(q('[data-live-source-group]')).toBeNull();
+    expect(q('[data-live-scene-bar]')).toBeNull();
+    expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('off');
+    expect(q('[data-live-mic-toggle]')).not.toBeNull();
+    expect(q('[data-live-camera-toggle]')).not.toBeNull();
   });
 
-  it('a desktop browser offers Caméra and Écran, and Écran opens the screen with its hint', async () => {
-    const { broadcast, deps } = sheet(true);
+  it('a desktop offers the five scenes with the hint, opens its microphone, and Écran opens the picker', async () => {
+    const { s } = sheet(true);
     await settle();
-    expect(q('[data-live-source="camera"]')!.textContent).toContain(m.live_source_camera());
-    expect(q('[data-live-source="screen"]')!.textContent).toContain(m.live_source_screen());
-    expect(q('[data-live-source-hint]')).toBeNull();
-    q<HTMLButtonElement>('[data-live-source="screen"]')!.click();
-    await vi.waitFor(() => expect(broadcast.source).toBe('screen'));
+    expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('on');
+    expect(q('[data-live-scene="camera"]')!.textContent).toContain(m.live_scene_camera());
+    expect(q('[data-live-scene="pause"]')!.textContent).toContain(m.live_scene_pause());
+    expect(q('[data-live-scene-hint]')!.textContent).toContain(m.live_scene_screen_hint());
+    expect(s!.deps.openMicrophone).toHaveBeenCalledTimes(1);
+    q<HTMLButtonElement>('[data-live-scene="screen"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen'));
     await settle();
-    expect(deps.openScreen).toHaveBeenCalledTimes(1);
-    expect(q('[data-live-source="screen"]')!.getAttribute('aria-checked')).toBe('true');
-    expect(q('[data-live-source-hint]')!.textContent).toContain(m.live_source_screen_hint());
+    expect(s!.deps.openDisplay).toHaveBeenCalledTimes(1);
+    expect(q('[data-live-scene="screen"]')!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('the preview shows the COMPOSED picture, contain and unmirrored: exactly what is sent', async () => {
+    const { s } = sheet(true);
+    await settle();
+    const video = q<HTMLVideoElement>('video')!;
+    expect(video.srcObject).toBe(s!.studio.previewStream);
+    expect(video.className).toContain('object-contain');
+    expect(video.className).not.toContain('object-cover');
+    expect(video.className).not.toContain('-scale-x-100');
+  });
+
+  it('screen + camera offers the overlay options and a handle the arrow keys move', async () => {
+    const { s } = sheet(true);
+    await settle();
+    expect(q('[data-live-overlay-options]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-scene="screen-camera"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen-camera'));
+    await settle();
+    q<HTMLButtonElement>('[data-live-overlay-size="large"]')!.click();
+    q<HTMLButtonElement>('[data-live-overlay-shape="rect"]')!.click();
+    await settle();
+    expect(s!.studio.overlay).toMatchObject({ size: 'large', shape: 'rect' });
+  });
+
+  it('on air the scene bar stays, and a share stopped from the browser says the live is paused', async () => {
+    const { s, broadcast } = sheet(true);
+    await settle();
+    q<HTMLButtonElement>('[data-live-scene="screen"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen'));
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    expect(q('[data-live-onair-scenes] [data-live-scene-bar]')).not.toBeNull();
+    s!.screens[0].video.end();
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    expect(q('[data-live-screen-ended]')!.textContent).toContain(m.live_scene_screen_ended());
+    expect(q('[data-live-scene="pause"]')!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('a sound that does not run keeps the live AWAY with its sentence, and the Retry click wakes it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { s, broadcast } = sheet(true);
+    s!.mixer.state = 'suspended';
+    s!.mixer.wakeTo = 'suspended';
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('away'));
+    await settle();
+    expect(q('[data-live-away-problem]')!.textContent).toContain(m.live_away_audio());
+    s!.mixer.wakeTo = 'running';
+    q<HTMLButtonElement>('[data-live-retry-camera]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+  });
+
+  it('the switches change their label and their pressed state, and never end the live', async () => {
+    const { broadcast } = sheet(true);
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    const mic = q<HTMLButtonElement>('[data-live-mic-toggle]')!;
+    expect(mic.getAttribute('aria-label')).toBe(m.live_mic_mute_label());
+    mic.click();
+    await settle();
+    expect(mic.getAttribute('aria-pressed')).toBe('true');
+    expect(mic.getAttribute('aria-label')).toBe(m.live_mic_unmute_label());
+    q<HTMLButtonElement>('[data-live-camera-toggle]')!.click();
+    await settle();
+    expect(broadcast.cameraOff).toBe(true);
+    expect(broadcast.phase).toBe('live');
+  });
+});
+
+describe('LiveBroadcaster - a phone on air (owner, 2026-11-14)', () => {
+  it('offers the lens on air and flips it on the same live; the camera switched off says so', async () => {
+    const { cam, broadcast, recorders } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    q<HTMLButtonElement>('[data-live-switch]')!.click();
+    await vi.waitFor(() => expect(recorders).toHaveLength(2));
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    expect(cam.session.facing).toBe('environment');
+    q<HTMLButtonElement>('[data-live-camera-toggle]')!.click();
+    await settle();
+    expect(q('[data-live-camera-off]')!.textContent).toContain(m.live_scene_camera_off_card());
+  });
+});
+
+describe('LiveOverlayHandle - drag and snap (owner, 2026-11-14)', () => {
+  function handle() {
+    vi.stubGlobal('MediaStream', FakeMediaStream);
+    const cam = fakeCamera();
+    const { studio } = studioOn(cam.session);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveOverlayHandle, { target, props: { studio, display: { width: 1280, height: 720 } } })
+    );
+    return { studio, el: () => q<HTMLButtonElement>('[data-live-overlay-handle]')! };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function pointer(el: Element, type: string, x: number, y: number) {
+    el.dispatchEvent(
+      new PointerEvent(type, { pointerId: 7, bubbles: true, clientX: x, clientY: y })
+    );
+  }
+
+  it('sits over the overlay, and a drag let go SNAPS to the nearest corner', async () => {
+    const { studio, el } = handle();
+    await settle();
+    expect(el().getAttribute('aria-label')).toBe(m.live_scene_overlay_move_label());
+    // From the bottom right, dragged far up and left: the top-left corner.
+    pointer(el(), 'pointerdown', 1100, 600);
+    pointer(el(), 'pointermove', 300, 100);
+    await settle();
+    // Nothing reaches the picture during the drag.
+    expect(studio.overlay.corner).toBe('bottom-right');
+    pointer(el(), 'pointerup', 300, 100);
+    await settle();
+    expect(studio.overlay.corner).toBe('top-left');
+  });
+
+  it('a small drag stays in its corner, and the arrow keys move it corner to corner', async () => {
+    const { studio, el } = handle();
+    await settle();
+    pointer(el(), 'pointerdown', 1100, 600);
+    pointer(el(), 'pointermove', 1050, 560);
+    pointer(el(), 'pointerup', 1050, 560);
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-right');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-left');
   });
 });
 

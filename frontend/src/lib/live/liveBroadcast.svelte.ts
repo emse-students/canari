@@ -28,7 +28,7 @@
  */
 
 import { generateMediaCek } from '$lib/mediaCrypto';
-import type { CameraOpener, CameraSession } from '$lib/reels/cameraSession.svelte';
+import type { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import {
   endLive,
@@ -49,7 +49,8 @@ import { LivePosterSender, posterEverySegments } from './livePoster';
 import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { liveTitleToSend } from './liveTitle';
-import { createMixContext, openLiveScreen, screenShareAvailable } from './liveDevice';
+import { liveScenesAvailable } from './liveDevice';
+import { LiveStudio } from './liveStudio.svelte';
 import {
   liveRecordingSupported,
   startLiveRecorder,
@@ -70,9 +71,6 @@ import type {
   LiveTitleResult,
   LiveView,
 } from './types';
-
-/** What a live broadcasts: the camera, or - on a desktop browser - the screen. */
-export type LiveSource = 'camera' | 'screen';
 
 /** Where the broadcast stands; see the diagram in the module comment. */
 export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'ending' | 'ended';
@@ -170,13 +168,8 @@ export interface LiveBroadcastDeps {
   /** Resolves after `ms`: the BOUND on a wait that has no verdict of its own, never a decision. */
   sleep: (ms: number) => Promise<void>;
   isHidden: () => boolean;
-  /** Whether this browser may broadcast its screen (desktop only). */
-  screenShareAvailable: () => boolean;
-  /** Opens the screen (and the microphone) as a live's source. */
-  /** Opens the screen with the mixing context made inside the click ({@link createAudioContext}). */
-  openScreen: (context: AudioContext | null) => Promise<MediaStream>;
-  /** Makes and resumes the mixing context; called synchronously in the click that picks the screen. */
-  createAudioContext: () => AudioContext | null;
+  /** The scenes' studio on a desktop browser, or null where the camera is recorded directly. */
+  createStudio: (camera: CameraSession) => LiveStudio | null;
 }
 
 /** The real dependencies. */
@@ -201,9 +194,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     now: () => performance.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
-    screenShareAvailable,
-    openScreen: (context) => openLiveScreen(context),
-    createAudioContext: () => createMixContext(),
+    createStudio: (camera) => (liveScenesAvailable() ? new LiveStudio(camera) : null),
   };
 }
 
@@ -251,21 +242,24 @@ export class LiveBroadcast {
   liveId = $state<string | null>(null);
   /**
    * Why the screen is `away` when it is not the camera's doing: the recorder's output could not be
-   * read or sent, so Retry starts a fresh recorder. Null for a background or a lens taken.
+   * read or sent (`unsendable`), or a desktop live's sound is not running, without which the recorder
+   * writes nothing (`audio`) - Retry, a click, starts a fresh recorder and wakes the sound. Null for
+   * a background or a lens taken.
    */
-  awayProblem = $state<'unsendable' | null>(null);
+  awayProblem = $state<'unsendable' | 'audio' | null>(null);
   /** Whether this engine records the live's container at all (read once). */
   readonly supported: boolean;
-  /** A desktop browser that can broadcast its screen: the sheet then offers the choice. */
-  readonly canShareScreen: boolean;
-  /** What the live broadcasts; chosen in the preview ({@link chooseSource}), fixed once on air. */
-  source = $state<LiveSource>('camera');
-  /** True while the screen picker (or the camera it falls back to) is opening: the choice is locked. */
-  choosingSource = $state(false);
-  /** The share was stopped from the browser's bar while the live was still starting: end on landing. */
-  #screenGoneWhileStarting = false;
-  /** The camera's opener, kept while the screen's stands in for it. */
-  #cameraOpener: CameraOpener | null = null;
+  /**
+   * THE SCENES of a desktop live (owner, 2026-11-14), or null on a phone: when set, the recorder
+   * records the studio's composed stream for the whole live and every source change is the studio's.
+   */
+  readonly studio: LiveStudio | null;
+  /** A phone's microphone switched off: its track disabled, so the recorder writes silence. */
+  #micMuted = $state(false);
+  /** A phone's camera switched off: its track disabled, so the recorder writes black frames. */
+  #cameraOff = $state(false);
+  /** A lens flip ON AIR is in flight on a phone: the recorder is paused for it, not the camera lost. */
+  lensSwitching = $state(false);
   /**
    * The TITLE (owner, 2026-11-07): the draft typed on the launch screen, sent with the start; on
    * air, the title the server last confirmed. Empty is "no title".
@@ -313,9 +307,9 @@ export class LiveBroadcast {
   ) {
     this.#deps = deps;
     this.supported = deps.recordingSupported();
-    this.canShareScreen = deps.screenShareAvailable();
+    this.studio = deps.createStudio(camera);
     console.debug(
-      `[LIVE-BROADCAST] screen for ${associationId ? `association ${associationId}` : 'the member'}, recordable ${this.supported}`
+      `[LIVE-BROADCAST] screen for ${associationId ? `association ${associationId}` : 'the member'}, recordable ${this.supported}, ${this.studio ? 'scenes (composed)' : 'camera (direct)'}`
     );
   }
 
@@ -371,9 +365,118 @@ export class LiveBroadcast {
       this.limits !== null &&
       this.rules !== null &&
       !this.rulesPending &&
-      this.camera.phase === 'live' &&
-      this.camera.stream !== null
+      this.#sourcesReady()
     );
+  }
+
+  /**
+   * Whether what would be recorded is there: a desktop live's microphone (its picture is always
+   * drawn, a missing camera as its card), or a phone's open camera.
+   */
+  #sourcesReady(): boolean {
+    if (this.studio) return this.studio.ready;
+    return this.camera.phase === 'live' && this.camera.stream !== null;
+  }
+
+  /** The microphone is switched off (the studio's on a desktop, the track's on a phone). */
+  get micMuted(): boolean {
+    return this.studio ? this.studio.micMuted : this.#micMuted;
+  }
+
+  /** The camera is switched off (the studio's on a desktop, the track's on a phone). */
+  get cameraOff(): boolean {
+    return this.studio ? !this.studio.cameraOn : this.#cameraOff;
+  }
+
+  /**
+   * Switches the microphone off or back on WITHOUT ending anything: on a desktop the studio's gain,
+   * on a phone the track disabled - the recorder keeps recording, silence while it is off.
+   */
+  toggleMic(): void {
+    if (this.studio) {
+      this.studio.toggleMic();
+      return;
+    }
+    this.#micMuted = !this.#micMuted;
+    console.log(`[LIVE-BROADCAST] microphone ${this.#micMuted ? 'muted' : 'on'}`);
+    this.#applyTrackSwitches();
+  }
+
+  /**
+   * Switches the camera off or back on WITHOUT ending anything: on a desktop the studio draws its
+   * card, on a phone the track is disabled and the recorder writes black frames.
+   */
+  toggleCamera(): void {
+    if (this.studio) {
+      this.studio.toggleCamera();
+      return;
+    }
+    this.#cameraOff = !this.#cameraOff;
+    console.log(`[LIVE-BROADCAST] camera ${this.#cameraOff ? 'off' : 'on'}`);
+    this.#applyTrackSwitches();
+  }
+
+  /**
+   * Writes a phone's two switches onto the tracks of the camera stream NOW - the screen calls it on
+   * every new stream (a flip in the preview opens new tracks, which start enabled), and every stream
+   * that goes on air gets it too. A desktop's switches are the studio's and never touch a track.
+   */
+  syncTrackSwitches(): void {
+    if (!this.studio) this.#applyTrackSwitches();
+  }
+
+  #applyTrackSwitches(): void {
+    const stream = this.camera.stream;
+    if (!stream) return;
+    for (const track of stream.getAudioTracks()) track.enabled = !this.#micMuted;
+    for (const track of stream.getVideoTracks()) track.enabled = !this.#cameraOff;
+  }
+
+  /**
+   * The other lens. In the preview, and on a desktop live at any time (the studio follows the new
+   * stream; its recorder never changes), it is the camera's own switch. ON AIR ON A PHONE the
+   * recorder records the lens's track, which cannot be swapped under it: the recorder is paused, the
+   * lens flipped, and a new recorder starts on the SAME live - the path a return from the background
+   * takes (`rebaseFragment`), so viewers see a short gap. A lens that does not open is asked back
+   * once (the one that was on air, so nothing new is shown); failing that, the screen is `away` with
+   * the camera's fault and its Retry.
+   */
+  async switchLens(): Promise<void> {
+    if (this.studio || this.phase === 'preview') {
+      console.debug(`[LIVE-BROADCAST] lens switch in ${this.phase}`);
+      await this.camera.switchFacing();
+      return;
+    }
+    if (this.phase !== 'live' || this.lensSwitching) {
+      console.warn(`[LIVE-BROADCAST] lens switch ignored in ${this.phase}`);
+      return;
+    }
+    const previous = this.camera.facing;
+    const attempt = ++this.#reacquireGeneration;
+    console.log(`[LIVE-BROADCAST] switching the lens on air (#${attempt})`);
+    this.lensSwitching = true;
+    this.#pauseRecording('the lens is switching');
+    this.phase = 'away';
+    try {
+      await this.camera.switchFacing();
+      if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+      if (this.camera.phase !== 'live') {
+        console.warn(
+          `[LIVE-BROADCAST] the other lens did not open (${this.camera.fault}) - the ${previous} lens back`
+        );
+        await this.camera.start(previous);
+        if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+      }
+      if (this.camera.phase !== 'live' || !this.camera.stream) {
+        console.warn('[LIVE-BROADCAST] no lens back after the switch - away until Retry');
+        return;
+      }
+      await this.#stopping;
+      if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+      this.#goOnAir();
+    } finally {
+      if (attempt === this.#reacquireGeneration) this.lensSwitching = false;
+    }
   }
 
   /**
@@ -399,10 +502,10 @@ export class LiveBroadcast {
       if (!this.supported) this.startProblem = 'unsupported';
       return;
     }
+    // Synchronously, inside the Start click: a desktop live's sound may still wait for one.
+    this.studio?.wakeAudio();
     console.log(`[LIVE-BROADCAST] starting`);
     this.phase = 'starting';
-    // A stop remembered from an EARLIER start must not end this one.
-    this.#screenGoneWhileStarting = false;
     this.startProblem = null;
     this.startSuspendedUntil = null;
     let live: LiveView;
@@ -416,7 +519,6 @@ export class LiveBroadcast {
         liveTitleToSend(this.title)
       );
     } catch (e) {
-      this.#screenGoneWhileStarting = false;
       if (this.#disposed) return;
       this.startProblem = startProblemOf(e);
       if (this.startProblem === 'suspended' && e instanceof LiveRefusalError) {
@@ -552,78 +654,13 @@ export class LiveBroadcast {
     }
   }
 
-  /**
-   * Chooses what the live broadcasts, in the preview only. The screen's picker is the member's click
-   * (a browser lets `getDisplayMedia` run only on one), so this is called FROM the choice's handler.
-   * A picker that is dismissed - or a microphone that is refused - returns to the CAMERA at once: the
-   * member asked for nothing the camera does not already answer, and the camera's own fault, if any,
-   * is then the one shown.
-   */
-  async chooseSource(next: LiveSource): Promise<void> {
-    if (this.phase !== 'preview' || next === this.source || this.choosingSource) return;
-    if (next === 'screen' && !this.canShareScreen) {
-      console.warn('[LIVE-BROADCAST] the screen was chosen where it cannot be shared - ignored');
-      return;
-    }
-    console.log(`[LIVE-BROADCAST] source ${this.source} -> ${next}`);
-    this.choosingSource = true;
-    // SYNCHRONOUSLY, before any await: the context needs the click's user activation to run.
-    const context = next === 'screen' ? this.#deps.createAudioContext() : null;
-    try {
-      await this.#switchSource(next, context);
-    } finally {
-      this.choosingSource = false;
-    }
-  }
-
-  /** The body of {@link chooseSource}, run with the choice locked. */
-  async #switchSource(next: LiveSource, context: AudioContext | null): Promise<void> {
-    this.source = next;
-    if (next === 'screen') {
-      const previous = this.camera.swapOpener(() => this.#deps.openScreen(context));
-      this.#cameraOpener ??= previous;
-    } else if (this.#cameraOpener) {
-      this.camera.swapOpener(this.#cameraOpener);
-    }
-    await this.camera.start();
-    if (next === 'screen' && this.camera.phase === 'error') {
-      console.warn(
-        `[LIVE-BROADCAST] the screen was not shared (${this.camera.fault}) - back to the camera`
-      );
-      this.source = 'camera';
-      this.camera.swapOpener(this.#cameraOpener!);
-      await this.camera.start();
-    }
-  }
-
-  /**
-   * The member stopped the share from the browser's own bar while on air: THE LIVE ENDS, cleanly,
-   * through the ordinary End. It does not fall back to the camera - a live that silently switched
-   * from what the member chose to show to their face is a surprise nobody agreed to - and it does
-   * not re-ask for a screen, which needs a click this code does not have.
-   */
-  async screenShareStopped(): Promise<void> {
-    if (this.source !== 'screen') return;
-    if (this.phase === 'starting') {
-      // The live row is being created: it cannot be ended yet, and going on air on a dead share would
-      // re-open the screen without a click. It ends the moment the start lands ({@link goOnAir}).
-      console.log(
-        '[LIVE-BROADCAST] the screen share stopped while starting - ending once it lands'
-      );
-      this.#screenGoneWhileStarting = true;
-      return;
-    }
-    if (this.phase !== 'live' && this.phase !== 'away') return;
-    console.log('[LIVE-BROADCAST] the screen share was stopped from the browser - ending the live');
-    await this.end();
-  }
-
   /** The app left the screen. */
   appHidden(): void {
-    if (this.source === 'screen') {
-      // A hidden tab is the normal state of a screen share (the member is looking at what they
-      // share), and the share cannot be re-opened without a click: nothing is paused.
-      console.debug('[LIVE-BROADCAST] the page is hidden, the screen share goes on');
+    if (this.studio) {
+      // A hidden tab is the normal state of a desktop live (the member is looking at what they
+      // share), a desktop's camera is not taken from a hidden page, and the share cannot be re-opened
+      // without a click: nothing is paused, and the worker clock keeps drawing (`liveFrameClock`).
+      console.debug('[LIVE-BROADCAST] the page is hidden, the desktop live goes on');
       return;
     }
     console.debug(`[LIVE-BROADCAST] app hidden in ${this.phase}`);
@@ -638,7 +675,7 @@ export class LiveBroadcast {
 
   /** The app is back on screen. */
   appVisible(): void {
-    if (this.source === 'screen') return;
+    if (this.studio) return;
     console.debug(`[LIVE-BROADCAST] app visible in ${this.phase}`);
     if (this.phase === 'preview' || this.phase === 'starting') {
       this.camera.resume();
@@ -653,6 +690,8 @@ export class LiveBroadcast {
    */
   async reacquire(): Promise<void> {
     if (this.phase !== 'away' || !this.liveId) return;
+    // Synchronously, inside the Retry click: a desktop live may be away for its sound.
+    this.studio?.wakeAudio();
     const attempt = ++this.#reacquireGeneration;
     const liveId = this.liveId;
     console.log(`[LIVE-BROADCAST] re-acquiring the camera for ${liveId} (#${attempt})`);
@@ -675,9 +714,10 @@ export class LiveBroadcast {
       );
     }
     if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
-    await this.camera.start();
+    // A desktop live's sources stayed open (only the recorder stopped): nothing to re-open.
+    if (!this.studio) await this.camera.start();
     if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
-    if (this.camera.phase !== 'live' || !this.camera.stream) {
+    if (!this.studio && (this.camera.phase !== 'live' || !this.camera.stream)) {
       // Refused, busy, or the app went away again: the screen shows the camera's own fault and a
       // Retry, and the live keeps its window.
       console.warn(`[LIVE-BROADCAST] camera not back (${this.camera.phase}/${this.camera.fault})`);
@@ -708,6 +748,7 @@ export class LiveBroadcast {
     if (this.#disposed) return;
     this.#pipeline?.close();
     this.camera.stop();
+    this.studio?.release();
     console.debug(
       `[LIVE-BROADCAST] camera given back; ${this.#uploader?.backlog ?? 0} segments to send`
     );
@@ -764,11 +805,8 @@ export class LiveBroadcast {
 
   /** Starts recording the camera in hand, or goes `away` when there is none to record. */
   #goOnAir(): void {
-    if (this.#screenGoneWhileStarting) {
-      this.#screenGoneWhileStarting = false;
-      console.log('[LIVE-BROADCAST] the screen share is gone - ending the live that just started');
-      this.phase = 'away';
-      void this.end();
+    if (this.studio) {
+      this.#goOnAirComposed(this.studio);
       return;
     }
     const stream = this.camera.stream;
@@ -780,6 +818,30 @@ export class LiveBroadcast {
       if (!this.#deps.isHidden()) void this.reacquire();
       return;
     }
+    this.#applyTrackSwitches();
+    this.#record(stream);
+  }
+
+  /**
+   * A desktop live goes on air on the studio's stream, hidden page or not. ITS SOUND MUST RUN: an MP4
+   * recorder fed a suspended context's track writes no chunk at all (measured, `liveAudioMixer`), so
+   * a sound not running yet is `away` with its own sentence and a Retry - a click, which wakes it -
+   * rather than a live on air that sends nothing.
+   */
+  #goOnAirComposed(studio: LiveStudio): void {
+    if (!studio.audioRunning) {
+      console.error(
+        "[LIVE-BROADCAST] the live's sound is not running - the recorder would write nothing; away until Retry"
+      );
+      this.phase = 'away';
+      this.awayProblem = 'audio';
+      return;
+    }
+    this.#record(studio.stream);
+  }
+
+  /** Starts a recorder on `stream` for the live already created, and goes `live`. */
+  #record(stream: MediaStream): void {
     const generation = ++this.#recorderGeneration;
     const first = this.#firstRecordAt === null;
     const now = this.#deps.now();
@@ -860,7 +922,8 @@ export class LiveBroadcast {
 
   #awayUntilRetry(why: string): void {
     this.#pauseRecording(why);
-    this.camera.stop();
+    // A desktop live keeps its sources: the screen could not be re-opened without a click.
+    if (!this.studio) this.camera.stop();
     this.phase = 'away';
   }
 
@@ -991,6 +1054,7 @@ export class LiveBroadcast {
     this.#uploader?.stop();
     this.#posterSender?.stop();
     this.camera.stop();
+    this.studio?.release();
     this.#deps.wakeLock.release();
   }
 

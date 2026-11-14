@@ -231,9 +231,10 @@ afterAll(() => {
 });
 
 describe('every worker loads in a worker scope', () => {
-  it('reads the four workers and the two AudioWorklets the app spawns from the source, not from a list', () => {
+  it('reads the five workers and the two AudioWorklets the app spawns from the source, not from a list', () => {
     expect(entries).toEqual([
       'src/lib/workers/encryption.worker.ts',
+      'src/lib/workers/liveFrameClock.worker.ts',
       'src/lib/workers/loudnessTap.worklet.ts',
       'src/lib/workers/mlsCrypto.worker.ts',
       'src/lib/workers/mlsEncrypt.worker.ts',

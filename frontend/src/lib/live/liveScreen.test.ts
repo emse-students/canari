@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
 /**
- * THE SCREEN AS A LIVE'S SOURCE, at the device: what is asked of the share's picker, the microphone
- * kept, the share's own audio mixed in only when the browser gave one, and the mix released with the
- * stream.
+ * THE DESKTOP LIVE'S CAPTURES, at the device (owner, 2026-10-31 and 2026-11-14): where the scenes are
+ * offered, what the screen picker is asked (the live's size, the share's sound offered, NO microphone
+ * - the live's microphone is its own capture), the microphone opened alone, and the camera's lens
+ * opened alone. Every refusal is typed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CameraAccessError } from '$lib/reels/cameraAccess';
-import { openLiveScreen, screenShareAvailable } from './liveDevice';
+import {
+  liveScenesAvailable,
+  openLiveCamera,
+  openLiveDisplay,
+  openLiveMicrophone,
+} from './liveDevice';
 import {
   LIVE_CAPTURE_FPS,
   LIVE_CAPTURE_LONG_SIDE_PX,
@@ -22,7 +28,11 @@ vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
 }));
 
 function track(kind: 'video' | 'audio') {
-  return { kind, stop: vi.fn(), getSettings: () => ({ width: 1280, height: 720, frameRate: 30 }) };
+  return {
+    kind,
+    stop: vi.fn(),
+    getSettings: () => ({ width: 1280, height: 720, frameRate: 30, channelCount: 1 }),
+  };
 }
 
 function streamOf(...tracks: ReturnType<typeof track>[]) {
@@ -33,52 +43,13 @@ function streamOf(...tracks: ReturnType<typeof track>[]) {
   } as unknown as MediaStream;
 }
 
-/** A MediaStream that keeps the tracks it was given, as a browser's does. */
-class FakeMediaStream {
-  constructor(private readonly tracks: ReturnType<typeof track>[] = []) {}
-  getTracks() {
-    return this.tracks;
-  }
-  getVideoTracks() {
-    return this.tracks.filter((t) => t.kind === 'video');
-  }
-  getAudioTracks() {
-    return this.tracks.filter((t) => t.kind === 'audio');
-  }
-}
-
-const contexts: { close: ReturnType<typeof vi.fn>; mixed: ReturnType<typeof track> }[] = [];
-
-/** What a fresh context says once resumed: `running`, or `suspended` for a browser that refuses. */
-let stateAfterResume: AudioContextState = 'running';
-
-class FakeAudioContext {
-  close = vi.fn(async () => {});
-  state: AudioContextState = 'suspended';
-  resume = vi.fn(async () => {
-    this.state = stateAfterResume;
-  });
-  constructor() {
-    contexts.push({ close: this.close, mixed: track('audio') });
-  }
-  createMediaStreamDestination() {
-    return { stream: new FakeMediaStream([contexts[contexts.length - 1].mixed]) };
-  }
-  createMediaStreamSource() {
-    return { connect: vi.fn() };
-  }
-}
-
 function stubDevices(devices: Partial<MediaDevices> | undefined) {
   vi.stubGlobal('navigator', { mediaDevices: devices, userAgent: 'test' });
 }
 
 beforeEach(() => {
-  contexts.length = 0;
-  stateAfterResume = 'running';
-  vi.stubGlobal('MediaStream', FakeMediaStream);
-  vi.stubGlobal('AudioContext', FakeAudioContext);
-  for (const level of ['debug', 'warn'] as const) {
+  vi.stubGlobal('AudioContext', class {});
+  for (const level of ['debug', 'warn', 'info'] as const) {
     vi.spyOn(console, level).mockImplementation(() => {});
   }
 });
@@ -88,36 +59,43 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('screenShareAvailable', () => {
-  it('needs getDisplayMedia AND a mouse: a phone keeps the camera', () => {
+describe('liveScenesAvailable', () => {
+  it('needs getDisplayMedia, an AudioContext AND a mouse: a phone keeps the camera', () => {
     stubDevices({ getDisplayMedia: vi.fn() } as unknown as MediaDevices);
     vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
-    expect(screenShareAvailable()).toBe(true);
+    expect(liveScenesAvailable()).toBe(true);
     vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
-    expect(screenShareAvailable()).toBe(false);
+    expect(liveScenesAvailable()).toBe(false);
     stubDevices({} as MediaDevices);
     vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
-    expect(screenShareAvailable()).toBe(false);
+    expect(liveScenesAvailable()).toBe(false);
     stubDevices(undefined);
-    expect(screenShareAvailable()).toBe(false);
+    expect(liveScenesAvailable()).toBe(false);
+  });
+
+  it('is not offered without an AudioContext: the scenes mix their sound', () => {
+    stubDevices({ getDisplayMedia: vi.fn() } as unknown as MediaDevices);
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
+    vi.stubGlobal('AudioContext', undefined);
+    expect(liveScenesAvailable()).toBe(false);
   });
 
   it('is never offered in the Tauri shell, mouse or not (no reliable picker)', () => {
     stubDevices({ getDisplayMedia: vi.fn() } as unknown as MediaDevices);
     vi.stubGlobal('window', { matchMedia: () => ({ matches: false }), __TAURI_INTERNALS__: {} });
-    expect(screenShareAvailable()).toBe(false);
+    expect(liveScenesAvailable()).toBe(false);
   });
 });
 
-describe('openLiveScreen', () => {
-  it('asks the picker for the live size, with audio offered, and keeps the microphone', async () => {
+describe('openLiveDisplay', () => {
+  it("asks the picker for the live size with the share's sound offered, and asks NO microphone", async () => {
     const video = track('video');
-    const mic = track('audio');
-    const getDisplayMedia = vi.fn(async () => streamOf(video));
-    const getUserMedia = vi.fn(async () => streamOf(mic));
+    const shareAudio = track('audio');
+    const getDisplayMedia = vi.fn(async () => streamOf(video, shareAudio));
+    const getUserMedia = vi.fn();
     stubDevices({ getDisplayMedia, getUserMedia } as unknown as MediaDevices);
 
-    const stream = await openLiveScreen();
+    const stream = await openLiveDisplay();
 
     expect(getDisplayMedia).toHaveBeenCalledWith({
       video: {
@@ -127,120 +105,59 @@ describe('openLiveScreen', () => {
       },
       audio: true,
     });
-    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).not.toHaveBeenCalled();
     expect(stream.getVideoTracks()).toEqual([video]);
-    // No share audio: the microphone alone, and the context made for the mix is closed unused.
-    expect(stream.getAudioTracks()).toEqual([mic]);
-    expect(contexts).toHaveLength(1);
-    expect(contexts[0].close).toHaveBeenCalledTimes(1);
+    expect(stream.getAudioTracks()).toEqual([shareAudio]);
   });
 
-  it('mixes the share audio with the microphone, and releasing the stream releases the mix', async () => {
-    const video = track('video');
-    const shareAudio = track('audio');
-    const mic = track('audio');
-    stubDevices({
-      getDisplayMedia: vi.fn(async () => streamOf(video, shareAudio)),
-      getUserMedia: vi.fn(async () => streamOf(mic)),
-    } as unknown as MediaDevices);
-
-    const stream = await openLiveScreen();
-
-    expect(contexts).toHaveLength(1);
-    const [mixed] = stream.getAudioTracks();
-    expect(mixed).toBe(contexts[0].mixed);
-    for (const t of stream.getTracks()) t.stop();
-    expect(video.stop).toHaveBeenCalled();
-    expect(mic.stop).toHaveBeenCalled();
-    expect(shareAudio.stop).toHaveBeenCalled();
-    expect(contexts[0].close).toHaveBeenCalledTimes(1);
-  });
-
-  it('RESUMES the mixing context, and a context that stays suspended falls back to the microphone alone', async () => {
-    const run = async () => {
-      const video = track('video');
-      const shareAudio = track('audio');
-      const mic = track('audio');
-      stubDevices({
-        getDisplayMedia: vi.fn(async () => streamOf(video, shareAudio)),
-        getUserMedia: vi.fn(async () => streamOf(mic)),
-      } as unknown as MediaDevices);
-      return { stream: await openLiveScreen(), shareAudio, mic };
-    };
-    const running = await run();
-    expect(contexts).toHaveLength(1);
-    expect(running.stream.getAudioTracks()).toEqual([contexts[0].mixed]);
-
-    contexts.length = 0;
-    stateAfterResume = 'suspended';
-    const stuck = await run();
-    expect(stuck.stream.getAudioTracks()).toEqual([stuck.mic]);
-    expect(stuck.shareAudio.stop).toHaveBeenCalled();
-    expect(contexts[0].close).toHaveBeenCalledTimes(1);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('is suspended'));
-  });
-
-  it('uses the context made inside the click, never awaits a resume that stays pending, and closes it on every exit', async () => {
-    // Safari without activation: resume() never settles. Nothing may wait for it.
-    const never = new FakeAudioContext();
-    never.resume = vi.fn(() => new Promise<void>(() => {}));
-    const given = never as unknown as AudioContext;
-    const video = track('video');
-    const shareAudio = track('audio');
-    const mic = track('audio');
-    stubDevices({
-      getDisplayMedia: vi.fn(async () => streamOf(video, shareAudio)),
-      getUserMedia: vi.fn(async () => streamOf(mic)),
-    } as unknown as MediaDevices);
-    const stream = await openLiveScreen(given);
-    // Not running: the microphone alone, the context closed, no second context made.
-    expect(stream.getAudioTracks()).toEqual([mic]);
-    expect(never.close).toHaveBeenCalledTimes(1);
-    expect(contexts).toHaveLength(1);
-
-    // A dismissed picker closes the context it was given.
-    const dismissed = new FakeAudioContext();
-    stubDevices({
-      getDisplayMedia: vi.fn(async () => {
-        throw new DOMException('no', 'NotAllowedError');
-      }),
-      getUserMedia: vi.fn(),
-    } as unknown as MediaDevices);
-    await expect(openLiveScreen(dismissed as unknown as AudioContext)).rejects.toBeInstanceOf(
-      CameraAccessError
-    );
-    expect(dismissed.close).toHaveBeenCalledTimes(1);
-  });
-
-  it('a dismissed picker is a typed refusal and the microphone is never asked', async () => {
-    const getUserMedia = vi.fn();
+  it('a dismissed picker is a typed denial (the scene stays as it was)', async () => {
     stubDevices({
       getDisplayMedia: vi.fn(async () => {
         throw new DOMException('dismissed', 'NotAllowedError');
       }),
-      getUserMedia,
     } as unknown as MediaDevices);
-    await expect(openLiveScreen()).rejects.toMatchObject({
-      name: 'CameraAccessError',
-      fault: 'denied',
-    });
-    expect(getUserMedia).not.toHaveBeenCalled();
+    await expect(openLiveDisplay()).rejects.toMatchObject({ fault: 'denied' });
   });
 
-  it('a refused microphone gives the share back and is a typed refusal', async () => {
-    const video = track('video');
+  it('an engine without getDisplayMedia answers unavailable', async () => {
+    stubDevices({} as MediaDevices);
+    await expect(openLiveDisplay()).rejects.toBeInstanceOf(CameraAccessError);
+    await expect(openLiveDisplay()).rejects.toMatchObject({ fault: 'unavailable' });
+  });
+});
+
+describe('openLiveMicrophone', () => {
+  it('asks the microphone alone, mono', async () => {
+    const mic = track('audio');
+    const getUserMedia = vi.fn(async () => streamOf(mic));
+    stubDevices({ getUserMedia } as unknown as MediaDevices);
+    const stream = await openLiveMicrophone();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    const asked = getUserMedia.mock.calls[0] as unknown as [MediaStreamConstraints];
+    expect(asked[0].video).toBeUndefined();
+    expect(asked[0].audio).toMatchObject({ channelCount: { ideal: 1 } });
+    expect(stream.getAudioTracks()).toEqual([mic]);
+  });
+
+  it('a refused microphone is a typed denial', async () => {
     stubDevices({
-      getDisplayMedia: vi.fn(async () => streamOf(video)),
       getUserMedia: vi.fn(async () => {
-        throw new DOMException('no mic', 'NotAllowedError');
+        throw new DOMException('no', 'NotAllowedError');
       }),
     } as unknown as MediaDevices);
-    await expect(openLiveScreen()).rejects.toBeInstanceOf(CameraAccessError);
-    expect(video.stop).toHaveBeenCalled();
+    await expect(openLiveMicrophone()).rejects.toMatchObject({ fault: 'denied' });
   });
+});
 
-  it('an engine without getDisplayMedia is unavailable', async () => {
-    stubDevices({ getUserMedia: vi.fn() } as unknown as MediaDevices);
-    await expect(openLiveScreen()).rejects.toMatchObject({ fault: 'unavailable' });
+describe('openLiveCamera without the microphone', () => {
+  it('asks the lens alone for a desktop live, and both for a phone', async () => {
+    const getUserMedia = vi.fn(async () => streamOf(track('video')));
+    stubDevices({ getUserMedia } as unknown as MediaDevices);
+    await openLiveCamera('user', false, false);
+    const lensOnly = getUserMedia.mock.calls[0] as unknown as [MediaStreamConstraints];
+    expect(lensOnly[0].audio).toBe(false);
+    await openLiveCamera('user');
+    const both = getUserMedia.mock.calls[1] as unknown as [MediaStreamConstraints];
+    expect(both[0].audio).toBeTruthy();
   });
 });

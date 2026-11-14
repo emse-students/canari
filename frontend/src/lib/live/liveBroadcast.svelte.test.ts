@@ -9,6 +9,7 @@ import { LiveRefusalError } from './api';
 import { LiveBroadcast, startProblemOf } from './liveBroadcast.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { fakeCamera, fakeDeps, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
+import { FakeMediaStream, studioOn } from './liveStudio.test-helper';
 import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
 import {
@@ -687,160 +688,195 @@ describe('LiveBroadcast - leaving the screen', () => {
   });
 });
 
-describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
-  /** A preview where the browser can share a screen and the camera is open. */
+describe('LiveBroadcast - a desktop live through the scenes (owner, 2026-11-14)', () => {
+  /** A preview on a desktop browser: a real studio on fakes, its microphone open, the limits read. */
   async function desktop() {
+    vi.stubGlobal('MediaStream', FakeMediaStream);
     const f = fakeDeps();
-    f.deps.screenShareAvailable.mockReturnValue(true);
     const cam = fakeCamera();
+    let made: ReturnType<typeof studioOn> | null = null;
+    f.deps.createStudio.mockImplementation((camera) => {
+      made = studioOn(camera);
+      return made.studio;
+    });
     const b = new LiveBroadcast(cam.session, null, f.deps);
+    const s = made!;
     await cam.session.start();
+    await s.studio.open();
     await b.loadLimits();
-    return { ...f, cam, b };
+    return { ...f, cam, b, s };
   }
 
-  it('offers the screen only where the browser can share one', async () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a phone has no studio and records the camera; a desktop records the studio stream', async () => {
     const phone = await ready();
-    expect(phone.b.canShareScreen).toBe(false);
-    await phone.b.chooseSource('screen');
-    expect(phone.b.source).toBe('camera');
-    expect(phone.deps.openScreen).not.toHaveBeenCalled();
-    expect(await desktop().then((d) => d.b.canShareScreen)).toBe(true);
-  });
+    expect(phone.b.studio).toBeNull();
+    await phone.b.start();
+    expect(phone.recorders[0].stream).toBe(phone.cam.session.stream);
 
-  it('choosing the screen opens it instead of the camera, and the camera comes back on request', async () => {
-    const { b, cam, deps } = await desktop();
-    expect(cam.control.opened).toHaveLength(1);
-    await b.chooseSource('screen');
-    expect(b.source).toBe('screen');
-    expect(deps.openScreen).toHaveBeenCalledTimes(1);
-    expect(cam.session.phase).toBe('live');
-    await b.chooseSource('camera');
-    expect(b.source).toBe('camera');
-    expect(cam.control.opened).toHaveLength(2);
-    expect(deps.openScreen).toHaveBeenCalledTimes(1);
-  });
-
-  it('a dismissed picker returns to the camera at once, on the camera and not on a fault', async () => {
-    const { b, cam, deps } = await desktop();
-    deps.openScreen.mockRejectedValueOnce(new CameraAccessError('denied', 'dismissed'));
-    await b.chooseSource('screen');
-    expect(b.source).toBe('camera');
-    expect(cam.session.phase).toBe('live');
-    expect(cam.session.fault).toBeNull();
-    expect(cam.control.opened).toHaveLength(2);
-  });
-
-  it('the source cannot change once the live started', async () => {
-    const { b, deps } = await desktop();
-    await b.start();
-    await b.chooseSource('screen');
-    expect(b.source).toBe('camera');
-    expect(deps.openScreen).not.toHaveBeenCalled();
-  });
-
-  it('a share stopped WHILE THE LIVE IS STARTING ends it the moment the start lands', async () => {
-    const { b, deps, cam } = await desktop();
-    await b.chooseSource('screen');
-    const real = deps.startLive.getMockImplementation()!;
-    let land: () => void = () => {};
-    deps.startLive.mockImplementationOnce(
-      (...args: Parameters<typeof real>) =>
-        new Promise((resolve) => {
-          land = () => resolve(real(...args));
-        })
-    );
-    const starting = b.start();
-    await vi.waitFor(() => expect(b.phase).toBe('starting'));
-    await b.screenShareStopped();
-    expect(deps.endLive).not.toHaveBeenCalled();
-    land();
-    await starting;
-    await vi.waitFor(() => expect(b.phase).toBe('ended'));
-    expect(deps.endLive).toHaveBeenCalledTimes(1);
-    expect(cam.session.phase).not.toBe('starting');
-  });
-
-  it('a stop remembered during a start that FAILS does not end the next start', async () => {
-    const { b, deps } = await desktop();
-    await b.chooseSource('screen');
-    const real = deps.startLive.getMockImplementation()!;
-    let fail: (e: unknown) => void = () => {};
-    deps.startLive.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
-    const first = b.start();
-    await vi.waitFor(() => expect(b.phase).toBe('starting'));
-    await b.screenShareStopped();
-    fail(new Error('network'));
-    await first;
-    expect(b.phase).toBe('preview');
-    deps.startLive.mockImplementation(real);
+    const { b, s, recorders } = await desktop();
+    expect(b.studio).toBe(s.studio);
     await b.start();
     expect(b.phase).toBe('live');
+    expect(recorders[0].stream).toBe(s.studio.stream);
+  });
+
+  it('Start waits for the microphone, not for a camera: a desktop with no webcam goes live on its screen', async () => {
+    const { b, s, cam } = await desktop();
+    cam.session.stop();
+    expect(b.canStart).toBe(true);
+    s.studio.release();
+    const other = await desktop();
+    other.s.control.micFailure = new CameraAccessError('denied', 'no');
+    await other.s.studio.reopenMicrophone();
+    expect(other.b.canStart).toBe(false);
+  });
+
+  it('switching scenes ON AIR never touches the recorder', async () => {
+    const { b, s, recorders, deps } = await desktop();
+    await b.start();
+    await s.studio.selectScene('screen');
+    await s.studio.selectScene('screen-camera');
+    await s.studio.selectScene('pause');
+    b.toggleMic();
+    b.toggleCamera();
+    expect(recorders).toHaveLength(1);
+    expect(recorders[0].stop).not.toHaveBeenCalled();
+    expect(b.phase).toBe('live');
+    expect(b.micMuted).toBe(true);
+    expect(b.cameraOff).toBe(true);
     expect(deps.endLive).not.toHaveBeenCalled();
   });
 
-  it('makes the mixing context synchronously inside the choice, before any await', async () => {
-    const { b, deps } = await desktop();
-    let sync = false;
-    deps.createAudioContext.mockImplementation(() => {
-      sync = true;
-      return null;
-    });
-    const choosing = b.chooseSource('screen');
-    expect(sync).toBe(true);
-    await choosing;
-    expect(deps.openScreen).toHaveBeenCalledWith(null);
-  });
-
-  it('the source choice is locked while the picker is open', async () => {
-    const { b, deps } = await desktop();
-    let answer: (s: MediaStream) => void = () => {};
-    deps.openScreen.mockImplementationOnce(() => new Promise<MediaStream>((r) => (answer = r)));
-    const choosing = b.chooseSource('screen');
-    await vi.waitFor(() => expect(b.choosingSource).toBe(true));
-    await b.chooseSource('camera');
-    expect(b.source).toBe('screen');
-    answer({
-      getTracks: () => [],
-      getVideoTracks: () => [],
-      getAudioTracks: () => [],
-    } as unknown as MediaStream);
-    await choosing;
-    expect(b.choosingSource).toBe(false);
-  });
-
-  it('a hidden page does not pause a screen share, and does pause a camera', async () => {
-    const screen = await desktop();
-    await screen.b.chooseSource('screen');
-    await screen.b.start();
-    screen.setHidden(true);
-    screen.b.appHidden();
-    expect(screen.b.phase).toBe('live');
-    expect(screen.cam.session.phase).toBe('live');
-
-    const camera = await desktop();
-    await camera.b.start();
-    camera.setHidden(true);
-    camera.b.appHidden();
-    expect(camera.b.phase).toBe('away');
-  });
-
-  it('a share stopped from the browser ends the live cleanly, once, and a camera never does', async () => {
-    const { b, deps, cam } = await desktop();
-    await b.chooseSource('screen');
+  it('a share stopped from the browser while on air turns to PAUSE and the live goes on', async () => {
+    const { b, s, deps, recorders } = await desktop();
+    await s.studio.selectScene('screen');
     await b.start();
-    await b.screenShareStopped();
-    expect(b.phase).toBe('ended');
-    expect(b.endCause).toBe('broadcaster');
-    expect(deps.endLive).toHaveBeenCalledTimes(1);
-    await b.screenShareStopped();
-    expect(deps.endLive).toHaveBeenCalledTimes(1);
-    expect(cam.session.phase).not.toBe('starting');
+    s.screens[0].video.end();
+    expect(s.studio.scene).toBe('pause');
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(1);
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
 
-    const camera = await desktop();
-    await camera.b.start();
-    await camera.b.screenShareStopped();
-    expect(camera.b.phase).toBe('live');
+  it('a hidden page pauses nothing: the desktop live goes on, its sources kept', async () => {
+    const { b, s, setHidden, cam } = await desktop();
+    await s.studio.selectScene('screen');
+    await b.start();
+    setHidden(true);
+    b.appHidden();
+    expect(b.phase).toBe('live');
+    expect(cam.session.phase).toBe('live');
+    expect(s.studio.screen).not.toBeNull();
+    b.appVisible();
+    expect(b.phase).toBe('live');
+  });
+
+  it("wakes the sound SYNCHRONOUSLY in the Start click, and a sound still not running is away, not a silent 'on air'", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, s, recorders } = await desktop();
+    s.mixer.state = 'suspended';
+    s.mixer.wakeTo = 'suspended';
+    const starting = b.start();
+    expect(s.mixer.wake).toHaveBeenCalled();
+    await starting;
+    expect(b.phase).toBe('away');
+    expect(b.awayProblem).toBe('audio');
+    expect(recorders).toHaveLength(0);
+    // The Retry is a click: it wakes the sound, and the live goes on air on the SAME live.
+    s.mixer.wakeTo = 'running';
+    await b.reacquire();
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(1);
+    expect(recorders[0].stream).toBe(s.studio.stream);
+  });
+
+  it('a broken recorder output is away WITHOUT giving back the sources (the screen needs a click)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, s, recorders, cam } = await desktop();
+    await s.studio.selectScene('screen');
+    await b.start();
+    recorders[0].onError(new Event('error'));
+    expect(b.phase).toBe('away');
+    expect(cam.session.phase).toBe('live');
+    expect(s.studio.screen).not.toBeNull();
+    await b.reacquire();
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(2);
+  });
+
+  it('End gives back the studio with the camera', async () => {
+    const { b, s } = await desktop();
+    await s.studio.selectScene('screen');
+    await b.start();
+    await b.end();
+    expect(b.phase).toBe('ended');
+    expect(s.compositor.stop).toHaveBeenCalled();
+    expect(s.mixer.close).toHaveBeenCalled();
+    expect(s.screens[0].video.stop).toHaveBeenCalled();
+  });
+
+  it('a desktop flips its lens on air without a new recorder', async () => {
+    const { b, recorders } = await desktop();
+    await b.start();
+    await b.switchLens();
+    expect(recorders).toHaveLength(1);
+    expect(b.phase).toBe('live');
+  });
+});
+
+describe('LiveBroadcast - a phone switches its microphone, its camera and its lens on air (owner, 2026-11-14)', () => {
+  it('mutes the microphone and the camera by DISABLING their tracks - nothing stopped, nothing ended', async () => {
+    const { b, cam, recorders } = await ready();
+    await b.start();
+    const [s] = cam.control.opened;
+    b.toggleMic();
+    expect((s.audio as unknown as { enabled?: boolean }).enabled).toBe(false);
+    expect(s.audio.stop).not.toHaveBeenCalled();
+    b.toggleCamera();
+    expect((s.video as unknown as { enabled?: boolean }).enabled).toBe(false);
+    expect(b.micMuted).toBe(true);
+    expect(b.cameraOff).toBe(true);
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(1);
+    b.toggleMic();
+    expect((s.audio as unknown as { enabled?: boolean }).enabled).toBe(true);
+  });
+
+  it('flips the lens ON AIR with a new recorder on the SAME live, the switches carried over', async () => {
+    const { b, cam, recorders, deps } = await ready();
+    await b.start();
+    b.toggleMic();
+    await b.switchLens();
+    expect(b.phase).toBe('live');
+    expect(b.lensSwitching).toBe(false);
+    expect(recorders).toHaveLength(2);
+    expect(recorders[0].stop).toHaveBeenCalled();
+    expect(deps.startLive).toHaveBeenCalledTimes(1);
+    const flipped = cam.control.opened.at(-1)!;
+    expect(recorders[1].stream).toBe(flipped.stream);
+    expect((flipped.audio as unknown as { enabled?: boolean }).enabled).toBe(false);
+  });
+
+  it('a lens that does not open brings the one that was on air back, and goes on', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { b, cam, recorders } = await ready();
+    await b.start();
+    const before = cam.session.facing;
+    cam.control.nextFailure = new CameraAccessError('unavailable', 'no other lens');
+    await b.switchLens();
+    expect(cam.session.facing).toBe(before);
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(2);
+  });
+
+  it('is ignored while not on air, and in the preview it is the camera switch alone', async () => {
+    const { b, cam, recorders } = await ready();
+    await b.switchLens();
+    expect(cam.control.opened).toHaveLength(2);
+    expect(recorders).toHaveLength(0);
+    expect(b.phase).toBe('preview');
   });
 });
 
