@@ -15,6 +15,7 @@
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
   import LydiaContractPanel from '$lib/components/admin/LydiaContractPanel.svelte';
+  import RetentionAppliedNotice from '$lib/components/admin/RetentionAppliedNotice.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     CALLS_MODES,
@@ -63,6 +64,8 @@
   let savedProvider = $state<PaymentProviderChoice>('disabled');
   let error = $state<string | null>(null);
   let savedMessage = $state('');
+  /** Bumped at each config load or save: the retention-applied notice reads its state again. */
+  let retentionRevision = $state(0);
 
   let maintenanceEnabled = $state(false);
   let maintenanceMessage = $state('');
@@ -278,6 +281,7 @@
   /** Shows a server answer in the form and makes it the snapshot the next save is diffed against. */
   function applyConfig(data: PlatformConfig) {
     loaded = data;
+    retentionRevision += 1;
     savedProvider = data.paymentProvider;
     maintenanceEnabled = data.maintenanceEnabled;
     maintenanceMessage = data.maintenanceMessage ?? '';
@@ -690,6 +694,9 @@
             </p>
           </div>
         {/each}
+        {#if retentionRevision > 0}
+          <RetentionAppliedNotice revision={retentionRevision} />
+        {/if}
       </fieldset>
 
       {#if error}

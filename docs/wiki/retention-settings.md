@@ -61,12 +61,28 @@ it did not answer) - so a social-service restart refused every chat file for its
   which reads `platform_config`. The read is single-flight: a notice arriving during a read shares it.
 - **A failed re-read keeps the last values.** It logs `[RETENTION] re-read (notice) FAILED (...):
   uploads keep the values read N s ago`, naming their age. It never falls back to a default.
+- **An outage is logged by state, twice** (re-review of #3521): the first failed read opens it -
+  the WARN above, or an ERROR when nothing is held - and the first successful read after it closes
+  it, `readable again (...) after N s: M upload(s) refused meanwhile`. Every read and refusal in
+  between is a debug line, so a social-service outage is not an ERROR per upload.
 - **Nothing held at all** (the boot read failed, and nothing has succeeded since) **refuses** the
   upload with a `503`, before a byte is stored. That upload asks for the read, which runs beside the
   refusal and never in its path. The client's outbox retries a 503, and its next try finds the values.
 - **A notice that fails** is an ERROR on the sender's side, and the admin's save stands. Media-service
   keeps stamping the values it read last until its next read: the next change, its own next boot, or
   social-service's next boot.
+- **The admin page SEES a lost notice** (re-review of #3521). `GET /api/users/admin/platform/retention-applied`
+  compares what media-service holds (`GET /api/media/internal/retention`, behind the secret) with the
+  columns (`retentionAppliedState`); while they differ, `/admin/platform` shows "pas encore appliqué
+  aux fichiers" with "Renvoyer" (`RetentionAppliedNotice`), which sends the notice again
+  (`POST .../retention-applied/resend`). **The version is the values themselves**: the lead asked for
+  a counter or an `updatedAt`; the values answer the admin's actual question - "are new files
+  stamped with what I set" - with no new column, and a change and its undo (30 -> 7 -> 30, the 7
+  lost) cannot read as behind. No timer and no retry: the state is read when the page loads or saves.
+- **The social-service boot notice may land before social-service listens** - `onApplicationBootstrap`
+  runs before `listen` - so the read it triggers can fail. State heals it, not a retry: a
+  media-service holding nothing re-reads at its next upload, by then social-service listens; one
+  already holding values keeps them, and they are the same columns.
 
 **The deploy window - stated, retried, no fallback.** The deploy replaces services in `depends_on`
 order, and social-service depends on media-service, so media-service boots first.
@@ -102,7 +118,8 @@ in order:
 2. an answer read EARLIER in this session (`sessionStorage`, `canari:retention_read`, stored with
    the moment it was read) - offline, or a probe that failed. It is never presented as current:
    a notice above the table says the server could not be reached and gives the date, "valeurs du
-   <date>" (`legal_privacy_retention_cached_notice`; review of #3521);
+   <date>" (`legal_privacy_retention_cached_notice`; review of #3521). It says no more than that -
+   not "read earlier in this session": the cache may come from an earlier session (re-review);
 3. with neither - the first launch offline - the values each column is created with
    (`RETENTION_DEFAULTS`), and a notice above the table saying they could not be confirmed and may
    differ, logged at WARN. Never a blank.

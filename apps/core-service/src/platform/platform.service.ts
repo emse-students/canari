@@ -21,7 +21,23 @@ import {
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { RETENTION_SETTINGS, type RetentionDays } from './retention';
-import { notifyMediaRetentionChanged } from './retention-notice';
+import {
+  notifyMediaRetentionChanged,
+  readMediaRetentionHeld,
+  retentionAppliedState,
+  type MediaHeldRetention,
+  type RetentionAppliedState,
+} from './retention-notice';
+
+/** Whether media-service stamps the durations the platform holds, for the admin page. */
+export type RetentionApplied = {
+  state: RetentionAppliedState;
+  configured: MediaHeldRetention;
+  /** What media-service holds, null before its first read or when it could not be asked. */
+  media: MediaHeldRetention | null;
+  /** When media-service read what it holds (ISO), or null. */
+  mediaReadAt: string | null;
+};
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
 import { describeHttpError } from '../common/http-error-log';
@@ -128,6 +144,39 @@ export class PlatformService implements OnModuleInit {
    * (it always does after the first boot) - `ensureDefaults` runs only when that read finds none -
    * and concurrent callers share one read (`configInFlight`), the answer being the same for all.
    */
+  /**
+   * Whether media-service stamps new conversation files with the durations the platform holds -
+   * compared from the columns and what media-service reports holding, never remembered here, so a
+   * lost notice is SEEN on the admin page until it is re-sent (docs/wiki/retention-settings.md).
+   */
+  async retentionApplied(): Promise<RetentionApplied> {
+    const row = await this.repo.findOneOrFail({ where: { id: 1 } });
+    const configured = {
+      chatReelDays: row.retentionChatReelDays,
+      idleFileDays: row.retentionIdleFileDays,
+    };
+    const media = await readMediaRetentionHeld(this.logger);
+    const state = retentionAppliedState(configured, media);
+    if (state !== 'applied') {
+      this.logger.warn(
+        `[RETENTION] media-service does not stamp the durations in force (${state}): configured chat reels ${configured.chatReelDays} / idle files ${configured.idleFileDays} days, media holds ${media === 'unreachable' || !media.held ? 'nothing readable' : `${media.held.chatReelDays} / ${media.held.idleFileDays}`}`
+      );
+    }
+    return {
+      state,
+      configured,
+      media: media === 'unreachable' ? null : media.held,
+      mediaReadAt: media === 'unreachable' ? null : media.readAt,
+    };
+  }
+
+  /** Sends the notice again (the admin's "Renvoyer"), then answers the state it left. */
+  async resendRetentionNotice(by: string): Promise<RetentionApplied> {
+    this.logger.log(`[RETENTION] notice to media-service re-sent by=${by}`);
+    await notifyMediaRetentionChanged(this.logger);
+    return this.retentionApplied();
+  }
+
   getConfig(): Promise<PlatformConfigPublic> {
     if (this.configInFlight) return this.configInFlight;
     const read = this.readConfig().finally(() => {

@@ -10,8 +10,9 @@ export const RETENTION_NOTICE_TIMEOUT_MS = 5_000;
  * docs/wiki/retention-settings.md). Called after the admin's change is saved; never throws.
  *
  * A failed notice is logged at ERROR, naming what still holds: media-service keeps stamping the
- * values it read last until its next read (its next boot, or social-service's next boot, which
- * sends the same notice). The setting itself is saved either way, and the next change notifies again.
+ * values it read last until its next read. The setting itself is saved either way, and the admin
+ * page SEES the gap - it compares what media-service holds with the columns
+ * ({@link retentionAppliedState}) and offers "Renvoyer" while they differ (re-review of #3521).
  */
 export async function notifyMediaRetentionChanged(
   logger: Pick<Logger, 'log' | 'error'>,
@@ -39,4 +40,71 @@ export async function notifyMediaRetentionChanged(
     );
     return false;
   }
+}
+
+/** The two durations media-service stamps, as it reports holding them. */
+export type MediaHeldRetention = { chatReelDays: number; idleFileDays: number };
+
+/**
+ * What media-service HOLDS right now (`GET /api/media/internal/retention`): its values and when it
+ * read them, `held: null` before its first successful read, or `'unreachable'` when it could not be
+ * asked (logged at warn). Never throws.
+ */
+export async function readMediaRetentionHeld(
+  logger: Pick<Logger, 'warn'>,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ held: MediaHeldRetention | null; readAt: string | null } | 'unreachable'> {
+  try {
+    const res = await fetchImpl(mediaUrl('media/internal/retention'), {
+      headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
+      signal: AbortSignal.timeout(RETENTION_NOTICE_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      logger.warn(`[RETENTION] media-service answered ${res.status} for the durations it holds`);
+      return 'unreachable';
+    }
+    const body = (await res.json()) as {
+      held?: { chatReelDays?: unknown; idleFileDays?: unknown } | null;
+      readAt?: unknown;
+    };
+    const held = body?.held;
+    const readAt = typeof body?.readAt === 'string' ? body.readAt : null;
+    if (held === null || held === undefined) return { held: null, readAt };
+    if (typeof held.chatReelDays !== 'number' || typeof held.idleFileDays !== 'number') {
+      logger.warn('[RETENTION] media-service reported durations that are not numbers');
+      return 'unreachable';
+    }
+    return { held: { chatReelDays: held.chatReelDays, idleFileDays: held.idleFileDays }, readAt };
+  } catch (e) {
+    logger.warn(
+      `[RETENTION] media-service could not be asked which durations it holds: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return 'unreachable';
+  }
+}
+
+/** Whether new conversation files are stamped with the durations the platform holds. */
+export type RetentionAppliedState = 'applied' | 'behind' | 'unreachable';
+
+/**
+ * THE VERSION IS THE VALUES THEMSELVES: media-service is up to date exactly when the durations it
+ * holds EQUAL the columns. A counter would answer "has it read since the last write", which a change
+ * and its undo (30 -> 7 -> 30, the 7 lost) gets wrong in the other direction; the values answer the
+ * question the admin asks - "are new files stamped with what I set" - with no new column.
+ * Nothing held yet is `behind`: media-service refuses conversation uploads until it reads.
+ */
+export function retentionAppliedState(
+  configured: MediaHeldRetention,
+  media: { held: MediaHeldRetention | null } | 'unreachable'
+): RetentionAppliedState {
+  if (media === 'unreachable') return 'unreachable';
+  const { held } = media;
+  if (
+    held &&
+    held.chatReelDays === configured.chatReelDays &&
+    held.idleFileDays === configured.idleFileDays
+  ) {
+    return 'applied';
+  }
+  return 'behind';
 }

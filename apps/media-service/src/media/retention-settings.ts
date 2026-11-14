@@ -56,12 +56,11 @@ function wholeDays(value: unknown, name: string): number {
 
 /**
  * The durations social-service reads RIGHT NOW. AN UNREADABLE VALUE IS AN ERROR, NEVER A DEFAULT: an
- * unreachable relay, a non-2xx answer or a timeout throw a 503 (logged at warn with the cause - the
- * upload is refused before a byte is stored), and a value that is not a positive whole number throws.
+ * unreachable relay, a non-2xx answer or a timeout throw a 503 whose message names the cause, and a
+ * value that is not a positive whole number throws. It logs nothing itself: its one caller, the
+ * holder, logs an outage once when it starts and once when it ends (re-review of #3521).
  */
-export async function fetchMediaRetention(
-  logger: Pick<Logger, 'warn'>
-): Promise<MediaRetentionDays> {
+export async function fetchMediaRetention(): Promise<MediaRetentionDays> {
   let res: Response;
   try {
     res = await fetch(retentionUrl(), {
@@ -69,16 +68,12 @@ export async function fetchMediaRetention(
       signal: AbortSignal.timeout(RETENTION_RELAY_TIMEOUT_MS),
     });
   } catch (e) {
-    logger.warn(
-      `[RETENTION] the retention durations could not be read from social-service: ${e instanceof Error ? e.message : String(e)} - refused`
+    throw new ServiceUnavailableException(
+      `social-service unreachable: ${e instanceof Error ? e.message : String(e)}`
     );
-    throw new ServiceUnavailableException();
   }
   if (!res.ok) {
-    logger.warn(
-      `[RETENTION] social-service answered ${res.status} for the retention durations - refused`
-    );
-    throw new ServiceUnavailableException();
+    throw new ServiceUnavailableException(`social-service answered ${res.status}`);
   }
   const body = (await res.json()) as { chatReelDays?: unknown; idleFileDays?: unknown };
   return {
@@ -95,15 +90,24 @@ export type RetentionReadReason = 'boot' | 'notice' | 'demand';
  *
  * `require` is the upload path: synchronous, no network. `refresh` is single-flight - a notice
  * arriving while a read runs shares it - and never throws: a success replaces the values, a failure
- * keeps them (WARN, naming their age) or, with nothing held yet, says so at ERROR.
+ * keeps them.
+ *
+ * AN OUTAGE IS LOGGED TWICE, by STATE, never per upload (re-review of #3521): the first failed read
+ * opens it - WARN naming the age of the values kept, or ERROR when nothing is held and conversation
+ * uploads are refused - and the first successful read after it closes it, with its length and how
+ * many uploads it refused. Every read and refusal between the two is a debug line.
  */
 export class MediaRetentionHolder {
   private held: { values: MediaRetentionDays; readAt: number } | null = null;
   private inFlight: Promise<boolean> | null = null;
+  /** When the current run of failed reads began, or null while reads succeed. */
+  private outageSince: number | null = null;
+  /** The uploads refused (nothing held) since {@link outageSince}. */
+  private refusedInOutage = 0;
 
   constructor(
-    private readonly read: (logger: Pick<Logger, 'warn'>) => Promise<MediaRetentionDays>,
-    private readonly logger: Pick<Logger, 'log' | 'warn' | 'error'>,
+    private readonly read: () => Promise<MediaRetentionDays>,
+    private readonly logger: Pick<Logger, 'log' | 'warn' | 'error' | 'debug'>,
     private readonly now: () => number = Date.now
   ) {}
 
@@ -118,7 +122,8 @@ export class MediaRetentionHolder {
    */
   require(): MediaRetentionDays {
     if (this.held) return this.held.values;
-    this.logger.warn(
+    this.refusedInOutage += 1;
+    this.logger.debug(
       '[RETENTION] no retention durations held yet: upload refused (503), a read is asked'
     );
     void this.refresh('demand');
@@ -135,9 +140,16 @@ export class MediaRetentionHolder {
 
   private async readOnce(reason: RetentionReadReason): Promise<boolean> {
     try {
-      const values = await this.read(this.logger);
+      const values = await this.read();
       const before = this.held?.values;
       this.held = { values, readAt: this.now() };
+      if (this.outageSince !== null) {
+        this.logger.log(
+          `[RETENTION] the retention durations are readable again (${reason}) after ${Math.round((this.now() - this.outageSince) / 1000)} s: ${this.refusedInOutage} upload(s) refused meanwhile`
+        );
+        this.outageSince = null;
+        this.refusedInOutage = 0;
+      }
       this.logger.log(
         `[RETENTION] read (${reason}): chat reels ${values.chatReelDays} days, idle files ${values.idleFileDays} days` +
           (before &&
@@ -149,6 +161,11 @@ export class MediaRetentionHolder {
       return true;
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
+      if (this.outageSince !== null) {
+        this.logger.debug(`[RETENTION] read (${reason}) still failing: ${cause}`);
+        return false;
+      }
+      this.outageSince = this.now();
       if (this.held) {
         const ageS = Math.round((this.now() - this.held.readAt) / 1000);
         this.logger.warn(
@@ -156,7 +173,7 @@ export class MediaRetentionHolder {
         );
       } else {
         this.logger.error(
-          `[RETENTION] read (${reason}) FAILED (${cause}) and nothing is held: conversation uploads are refused (503) until a read succeeds - the next notice or upload asks again`
+          `[RETENTION] read (${reason}) FAILED (${cause}) and nothing is held: conversation uploads are refused (503) until a read succeeds - the next notice or upload asks again; logged once until it ends`
         );
       }
       return false;

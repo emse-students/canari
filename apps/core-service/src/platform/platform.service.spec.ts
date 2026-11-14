@@ -4,7 +4,7 @@ import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
 import { deployedVersion } from './deployed-version';
 import axios from 'axios';
-import { notifyMediaRetentionChanged } from './retention-notice';
+import { notifyMediaRetentionChanged, readMediaRetentionHeld } from './retention-notice';
 
 jest.mock('axios');
 const mockedAxios = axios as unknown as { post: jest.Mock };
@@ -12,7 +12,9 @@ const mockedAxios = axios as unknown as { post: jest.Mock };
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
 jest.mock('./retention-notice', () => ({
+  ...jest.requireActual<object>('./retention-notice'),
   notifyMediaRetentionChanged: jest.fn().mockResolvedValue(true),
+  readMediaRetentionHeld: jest.fn(),
 }));
 const mockDeployed = deployedVersion as jest.MockedFunction<typeof deployedVersion>;
 /** The acting administrator: a uuid whose first 8 characters are what the audit lines print. */
@@ -577,6 +579,36 @@ describe('PlatformService', () => {
     expect(notify).not.toHaveBeenCalled();
     await service.updateConfig({ retentionChatReelDays: 7 }, ADMIN);
     expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a lost notice is SEEN: behind while media-service holds the old value, applied once re-sent', async () => {
+    const row = rowWithMin('0.13.0');
+    row.retentionChatReelDays = 7;
+    repo.findOneOrFail.mockResolvedValue(row);
+    const held = jest.mocked(readMediaRetentionHeld);
+    held.mockResolvedValueOnce({
+      held: { chatReelDays: 30, idleFileDays: 90 },
+      readAt: '2026-11-14T12:00:00.000Z',
+    });
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await expect(service.retentionApplied()).resolves.toMatchObject({
+      state: 'behind',
+      configured: { chatReelDays: 7, idleFileDays: 90 },
+      media: { chatReelDays: 30, idleFileDays: 90 },
+    });
+
+    const notify = jest.mocked(notifyMediaRetentionChanged);
+    notify.mockClear();
+    held.mockResolvedValueOnce({
+      held: { chatReelDays: 7, idleFileDays: 90 },
+      readAt: '2026-11-14T12:05:00.000Z',
+    });
+    await expect(service.resendRetentionNotice(ADMIN)).resolves.toMatchObject({
+      state: 'applied',
+    });
+    expect(notify).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it('getConfig publishes every retention duration the row holds', async () => {

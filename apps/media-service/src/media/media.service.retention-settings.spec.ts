@@ -145,7 +145,6 @@ describe('a duration that cannot be read refuses the upload', () => {
 });
 
 describe('fetchMediaRetention - the relay read, failing closed', () => {
-  const logger = { warn: jest.fn() } as never;
   const realFetch = global.fetch;
   afterEach(() => {
     global.fetch = realFetch;
@@ -158,7 +157,7 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
 
   it('reads the two durations social-service relays', async () => {
     relayAnswers(200, { chatReelDays: 14, idleFileDays: 60, reelDays: 365 });
-    await expect(fetchMediaRetention(logger)).resolves.toEqual({
+    await expect(fetchMediaRetention()).resolves.toEqual({
       chatReelDays: 14,
       idleFileDays: 60,
     });
@@ -166,19 +165,19 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
 
   it('answers 503 on a refusal or an unreachable relay', async () => {
     relayAnswers(500, {});
-    await expect(fetchMediaRetention(logger)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(fetchMediaRetention()).rejects.toBeInstanceOf(ServiceUnavailableException);
     global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
-    await expect(fetchMediaRetention(logger)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(fetchMediaRetention()).rejects.toThrow(/ECONNREFUSED/);
   });
 
   it.each([0, 1.5, '30', null])('THROWS on an unusable value %p, never a default', async (bad) => {
     relayAnswers(200, { chatReelDays: bad, idleFileDays: 90 });
-    await expect(fetchMediaRetention(logger)).rejects.toThrow(/chatReelDays/);
+    await expect(fetchMediaRetention()).rejects.toThrow(/chatReelDays/);
   });
 });
 
 describe('MediaRetentionHolder - the durations held in memory', () => {
-  const logs = () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn() });
+  const logs = () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() });
   const values = (chatReelDays: number, idleFileDays: number): MediaRetentionDays => ({
     chatReelDays,
     idleFileDays,
@@ -210,6 +209,36 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
     expect(await holder.refresh('notice')).toBe(false);
     expect(holder.require()).toEqual(values(14, 60));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('values read 120 s ago'));
+  });
+
+  it('logs an outage once when it starts and once when it ends - a refused upload is a debug line', async () => {
+    let now = 1_000_000;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockResolvedValue(values(30, 90));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger, () => now);
+
+    await holder.refresh('boot');
+    for (let upload = 0; upload < 2; upload++) {
+      expect(() => holder.require()).toThrow(ServiceUnavailableException);
+      await holder.refresh('demand');
+    }
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('upload refused'));
+
+    now += 45_000;
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    await holder.refresh('demand');
+    expect(holder.require()).toEqual(values(30, 90));
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('readable again (demand) after 45 s: 3 upload(s) refused meanwhile')
+    );
   });
 
   it('applies a changed value from the notice on', async () => {
