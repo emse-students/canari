@@ -225,6 +225,10 @@ request they had to run on, the one doing the renaming, is the one they were ski
 rebuilt the poll composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went
 with it, and the rig could not compose a poll until 2026-09-24, when an unrelated workflow edit
 made CI run everything and said so. The trigger now names the two app paths those tests read.
+**And all of `tools/`, since 2026-11-14**: the recipe's second lint reads every directory under
+`tools/`, and a pull request that edited `tools/ios-device/` alone merged a warning the gate never
+saw - which then failed every later pull request that did trigger it. A trigger is what the recipe
+READS, so it is `tools/` whole, and the lint configuration at the root.
 
 **`typecheck` IS A SEPARATE STEP FROM `build`, AND THE DIFFERENCE IS THE TESTS.** `bun run build`
 is `nest build`, which reads `tsconfig.build.json`; every service excludes `*.spec.ts` there. Jest
