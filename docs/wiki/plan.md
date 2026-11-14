@@ -106,7 +106,7 @@ earliest version, as a checklist.
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
-- [ ] [call noise suppression on a real call on both phones, which decides its default](backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)
+- [ ] [call noise suppression on a real call on both phones (the mechanical reads; the default stays OFF)](backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)
 - [ ] [the `event_pending_coorganiser` push on both phones](backlog.d/p3-event-pending-coorganiser-native-readings-owed.md)
 - [ ] [live titles and the preview card](backlog.d/reading-owed-live-titles-and-the-preview-card.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)

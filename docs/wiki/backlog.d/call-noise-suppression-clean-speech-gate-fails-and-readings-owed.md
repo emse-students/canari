@@ -1,4 +1,4 @@
-## Reading owed - call noise suppression on a real call on both phones, which decides its default
+## Reading owed - call noise suppression on a real call on both phones (the mechanical reads; the default stays OFF)
 
 target: 1.7.0
 
@@ -26,4 +26,4 @@ Also seen in the same run, unrelated to it: the gated `video-switch` and `video-
 19.6-25 fps (threshold 27) on Chrome 156 in two runs - the rig had not run since #2176 (it was
 broken until this change), so when they started failing is unknown.
 
-**Triage 2026-11-14 - left: the mechanical reads, both phones together, about 30 min** (a dev call between the phones, the switch ON: `worklet ready`, `ns=on`, `cost_ms_per_frame` / `realtime_pct`, `dumpsys audio` before and after, the iPhone route and `ns_fallbacks` across a lock, a call answered from the native ring). **DELETED: "a real voice and music with the switch on and off ... sounds good", the reading that would lift the default**: it needs an ear and a judgement, the bench has neither, and the owner decision of 2026-11-01 stands - RNNoise ships OFF. The `video-switch` and `video-off-on` fps finding is its own entry now ([rig rows](p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)).
+**Triage 2026-11-14 - left: the mechanical reads, both phones together, about 30 min** (a dev call between the phones, the switch ON: `worklet ready`, `ns=on`, `cost_ms_per_frame` / `realtime_pct`, `dumpsys audio` before and after, the iPhone route and `ns_fallbacks` across a lock, a call answered from the native ring). **DELETED: "a real voice and music with the switch on and off ... sounds good", the reading that would lift the default**: it needs an ear and a judgement, the bench has neither, and the owner decision of 2026-11-01 stands - RNNoise ships OFF, and the line above that names a sounds-good call as what lifts the default is now the OWNER's listening, not a bench reading: it is filed nowhere as owed. The `video-switch` and `video-off-on` fps finding is its own entry now ([rig rows](p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)).
