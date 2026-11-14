@@ -59,7 +59,15 @@ describe('FormsService - anonymous forms', () => {
       manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)), query: jest.fn() },
     };
     const respondentRepo: any = { count: jest.fn(() => Promise.resolve(0)) };
-    const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
+    const pricingFacts: any = {
+      build: jest.fn(() =>
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
+      ),
+    };
     const service = new FormsService(
       formRepo,
       submissionRepo,

@@ -576,8 +576,38 @@ Two properties make that work:
 
 `pricing/price-matrix.ts` resolves a subject to a cell, `pricing/validate.ts` refuses an
 incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
-`matchesCondition` plus `PricingFacts` - the promo, formation and cotisation facts assembled by
-`pricing/pricing-facts.service.ts`.
+`matchesCondition` plus `PricingFacts` - EVERY cursus of the person (promo and formation of each
+entry), and the cotisation tiers and answers, assembled by `pricing/pricing-facts.service.ts`.
+
+**Two cursus pay the most favourable price (D32, built 2026-11-14).** `PricingFacts.cursus` is a
+LIST (`NO_CURSUS`, one empty view, for staff, a guest or a 404 - exactly the old behaviour). A
+CONDITION (a question's `showIf`, `submitCondition`, a booking space's audience) holds when it holds
+for at least one cursus, promo and formation read from the SAME entry; a refusal's criterion is the
+first cursus's, `notCotisation` first. A PRICE is computed WHOLE once per cursus and the cheapest
+total wins (`cheapestCursus`; an unavailable cell loses to any price; a tie goes to the first
+cursus). The single-cursus facts a bucket, a cell or a grid tier is read from (`CursusFacts`) are
+branded: only `cursusViews` makes them, so no caller can price on one cursus by passing the
+person's facts. `forms/form-quote.ts` is where a form picks its winner, once per operation:
+`quoteSubmission` at submit (base cell for the visible answers + every product grid's lines;
+option supplements do not depend on the cursus and are left out of the comparison), and
+`displaySlices` for `/check` and the public read: EVERY distinct cursus's slice (`cursusSlices`:
+`pricing` + `productGridPrices`, nothing beyond the viewer's own cursus). The fill page
+(`fillPricing.ts`) totals each slice for the current answers and shows the cheapest with the same
+rule; an option is closed, and "combinaison indisponible" said, only when EVERY slice closes it;
+the label and the grid prices shown are the winning slice's; the form is "not open to you" only when
+every slice's row is entirely unavailable. One table of cases, `libs/contracts/cursus-pricing.cases.json` ([libs](../../libs.md#cursus-pricingcasesjson)),
+is asserted by `form-quote.spec.ts` on the server and `fillPricing.test.ts` on the page, so the two
+cannot drift. `pricing` and `productGridPrices` alone are still served - the FIRST slice - for a page
+older than D32 ([legacy-compatibility](../../legacy-compatibility.md)).
+The cursus come from core-service as `cursusViews`, reconciled THERE (`cursusViewsOf`): every
+well-formed entry, plus the legacy `promo`/`formation` pair when no entry carries it (a person the
+WP3 backfill has not reached, logged `[PROFILE_CURSUS_BEHIND]`), so D32 only ever ADDS a view -
+nobody pays more or sees less than before it. A core-service that serves no `cursusViews` (only a
+rollback produces one) gets every profile-priced operation a typed `503 PRICING_CORE_BEHIND`
+([cicd](../../cicd.md)).
+A boutique product is `cheapestCell`. The winner is logged
+(`describeCursus`: `cursus=2/2 formation=ICM promo=2024`). Stored snapshots are unchanged in
+meaning: `submissions.lines` carries the winning cursus's tier, as charged.
 
 **The module sits at `src/pricing/`, not under `src/forms/`** (moved 2026-08-31). A boutique product
 prices on the same grid, and a shared mechanism kept inside one consumer is a mechanism the second
@@ -705,10 +735,14 @@ Measured on prod 2026-08-23, `auth_db.users`, 221 rows:
 
 Three facts shape the feature:
 
-1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; `promo` and
-   `formation` are written only by `findOrCreateFromOidc`. That is what makes them safe to price on -
-   the payer cannot move themselves into a cheaper cell. **If that DTO ever gains `promo`, this
-   becomes a self-service discount**, which is why the warning is written at the DTO itself.
+1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; the cursus
+   and the `promo`/`formation` columns derived from it are written by `findOrCreateFromOidc` (from
+   the identity provider, at every sign-in) and by the platform admin's profile edit
+   (`ProfileEditService.applyEdit`, audited in `profile_changes`). That is what makes them safe to
+   price on - the payer cannot move themselves into a cheaper cell. Under D32 an admin who ADDS a
+   second cursus to somebody can move that person's price (the cheapest cursus wins), which is the
+   edit's audit trail's business, not the payer's. **If that DTO ever gains `promo` or `cursus`,
+   this becomes a self-service discount**, which is why the warning is written at the DTO itself.
 2. **`formation` is a small OPEN vocabulary, not an enum.** The next value arrives from Authentik with
    no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
 3. **Both can be null**, and five rows on prod are. A null is not an error and must price.
@@ -1003,8 +1037,8 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
 | every other pair | allowed | - | |
 
-**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
-promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers
+`NO_CURSUS` and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
 every profile criterion, and `submit` prices the cell from those facts
 (`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
 group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a

@@ -394,6 +394,47 @@ adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `buil
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
 
+### Removal with WP6, once `[PROFILE_CURSUS_BEHIND]` is silent for 7 days - the legacy pair as a cursus view (D32, 2026-11-14)
+
+**Site:** `cursusViewsOf` (`apps/core-service/src/users/miconnect-profile.ts`), served as
+`cursusViews` by `internal/users/:id/public-profile`; the legacy half of `cursusEntryFilter`
+(`users/cursus-filter.ts`, the directory's promo and formation filters) and of `FORMATIONS_SQL`
+(`internal/internal-users.controller.ts`, the criterion editor's formation picker).
+**What it humours:** people whose `users.promo` / `users.formation` columns are set while `cursus` is
+empty or has no entry carrying that pair - the WP3 backfill not applied to them and no sign-in since
+([profiles-and-access](profiles-and-access.md)). Before D32 every price, question condition, audience
+and directory filter read those columns; D32 reads every cursus entry. So the pair stays a VIEW (D32
+only ever adds): nobody is priced higher, refused, shown fewer questions or dropped from the directory
+or the picker than before it. Each time it is added, core-service logs WARN
+`[PROFILE_CURSUS_BEHIND] user=<8-char prefix> legacy promo=.. formation=.. is in no cursus entry`.
+**The cost while it stands:** a second source for one fact on every profile-priced operation, and two
+`OR` branches in two queries.
+**Measured on production, 2026-11-14** (read-only count authorised by the owner, the query in #3530's
+body): `not_array` 0, `legacy_only` 0, `first_entry_disagrees` 0, `multi_cursus` 0 over 563 accounts.
+So that day nobody depended on the legacy pair alone, the first entry agreed with the columns
+everywhere, and nobody had two cursus yet: the shim was a guard, not a rescue.
+`[PROFILE_CURSUS_BEHIND]` stays the witness of any later drift (a write path that sets the columns
+without the cursus).
+**Removal condition:** no `[PROFILE_CURSUS_BEHIND]` line for 7 days, then WITH WP6 - dropping the
+`promo`/`formation` columns is that later chantier, not D32's pull request: delete the legacy half of `cursusViewsOf`, of
+`cursusEntryFilter` and of `FORMATIONS_SQL`, their spec cases and this entry.
+
+### Removal once `minClientVersion` passes the release carrying D32 - the single pricing slice of a fill page (2026-11-14)
+
+**Site:** `pricing` and `productGridPrices` in `FormsService.hasSubmission` (`/forms/:id/check`) and
+`FormsService.getPublic` (`apps/social-service/src/forms/forms.service.ts`), beside `cursusSlices`; and
+on the client, the branch of `cursusSlicesOf` (`frontend/src/lib/forms/fillPricing.ts`) that reads a
+server serving no `cursusSlices`.
+**What it humours:** a fill page older than D32 reads the single slice: it is served the FIRST cursus's
+(what it showed when one cursus was all anybody had), and the server still charges the cheapest, so it
+can only overstate or close what a newer page opens - never undercharge. The other way round, a page
+carrying D32 that reaches a server older than it (a rollback window) reads that server's single slice
+as its one slice, logged `[FORMS] the server serves no cursusSlices`.
+**The cost while it stands:** the first slice sent twice per answer, and one client branch.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying D32, and no
+estate older than it is served. Then delete the two fields from both answers and their types, the
+`cursusSlicesOf` branch, its test and this entry.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

@@ -164,7 +164,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           throw new Error('no request/do may be issued in this file');
         },
       },
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
       activePaymentProvider: () => Promise.resolve('lydia'),
     }) as unknown as ProductsService;
   });

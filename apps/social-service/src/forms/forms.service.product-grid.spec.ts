@@ -5,6 +5,7 @@ import { SubmitFormDto } from './dto/form.dto';
 import type { ProductGrid } from './product-grid-contract';
 import type { ProductGridRefusalBody } from './product-grid';
 import type { PricingFacts } from '../pricing/audience';
+import { factsOf } from '../pricing/facts.it-fixture';
 import { PROVIDER_MAX_AMOUNT_CENTS } from '../common/core-payment-error';
 
 /**
@@ -13,13 +14,8 @@ import { PROVIDER_MAX_AMOUNT_CENTS } from '../common/core-payment-error';
  * from anything the client sent - down to the one amount handed to Lydia.
  */
 
-const COTISANT: PricingFacts = {
-  promo: 2024,
-  formation: null,
-  cotisationTiers: [null],
-  answers: {},
-};
-const NOBODY: PricingFacts = { promo: null, formation: null, cotisationTiers: [], answers: {} };
+const COTISANT: PricingFacts = factsOf({ promo: 2024, cotisationTiers: [null] });
+const NOBODY: PricingFacts = factsOf();
 
 /** Hoodie: two colours x two sizes, Noir closed in XS, at most 3 per cell. */
 const hoodie = (pricing: ProductGrid['pricing']): ProductGrid => ({
@@ -738,5 +734,145 @@ describe('SubmitFormDto - a grid answer through the real ValidationPipe', () => 
     await expect(run({ 'q-grid': { 'vert:m': { deep: 1 } } })).rejects.toThrow(BadRequestException);
     const huge = Object.fromEntries(Array.from({ length: 601 }, (_, i) => [`r${i}:c`, 1]));
     await expect(run({ 'q-grid': huge })).rejects.toThrow(BadRequestException);
+  });
+});
+
+/**
+ * D32 THROUGH `FormsService`: two cursus pay the most favourable price - the WHOLE form priced per
+ * cursus (base cell + every grid's lines), the cheapest total charged, and the page handed every
+ * cursus's slice to total the same way; a question or a submission open to either cursus is open. Each case failed when
+ * only the first cursus was read.
+ */
+describe('FormsService - two cursus (D32)', () => {
+  const submit = (service: FormsService, answers: Record<string, unknown>) =>
+    service.submit('f1', { userId: 'u1', answers } as any);
+
+  /** Base: ICM 1000, everyone else 2000. Grid: promo 2026 ("1A") 500 a unit, else 1600. */
+  const matrixAndPromoGrid = () =>
+    baseForm({
+      priceMatrix: {
+        dimensions: [
+          {
+            id: 'form',
+            kind: 'formation',
+            buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }],
+          },
+        ],
+        cells: { icm: 1000, _others: 2000 },
+      },
+      items: [
+        gridItem(
+          hoodie({
+            mode: 'single',
+            tiers: {
+              id: 'p',
+              kind: 'promo',
+              buckets: [{ id: 'p26', label: '1A', values: [2026] }],
+            } as any,
+            prices: { p26: { '*': 500 }, _others: { '*': 1600 } },
+          })
+        ),
+      ],
+    });
+  /** ICM 2024 first (cheaper base cell), ISMIN 2026 second (cheaper grid tier). */
+  const ICM_THEN_1A = factsOf({
+    cursus: [
+      { formation: 'ICM', promo: 2024 },
+      { formation: 'ISMIN', promo: 2026 },
+    ],
+  });
+
+  it('charges the cheapest WHOLE total, even when the cheaper base cell carries dearer lines', async () => {
+    const { service, saved } = makeService({ form: matrixAndPromoGrid(), facts: ICM_THEN_1A });
+    await submit(service, { 'q-grid': { 'vert:m': 2 } });
+    // First cursus: 1000 + 2 x 1600 = 4200. Second: 2000 + 2 x 500 = 3000.
+    expect(chargedCents()).toBe(3000);
+    expect((saved[0].lines as any[])[0]).toEqual(
+      expect.objectContaining({ tierId: 'p26', tierLabel: '1A', unitCents: 500 })
+    );
+  });
+
+  it('the page is handed EVERY cursus slice, and the first alone in the legacy fields', async () => {
+    const { service } = makeService({ form: matrixAndPromoGrid(), facts: ICM_THEN_1A });
+    const check = await service.hasSubmission('f1', 'u1');
+    // One slice per cursus, in cursus order: the page totals each and shows the cheapest.
+    expect(check.cursusSlices.map((s) => s.pricing?.baseCents)).toEqual([1000, 2000]);
+    expect(check.cursusSlices.map((s) => s.productGridPrices['q-grid'].tierId)).toEqual([
+      '_others',
+      'p26',
+    ]);
+    // [LEGACY] a page older than D32 reads the first slice, as it did when there was one cursus.
+    expect(check.pricing).toEqual(check.cursusSlices[0].pricing);
+    expect(check.productGridPrices).toEqual(check.cursusSlices[0].productGridPrices);
+  });
+
+  it('is open while ANY cursus has an available combination', async () => {
+    const form = baseForm({
+      items: [],
+      priceMatrix: {
+        dimensions: [
+          {
+            id: 'form',
+            kind: 'formation',
+            buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }],
+          },
+        ],
+        cells: { icm: null, _others: 1500 },
+      },
+    });
+    const check = await makeService({ form, facts: ICM_THEN_1A }).service.hasSubmission('f1', 'u1');
+    expect(check.maySubmit).toBe(true);
+    const icmOnly = factsOf({ cursus: [{ formation: 'ICM', promo: 2024 }] });
+    const closed = await makeService({ form, facts: icmOnly }).service.hasSubmission('f1', 'u1');
+    expect(closed.maySubmit).toBe(false);
+  });
+
+  it('a question shown to the second cursus is shown, required and stored; the submission is allowed through it', async () => {
+    const form = baseForm({
+      basePrice: 500,
+      submitCondition: { formation: { values: ['ICM'] } },
+      items: [
+        gridItem(),
+        {
+          id: 'q-1a',
+          label: 'Parrain',
+          type: 'short_text',
+          required: true,
+          showIf: { formation: { values: ['ICM'] }, promo: { values: [2026] } },
+        },
+      ],
+    });
+    const person = factsOf({
+      cursus: [
+        { formation: 'ISMIN', promo: 2023 },
+        { formation: 'ICM', promo: 2026 },
+      ],
+    });
+    const check = await makeService({ form, facts: person }).service.hasSubmission('f1', 'u1');
+    expect(check.maySubmit).toBe(true);
+    expect(check.hiddenItemIds).toEqual([]);
+
+    expect(await refusalCode(submit(makeService({ form, facts: person }).service, {}))).toBe(
+      'FORM_ANSWER_MISSING'
+    );
+    const { service, saved } = makeService({ form, facts: person });
+    await submit(service, { 'q-1a': 'Ada' });
+    expect(saved[0].answers).toEqual({ 'q-1a': 'Ada' });
+  });
+
+  it('promo and formation are never taken from two cursus', async () => {
+    const form = baseForm({
+      basePrice: 500,
+      submitCondition: { formation: { values: ['ICM'] }, promo: { values: [2026] } },
+    });
+    const mixed = factsOf({
+      cursus: [
+        { formation: 'ICM', promo: 2023 },
+        { formation: 'ISMIN', promo: 2026 },
+      ],
+    });
+    expect(await refusalCode(submit(makeService({ form, facts: mixed }).service, {}))).toBe(
+      'FORM_NOT_OPEN_TO_YOU'
+    );
   });
 });

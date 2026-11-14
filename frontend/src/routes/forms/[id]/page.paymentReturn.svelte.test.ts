@@ -83,6 +83,7 @@ const fresh = {
   hasSubmitted: false,
   formFull: false,
   pricing: null,
+  cursusSlices: [{ pricing: null, productGridPrices: {} }],
   hiddenItemIds: [],
   maySubmit: true,
 };

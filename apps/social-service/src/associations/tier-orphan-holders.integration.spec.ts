@@ -207,7 +207,7 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       httpService: {
         post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
       },
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
       activePaymentProvider: () => Promise.resolve('lydia'),
       routeWith: () =>
         Promise.resolve({

@@ -415,6 +415,24 @@ describe('UsersService.directory campus and post filters', () => {
     expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
   });
 
+  // D32: the promo and formation filters read every cursus entry OR the legacy pair, the two from the
+  // same place. Judged on SQL in `cursus-reads.integration.spec.ts`; here, that the query asks it.
+  it('filters promo and formation through one cursus entry or the legacy pair', async () => {
+    const { service, where } = makeService();
+    await service.directory({ promo: 2024, formation: 'ICM' });
+    const filter = where.find(([sql]) => sql.includes('jsonb_array_elements'));
+    expect(filter?.[0]).toContain("entry->>'promo' = :cursusPromoText");
+    expect(filter?.[0]).toContain(
+      'OR (user.promo = :legacyPromo AND unaccent(LOWER(user.formation)) LIKE'
+    );
+    expect(filter?.[0]).toContain("jsonb_typeof(user.cursus) = 'array'");
+    expect(filter?.[1]).toEqual({
+      cursusPromoText: '2024',
+      legacyPromo: 2024,
+      cursusFormation: '%ICM%',
+    });
+  });
+
   it('hides accounts blocked in either direction, as the New chat search does', async () => {
     const { service, where, invisibleUserIdsFor } = makeService(['blocked-1', 'blocker-2']);
     await service.directory({ campus: 'gardanne' }, 'me');

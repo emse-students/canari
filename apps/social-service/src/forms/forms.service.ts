@@ -130,12 +130,13 @@ import {
   storedGuestFields,
 } from './guest-identity';
 import {
-  bucketFor,
+  describeCursus,
   dimensionsNeedProfile,
   needsProfile,
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
+import { displaySlices, quoteSubmission, sliceOffersNothing, type CursusSlice } from './form-quote';
 import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
   answerEditOff,
@@ -146,14 +147,7 @@ import {
   rowLockedItemIds,
   sameAnswer,
 } from './answer-edit';
-import {
-  pricedQuestionIds,
-  pricingViewFor,
-  resolveCellPrice,
-  type CellValue,
-  type PriceMatrix,
-  type PricingView,
-} from '../pricing/price-matrix';
+import { pricedQuestionIds, type PriceMatrix, type PricingView } from '../pricing/price-matrix';
 import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
 import {
   answerSelections,
@@ -213,7 +207,6 @@ import {
   priceProductGridAnswer,
   productGridItems,
   productGridPriceFingerprint,
-  productGridPricesFor,
   productGridsCharge,
   productGridsNameCotisation,
   productGridsNeedProfile,
@@ -820,27 +813,6 @@ export class FormsService {
     });
   }
 
-  /**
-   * The base price this submitter pays, in cents, and the buckets that decided it.
-   *
-   * The single answer behind both the quote shown before submitting and the amount actually
-   * charged. It was two byte-identical copies when it was one boolean; a grid makes a second copy
-   * unthinkable.
-   */
-  private priceFor(
-    form: Form,
-    facts: PricingFacts
-  ): { baseCents: CellValue; appliedBuckets: { dimensionId: string; label: string }[] } {
-    if (!form.priceMatrix) return { baseCents: form.basePrice, appliedBuckets: [] };
-    const baseCents = resolveCellPrice(form.priceMatrix, facts);
-    const appliedBuckets = form.priceMatrix.dimensions.map((d) => {
-      const bucketId = bucketFor(d, facts);
-      const bucket = d.buckets.find((b) => b.id === bucketId);
-      return { dimensionId: d.id, label: bucket?.label ?? 'Autres' };
-    });
-    return { baseCents, appliedBuckets };
-  }
-
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
   private assertMaySubmit(form: Form, facts: PricingFacts): void {
     const code = submitRefusalCode(form.submitCondition, facts);
@@ -1223,8 +1195,7 @@ export class FormsService {
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
     // recomputes what is charged, from the same facts.
-    const guestFacts = await this.factsFor(form, undefined);
-    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, guestFacts) : null;
+    const guestSlices = displaySlices(form, await this.factsFor(form, undefined));
     // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
     // to anybody holding the link until someone adds it here. The price fields are what the page
     // needs to show a total; nothing names the owner, the association or its payment account.
@@ -1245,8 +1216,12 @@ export class FormsService {
       basePrice: form.basePrice,
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
-      pricing,
-      productGridPrices: productGridPricesFor(form.items, guestFacts),
+      // A guest has no cursus: one slice. `cursusSlices` is what a current page totals from;
+      // [LEGACY] `pricing` and `productGridPrices` are the same slice, for a page older than D32
+      // (legacy-compatibility.md, "the single pricing slice of a fill page").
+      cursusSlices: guestSlices,
+      pricing: guestSlices[0].pricing,
+      productGridPrices: guestSlices[0].productGridPrices,
       paymentsPaused: await this.paymentsPaused(form),
     };
   }
@@ -2249,6 +2224,12 @@ export class FormsService {
      * the page shows and totals them, `submit` recomputes what is charged. Never another category's.
      */
     productGridPrices: ProductGridPrices;
+    /**
+     * EVERY distinct slice the person's cursus give (D32, `displaySlices`): the page totals each for
+     * the answers given and shows the cheapest, with `submit`'s own rule. `pricing` and
+     * `productGridPrices` above are [LEGACY] - the FIRST slice, for a page older than D32.
+     */
+    cursusSlices: CursusSlice[];
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2260,6 +2241,7 @@ export class FormsService {
         maySubmit: false,
         refusalCode: null,
         productGridPrices: {},
+        cursusSlices: [],
       };
 
     // Check global capacity independently of per-user state
@@ -2269,19 +2251,25 @@ export class FormsService {
     }
 
     const facts = await this.factsFor(form, userId);
-    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, facts) : null;
-    // A profile row where EVERY combination is unavailable is a form this person cannot answer
-    // whatever they click, which is the same outcome as an audience condition refusing them - so it
-    // is reported the same way rather than shown as a form with no price.
-    const noCombinationAvailable =
-      !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
+    // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
+    // the first is also served alone, for a page older than D32.
+    const cursusSlices = displaySlices(form, facts);
+    const { pricing, productGridPrices } = cursusSlices[0];
+    if (cursusSlices.length > 1) {
+      this.logger.debug(
+        `[FORMS] check form=${form.id.slice(0, 8)} slices=${cursusSlices.length} (one per distinct cursus)`
+      );
+    }
+    // A profile row where EVERY combination is unavailable - through every cursus - is a form this
+    // person cannot answer whatever they click, which is the same outcome as an audience condition
+    // refusing them - so it is reported the same way rather than shown as a form with no price.
+    const noCombinationAvailable = cursusSlices.every(sliceOffersNothing);
     // The same classification `submit` refuses with, so the page and the 403 are one fact.
     const refusalCode = submitRefusalCode(form.submitCondition, facts);
     const maySubmit = refusalCode === null && !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
-    const productGridPrices = productGridPricesFor(form.items, facts);
 
     if (form.allowMultipleSubmissions)
       return {
@@ -2292,6 +2280,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
@@ -2307,6 +2296,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
     }
 
@@ -2335,6 +2325,7 @@ export class FormsService {
       maySubmit,
       refusalCode,
       productGridPrices,
+      cursusSlices,
     };
   }
 
@@ -2439,7 +2430,19 @@ export class FormsService {
     );
     const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
-    const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
+    // The WHOLE price, once per cursus, and the cheapest wins (D32): the base cell and every grid's
+    // lines below are read from that ONE cursus, so what is stored is what was charged.
+    const quote = quoteSubmission(
+      form,
+      { ...facts, answers: visibleAnswers },
+      visible,
+      input.answers ?? {}
+    );
+    const { baseCents } = quote.quote;
+    this.logger.debug(
+      `[FORMS] submit form=${form.id.slice(0, 8)} priced on ${describeCursus(quote)} ` +
+        `total=${quote.cents ?? 'unavailable'}`
+    );
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
     // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
     if (baseCents === null) {
@@ -2482,7 +2485,7 @@ export class FormsService {
       // switched "Obligatoire" demands ONE unit of its own, refused like any required question
       // (owner, 2026-11-13: no rule over the whole order).
       if (isProductGridItem(item)) {
-        const priced = priceProductGridAnswer(item, answer, facts);
+        const priced = priceProductGridAnswer(item, answer, quote.view);
         if (item.required && !productGridOrdered(priced.answer)) {
           this.logger.debug(
             `[FORMS] submit refused: required grid ${item.id} holds no unit form=${form.id.slice(0, 8)}`

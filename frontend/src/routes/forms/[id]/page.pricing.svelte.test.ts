@@ -10,9 +10,13 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
-import type { PricingView } from '$lib/forms/api';
+import type { CursusSlice, PricingView } from '$lib/forms/api';
 
-const submission = vi.hoisted(() => ({ pricing: null as PricingView | null }));
+const submission = vi.hoisted(() => ({
+  pricing: null as PricingView | null,
+  /** Every cursus slice (D32); null serves the one `pricing` as the only slice. */
+  slices: null as CursusSlice[] | null,
+}));
 const form = vi.hoisted(() => ({ items: [] as unknown[] }));
 
 vi.mock('$app/state', () => ({
@@ -49,7 +53,8 @@ vi.mock('$lib/forms/api', async (orig) => ({
     Promise.resolve({
       hasSubmitted: false,
       formFull: false,
-      pricing: submission.pricing,
+      pricing: submission.slices?.[0]?.pricing ?? submission.pricing,
+      cursusSlices: submission.slices ?? [{ pricing: submission.pricing, productGridPrices: {} }],
       hiddenItemIds: [],
       maySubmit: true,
     }),
@@ -84,6 +89,7 @@ const mounted: (() => void)[] = [];
 
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
+  submission.slices = null;
 });
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
@@ -176,5 +182,54 @@ describe('the price of a form whose priced question is not answered yet', () => 
 
     await choose('p2');
     expect(radio('icm').disabled).toBe(true);
+  });
+});
+
+/**
+ * TWO CURSUS (D32): the page is handed one slice per cursus and shows the cheapest for the answers
+ * given, with the server's rule - the two scenarios of the review of #3530, which the page got wrong
+ * when it was handed ONE slice (the same cases are in `libs/contracts/cursus-pricing.cases.json`, asserted on both
+ * sides).
+ */
+describe('the price of a person with two cursus', () => {
+  const twoSlices = (icm: Record<string, number | null>, others: Record<string, number | null>) => [
+    {
+      pricing: { ...grid({ formule: ['repas', 'sans'] }, icm), appliedLabels: ['ICM'] },
+      productGridPrices: {},
+    },
+    { pricing: grid({ formule: ['repas', 'sans'] }, others), productGridPrices: {} },
+  ];
+
+  it('keeps open, at its price, an answer only the SECOND cursus prices', async () => {
+    form.items = [choice('formule', ['repas', 'sans'])];
+    submission.slices = twoSlices(
+      { repas: 500, sans: null, _others: null },
+      { repas: 1500, sans: 1000, _others: null }
+    );
+    await render();
+
+    expect(radio('sans').disabled).toBe(false);
+    await choose('sans');
+    expect(text()).not.toContain(m.form_view_combination_closed_title());
+    expect(text()).toContain('10,00');
+  });
+
+  it('never shows a dearer total than the one charged', async () => {
+    form.items = [choice('formule', ['repas', 'sans'])];
+    submission.slices = twoSlices(
+      { repas: 5000, sans: 500, _others: null },
+      { repas: 2000, sans: 1000, _others: null }
+    );
+    await render();
+
+    await choose('repas');
+    expect(text()).toContain('20,00');
+    expect(text()).not.toContain('50,00');
+    // The winning slice's groups only: the second cursus applied none.
+    expect(text()).not.toContain('(ICM)');
+
+    await choose('sans');
+    expect(text()).toContain(`${m.form_view_total_to_pay()} (ICM)`);
+    expect(text()).toContain('5,00');
   });
 });

@@ -57,7 +57,15 @@ describe('FormsService - the file question', () => {
       count: jest.fn(() => Promise.resolve(0)),
       manager: { find: manager.find, transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
-    const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
+    const pricingFacts: any = {
+      build: jest.fn(() =>
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
+      ),
+    };
     const formFiles: any = { attach: jest.fn(() => Promise.resolve()) };
     const service = new FormsService(
       formRepo,
@@ -239,8 +247,7 @@ describe('FormsService - the file question', () => {
   describe('at upload - the form audience', () => {
     const PROMO_2024 = { promo: { values: [2024] } };
     const facts = (promo: number | null) => ({
-      promo,
-      formation: null,
+      cursus: [{ promo, formation: null }],
       cotisationTiers: [],
       answers: {},
     });

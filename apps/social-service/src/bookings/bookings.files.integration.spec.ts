@@ -181,7 +181,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         flag === AssociationPermissionFlag.MANAGE_BOOKINGS &&
         grants.has(`${userId}:${associationId}`),
     } as unknown as AssociationsService;
-    const pricingFacts = { build: async () => ({}) } as unknown as PricingFactsService;
+    const pricingFacts = {
+      build: async () => ({
+        cursus: [{ promo: null, formation: null }],
+        cotisationTiers: [],
+        answers: {},
+      }),
+    } as unknown as PricingFactsService;
     const formFiles = {
       storeBlob: async (data: Buffer, owner: string) => {
         const mediaId = randomUUID();

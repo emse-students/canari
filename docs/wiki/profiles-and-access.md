@@ -244,7 +244,26 @@ built.
   (user, 2026-10-05): through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
-  or allowed.
+  or allowed. **BUILT 2026-11-14 - as built:** core-service's internal public profile serves
+  `cursusViews` (`cursusViewsOf`: every well-formed entry, PLUS the legacy `promo`/`formation` pair
+  when no entry carries it - D32 only ever adds, so a person the WP3 backfill has not reached keeps
+  exactly what they had, logged `[PROFILE_CURSUS_BEHIND]`, [legacy-compatibility](legacy-compatibility.md)). Measured on
+  production 2026-11-14 over 563 accounts: no `cursus` that is not a list, nobody with the legacy pair
+  alone, no first entry disagreeing with the columns, nobody with two cursus yet - so the pair is a
+  guard today and `[PROFILE_CURSUS_BEHIND]` the witness of any drift; dropping the columns is WP6,
+  a later chantier, not D32's pull request. Social-service's `PricingFacts` carries the list (`NO_CURSUS`, one empty view, for a person with
+  none). A condition - a form question's `showIf`, `submitCondition`, a booking space's audience -
+  holds through ANY cursus, promo and formation from the same entry; a price is computed WHOLE per
+  cursus (base cell, product-grid lines) and the cheapest total wins, ties to the first cursus, and
+  everything shown or stored about that price comes from the winning cursus. The mechanism, and how
+  the fill page totals every cursus's slice live, are in
+  [forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong) (`pricing/audience.ts`
+  `cheapestCursus`, `forms/form-quote.ts`). The people directory's promo and formation filters and
+  the formations listing (the criterion editor's picker) read every entry too, OR the legacy pair,
+  a person counted once; a `cursus` that is not a list contributes nothing instead of failing the
+  query. An admin who adds a second cursus through the audited profile edit
+  (`ProfileEditService.applyEdit`) can therefore move that person's price. No migration;
+  posts, spaces, read grants and the agenda are untouched by it.
 - **D33 - A post chooses its own visibility (user, 2026-10-04), amending D19's "fixed by the author".**
   An entity's audience rules are its CEILING - what it may address: the School everything, each of
   the two MEs its campus, an association its own. A post with no rule inherits them; an author may

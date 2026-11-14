@@ -165,7 +165,7 @@ RESET lock_timeout;`
       httpService: {
         post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
       },
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
       // Payments are routed and ready: what is under test is the grant, not the routing.
       activePaymentProvider: () => Promise.resolve('lydia'),
       routeWith: (asso: Association) =>
