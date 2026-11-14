@@ -127,7 +127,62 @@ describe('publishReel', () => {
     );
     expect(d.createPost).toHaveBeenCalledWith({ markdown: 'hello', media: [ref] });
     expect(onUploaded).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not vertical'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('outside the rule'));
+  });
+
+  describe('under the rule of 2026-11-14 - vertical OR short', () => {
+    const orRule = { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 600_000 };
+    const prepared = (width: number, height: number, durationSeconds: number) => ({
+      file: new File([new Uint8Array(4)], 'take.mp4', { type: 'video/mp4' }),
+      width,
+      height,
+      durationSeconds,
+      sourceBytes: 8,
+      outputBytes: 4,
+    });
+
+    it('publishes a short landscape take as a reel', async () => {
+      const d = deps();
+      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 12));
+      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      expect(d.createPost).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'reel', durationMs: 12_000 })
+      );
+    });
+
+    it('publishes a long vertical take as a reel with its whole length declared', async () => {
+      const d = deps();
+      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(720, 1280, 300));
+      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      expect(d.createPost).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'reel', durationMs: 300_000 })
+      );
+    });
+
+    it('declares a landscape take at the recorder grace as the 90 s it is', async () => {
+      const d = deps();
+      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 90.2));
+      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      expect(d.createPost).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'reel', durationMs: 90_000 })
+      );
+    });
+
+    it('publishes a long landscape take as an ordinary post, uploaded archive', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const d = deps();
+      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 120));
+      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      expect(d.upload).toHaveBeenCalledWith(
+        expect.any(File),
+        'tok',
+        { width: 1280, height: 720 },
+        'archive'
+      );
+      expect(d.createPost).toHaveBeenCalledWith({ markdown: 'hello', media: [ref] });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cap 90000 ms'));
+      warn.mockRestore();
+    });
   });
 
   it('against an estate that serves no vertical rule, the take stays a reel as it did there', async () => {

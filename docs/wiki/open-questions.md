@@ -657,7 +657,27 @@ client). The question is whether the USER should ever see that a frame was dropp
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
 
-## QUESTION - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
+## DECIDED 2026-11-14 - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
+
+**Decided by the owner, 2026-11-14:** *"Toute vidéo verticale et/ou inférieure à 90 s est un
+CanaReel, y compris depuis la galerie"* - a video is a CanaReel when it is vertical OR 90 s or
+shorter, from the camera or the gallery - and for the videos already posted, *"Oui, toutes"*: each
+becomes a CanaReel expiring one year after its publication, the owner knowing that a video older
+than a year then goes at once. The lifetime itself is the admin setting `retention_reel_days` (a
+year by default, [retention-settings](retention-settings.md)). Built: the rule
+([reels](services/reels.md#the-rule-what-is-a-canareel)) and held migration 170. **Two choices the
+lead took, reversible, for the owner to confirm:**
+
+- **A post with several media that include a video stays a post** (migration 170 converts only a
+  post whose ONLY content is one video): converting it would delete its photos with the video a year
+  on, and a reel carries one video. The migration's header holds the count of such posts. If the
+  owner wants them converted too, a later migration can (split the video out, or convert the whole
+  post).
+- **A vertical reel is at most 10 minutes** (`REEL_VERTICAL_MAX_DURATION_MS`): the owner named no
+  upper bound, and a declared length needs one. A longer vertical video stays a post.
+
+What follows is the question as it was asked, kept for its history:
+
 
 Asked by the owner on 2026-11-09 while deciding the live replays ([live-replays](live-replays.md)):
 *"un truc général pour toutes les vidéos du genre ? 90 s et vidéos verticales ?"* - whether camera

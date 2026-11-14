@@ -317,14 +317,17 @@ export class CreatePostDto {
   authorId?: string;
 
   /**
-   * `'reel'` publishes a CanaReel (one video, expires after a month); absent or `'post'` is the
+   * `'reel'` publishes a CanaReel (one video, expires after the reel lifetime in force); absent or `'post'` is the
    * post that has always existed. The rest of the reel's shape is `assertCreateKindShape`.
    */
   @IsIn(['post', 'reel'])
   @IsOptional()
   kind?: 'post' | 'reel';
 
-  /** The reel's length in ms as the CLIENT declares it; refused above `REEL_MAX_DURATION_MS`. */
+  /**
+   * The reel's length in ms as the CLIENT declares it; refused above `REEL_MAX_DURATION_MS` on a
+   * square or landscape reel and above `REEL_VERTICAL_MAX_DURATION_MS` on a vertical one.
+   */
   @IsInt()
   @IsOptional()
   durationMs?: number;

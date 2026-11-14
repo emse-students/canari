@@ -32,10 +32,55 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
+{ "rule": "vertical-or-short", "maxDurationMs": 90000, "maxVerticalDurationMs": 600000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
 ```
 
-### The rule: what is a CanaReel (owner, 2026-11-09)
+`rule` and `maxVerticalDurationMs` are served since 2026-11-14; `retentionDays` is the admin setting
+in force ([retention-settings](../retention-settings.md)).
+
+### The rule: what is a CanaReel
+
+**Decided by the owner, 2026-11-14 - it WIDENS the rule of 2026-11-09 below: "Toute vidéo verticale
+et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie".** A video is a CanaReel when
+it is **VERTICAL OR 90 s or shorter**: a short landscape or square video is one (drawn with bars -
+the reel pane is `object-contain` over a blurred copy of the frame, `ReelMediaPane`, `ReelBackdrop`),
+and so is a long vertical one, filmed or picked from the gallery alike. Only a **long landscape or
+square** video stays an ordinary post video.
+
+- **The door** (`assertCreateKindShape`, `isReelVideo` in `posts/reel.constants.ts`): a declared reel
+  is accepted when its declared frame is vertical and its declared length is 1 ms to
+  `REEL_VERTICAL_MAX_DURATION_MS` (**10 min**, the lead's bound - the owner named none, parked in
+  [open-questions](../open-questions.md)), or whatever its frame when its length is 1 ms to
+  `REEL_MAX_DURATION_MS` (90 s). The frame read is the `width`/`height` the media element carries,
+  which is what is stored on the post.
+- **The version-skew gate**: the OR is served as `rule: 'vertical-or-short'` with
+  `maxVerticalDurationMs`, and a client applies it ONLY when it reads that value (`reelRuleOf`). A
+  client older than the change reads `maxDurationMs` and `maxAspectRatio` alone and keeps the
+  2026-11-09 rule - vertical AND 90 s or less - whose reels the new door still accepts; a new client
+  against an older server (the days between the stores and the deploy) keeps it too, so it never
+  sends a landscape reel a door would refuse.
+- **The client**: the composers' publish queue (`reelDeclarationFor`) and the composer notice
+  (`reelRuleNotice`) read the rule as served; the CanaReels tab's gallery pick (`reelPickRefusal`)
+  takes a short landscape video and a long vertical one and refuses only a long landscape one
+  (`reels_capture_long_landscape`) or a vertical one past its 10 min; `publishReel` prepares a pick
+  under `longestReelMs` and decides on the PREPARED frame and length (`reelCapForFrame`), publishing
+  a take outside the rule as a post with a WARN. **The camera's own cap is unchanged** (90 s, C4): the
+  rule decides what a video IS, not how long the camera films. A take for a conversation keeps the
+  2026-11-09 rule and the 60 s chat cap.
+- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 170
+  (`170_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
+  whose ONLY content is one video into a reel expiring **one year after its publication** - so a
+  video older than a year is deleted at the reel worker's next tick, which the owner accepted. **A
+  post with several media (a video beside photos, two videos) STAYS A POST** - the lead's
+  conservative reading, reversible, parked in [open-questions](../open-questions.md); so does a post
+  with a poll, a form, an attached form, a linked event or a later schedule. A converted reel carries
+  **no `durationMs`** (nobody declared it; `posts_kind_shape` is widened by exactly that, and the
+  NULL marks the migration's rows for the rollback). The file carries the read-only count, by age
+  band, of what it converts and what it would delete at once, and its rollback. Its approval line is
+  the owner's, not written here.
+
+The rule of 2026-11-09, as it stood until then (the "Existing posts are not converted" line is
+superseded by migration 170, and "every other video stays a post" by the OR above):
 
 **Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
 the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
@@ -74,8 +119,7 @@ YEAR** (was C6's month); the reels already published were moved to the year by m
   - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
   capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
   publish the video as a post from "Nouvelle publication".
-- **Existing posts are not converted**: a vertical video published as a post before the rule stays a
-  post (it already shows in the pager through `singleMedia`, below, and never expires).
+- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 170, above.
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 

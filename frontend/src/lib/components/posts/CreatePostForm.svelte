@@ -20,7 +20,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { getReelLimits, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
   import { readVideoMetadata } from '$lib/reels/videoDuration';
-  import { reelDeclarationFor, reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
+  import { reelDeclarationFor, reelRuleNotice, reelRuleOf } from '$lib/reels/reelRule';
   import { landingFeedFor } from '$lib/posts/landingFeed';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
@@ -243,12 +243,7 @@
           'POST_COMPOSER',
           `the picked video ${video.width ?? '?'}x${video.height ?? '?'}, ${video.durationMs ?? '?'} ms: ${reel ? 'a CanaReel' : 'a post'}`
         );
-        reelNotice = reel
-          ? m.reels_publish_from_composer_notice({
-              seconds: Math.round(rule.maxDurationMs / 1000),
-              lifetime: reelLifetimeLabel(limits.retentionDays),
-            })
-          : null;
+        reelNotice = reel ? reelRuleNotice(rule, limits.retentionDays) : null;
       })
       .catch((e: unknown) => {
         // The notice only: the queue reads the rule again at the create step, and waits it out.

@@ -128,18 +128,22 @@ export class Post {
   /**
    * `'post'` for every row that predates CanaReels, `'reel'` for a short video that expires,
    * `'replay'` for a finished live kept three days (migration 156). Fixed at creation. The columns
-   * of each kind are one fact (`posts_kind_shape`): a reel has a `durationMs` and an `expiresAt`, a
+   * of each kind are one fact (`posts_kind_shape`): a reel has an `expiresAt` and a `durationMs` (NULL only on a reel held migration 170 converted), a
    * replay those and a `liveId`, a post none of them.
    */
   @Column({ type: 'varchar', length: 16, default: 'post' })
   kind: StoredPostKind;
 
-  /** The length the CLIENT declared for a reel, 1..`REEL_MAX_DURATION_MS`; null on a post. Never verified server-side - the video is ciphertext. */
+  /**
+   * The length the CLIENT declared for a reel (`isReelVideo`'s bounds); null on a post, and on a reel
+   * converted from a post by held migration 170, whose length nobody declared - a reader then takes
+   * the video's own. Never verified server-side - the video is ciphertext.
+   */
   @Column({ type: 'integer', nullable: true, default: null })
   durationMs: number | null;
 
   /**
-   * When `ReelRetentionScheduler` deletes this reel: `createdAt` + `REEL_RETENTION_DAYS`, set ONCE
+   * When `ReelRetentionScheduler` deletes this reel: `createdAt` + the `retention_reel_days` setting in force, set ONCE
    * at creation. Null on a post. A reel past it is invisible to every read before the worker has
    * reached it.
    */

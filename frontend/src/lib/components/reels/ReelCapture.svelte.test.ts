@@ -985,6 +985,57 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     }
   );
 
+  describe('against a server of 2026-11-14 - vertical OR short', () => {
+    beforeEach(() => {
+      getReelLimits.mockResolvedValue({
+        rule: 'vertical-or-short',
+        maxDurationMs: 90_000,
+        maxVerticalDurationMs: 600_000,
+        chatMaxDurationMs: 60_000,
+        maxAspectRatio: 0.8,
+        retentionDays: 365,
+        warningWindowDays: 7,
+      });
+    });
+
+    const pickVideo = async (meta: { durationMs: number; width: number; height: number }) => {
+      pickedMetadata.value = meta;
+      const { target } = await render();
+      const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+      const clip = new File([new Uint8Array(3)], 'pick.mp4', { type: 'video/mp4' });
+      Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      await settle();
+      return target;
+    };
+
+    it.each([
+      ['a short landscape video', 30_000, 1280, 720],
+      ['a long vertical video', 300_000, 720, 1280],
+    ])('takes %s to the review', async (_l, durationMs, width, height) => {
+      try {
+        const target = await pickVideo({ durationMs, width, height });
+        expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+      } finally {
+        pickedMetadata.value = { durationMs: 5_000, width: 720, height: 1280 };
+      }
+    });
+
+    it('refuses a long landscape video, and says where to publish it', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const target = await pickVideo({ durationMs: 120_000, width: 1280, height: 720 });
+        expect(target.querySelector('[data-reel-review]')).toBeNull();
+        expect(toastStore.toasts.map((t) => t.message)).toContain(
+          m.reels_capture_long_landscape({ seconds: 90 })
+        );
+      } finally {
+        pickedMetadata.value = { durationMs: 5_000, width: 720, height: 1280 };
+      }
+    });
+  });
+
   it('a pick whose frame the engine cannot read reaches the review: the publish decides', async () => {
     pickedMetadata.value = { durationMs: 5_000, width: null, height: null };
     try {

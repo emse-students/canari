@@ -1,8 +1,8 @@
 /**
  * What a create or edit request may say about a post's KIND.
  *
- * The server cannot look inside a reel's ciphertext, so these rules ARE the 90-second cap and the
- * "one video" shape: whatever is enforced is enforced here, as a refusal at the door. The cases that
+ * The server cannot look inside a reel's ciphertext, so these rules ARE the vertical-or-short rule and
+ * the "one video" shape: whatever is enforced is enforced here, as a refusal at the door. The cases that
  * carry weight are the boundaries (the cap itself, one past it) and the fields a reel must not
  * carry - a poll on something that expires in a month, a schedule that would start the month before
  * anybody could see it.
@@ -16,8 +16,10 @@ import {
   REEL_MAX_ASPECT_RATIO,
   REEL_MAX_DURATION_MS,
   REEL_RETENTION_DAYS,
+  REEL_VERTICAL_MAX_DURATION_MS,
   isExpiredPost,
   isReelFrame,
+  isReelVideo,
   reelLimits,
 } from './reel.constants';
 
@@ -35,11 +37,13 @@ describe('assertCreateKindShape - a reel', () => {
     expect(() => assertCreateKindShape(reel())).not.toThrow();
   });
 
-  it('accepts the cap exactly and refuses one millisecond past it', () => {
-    expect(() => assertCreateKindShape(reel({ durationMs: REEL_MAX_DURATION_MS }))).not.toThrow();
-    expect(() => assertCreateKindShape(reel({ durationMs: REEL_MAX_DURATION_MS + 1 }))).toThrow(
-      BadRequestException
-    );
+  it('accepts a vertical reel up to its cap exactly and refuses one millisecond past it', () => {
+    expect(() =>
+      assertCreateKindShape(reel({ durationMs: REEL_VERTICAL_MAX_DURATION_MS }))
+    ).not.toThrow();
+    expect(() =>
+      assertCreateKindShape(reel({ durationMs: REEL_VERTICAL_MAX_DURATION_MS + 1 }))
+    ).toThrow(BadRequestException);
   });
 
   it.each([
@@ -81,16 +85,18 @@ describe('assertCreateKindShape - a reel', () => {
   });
 });
 
-describe('assertCreateKindShape - a reel is a VERTICAL video (owner, 2026-11-09)', () => {
-  const framed = (width?: number, height?: number) =>
-    reel({ media: [{ type: 'video', mimeType: 'video/mp4', width, height }] });
+describe('assertCreateKindShape - a reel is VERTICAL OR SHORT (owner, 2026-11-14)', () => {
+  const LONG = REEL_MAX_DURATION_MS + 5_000;
+  const framed = (width?: number, height?: number, durationMs = 41_250) =>
+    reel({ durationMs, media: [{ type: 'video', mimeType: 'video/mp4', width, height }] });
 
   it.each([
     ['9:16, a phone held upright', 720, 1280],
     ['3:4, the iOS system camera', 360, 480],
-    ['4:5 exactly, the widest a reel may be', 1080, 1350],
-  ])('accepts %s', (_label, width, height) => {
+    ['4:5 exactly, the widest vertical frame', 1080, 1350],
+  ])('accepts %s, short or long', (_label, width, height) => {
     expect(() => assertCreateKindShape(framed(width, height))).not.toThrow();
+    expect(() => assertCreateKindShape(framed(width, height, LONG))).not.toThrow();
   });
 
   it.each([
@@ -100,8 +106,16 @@ describe('assertCreateKindShape - a reel is a VERTICAL video (owner, 2026-11-09)
     ['no dimensions', undefined, undefined],
     ['a width only', 720, undefined],
     ['a zero height', 720, 0],
-  ])('refuses %s', (_label, width, height) => {
-    expect(() => assertCreateKindShape(framed(width, height))).toThrow(BadRequestException);
+  ])('accepts %s when SHORT, and refuses it past 90 s', (_label, width, height) => {
+    expect(() => assertCreateKindShape(framed(width, height))).not.toThrow();
+    expect(() => assertCreateKindShape(framed(width, height, REEL_MAX_DURATION_MS))).not.toThrow();
+    expect(() => assertCreateKindShape(framed(width, height, REEL_MAX_DURATION_MS + 1))).toThrow(
+      BadRequestException
+    );
+  });
+
+  it('accepts what a client OLDER than the rule declares: a vertical reel of 90 s or less', () => {
+    expect(() => assertCreateKindShape(framed(720, 1280, REEL_MAX_DURATION_MS))).not.toThrow();
   });
 
   it('leaves an ordinary post alone whatever its video is: a landscape video stays a post', () => {
@@ -128,6 +142,20 @@ describe('isReelFrame', () => {
     ['a negative width', -720, 1280],
   ])('is false on %s', (_label, width, height) => {
     expect(isReelFrame(width, height)).toBe(false);
+  });
+});
+
+describe('isReelVideo - the rule on one declared video', () => {
+  it.each([
+    ['a short landscape video', 30_000, 1920, 1080, true],
+    ['a long vertical video', 300_000, 1080, 1920, true],
+    ['a long landscape video', 90_001, 1920, 1080, false],
+    ['a vertical video past its cap', REEL_VERTICAL_MAX_DURATION_MS + 1, 1080, 1920, false],
+    ['a short video with no frame', 5_000, undefined, undefined, true],
+    ['a length that is not an integer', 5_000.5, 1080, 1920, false],
+    ['no length at all', undefined, 1080, 1920, false],
+  ])('%s: %s', (_label, durationMs, width, height, expected) => {
+    expect(isReelVideo(durationMs, width, height)).toBe(expected);
   });
 });
 
@@ -199,6 +227,15 @@ describe('reelLimits - the numbers a client reads', () => {
   it('serves the vertical rule and the lifetime it is GIVEN - the admin setting in force (2026-11-14)', () => {
     expect(reelLimits(180)).toMatchObject({ maxAspectRatio: 0.8, retentionDays: 180 });
     expect(REEL_RETENTION_DAYS).toBe(365);
+  });
+
+  it('serves the rule a client applies only when it reads it - the version-skew gate (2026-11-14)', () => {
+    expect(reelLimits(365)).toMatchObject({
+      rule: 'vertical-or-short',
+      maxDurationMs: REEL_MAX_DURATION_MS,
+      maxVerticalDurationMs: REEL_VERTICAL_MAX_DURATION_MS,
+    });
+    expect(REEL_VERTICAL_MAX_DURATION_MS).toBe(600_000);
   });
 
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {

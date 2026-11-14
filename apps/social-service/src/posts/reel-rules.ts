@@ -1,5 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { REEL_MAX_ASPECT_RATIO, REEL_MAX_DURATION_MS, isReelFrame } from './reel.constants';
+import {
+  REEL_MAX_ASPECT_RATIO,
+  REEL_MAX_DURATION_MS,
+  REEL_VERTICAL_MAX_DURATION_MS,
+  isReelVideo,
+} from './reel.constants';
 
 /** What the create request says about a post's KIND, as `CreatePostDto` carries it. */
 interface KindedCreateBody {
@@ -22,10 +27,11 @@ const present = (value: unknown): boolean =>
  * The shape a create request must have, decided before anything is stored or claimed.
  *
  * Every refusal is a `400`: a status is an ANSWER about the request, never retried. What the server
- * can and cannot know about a reel is on docs/wiki/services/reels.md - in short it enforces the
- * DECLARED duration, the DECLARED frame (vertical: `isReelFrame`, owner 2026-11-09) and the
- * structure, and cannot look inside the ciphertext, so it neither verifies the duration, the frame nor
- * the codec.
+ * can and cannot know about a reel is on docs/wiki/services/reels.md - in short it enforces the rule
+ * (`isReelVideo`, owner 2026-11-14: VERTICAL or SHORT) on the DECLARED duration and the DECLARED
+ * frame - the very `width`/`height` stored on the media - and the structure, and cannot look inside
+ * the ciphertext, so it neither verifies the duration, the frame nor the codec. A client older than
+ * the rule declares only vertical reels of 90 s or less, which the rule still accepts.
  *
  * A post that is not a reel keeps the text-or-media rule the DTO states (`PostBodyOrMediaConstraint`)
  * and may not carry a `durationMs`: the two fields are one fact.
@@ -47,10 +53,10 @@ export function assertCreateKindShape(body: KindedCreateBody): void {
     typeof duration !== 'number' ||
     !Number.isInteger(duration) ||
     duration < 1 ||
-    duration > REEL_MAX_DURATION_MS
+    duration > REEL_VERTICAL_MAX_DURATION_MS
   ) {
     throw new BadRequestException(
-      `a reel needs an integer durationMs between 1 and ${REEL_MAX_DURATION_MS}`
+      `a reel needs an integer durationMs between 1 and ${REEL_VERTICAL_MAX_DURATION_MS}`
     );
   }
 
@@ -64,11 +70,12 @@ export function assertCreateKindShape(body: KindedCreateBody): void {
       'a reel\'s media must be a video (type "video", mimeType "video/*")'
     );
   }
-  // THE RULE (owner, 2026-11-09): a reel is a VERTICAL video. The dimensions are the prepared file's,
-  // rotation baked in, as the client declared them - the same kind of declaration as the duration.
-  if (!isReelFrame(video.width, video.height)) {
+  // THE RULE (owner, 2026-11-14): a reel is a VERTICAL video, or a SHORT one whatever its frame. The
+  // dimensions are the prepared file's, rotation baked in, as the client declared them and as the
+  // media stores them - the same kind of declaration as the duration.
+  if (!isReelVideo(duration, video.width, video.height)) {
     throw new BadRequestException(
-      `a reel's video must be vertical: width and height declared, width / height at most ${REEL_MAX_ASPECT_RATIO} (4:5)`
+      `a reel's video is vertical (width / height at most ${REEL_MAX_ASPECT_RATIO}, 4:5, declared) or at most ${REEL_MAX_DURATION_MS} ms long`
     );
   }
 
