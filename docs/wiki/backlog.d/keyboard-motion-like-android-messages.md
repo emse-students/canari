@@ -36,6 +36,18 @@ sees only the END state. Reading #42 (Mi 9T, 2026-11-14, [chat](../frontend/modu
 `innerHeight` goes 945 -> 855 **in one frame**. The whole page jumps by the keyboard's height once,
 while the keyboard itself takes ~280 ms to slide. That is the "bloc".
 
+**Measured the same way as Messages, on the same Pixel 6a** (Canari `1.6.12`, the current stable,
+no keyboard change on `main` since; a long DM, 2026-11-14, the owner's go):
+
+| | what the frames show |
+| --- | --- |
+| keyboard opening | 5 frames of the old layout while the keyboard starts; then **3 frames (~50 ms) where the WebView is already shrunk but its bottom is not repainted**: a blank band where the last bubbles and the composer were, the keyboard rising into it; then the composer appears at its FINAL place (868 px up) while the keyboard is still a quarter short, the gap filling as it finishes |
+| keyboard closing | **the composer stays up for 13 frames (~220 ms) while the keyboard slides away**, a blank band growing under it, then the whole page drops 868 px in one frame |
+
+So the defect is worse than a jump: both directions show an empty band, and the closing one lasts
+most of the animation. Both come from the same fact - the listener sees only the end state, and
+applies it at the start of the opening (too early) and at the end of the closing (too late).
+
 ### Is it possible in a Tauri app: yes, the hook is ours
 
 `MainActivity` is our Kotlin, and `WindowInsetsAnimationCompat.Callback` (API 30+ native, compat
