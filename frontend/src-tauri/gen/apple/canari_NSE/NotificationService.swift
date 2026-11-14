@@ -2176,10 +2176,22 @@ class NotificationService: UNNotificationServiceExtension {
   /// Reads `conversation_nicknames.json` in the App Group, or nil (absent, unreadable - said under
   /// `label`). The owner is checked by `conversationNickname`.
   static func readConversationNicknames(label: String) -> NicknameBook? {
-    guard let dir = appGroupDir(),
-      let data = try? Data(contentsOf: dir.appendingPathComponent("conversation_nicknames.json"))
-    else {
+    guard let dir = appGroupDir() else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) WARN no App Group - profile names only")
+      return nil
+    }
+    let url = dir.appendingPathComponent("conversation_nicknames.json")
+    // Absent is a state (a session of this build never ran yet); present and unreadable is a fault.
+    guard FileManager.default.fileExists(atPath: url.path) else {
       NseLog.log.notice("[CanariNSE] \(label, privacy: .public) no conversation_nicknames.json - profile names only")
+      return nil
+    }
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch {
+      NseLog.log.notice(
+        "[CanariNSE] \(label, privacy: .public) WARN conversation_nicknames.json not read: \(errorReason(error), privacy: .public)")
       return nil
     }
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

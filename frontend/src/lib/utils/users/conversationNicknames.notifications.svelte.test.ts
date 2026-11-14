@@ -18,11 +18,15 @@ const notes = vi.hoisted(() => ({
   nickname: [] as Array<[string, string, string | null]>,
   salon: [] as Array<[string, string | null]>,
   forgotten: [] as string[],
+  restated: [] as string[],
+  sessions: 0,
 }));
 vi.mock('./nicknameMirror', () => ({
   noteMirroredNickname: (s: string, u: string, n: string | null) => notes.nickname.push([s, u, n]),
   noteMirroredSalon: (c: string, s: string | null) => notes.salon.push([c, s]),
   forgetNicknameMirror: async (u: string) => void notes.forgotten.push(u),
+  noteMirroredScopeRestated: (s: string) => void notes.restated.push(s),
+  noteMirrorSessionStart: () => void notes.sessions++,
 }));
 
 import {
@@ -35,6 +39,7 @@ import {
   notificationNicknameScope,
   noteSalonCommunities,
   resetConversationNicknamesForTests,
+  restateMirroredScope,
   visibleNickname,
 } from './conversationNicknames.svelte';
 
@@ -51,6 +56,8 @@ beforeEach(() => {
   notes.nickname.length = 0;
   notes.salon.length = 0;
   notes.forgotten.length = 0;
+  notes.restated.length = 0;
+  notes.sessions = 0;
 });
 
 describe('the scope a notification reads', () => {
@@ -71,6 +78,20 @@ describe('the scope a notification reads', () => {
       ['c1', null],
     ]);
     expect(notificationNicknameScope('channel_c1', 'channel')).toBeNull();
+  });
+
+  it('places every salon again for the next account of the install, whose copy starts afresh', () => {
+    const list = [{ workspaceDbId: 'w1', channels: [{ id: 'channel_c1' }] }];
+    noteSalonCommunities(list);
+    me.id = 'other';
+    // Before the next account's list is read, the previous account's placements are not used.
+    expect(notificationNicknameScope('channel_c1', 'channel')).toBeNull();
+    noteSalonCommunities(list);
+    expect(notes.salon).toEqual([
+      ['c1', 'community:w1'],
+      ['c1', 'community:w1'],
+    ]);
+    expect(notificationNicknameScope('channel_c1', 'channel')).toBe('community:w1');
   });
 });
 
@@ -178,12 +199,28 @@ describe('what the native copy receives', () => {
     resetConversationNicknamesForTests();
     notes.nickname.length = 0;
     expect(mirrorStoredNicknames()).toBe(2);
+    expect(notes.sessions).toBe(1);
+    expect(notes.restated.sort()).toEqual(['g1', 'g2']);
     expect(notes.nickname).toEqual(
       expect.arrayContaining([
         ['g1', 'bob', 'Capitaine'],
         ['g2', 'eve', 'Eve2'],
       ])
     );
+  });
+
+  it('owes the session its write even when the account holds no nickname', () => {
+    expect(mirrorStoredNicknames()).toBe(0);
+    expect(notes.sessions).toBe(1);
+  });
+
+  it("restates a community's whole register, so what its list stopped naming leaves the copy", () => {
+    const scope = communityNicknameScope('w1');
+    applyNickname(scope, 'bob', { nickname: 'Prez', setBy: 'ann', at: 1 });
+    notes.nickname.length = 0;
+    expect(restateMirroredScope(scope)).toBe(1);
+    expect(notes.restated).toEqual([scope]);
+    expect(notes.nickname).toEqual([[scope, 'bob', 'Prez']]);
   });
 
   it('is removed at sign-out with the register', () => {

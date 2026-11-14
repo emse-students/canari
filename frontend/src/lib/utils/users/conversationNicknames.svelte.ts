@@ -4,7 +4,13 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isBlockedWith } from '$lib/users/blocks';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { normalizeNickname } from './nicknameRules';
-import { forgetNicknameMirror, noteMirroredNickname, noteMirroredSalon } from './nicknameMirror';
+import {
+  forgetNicknameMirror,
+  noteMirroredNickname,
+  noteMirroredSalon,
+  noteMirroredScopeRestated,
+  noteMirrorSessionStart,
+} from './nicknameMirror';
 
 /**
  * PER-CONVERSATION NICKNAMES ("Modifier les pseudos", owner 2026-10-14), as one dated register per
@@ -382,7 +388,14 @@ function askAboutSetter(viewer: string, setBy: string): void {
  * claiming the viewer - waits until its setter is known not to stand in a block with the viewer.
  */
 export function visibleNickname(scope: string | null | undefined, userId: string): string | null {
-  const entry = nicknameEntry(scope, userId);
+  return shownNickname(nicknameEntry(scope, userId), userId);
+}
+
+/**
+ * The block rule both readers apply - {@link visibleNickname} (the screen, reactive) and
+ * {@link mirroredNickname} (the notifications' copy): `entry` names `userId`, read by the caller.
+ */
+function shownNickname(entry: NicknameEntry | null | undefined, userId: string): string | null {
   if (!entry?.nickname) return null;
   const me = currentUserId();
   if (!me || norm(me) !== norm(userId)) return entry.nickname;
@@ -428,16 +441,7 @@ const salonCommunities = new Map<string, string>();
  * null (the profile name, as on the screen), and the question is asked; its answer re-mirrors.
  */
 export function mirroredNickname(scope: string, userId: string): string | null {
-  const entry = load(scope).get(norm(userId));
-  if (!entry?.nickname) return null;
-  const me = currentUserId();
-  if (!me || norm(me) !== norm(userId)) return entry.nickname;
-  const viewer = norm(me);
-  if (entry.verified && entry.setBy === viewer) return entry.nickname;
-  const verdict = setterVerdicts.get(pairKey(viewer, entry.setBy));
-  if (verdict === 'clear') return entry.nickname;
-  if (verdict === undefined) queueMicrotask(() => askAboutSetter(viewer, entry.setBy));
-  return null;
+  return shownNickname(load(scope).get(norm(userId)), userId);
 }
 
 /** Notes `userId`'s entry in `scope` for the native copy, as a notification may show it. */
@@ -464,6 +468,8 @@ function remirrorViewerEntriesBy(viewer: string, setBy: string): void {
 export function mirrorStoredNicknames(): number {
   const owner = account();
   if (!owner) return 0;
+  // Written even when this account holds nothing: the copy is this account's from now on.
+  noteMirrorSessionStart();
   const prefix = ACCOUNT_KEY.conversationNicknames(owner, '');
   const scopes: string[] = [];
   try {
@@ -476,17 +482,32 @@ export function mirrorStoredNicknames(): number {
     return 0;
   }
   let restated = 0;
-  for (const scope of scopes) {
-    for (const userId of load(scope).keys()) {
-      mirrorEntry(scope, userId);
-      restated++;
-    }
-  }
+  for (const scope of scopes) restated += restateMirroredScope(scope);
   console.info(
     `[NICKNAME] ${restated} nickname(s) of ${scopes.length} conversation(s) restated for the notifications`
   );
   return restated;
 }
+
+/**
+ * Restates `scope`'s whole register to the native copy: what the copy held there and the register no
+ * longer does is removed. A community's list read from the server (`loadCommunityNicknames`) ends
+ * with it - after a relaunch the register starts empty, so a member the list stopped naming (who
+ * left, or whose membership was created afresh) would otherwise keep the old nickname in the copy,
+ * and a notification would show what the screen no longer does. Returns how many entries it noted.
+ */
+export function restateMirroredScope(scope: string): number {
+  noteMirroredScopeRestated(scope);
+  let noted = 0;
+  for (const userId of load(scope).keys()) {
+    mirrorEntry(scope, userId);
+    noted++;
+  }
+  return noted;
+}
+
+/** The account {@link salonCommunities} was built for: an account switch starts it afresh. */
+let salonsPlacedFor = '';
 
 /**
  * Places every salon in its community, from the sidebar's list: what lets a salon's notification
@@ -496,6 +517,14 @@ export function mirrorStoredNicknames(): number {
 export function noteSalonCommunities(
   workspaces: ReadonlyArray<{ workspaceDbId?: string; channels: ReadonlyArray<{ id: string }> }>
 ): void {
+  // ONE ACCOUNT'S PLACEMENTS: the diff below notes only what changed, so a salon the previous
+  // account of the install also had would otherwise never be noted for this one, whose copy starts
+  // afresh - and its notifications would never read the community's nicknames.
+  const who = account();
+  if (who !== salonsPlacedFor) {
+    salonCommunities.clear();
+    salonsPlacedFor = who;
+  }
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a local diff, never drawn
   const next = new Map<string, string>();
   for (const ws of workspaces) {
@@ -532,7 +561,10 @@ export function notificationNicknameScope(
   if (conversationType !== 'channel' && !conversationKey.startsWith('channel_')) {
     return conversationKey;
   }
-  const ws = salonCommunities.get(conversationKey.replace(/^channel_/, ''));
+  const ws =
+    salonsPlacedFor === account()
+      ? salonCommunities.get(conversationKey.replace(/^channel_/, ''))
+      : undefined;
   if (!ws) {
     console.debug(
       `[NICKNAME] salon ${conversationKey.slice(0, 16)} not placed in a community - its notification names the profile`
@@ -547,5 +579,6 @@ export function resetConversationNicknamesForTests(): void {
   registers.clear();
   setterVerdicts.clear();
   salonCommunities.clear();
+  salonsPlacedFor = '';
   revision++;
 }

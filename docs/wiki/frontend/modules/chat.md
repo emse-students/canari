@@ -5861,8 +5861,15 @@ What stays the profile name, and why:
   sign-out.
 
 **The copy follows the account.** It names its owner: every reader uses it only when the owner is the
-account of `push_context.json`, a write for another account REPLACES it, every register stored for
-the signed-in account is restated once per session (`mirrorStoredNicknames`, `ChatBackgroundService`),
+account of `push_context.json`, a write for another account REPLACES it, every session writes it once
+even with nothing to say (so it names the signed-in account from then on, and an absent file is a
+fault, not a state), every register stored for the signed-in account is restated WHOLE once per
+session (`mirrorStoredNicknames`, `ChatBackgroundService`; `restatedScopes` empties each scope before
+its entries apply), a community's list read from the server restates that community whole
+(`restateMirroredScope`: after a relaunch the register starts empty, so a member the list stopped
+naming would otherwise keep the old nickname in the copy), the salon placements are one account's
+(an account switch places every salon again), the sign-out waits for a write in flight before it
+removes the copy,
 the sign-out removes it (`forgetConversationNicknames` -> `forget_conversation_nicknames`, the owner
 checked), the account deletion removes it with the other push files
 (`remove_account_push_and_name_files`), and the factory wipe removes the App Group copy

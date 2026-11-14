@@ -4152,8 +4152,8 @@ mod delete_user_push_files_tests {
             member_id: "1".repeat(64),
             nickname: Some("Lili".into()),
         }];
-        merge_conversation_nicknames(&dir, "a", &nick, &[]).unwrap();
-        merge_conversation_nicknames(&group, "a", &nick, &[]).unwrap();
+        merge_conversation_nicknames(&dir, "a", &nick, &[], &[]).unwrap();
+        merge_conversation_nicknames(&group, "a", &nick, &[], &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
             5

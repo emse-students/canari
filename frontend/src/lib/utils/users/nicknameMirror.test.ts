@@ -21,6 +21,8 @@ const {
   noteMirroredSalon,
   flushNicknameMirror,
   forgetNicknameMirror,
+  noteMirroredScopeRestated,
+  noteMirrorSessionStart,
   pendingMirroredNicknames,
 } = await import('./nicknameMirror');
 
@@ -55,7 +57,50 @@ describe('the native nickname mirror', () => {
         { scope: 'community:w1', memberId: BOB, nickname: null },
       ],
       channels: [{ channelId: 'c1', scope: 'community:w1' }],
+      restatedScopes: [],
     });
+  });
+
+  it('restates a scope whole: a change noted before the restatement is superseded by it', async () => {
+    noteMirroredNickname('community:w1', BOB, 'Old');
+    noteMirroredNickname('g1', BOB, 'Kept');
+    noteMirroredScopeRestated('community:w1');
+    noteMirroredNickname('community:w1', BOB, 'New');
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls[0][1]).toMatchObject({
+      changes: [
+        { scope: 'g1', memberId: BOB, nickname: 'Kept' },
+        { scope: 'community:w1', memberId: BOB, nickname: 'New' },
+      ],
+      restatedScopes: ['community:w1'],
+    });
+  });
+
+  it("writes at a session's start even with nothing to say, so the copy names this account", async () => {
+    noteMirrorSessionStart();
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(invoke).toHaveBeenCalledWith('store_conversation_nicknames', {
+      userId: me,
+      changes: [],
+      channels: [],
+      restatedScopes: [],
+    });
+  });
+
+  it('lets a write already in flight land before the sign-out removes the copy', async () => {
+    let release!: () => void;
+    invoke.mockImplementationOnce(() => new Promise((r) => (release = () => r(1))));
+    noteMirroredNickname('g1', BOB, 'X');
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    const forgetting = forgetNicknameMirror(me!);
+    await Promise.resolve();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    release();
+    await forgetting;
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual([
+      'store_conversation_nicknames',
+      'forget_conversation_nicknames',
+    ]);
   });
 
   it('notes nothing off a phone', () => {

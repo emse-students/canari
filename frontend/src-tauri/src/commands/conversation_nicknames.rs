@@ -126,6 +126,8 @@ fn read_owned(dir: &Path, owner: &str) -> Result<(Scopes, BTreeMap<String, Strin
 /// how many nicknames the file holds afterwards.
 ///
 /// - The file names another owner (or none, or cannot be parsed): it is REPLACED, never merged.
+/// - Each scope of `restated` is emptied BEFORE `changes` apply: the WebView restates that scope's
+///   whole register in them, so an entry it no longer holds leaves the copy too.
 /// - A change with a nickname sets the member's entry in its scope; one without (or empty) removes it.
 /// - Over [`CONVERSATION_NICKNAMES_MAX`]: entries THIS write did not touch go first, in reverse key
 ///   order, then this write's own the same way. Deterministic; the same for the salons.
@@ -136,6 +138,7 @@ pub(crate) fn merge_conversation_nicknames(
     owner: &str,
     changes: &[NicknameChange],
     channels: &[ChannelChange],
+    restated: &[String],
 ) -> Result<usize, String> {
     let owner = owner.trim().to_lowercase();
     if owner.is_empty() {
@@ -143,6 +146,9 @@ pub(crate) fn merge_conversation_nicknames(
         return Err("no owner".to_string());
     }
     let (mut scopes, mut salons) = read_owned(dir, &owner)?;
+    for scope in restated {
+        scopes.remove(scope.trim());
+    }
 
     let mut touched: BTreeSet<(String, String)> = BTreeSet::new();
     let mut skipped = 0usize;
@@ -238,9 +244,10 @@ pub(crate) fn merge_conversation_nicknames(
         .and_then(|()| std::fs::rename(&tmp, dir.join(CONVERSATION_NICKNAMES_FILE)))
         .map_err(|e| format!("write {CONVERSATION_NICKNAMES_FILE}: {e}"))?;
     log::debug!(
-        "[NICKNAME_MIRROR] {} change(s), {} salon(s), {skipped} skipped, {count} held",
+        "[NICKNAME_MIRROR] {} change(s), {} salon(s), {} scope(s) restated, {skipped} skipped, {count} held",
         changes.len(),
-        channels.len()
+        channels.len(),
+        restated.len()
     );
     Ok(count)
 }
@@ -330,15 +337,17 @@ pub(crate) fn store_conversation_nicknames(
     user_id: String,
     changes: Vec<NicknameChange>,
     channels: Vec<ChannelChange>,
+    restated_scopes: Vec<String>,
 ) -> Result<usize, String> {
     log::debug!(
-        "[NICKNAME_MIRROR] store_conversation_nicknames: {} change(s), {} salon(s)",
+        "[NICKNAME_MIRROR] store_conversation_nicknames: {} change(s), {} salon(s), {} restated",
         changes.len(),
-        channels.len()
+        channels.len(),
+        restated_scopes.len()
     );
     let mut held = 0;
     for dir in mirror_dirs(&app)? {
-        held = merge_conversation_nicknames(&dir, &user_id, &changes, &channels)?;
+        held = merge_conversation_nicknames(&dir, &user_id, &changes, &channels, &restated_scopes)?;
     }
     Ok(held)
 }
@@ -410,16 +419,17 @@ mod tests {
                 set("g1", &id(2).to_uppercase(), Some("Bob")),
             ],
             &[],
+            &[],
         );
         assert_eq!(n, Ok(2));
         assert_eq!(read(&dir)["scopes"]["g1"][id(1)], "Lili");
         assert_eq!(read(&dir)["scopes"]["g1"][id(2)], "Bob", "lower-cased id");
         assert_eq!(
-            merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(1), None)], &[]),
+            merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(1), None)], &[], &[]),
             Ok(1)
         );
         assert_eq!(
-            merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(2), Some(" "))], &[]),
+            merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(2), Some(" "))], &[], &[]),
             Ok(0)
         );
         assert!(
@@ -432,8 +442,10 @@ mod tests {
     #[test]
     fn another_accounts_copy_is_replaced_never_merged() {
         let dir = temp_dir("owner");
-        merge_conversation_nicknames(&dir, "other", &[set("g1", &id(1), Some("A"))], &[]).unwrap();
-        merge_conversation_nicknames(&dir, OWNER, &[set("g2", &id(2), Some("B"))], &[]).unwrap();
+        merge_conversation_nicknames(&dir, "other", &[set("g1", &id(1), Some("A"))], &[], &[])
+            .unwrap();
+        merge_conversation_nicknames(&dir, OWNER, &[set("g2", &id(2), Some("B"))], &[], &[])
+            .unwrap();
         let v = read(&dir);
         assert_eq!(v["userId"], OWNER);
         assert!(
@@ -458,6 +470,7 @@ mod tests {
                 place("channel_c1", Some("community:w")),
                 place("c2", Some("community:w")),
             ],
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -465,7 +478,7 @@ mod tests {
             "community:w",
             "the prefix is not stored"
         );
-        merge_conversation_nicknames(&dir, OWNER, &[], &[place("c2", None)]).unwrap();
+        merge_conversation_nicknames(&dir, OWNER, &[], &[place("c2", None)], &[]).unwrap();
         assert!(read(&dir)["channels"].get("c2").is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -482,6 +495,7 @@ mod tests {
                 set("g\u{0}", &id(1), Some("X")),
                 set("g1", &id(2), Some(&"B".repeat(300))),
             ],
+            &[],
             &[],
         );
         assert_eq!(n, Ok(1));
@@ -502,9 +516,9 @@ mod tests {
         let old: Vec<NicknameChange> = (0..CONVERSATION_NICKNAMES_MAX as u32)
             .map(|n| set("g1", &id(n), Some("old")))
             .collect();
-        merge_conversation_nicknames(&dir, OWNER, &old, &[]).unwrap();
+        merge_conversation_nicknames(&dir, OWNER, &old, &[], &[]).unwrap();
         assert_eq!(
-            merge_conversation_nicknames(&dir, OWNER, &[set("g9", &id(1), Some("New"))], &[]),
+            merge_conversation_nicknames(&dir, OWNER, &[set("g9", &id(1), Some("New"))], &[], &[]),
             Ok(CONVERSATION_NICKNAMES_MAX)
         );
         assert_eq!(read(&dir)["scopes"]["g9"][id(1)], "New");
@@ -512,9 +526,47 @@ mod tests {
     }
 
     #[test]
+    fn a_restated_scope_keeps_only_what_the_restatement_names() {
+        let dir = temp_dir("restate");
+        merge_conversation_nicknames(
+            &dir,
+            OWNER,
+            &[
+                set("community:w", &id(1), Some("Gone")),
+                set("community:w", &id(2), Some("Kept")),
+                set("g1", &id(1), Some("Elsewhere")),
+            ],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let n = merge_conversation_nicknames(
+            &dir,
+            OWNER,
+            &[set("community:w", &id(2), Some("Kept"))],
+            &[],
+            &["community:w".to_string()],
+        );
+        assert_eq!(n, Ok(2));
+        let v = read(&dir);
+        assert!(
+            v["scopes"]["community:w"].get(id(1)).is_none(),
+            "a member the list stopped naming kept the old nickname"
+        );
+        assert_eq!(v["scopes"]["community:w"][id(2)], "Kept");
+        assert_eq!(
+            v["scopes"]["g1"][id(1)],
+            "Elsewhere",
+            "another scope is untouched"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn the_sign_out_removes_only_its_own_accounts_copy() {
         let dir = temp_dir("remove");
-        merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(1), Some("A"))], &[]).unwrap();
+        merge_conversation_nicknames(&dir, OWNER, &[set("g1", &id(1), Some("A"))], &[], &[])
+            .unwrap();
         assert_eq!(
             remove_conversation_nicknames_of(&dir, "someone-else"),
             Ok(false)
@@ -558,7 +610,7 @@ mod tests {
             })
             .collect();
         let dir = temp_dir("contract");
-        merge_conversation_nicknames(&dir, owner, &changes, &channels).unwrap();
+        merge_conversation_nicknames(&dir, owner, &changes, &channels, &[]).unwrap();
         let written = read(&dir);
         for case in contract["cases"].as_array().unwrap() {
             let got = lookup_conversation_nickname(

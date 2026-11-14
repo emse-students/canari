@@ -27,6 +27,14 @@ type Change = { scope: string; memberId: string; nickname: string | null };
 const pending = new Map<string, Change>();
 /** Salon placements since the last write: salon id -> community scope, or `null` to forget it. */
 const pendingSalons = new Map<string, string | null>();
+/**
+ * Scopes whose WHOLE register is restated by the changes noted after it: Rust empties each before
+ * applying them, so an entry the device no longer holds (a community's list that stopped naming a
+ * member, an eviction a killed app never wrote) leaves the copy too.
+ */
+const pendingRestated = new Set<string>();
+/** The session's first write is owed even when it carries nothing: it makes the copy this account's. */
+let sessionWriteOwed = false;
 /** The account those changes were learned under. */
 let pendingOwner: string | null = null;
 /** The write in flight, if any - there is never more than one. */
@@ -47,6 +55,8 @@ function prepare(): boolean {
   if (pendingOwner !== who) {
     pending.clear();
     pendingSalons.clear();
+    pendingRestated.clear();
+    sessionWriteOwed = false;
     pendingOwner = who;
   }
   if (!scheduled) {
@@ -83,6 +93,30 @@ export function noteMirroredSalon(channelId: string, scope: string | null): void
   pendingSalons.set(id, scope);
 }
 
+/**
+ * Says that the changes noted next restate `scope`'s whole register: the copy forgets what it held
+ * there first. A change for `scope` noted before this is dropped - the restatement supersedes it.
+ */
+export function noteMirroredScopeRestated(scope: string): void {
+  if (!scope || !prepare()) return;
+  for (const key of pending.keys()) if (key.startsWith(`${scope}\u0000`)) pending.delete(key);
+  pendingRestated.add(scope);
+}
+
+/**
+ * Owes one write at the start of a signed-in session even when nothing changed, so the copy names
+ * THIS account from then on (a copy left by the previous account of the install is replaced, not
+ * kept beside it) and an absent file is a fault a reader may accuse rather than an ordinary state.
+ */
+export function noteMirrorSessionStart(): void {
+  if (!prepare()) return;
+  sessionWriteOwed = true;
+}
+
+/** Whether anything waits for a write. */
+const hasPending = () =>
+  pending.size > 0 || pendingSalons.size > 0 || pendingRestated.size > 0 || sessionWriteOwed;
+
 /** Hands the pending changes to Rust in ONE call; on failure they are kept for the next write. */
 async function writePending(): Promise<void> {
   const userId = owner();
@@ -93,29 +127,40 @@ async function writePending(): Promise<void> {
     );
     pending.clear();
     pendingSalons.clear();
+    pendingRestated.clear();
+    sessionWriteOwed = false;
     return;
   }
   const changes = new Map(pending);
   const salons = new Map(pendingSalons);
+  const restated = [...pendingRestated];
+  const owedSession = sessionWriteOwed;
   pending.clear();
   pendingSalons.clear();
+  pendingRestated.clear();
+  sessionWriteOwed = false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     const held = await invoke<number>('store_conversation_nicknames', {
       userId,
       changes: [...changes.values()],
       channels: [...salons].map(([channelId, scope]) => ({ channelId, scope })),
+      restatedScopes: restated,
     });
     Log.d(
       'NicknameMirror',
-      `mirrored ${changes.size} nickname change(s), ${salons.size} salon(s), ${held} held`
+      `mirrored ${changes.size} nickname change(s), ${salons.size} salon(s), ${restated.length} scope(s) restated, ${held} held`
     );
   } catch (e) {
     // A newer change for the same key, noted while this one failed, wins.
     for (const [k, c] of changes) if (!pending.has(k)) pending.set(k, c);
     for (const [k, s] of salons) if (!pendingSalons.has(k)) pendingSalons.set(k, s);
+    // A restatement is kept with its changes: Rust empties the scope before applying them, so a
+    // change noted for it since is applied after the emptying, as it was noted after the restatement.
+    for (const scope of restated) pendingRestated.add(scope);
+    if (owedSession) sessionWriteOwed = true;
     console.warn(
-      `[NICKNAME_MIRROR] store failed, ${changes.size + salons.size} change(s) kept: ${String(e)}`
+      `[NICKNAME_MIRROR] store failed, ${changes.size + salons.size + restated.length} change(s) kept: ${String(e)}`
     );
   }
 }
@@ -126,7 +171,7 @@ async function writePending(): Promise<void> {
  */
 export async function flushNicknameMirror(): Promise<void> {
   while (inFlight) await inFlight;
-  if (pending.size === 0 && pendingSalons.size === 0) return;
+  if (!hasPending()) return;
   inFlight = writePending().finally(() => {
     inFlight = null;
   });
@@ -144,7 +189,12 @@ export async function forgetNicknameMirror(userId: string): Promise<void> {
   if (pendingOwner === who) {
     pending.clear();
     pendingSalons.clear();
+    pendingRestated.clear();
+    sessionWriteOwed = false;
   }
+  // A WRITE ALREADY IN FLIGHT LANDS BEFORE THE REMOVAL, never after it: a store for this account
+  // completing once the copy is gone would recreate it after the sign-out.
+  while (inFlight) await inFlight;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     const removed = await invoke<boolean>('forget_conversation_nicknames', { userId: who });
@@ -158,7 +208,7 @@ export async function forgetNicknameMirror(userId: string): Promise<void> {
 
 /** How many changes wait for the next write - for tests and a debug surface. */
 export function pendingMirroredNicknames(): number {
-  return pending.size + pendingSalons.size;
+  return pending.size + pendingSalons.size + pendingRestated.size + (sessionWriteOwed ? 1 : 0);
 }
 
 if (typeof document !== 'undefined') {

@@ -3349,12 +3349,18 @@ static NSString *_Nullable CanariConversationNickname(NSDictionary *_Nullable ro
 // said under `label`). Written by `store_conversation_nicknames` (Rust).
 static NSDictionary *_Nullable CanariReadConversationNicknames(NSString *label) {
   NSString *dir = CanariTauriDataDir();
-  NSData *data =
-      dir == nil ? nil
-                 : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
-                                                           @"conversation_nicknames.json"]];
-  if (data == nil) {
+  NSString *path =
+      dir == nil ? nil : [dir stringByAppendingPathComponent:@"conversation_nicknames.json"];
+  // Absent is a state (a session of this build never ran yet); present and unreadable is a fault.
+  if (path == nil || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
     NSLog(@"[CanariPush] %@ no conversation_nicknames.json - profile names only", label);
+    return nil;
+  }
+  NSError *readError = nil;
+  NSData *data = [NSData dataWithContentsOfFile:path options:0 error:&readError];
+  if (data == nil) {
+    NSLog(@"[CanariPush] %@ WARN conversation_nicknames.json not read: %@", label,
+          CanariErrorReason(readError));
     return nil;
   }
   id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
