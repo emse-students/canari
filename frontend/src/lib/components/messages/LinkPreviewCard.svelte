@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
+  import FormCard from '$lib/components/posts/FormCard.svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
   import EcosystemCoverPreview from '$lib/components/messages/EcosystemCoverPreview.svelte';
   import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
@@ -27,9 +28,14 @@
     url: string;
     /** When true, removes the top margin (card is the only element in the bubble). */
     standalone?: boolean;
+    /**
+     * Inside a post, a link to a form is drawn as the same `FormCard` an attached form gets, so the
+     * two read alike and carry the same reminder bell. A chat bubble keeps the compact link card.
+     */
+    formAsCard?: boolean;
   }
 
-  let { url, standalone = false }: Props = $props();
+  let { url, standalone = false, formAsCard = false }: Props = $props();
 
   const isInApp = $derived(isInAppHref(url));
 
@@ -347,7 +353,19 @@
   }
 </script>
 
-{#if coverCard}
+{#if formAsCard && isInApp && canariPreview?.form}
+  <div class="mt-3" use:nearViewport={{ onnear: () => (isNear = true) }}>
+    <FormCard
+      formId={canariPreview.form.id}
+      href={inAppPath ?? url}
+      title={canariPreview.title}
+      submitted={canariPreview.form.submitted}
+      opensAt={canariPreview.form.opensAt}
+      openLabel={canariPreview.form.openLabel}
+      onclick={handleClick}
+    />
+  </div>
+{:else if coverCard}
   <EcosystemCoverPreview
     onnear={() => (isNear = true)}
     url={parsed.href}

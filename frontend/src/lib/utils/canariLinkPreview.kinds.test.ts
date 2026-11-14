@@ -3,7 +3,12 @@ import { setLocale } from '$lib/paraglide/runtime';
 
 vi.mock('$lib/forms/api', async (orig) => {
   const actual = await orig<typeof import('$lib/forms/api')>();
-  return { ...actual, getForm: vi.fn(), getPublicForm: vi.fn() };
+  return {
+    ...actual,
+    getForm: vi.fn(),
+    getPublicForm: vi.fn(),
+    checkSubmission: vi.fn(async () => ({ hasSubmitted: false, formFull: false })),
+  };
 });
 vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: vi.fn(async () => 'Camille D'),

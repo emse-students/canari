@@ -33,6 +33,11 @@ export interface CanariLinkPreview {
    * session read, so the viewer shows exactly what this reader may see.
    */
   reelPost?: PostEntity | null;
+  /**
+   * What the ONE form card (`FormCard`) needs when this preview is a form: its id, when it opens, and
+   * whether this reader answered. Present only on a `kind: 'form'` preview.
+   */
+  form?: { id: string; opensAt: string | null; submitted: boolean; openLabel: string };
 }
 
 export type CanariLinkTarget =

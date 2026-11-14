@@ -2,6 +2,7 @@ import { getAssociation, getAssociationBySlug, associationLogoSrc } from '$lib/a
 import {
   FormNotFoundError,
   getForm,
+  checkSubmission,
   getPublicForm,
   PublicFormUnavailableError,
   type Form,
@@ -103,8 +104,10 @@ export function isUnreadableAnswer(err: unknown): boolean {
  */
 async function fetchFormPreview(formId: string): Promise<CanariLinkPreview> {
   let form: Form | PublicForm;
+  let isMemberRead = false;
   try {
     form = await getForm(formId);
+    isMemberRead = true;
   } catch (err) {
     if (!isUnreadableAnswer(err)) throw err;
     Log.d('LINK_PREVIEW', `form ${formId}: member read refused, trying the guest read`);
@@ -132,8 +135,27 @@ async function fetchFormPreview(formId: string): Promise<CanariLinkPreview> {
     ? m.link_preview_form_by({ state, association: associationName })
     : state;
 
+  // Whether this reader already answered: only a member read can say, a guest read never knows.
+  let submitted = false;
+  if (isMemberRead) {
+    try {
+      submitted = (await checkSubmission(formId)).hasSubmitted;
+    } catch (err) {
+      Log.d(
+        'LINK_PREVIEW',
+        `form ${formId}: submission not read, drawn as not answered: ${String(err)}`
+      );
+    }
+  }
+
   return {
     kind: 'form',
+    form: {
+      id: formId,
+      opensAt: form.opensAt ?? null,
+      submitted,
+      openLabel: stateLine,
+    },
     categoryLabel: m.link_label_form(),
     title: form.title?.trim() || m.link_label_form(),
     subtitle: [stateLine, description ?? price].filter(Boolean).join(' - '),

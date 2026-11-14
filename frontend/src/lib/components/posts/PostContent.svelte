@@ -251,7 +251,7 @@
       {/if}
     </div>
     {#each previewLinks as url (url)}
-      <LinkPreviewCard {url} />
+      <LinkPreviewCard {url} formAsCard />
     {/each}
   </div>
 {/if}
