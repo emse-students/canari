@@ -1,6 +1,10 @@
 import type { EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
-import { postVisibleToViewerSql, type PostAccessIntent } from '../spaces/reader-spaces';
+import {
+  authorDoorHoldsSql,
+  postVisibleToViewerSql,
+  type PostAccessIntent,
+} from '../spaces/reader-spaces';
 import { commentsWithheldPostIds } from './comments-withheld';
 import { isExpiredPost, type StoredPostKind } from './reel.constants';
 
@@ -63,7 +67,8 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  *    only door is the grant, switch off - `commentsWithheldPostIds`, owner 2026-11-04), else a 404:
  *    for that reader the comments do not exist;
  * 3. hidden by moderation, unless `allowHidden` (a platform admin doing platform work);
- * 4. scheduled later, unless the reader wrote it (or `allowHidden`): an unpublished post's existence
+ * 4. scheduled later, unless the reader holds its author's door (`authorDoorHoldsSql`: wrote it, and
+ *    for an entity's post still holds a role there) or `allowHidden`: an unpublished post's existence
  *    is itself what is hidden;
  * 5. a block either way between the reader and the author of a PERSONAL, NON-ANONYMOUS post (or
  *    `allowHidden`). An association or anonymous post is exempt, as in every feed: filtering it on
@@ -103,8 +108,12 @@ export async function readPostOpenVerdict(
   }
   if (post.hiddenByModeration && !opts.allowHidden) return refuse('hidden', 'hidden by moderation');
   const scheduledAt = post.scheduledAt ? new Date(post.scheduledAt) : null;
-  const viewerOwnsIt = !!opts.viewerId && post.authorId === opts.viewerId;
-  if (scheduledAt && scheduledAt.getTime() > Date.now() && !viewerOwnsIt && !opts.allowHidden) {
+  if (
+    scheduledAt &&
+    scheduledAt.getTime() > Date.now() &&
+    !opts.allowHidden &&
+    !(await viewerHoldsAuthorDoor(manager, post, opts.viewerId))
+  ) {
     return refuse('not-found', `scheduled for ${scheduledAt.toISOString()}`);
   }
   const blockedIds = await blockedUserIdsFor(manager, opts.viewerId);
@@ -119,6 +128,24 @@ export async function readPostOpenVerdict(
     return refuse('not-found', 'a block stands between the reader and its author');
   }
   return { refusal: null, why: 'open', blockedIds };
+}
+
+/**
+ * The viewer holds the post's AUTHOR'S DOOR (`authorDoorHoldsSql`): its writer, and for a post in an
+ * entity's name only while they still hold a role there - what "unless the reader wrote it" means
+ * for a post scheduled later. Asked of a scheduled post alone, so an ordinary read pays no query.
+ */
+async function viewerHoldsAuthorDoor(
+  manager: EntityManager,
+  post: OpenablePost,
+  viewerId: string | undefined
+): Promise<boolean> {
+  if (!viewerId || viewerId !== post.authorId) return false;
+  const rows: { holds: boolean }[] = await manager.query(
+    `SELECT ${authorDoorHoldsSql('posts', '$2')} AS holds FROM posts WHERE posts.id = $1`,
+    [post.id, viewerId]
+  );
+  return rows[0]?.holds === true;
 }
 
 /**

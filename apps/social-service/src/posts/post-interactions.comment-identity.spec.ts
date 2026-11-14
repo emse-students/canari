@@ -35,6 +35,8 @@ describe('PostInteractionsService - comment identity', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const query = jest.fn((sql: string) =>

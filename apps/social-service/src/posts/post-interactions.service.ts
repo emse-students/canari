@@ -98,7 +98,8 @@ export class PostInteractionsService {
     await this.postRepo.save(post);
 
     // Notify post author of a new reaction (not for self-reactions or changes), never across the
-    // review cohort's boundary (review-cohort.ts).
+    // review cohort's boundary (review-cohort.ts), and for an entity's post only while its writer
+    // still holds a role there (`postAuthorIsTold`, 2026-11-14).
     if (
       isNew &&
       post.authorId &&
@@ -107,6 +108,7 @@ export class PostInteractionsService {
     ) {
       void (async () => {
         try {
+          if (!(await this.notifications.postAuthorIsTold(postId))) return;
           const actorName = await this.notifications.resolveActorName(userId);
           await this.notifications.createNotification({
             recipientId: post.authorId,
@@ -325,9 +327,13 @@ export class PostInteractionsService {
       };
 
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
-        alreadyNotified.add(post.authorId);
         try {
-          await send(post.authorId, 'comment');
+          // An entity's post tells its writer only while they still hold a role there (2026-11-14);
+          // one it no longer tells stays reachable as a parent's writer or a mention below.
+          if (await this.notifications.postAuthorIsTold(postId)) {
+            alreadyNotified.add(post.authorId);
+            await send(post.authorId, 'comment');
+          }
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,

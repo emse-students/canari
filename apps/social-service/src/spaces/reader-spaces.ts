@@ -110,8 +110,30 @@ function ruleReachesUserSql(rule: string, user: string, spaceFilter?: SpaceFilte
 
 /** User row `user` is a member of association `association` (an id expression). Any row counts. */
 export function isMemberSql(association: string, user: string): string {
+  return isMemberIdSql(association, `${user}.id`);
+}
+
+/** {@link isMemberSql} for a user ID expression (`$2`, a column) rather than a `users` row. */
+function isMemberIdSql(association: string, userId: string): string {
   return `EXISTS (SELECT 1 FROM association_members vis_member
-    WHERE vis_member."associationId" = ${association} AND vis_member."userId" = ${user}.id)`;
+    WHERE vis_member."associationId" = ${association} AND vis_member."userId" = ${userId})`;
+}
+
+/**
+ * THE AUTHOR'S DOOR of post row `post`, for the user whose id is the expression `userId` (2026-11-14,
+ * profiles-and-access.md): the writer of a PERSONAL post always; the writer of a post in an ENTITY's
+ * name (an association, a list, an institution) only while they still hold a role in that entity -
+ * any `association_members` row, the membership the own-entity branch of `postVisibleToUserSql`
+ * already reads. An entity's post belongs to the entity: an officer who left it keeps no door the
+ * other former members do not have.
+ *
+ * One fragment, asked by every place where "the author" opens or is told something: the visibility
+ * predicate's first door, the by-id gate's "scheduled later, unless the reader wrote it", the comment
+ * and reaction notices to the author, and the bell rows those wrote.
+ */
+export function authorDoorHoldsSql(post: string, userId: string): string {
+  return `(${post}."authorId" = ${userId}
+    AND (${post}."associationId" IS NULL OR ${isMemberIdSql(`${post}."associationId"`, userId)}))`;
 }
 
 /** The association's own rules (its ceiling) reach user row `user`, through a space `spaceFilter` keeps. */
@@ -595,7 +617,8 @@ export function institutionReachNotForStudentsSql(item: string): string {
 
 /**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
- * - the post's author, and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
+ * - the post's author ({@link authorDoorHoldsSql}: for an entity's post, only while they still hold a
+ *   role in that entity), and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
  *   post by its id, its comment page, the way a report or a moderation link does) - never when
  *   BROWSING, so the feed, the search and the announcements show an admin what they would show an
  *   ordinary reader (user, 2026-10-04: an admin reading everyone's personal posts would be a mess,
@@ -691,7 +714,7 @@ export function postVisibleToUserSql(
       ? ''
       : `
       OR ${republicationReachesUserSql(post, user)}`;
-  return `(${adminClause}${cohortClause}${post}."authorId" = ${user}.id
+  return `(${adminClause}${cohortClause}${authorDoorHoldsSql(post, `${user}.id`)}
     OR (${postPublicAdmitsUserSql(post, user)} AND (
     (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
