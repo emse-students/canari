@@ -40,6 +40,7 @@ earliest version, as a checklist.
 - ["Envoyer a..." to several targets and CanaReels in chats: the 13 readings, then the production flip](backlog.d/envoyer-a-and-canareels-in-chats-the-readings-then-the-production-flip.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
+- [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 
 **P2 - correctness**
 
