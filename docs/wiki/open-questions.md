@@ -662,7 +662,23 @@ earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the own
 question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
 is written until the owner answers. Live replays are not part of the question: they are 3 days.
 
-## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
+## DECIDED 2026-11-14 by the owner ("Oui, par campus") - an institution's Personnel public reaches every staff account of its campuses
+
+**The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" post or calendar event
+of an institution also opens to every staff account (a campus, no cursus) whose campus is the campus
+of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
+in both predicates, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
+
+**Left open, for the owner - the institution as a whole.** The door is per ITEM: it needs a chosen
+public. The association-level readers that the audiences audit of 2026-11-14 found with the same
+dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
+(`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
+and its posts and events with no reach (legacy) - ask whether the reader sees the ASSOCIATION, and
+carry no public. Opening an institution to every staff account of a campus its rules reach would
+widen all of them at once; it was not taken by default. (The signed agenda subscription link already
+gives staff their whole campus, `campusWideReaderCampus`: a selection, not a reader predicate.)
+
+The question as it was asked:
 
 Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
 ([profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)): the public "Personnel" means "only staff (no

@@ -714,7 +714,9 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   with its author - and, since WP-F5, a NON-anonymous one to the author's accepted followers
   ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)). Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
 - **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
-  one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
+  one space, or a member of at least one association (later: a named reader, an accepted follower,
+  and - 2026-11-14 - staff of a campus an institution's rules reach, for the staff-by-campus door).
+  **Readers**: `GET /api/posts` (all four
   feeds), `/search`, `/:postId`, `/:postId/calendar-link` and `/calendar-link/:eventId` apply
   the per-post predicate; a post the reader may not see is a **404** (before the moderation 403,
   which would confirm the id). Voting, reacting, commenting and liking a comment are refused the
@@ -2727,6 +2729,22 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   campus and an empty cursus), a student whose campus and formation make no opened space, an account
   with no campus, and a review account - the SQL and every sentence here mean that set, nothing
   narrower; the picker's "Personnel" hint names who it reaches in those terms.
+- **Staff by campus, a door of its own (owner, 2026-11-14, "Oui, par campus")**:
+  `institutionReachStaffCampusDoorSql` opens a "Tous" or "Personnel" post to every STAFF ACCOUNT OF
+  A CAMPUS (`isCampusStaffSql`: a campus, no cursus entry, not a review account - the SQL twin of
+  `campusWideReaderCampus`, held to it by `reader-spaces.integration.spec.ts`) whose campus is the
+  campus of a space the post ticked AND that the institution's rules still reach. So the School
+  addresses its staff without naming each one. It sits beside the rules door in
+  `postVisibleToUserSql` (and `eventVisibleToUserSql`, the same fragment), so every consumer below
+  gets it - the bell and the announcement included: such staff are TOLD of the post. Under the
+  public gate like every door: "Étudiants" closes it. Not opened: a post with no reach (legacy, or
+  not an institution's), staff of another campus, a ticked space outside the audience; a student
+  gains nothing (a student of an unticked space of the same campus still does not read it); nor an
+  account whose cursus names a formation with no opened space (it passes the "Personnel" public but
+  is not staff of a campus). `postReachesSpaceSql` is unchanged (a space's readers are students).
+  **The feed gate** (`IN_FEED_AUDIENCE_SQL`) admits such staff when an INSTITUTION's rules reach a
+  space of their campus, or a staff account told of a post would be refused the feed that holds it
+  (the follow precedent, F3 of WP-F5).
 - **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
   `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
   `postVisibleToUserSql` passes `institutionReachHoldsSpaceSql` for the post's own association only. So a
@@ -2793,12 +2811,16 @@ would be refused word for word - the banner offers Delete alone.
 
 #### Decisions taken in the build, reversible
 
-1. **"Personnel" reaches the staff who already have a door** - the institution's members, named
-   readers whose grant cell meets a ticked space, a republisher's or a reposter's staff readers. A
-   staff account has no space, so the institution's rules never reached one, and the read-grant
-   decision (6) - "staff without a cursus see nothing more by default, the named ones do" - stands.
-   Whether "Personnel" should ALSO open the post to every staff account of a ticked space's campus
-   is parked for the owner ([open-questions](open-questions.md#question---should-an-institutions-personnel-public-reach-every-staff-account-of-its-campuses-2026-11-10)).
+1. **"Personnel" and "Tous" reach the staff of a ticked space's campus (owner, 2026-11-14, "Oui,
+   par campus")** - the staff-by-campus door above - beside the staff who already had a door (the
+   institution's members, named readers whose grant cell meets a ticked space, a republisher's or a
+   reposter's staff readers). Built on 2026-11-10 as "only the staff who already have a door" and
+   parked for the owner, who answered on 2026-11-14
+   ([open-questions](open-questions.md#decided-2026-11-14-by-the-owner-oui-par-campus---an-institutions-personnel-public-reaches-every-staff-account-of-its-campuses)).
+   Reversible: one disjunct and one gate term. The association-level readers (the shop, the
+   partnerships, the directory, an institution's live, an event or a post with no reach) are NOT
+   widened: they carry no per-item public, and opening an institution to its campus's staff as a
+   whole is a separate question, parked in the same entry.
 2. **A republication and a member repost keep reaching their own readers** (G4); only the public
    follows the post there.
 3. **An institution's members read every post of it**, whatever its reach (D21), as the switch lets
@@ -2866,7 +2888,11 @@ held**: `migration_hold_reason` returns empty (additive only), as for 162.
 every door (`institutionReachAdmitsUserSql`), the spaces narrow the organiser's own door (rules and
 read grants, through `ReadOpts.spaceFilter`), and a `students` event closes the read-grant door.
 `eventReachesSpaceMatchingSql` (the agenda's space filter and the anonymous per-selection feed) asks
-the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` does.
+the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` does. **Staff by
+campus** (owner, 2026-11-14): a "Tous" or "Personnel" event opens to the staff of a ticked space's
+campus through the posts' fragment, `institutionReachStaffCampusDoorSql` - so the signed-in agenda,
+the event by id, the opening reminders and a post's event card all follow; the anonymous feeds do
+not change (a `staff` event is still withheld from them).
 
 **Co-organised events - decided by the lead, reversible:**
 
