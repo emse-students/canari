@@ -398,7 +398,11 @@ export class CallMicSwitch {
   /** The worklet's frame count at the last report tick that found the processed track sent. */
   private framesAtLastTick: number | null = null;
   private fallbacks = 0;
-  private sender: RTCRtpSender | null = null;
+  /**
+   * The microphone senders, one per peer connection of the call, keyed by its leg (`''` in a 1:1
+   * call, the participant in a group call - WP-GC2): every decision is applied to each.
+   */
+  private senders = new Map<string, RTCRtpSender>();
   private closed = false;
   /** What the sender carried after the last applied decision. */
   private sent: 'raw' | 'processed' = 'raw';
@@ -429,22 +433,36 @@ export class CallMicSwitch {
     return this.stalled ? null : this.pipeline;
   }
 
-  /** The audio sender of the call's current peer connection, created with {@link trackToSend}. */
-  attachSender(sender: RTCRtpSender): void {
-    this.log(`[Call] noise suppression: microphone sender attached (ns=${this.reportState()})`);
-    this.sender = sender;
+  /**
+   * The audio sender of the peer connection of `leg` (`''`: the call's only one), created with
+   * {@link trackToSend}; it replaces that leg's previous sender.
+   */
+  attachSender(sender: RTCRtpSender, leg = ''): void {
+    this.log(
+      `[Call] noise suppression: microphone sender attached${leg ? ` (leg ${leg.slice(0, 8)})` : ''} (ns=${this.reportState()})`
+    );
+    this.senders.set(leg, sender);
     this.sent = this.pipeline && sender.track === this.pipeline.processed ? 'processed' : 'raw';
     this.sync('a new sender');
   }
 
   /**
-   * The sender's peer connection was closed (the caller's ring ended unanswered): nothing is sent
-   * until the next {@link attachSender}, so no `replaceTrack` reaches a closed sender.
+   * The sender of `leg` lost its peer connection (the caller's ring ended unanswered, a group
+   * participant left); with no `leg`, every sender did. Nothing is sent to a detached sender, so no
+   * `replaceTrack` reaches a closed one.
    */
-  detachSender(): void {
-    if (!this.sender) return;
-    this.log('[Call] noise suppression: microphone sender detached (its connection closed)');
-    this.sender = null;
+  detachSender(leg?: string): void {
+    if (leg !== undefined) {
+      if (!this.senders.delete(leg)) return;
+      this.log(
+        `[Call] noise suppression: microphone sender detached (leg ${leg.slice(0, 8) || '-'})`
+      );
+      if (this.senders.size > 0) return;
+    } else {
+      if (this.senders.size === 0) return;
+      this.log('[Call] noise suppression: microphone sender detached (its connection closed)');
+      this.senders.clear();
+    }
     this.sent = 'raw';
     this.framesAtLastTick = null;
   }
@@ -546,7 +564,10 @@ export class CallMicSwitch {
 
   /** The sender carries the processed track right now (a measurement reads it, the call does not). */
   sendsProcessed(): boolean {
-    return !!this.pipeline && this.sender?.track === this.pipeline.processed;
+    const processed = this.pipeline?.processed;
+    if (!processed || this.senders.size === 0) return false;
+    for (const sender of this.senders.values()) if (sender.track !== processed) return false;
+    return true;
   }
 
   /** Settles once every queued `replaceTrack` has run (tests, and nothing else, wait on it). */
@@ -567,7 +588,7 @@ export class CallMicSwitch {
     );
     this.pipeline?.close();
     this.pipeline = null;
-    this.sender = null;
+    this.senders.clear();
     // A build still waiting on its worklet's proof ends with the call, and releases its context.
     this.building?.abort();
     this.building = null;
@@ -580,8 +601,7 @@ export class CallMicSwitch {
   }
 
   private async apply(why: string): Promise<void> {
-    const sender = this.sender;
-    if (this.closed || !sender) return;
+    if (this.closed || this.senders.size === 0) return;
     const track = this.trackToSend();
     const next = track === this.raw ? 'raw' : 'processed';
     if (
@@ -596,19 +616,22 @@ export class CallMicSwitch {
         `[Call] WARN noise suppression stopped carrying the microphone (context ${this.pipeline.contextState()}) - the raw microphone is sent`
       );
     }
-    if (sender.track === track) {
+    const stale = [...this.senders.values()].filter((sender) => sender.track !== track);
+    if (stale.length === 0) {
       this.sent = next;
       return;
     }
-    try {
-      await sender.replaceTrack(track);
-      this.sent = next;
-      this.log(
-        `[Call] microphone sender now carries the ${next} track (${why}; replaceTrack: same sender, same transform)`
-      );
-    } catch (e) {
-      this.fallbacks += 1;
-      this.log(`[Call] WARN microphone replaceTrack(${next}) refused (${why}): ${String(e)}`);
+    for (const sender of stale) {
+      try {
+        await sender.replaceTrack(track);
+        this.sent = next;
+        this.log(
+          `[Call] microphone sender now carries the ${next} track (${why}; replaceTrack: same sender, same transform)`
+        );
+      } catch (e) {
+        this.fallbacks += 1;
+        this.log(`[Call] WARN microphone replaceTrack(${next}) refused (${why}): ${String(e)}`);
+      }
     }
     this.publish(this.view());
   }

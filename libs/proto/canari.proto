@@ -88,6 +88,11 @@ message AppMessage {
     // A salon message edited by its author, carried as an encrypted SILENT channel row. DMs and
     // groups keep their `edit_message` system event.
     EditMsg          edit           = 13;
+    // EVERY signal of a GROUP call (WP-GC2): the same CallMsg, under its own field so a build
+    // older than group calls never rings for one. An old build decodes an AppMessage whose kind it
+    // does not know as no kind at all and drops it (`setupMessageHandler`), while it would ring a
+    // `call` with any extra field: its invite test is "a call id, and no call in progress".
+    CallMsg          group_call     = 15;
   }
   // The author's signature over this message, appended by mls-core as the LAST field of the bytes
   // (`mls-core/src/authorship.rs`). Present on a decrypted frame only when mls-core verified it

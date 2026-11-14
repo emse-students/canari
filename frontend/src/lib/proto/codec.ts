@@ -400,6 +400,17 @@ export function callEndReasonFromWire(wire: number | null | undefined): CallEndR
   return undefined;
 }
 
+/**
+ * Whether a REMOTE hangup of a GROUP call (WP-GC2) finalises this device's record. One member's
+ * hangup does not end a group call (WP-C11): a member who LEFT an answered call (no outcome) or
+ * DECLINED says so for themselves, and the call goes on for the others - this device's own record
+ * is written by its own end (`CallService.endCall`). Only an unanswered outcome closes it here, and
+ * only the CALLER's end carries one (cancelled, not answered): the call rang nobody into it.
+ */
+export function groupHangupEndsRecord(outcome: CallEndReason | undefined): boolean {
+  return outcome !== undefined && outcome !== 'declined';
+}
+
 /** Builds an MLS call hangup message; `reason` is set when the call ended unanswered. */
 export function mkCallHangup(
   callId: string,
@@ -439,6 +450,19 @@ export function mkCallAnswered(callId: string, deviceId: string): canari.AppMess
       answered: true,
     },
   };
+}
+
+/**
+ * The same call signal, as a GROUP call's (WP-GC2): its `CallMsg` moved from `call` to
+ * `group_call`, the AppMessage kind a build older than group calls does not know and drops - so no
+ * old build ever rings, or writes a record, for a group call it could not join. Every signal of a
+ * group call travels this way (invite, hangup, answered); a message with no call signal is returned
+ * as it is.
+ */
+export function asGroupCallSignal(msg: canari.AppMessage.$Properties): canari.AppMessage.$Properties {
+  if (!msg.call) return msg;
+  const { call, ...rest } = msg;
+  return { ...rest, groupCall: call };
 }
 
 // ─── Envelope builders ────────────────────────────────────────────────────────

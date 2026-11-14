@@ -26,6 +26,7 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
 import { CALLS_NATIVE_RING_COMPILED, PUSH_WAKE_DECLARED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
+import { GROUP_CALL_VERSION } from '$lib/utils/callRoomToken';
 import { readApiJson } from '$lib/utils/apiJson';
 import { isTransportFailure, RefreshFailedError } from '$lib/utils/transportFailure';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
@@ -324,6 +325,9 @@ export async function startPushService(
         // false until its P1 is closed - see `PUSH_WAKE_DECLARED`); the server writes
         // `push_token.wakeCapable` from it on every registration (false if absent).
         wake: PUSH_WAKE_DECLARED[platform],
+        // The group-call protocol this build carries (WP-GC2): the server rings a device for a
+        // group call only when it declared one, so a build before group calls is never rung for one.
+        groupCallVersion: GROUP_CALL_VERSION,
       });
       const send = (token: string): Promise<Response> =>
         fetch(`${apiBaseUrl}/api/mls/push/register`, {

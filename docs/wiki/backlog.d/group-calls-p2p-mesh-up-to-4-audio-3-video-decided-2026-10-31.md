@@ -82,7 +82,13 @@ Each is one pull request or more; none is built by the D3 change.
    **past the cap is REFUSED (`room-full`) as an interim decision, superseded by D1 when WP-GC3
    lands.** **The 3-party CI call is BUILT** (`run.mjs --scenario mesh`, every directed leg proven
    under its sender's key, [call-service](../services/call-service.md#the-mesh-scenario-wp-gc2-2026-11-13)).
-   Owed: the client half.
+   **Client half BUILT 2026-11-13** (one leg per participant in the one call service, the
+   `group_call` invite kind an old build drops, per-leg keys and transforms, WP-C11's decline and
+   last-leave rules, the tile grid and the start control behind `group_calls_mode = mesh`:
+   [calls](../frontend/modules/calls.md#group-calls---the-mesh-client-half-wp-gc2-2026-11-13)).
+   Owed: the bench readings - 3-way audio and 3-way video on the Mi 9T and the iPhone 12, WebKit's
+   receiver transforms per peer, CPU and fps with two receivers
+   ([readings owed](../plan.md#readings-owed)).
 3. **WP-GC3 - the Cloudflare Realtime SFU leg**: first the Q4 probe (do transformed frames cross
    the raw SFU), then the owner's one-off (a Realtime SFU app and its two secrets), then the backend
    proxy of the sessions/tracks API and the client's SFU leg on it.
