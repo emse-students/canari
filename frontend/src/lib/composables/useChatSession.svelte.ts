@@ -356,7 +356,22 @@ export function useChatSession() {
     // this copy. The pause detaches the handlers, so nothing more is read or acknowledged here.
     if (isLoggedIn) pauseConnectionImpl(ctx);
     if (typeof window === 'undefined') return;
-    setTimeout(() => window.location.reload(), 50);
+    const reload = () => setTimeout(() => window.location.reload(), 50);
+    // NOT WHILE A DRAIN STILL HOLDS ROWS IN ITS UI BUFFER (second review of #3321). A checkpoint that
+    // landed before the lead left may hold a frame's ratchet advance and its seen mark while the
+    // frame's row is only stored when the drain's window closes: reloading in between loses the
+    // message for good - the new leader can neither decrypt it again nor replay it. The socket is
+    // paused, so the open windows only close; nothing this copy does meanwhile is written as state.
+    let settled: Promise<void> | null = null;
+    if (isLoggedIn) {
+      try {
+        settled = ctx.ensureMls().whenBulkIngestsClosed();
+      } catch {
+        // No service built yet: nothing was drained, so nothing is buffered.
+      }
+    }
+    if (settled === null) reload();
+    else void settled.then(reload);
     // Said, so this document neither queues nor accepts the lead on its way out.
     return 'reloads';
   });

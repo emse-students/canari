@@ -796,6 +796,11 @@ export abstract class BaseMlsService implements IMlsService {
       via: DeliveryChannel;
       /** The {@link ackSerial} of the request that acknowledged it; absent until one is issued. */
       ackSerial?: number;
+      /**
+       * Set while a drain's hold WITHHELD its ack for want of a landed checkpoint covering it
+       * ({@link DrainAckHold}): what it had applied, and whether it was a commit or a Welcome.
+       */
+      heldForDisk?: { applied: number; structural: boolean };
     }
   >();
 
@@ -1769,6 +1774,21 @@ export abstract class BaseMlsService implements IMlsService {
     return handle;
   }
 
+  /** Windows removed from {@link openBulkIngests} whose observers are still closing. */
+  private closingBulkIngests = 0;
+
+  /** Waiters of {@link whenBulkIngestsClosed}, released by the last close. */
+  private bulkIngestsClosedWaiters: Array<() => void> = [];
+
+  whenBulkIngestsClosed(): Promise<void> {
+    if (this.openBulkIngests.size === 0 && this.closingBulkIngests === 0) return Promise.resolve();
+    // Said only when it waits: the line names what the caller is behind.
+    console.log(
+      `[QUEUE] waiting for ${this.openBulkIngests.size + this.closingBulkIngests} open ingest window(s) to close before going on`
+    );
+    return new Promise<void>((resolve) => this.bulkIngestsClosedWaiters.push(resolve));
+  }
+
   async endBulkIngest(handle: BulkIngestHandle): Promise<void> {
     const phase = this.openBulkIngests.get(handle);
     if (!phase) {
@@ -1778,21 +1798,29 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     this.openBulkIngests.delete(handle);
-    // Replay the exact phase the matching open used: start and end can never disagree.
-    //
-    // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
-    // state persister and the UI render buffer - and they were being awaited in one bare loop, so
-    // the FIRST to reject cancelled every one after it. The persister is registered first and
-    // rethrows when a checkpoint fails, which would have left the UI observer's window open
-    // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
-    // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
-    // buffered instead of rendered and is then discarded by the next drain. A failed disk write
-    // must cost a checkpoint, never the message pipeline.
-    for (const observer of this.bulkIngestObservers) {
-      try {
-        await observer.onBulkIngestEnd(phase);
-      } catch (e) {
-        console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+    this.closingBulkIngests += 1;
+    try {
+      // Replay the exact phase the matching open used: start and end can never disagree.
+      //
+      // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
+      // state persister and the UI render buffer - and they were being awaited in one bare loop, so
+      // the FIRST to reject cancelled every one after it. The persister is registered first and
+      // rethrows when a checkpoint fails, which would have left the UI observer's window open
+      // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
+      // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
+      // buffered instead of rendered and is then discarded by the next drain. A failed disk write
+      // must cost a checkpoint, never the message pipeline.
+      for (const observer of this.bulkIngestObservers) {
+        try {
+          await observer.onBulkIngestEnd(phase);
+        } catch (e) {
+          console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+        }
+      }
+    } finally {
+      this.closingBulkIngests -= 1;
+      if (this.openBulkIngests.size === 0 && this.closingBulkIngests === 0) {
+        for (const resolve of this.bulkIngestsClosedWaiters.splice(0)) resolve();
       }
     }
   }
@@ -1875,13 +1903,27 @@ export abstract class BaseMlsService implements IMlsService {
       }
     }
     const withheld = new Set(ids.filter((id) => !covered(id) && needsDisk(id)));
+    for (const id of ids) {
+      const known = this.deliveries.get(id);
+      if (!known) continue;
+      // REMEMBERED ON THE DELIVERY, so the re-ack of its repeat waits for the same coverage
+      // ({@link reAckHold}); forgotten once it is acknowledged.
+      if (withheld.has(id)) {
+        known.heldForDisk = {
+          applied: hold.applied.get(id) ?? 0,
+          structural: hold.structural.has(id),
+        };
+      } else {
+        delete known.heldForDisk;
+      }
+    }
     if (withheld.size === 0) return ids;
     for (const id of withheld) this.unacknowledged.add(id);
     console.info(
       `[ACK] ${withheld.size} id(s) not acknowledged: no landed checkpoint holds what they changed (` +
         (refusesCommitsHere()
           ? `this tab no longer owns the MLS state, ${getTabLeadership()}`
-          : 'the drain checkpoint did not land') +
+          : 'the checkpoint covering them did not land') +
         ') - the rows stay on the server for the tab that writes the state'
     );
     return ids.filter((id) => !withheld.has(id));
@@ -1896,6 +1938,25 @@ export abstract class BaseMlsService implements IMlsService {
   private checkpointCoveringNow(): Promise<void> {
     const persister = activeMlsStatePersister();
     return persister ? persister.flushEncrypted() : this.persistCheckpoint();
+  }
+
+  /**
+   * The hold a REPEAT of a withheld id is re-acknowledged under (second review of #3321).
+   *
+   * A withheld row stays on the server, so the next pull lists it again; the drain had settled it
+   * `done`, so {@link admitDelivery} drops the repeat and acknowledges it once more. Without a hold
+   * that re-ack deleted the row while still no landed checkpoint held the commit it carried - the
+   * very window the drain's hold had just refused. It waits for a checkpoint covering it, asked now.
+   */
+  private reAckHold(
+    queuedMessageId: string,
+    held: { applied: number; structural: boolean }
+  ): DrainAckHold {
+    return {
+      applied: new Map([[queuedMessageId, held.applied]]),
+      structural: held.structural ? new Set([queuedMessageId]) : new Set(),
+      covered: () => this.checkpointCoveringNow(),
+    };
   }
 
   /**
@@ -2802,9 +2863,11 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(`${line}. Further ones of this shape are counted, not printed`);
     }
     if (reAck) {
-      void this.announceAck([queuedMessageId]).catch((e) =>
-        console.warn('[ACK] re-ack of a repeated delivery failed:', e)
-      );
+      const held = known.heldForDisk;
+      void this.announceAck(
+        [queuedMessageId],
+        held ? this.reAckHold(queuedMessageId, held) : undefined
+      ).catch((e) => console.warn('[ACK] re-ack of a repeated delivery failed:', e));
     }
     return false;
   }

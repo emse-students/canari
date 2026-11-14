@@ -1570,7 +1570,7 @@ refuses, and every put it landed before belongs to a transaction created before 
 IndexedDB finishes before the new leader's later read of the same store starts. The new leader
 writes nothing until its reload reads the disk (`promotedSinceLoad`). So the two documents' writes
 never interleave: nothing reconciles them afterwards, the overlap does not exist. The old leader
-also keeps RUNNING after a hand-over (unlike an unload), and two of its tails had to be closed:
+also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be closed:
 - **an ack never runs ahead of the disk where the disk is the only copy** (`DrainAckHold`,
   review of #3321). An ack deletes the row from the server, and a drain used to acknowledge a COMMIT
   or a WELCOME at its end while the checkpoint holding it was still sealing: a kill there - and, with
@@ -1588,7 +1588,15 @@ also keeps RUNNING after a hand-over (unlike an unload), and two of its tails ha
   (`SecretReuseError`, a false `LOST frame` and a history-diff repair). This is why neither the
   hand-over nor the freeze waits for a checkpoint before the lead moves: nothing the old leader did
   is lost, only what it did not make durable is done again by the new one. The cost: a pull issued
-  behind a drain that applied a commit waits for that drain's checkpoint (`ackInFlight`);
+  behind a drain that applied a commit waits for that drain's checkpoint (`ackInFlight`). A withheld
+  id is remembered on its delivery (`heldForDisk`): the next pull lists the row again, and the
+  re-ack of that repeat waits for a checkpoint covering it too (`reAckHold`, second review) - it
+  used to delete the row at once, reopening the window the hold had just refused;
+- **the old leader reloads only once its ingest windows have closed** (`whenBulkIngestsClosed`,
+  second review): a drain stores its rows when its window closes, while a checkpoint that landed
+  before the lead left may already hold those frames' ratchet advance and seen marks. A reload in
+  between - 50 ms after the demotion, now routine - lost the message for good: the new leader can
+  neither decrypt it again nor replay it. The socket is paused, so the open windows only close;
 - **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
   from the grant, but holds the lock until the asker steals it, and an asker that closed in between
   never will. Frozen with that hold, it left every tab a follower until it was thawed;
@@ -1643,9 +1651,12 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
   - a lead handed to an asker that never takes it is released at `freeze`, and a stolen hold is
     forgotten.
 - `BaseMlsService.leadLostAck.test.ts`: a commit is acknowledged only after the drain's checkpoint
-  lands, and stays on the server when it is refused; the message beside it does not wait; once the
+  lands, and stays on the server when it is refused; the message beside it is never withheld (it
+  rides the same request, so it waits for that checkpoint without depending on it); once the
   lead left, an uncovered message is withheld and a covered one acknowledged; a checkpoint claims
-  what it held at its export; and the drain wires it through the persister.
+  what it held at its export; the drain wires it through the persister; the repeat of a withheld
+  commit is re-acknowledged only behind a checkpoint covering it; and `whenBulkIngestsClosed`
+  settles only once the last window's observers have returned.
 - the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
 - `outbox.test.ts`: the line is said once, a lead lost during the gates leaves the entry queued, and
   an offline follower does not ask for the lead.

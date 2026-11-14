@@ -173,6 +173,104 @@ describe('a drain ack and the checkpoint that covers it', () => {
   });
 });
 
+describe('a withheld commit listed again by a pull (second review of #3321)', () => {
+  afterEach(() => {
+    unregisterMlsStatePersister();
+    vi.restoreAllMocks();
+  });
+
+  it('its re-ack waits for a checkpoint covering it, rather than deleting the row the hold kept', async () => {
+    role.now = 'leader';
+    resetStateAuthorityForTests();
+    noteMlsStateLoaded(true);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const svc = makeService();
+    const ackMessages = vi.fn(async (_ids: string[]) => undefined);
+    Object.assign(svc, { userId: 'user-a', delivery: { ackMessages } });
+    const internals = svc as unknown as {
+      rememberDelivery(
+        id: string,
+        record: { state: 'queued' | 'done'; via: DeliveryChannel }
+      ): void;
+      admitDelivery(id: string, arrival: { channel: 'pull'; listedAfterAck: number }): boolean;
+      ackSerial: number;
+      ackInFlight: Promise<void> | null;
+    };
+    // The drain applied the commit and settled it `done`; its checkpoint was then refused.
+    internals.rememberDelivery('commit', { state: 'done', via: 'live' });
+    inner(svc).inboundApplied = 1;
+    const refused = checkpointByHand(svc);
+    const drainAck = inner(svc).announceAck(['commit'], {
+      applied: new Map([['commit', 1]]),
+      structural: new Set(['commit']),
+      covered: refused.covered,
+    });
+    refused.refuse(new Error('stale'));
+    await drainAck;
+    expect(ackMessages).not.toHaveBeenCalled();
+
+    // The next pull lists the row again: dropped as a repeat, and acknowledged once more - but only
+    // behind a checkpoint that holds it, asked of the persister now.
+    let land!: () => void;
+    const landed = new Promise<void>((r) => (land = r));
+    const flushEncrypted = vi.fn(async () => {
+      await landed;
+      inner(svc).durableApplied = inner(svc).inboundApplied;
+    });
+    registerMlsStatePersister({ flushEncrypted } as unknown as MlsStatePersister);
+    expect(
+      internals.admitDelivery('commit', { channel: 'pull', listedAfterAck: internals.ackSerial })
+    ).toBe(false);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(flushEncrypted).toHaveBeenCalled();
+    // THE DEFECT: the repeat's re-ack deleted the row while no landed checkpoint held the commit.
+    expect(ackMessages).not.toHaveBeenCalled();
+
+    land();
+    await internals.ackInFlight;
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['commit']);
+  });
+});
+
+describe('a document leaving the lead reloads only once its ingest windows have closed (second review of #3321)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('settles at once with no window, and otherwise only once the last observer close has returned', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const svc = makeService();
+    let settledEarly = false;
+    await svc.whenBulkIngestsClosed().then(() => (settledEarly = true));
+    expect(settledEarly).toBe(true);
+
+    // The UI observer stores the drain's buffered rows in its close: the wait covers that close.
+    let rowsStored!: () => void;
+    const storing = new Promise<void>((r) => (rowsStored = r));
+    svc.addBulkIngestObserver({
+      onBulkIngestStart: () => undefined,
+      onBulkIngestEnd: () => storing,
+    });
+    const drain = svc.beginBulkIngest({ bufferUi: true, showOverlay: false });
+    const replay = svc.beginBulkIngest();
+    let settled = false;
+    void svc.whenBulkIngestsClosed().then(() => (settled = true));
+    const closingDrain = svc.endBulkIngest(drain);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(false);
+    rowsStored();
+    await closingDrain;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    // Another window is still open.
+    expect(settled).toBe(false);
+    await svc.endBulkIngest(replay);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+});
+
 describe('the drain wires it: a commit it applied waits for the persister checkpoint the drain started', () => {
   afterEach(() => {
     unregisterMlsStatePersister();

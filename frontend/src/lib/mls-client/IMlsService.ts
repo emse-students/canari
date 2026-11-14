@@ -1912,6 +1912,15 @@ export interface IMlsService {
   addBulkIngestObserver(observer: BulkIngestObserver): void;
 
   /**
+   * Resolves once no bulk-ingest window is open or closing - every observer's close has returned,
+   * so the rows a drain buffered are stored. At once when none is. A document leaving the lead
+   * reloads behind it (`useChatSession`): a checkpoint that landed before the lead left may already
+   * hold the ratchet advance and the seen mark of a frame whose row is still buffered, and a reload
+   * there would lose the message for good.
+   */
+  whenBulkIngestsClosed(): Promise<void>;
+
+  /**
    * Opens a bulk-ingest window with the given {@link BulkIngestPhase} and returns the handle that
    * closes it. Pair with {@link endBulkIngest}; prefer the {@link withMlsBulkIngest} helper which is
    * exception-safe. The encrypted checkpoint coalesces to one flush when the last open window
