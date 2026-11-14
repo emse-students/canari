@@ -2,6 +2,8 @@ import {
   jsonStringLikePattern,
   mentionLikePattern,
   scrubComments,
+  scrubCarteDocument,
+  scrubbedCarteParams,
   scrubPolls,
 } from './account-erasure';
 import { InternalController } from './internal.controller';
@@ -123,6 +125,59 @@ describe('scrubComments', () => {
     ) as { comments: Array<{ parentId: string | null }> };
     expect(comments).toHaveLength(1);
     expect(comments[0].parentId).toBeNull();
+  });
+});
+
+describe('scrubCarteDocument', () => {
+  const ME = 'erased';
+
+  it("removes the account's member card from every unit and its id from a selection, nothing else", () => {
+    const published = {
+      version: 3,
+      units: [
+        {
+          assoId: 'a1',
+          cards: [
+            { userId: ME, name: 'Erased Person', role: 'President' },
+            { userId: 'other', name: 'Other', role: null },
+          ],
+        },
+        { assoId: 'a2', cards: [{ userId: ME, name: 'Erased Person' }] },
+      ],
+    };
+    const out = scrubCarteDocument(published, ME);
+    expect(out.changed).toBe(true);
+    expect(out.doc).toEqual({
+      version: 3,
+      units: [
+        { assoId: 'a1', cards: [{ userId: 'other', name: 'Other', role: null }] },
+        { assoId: 'a2', cards: [] },
+      ],
+    });
+    expect(JSON.stringify(out.doc)).not.toContain('Erased Person');
+
+    const layout = { bubbles: [{ assoId: 'a1', selectedBureau: [ME, 'other'] }] };
+    expect(scrubCarteDocument(layout, ME).doc).toEqual({
+      bubbles: [{ assoId: 'a1', selectedBureau: ['other'] }],
+    });
+  });
+
+  it('leaves a document that does not name the account untouched, and a map that is not live null', () => {
+    const doc = { units: [{ cards: [{ userId: 'other', name: 'Other' }] }] };
+    const out = scrubCarteDocument(doc, ME);
+    expect(out).toEqual({ doc, changed: false });
+    expect(out.doc).toBe(doc);
+    expect(scrubCarteDocument(null, ME)).toEqual({ doc: null, changed: false });
+  });
+
+  it('writes back only the document that changed', () => {
+    const layout = { bubbles: [{ selectedBureau: [ME] }] };
+    expect(scrubbedCarteParams({ id: 'p1', layout, publication: null }, ME)).toEqual([
+      'p1',
+      JSON.stringify({ bubbles: [{ selectedBureau: [] }] }),
+      null,
+    ]);
+    expect(scrubbedCarteParams({ id: 'p1', layout: {}, publication: null }, ME)).toBeNull();
   });
 });
 

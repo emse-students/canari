@@ -210,6 +210,18 @@ maybe('account erasure against PostgreSQL', () => {
     );
   }
 
+  /** A live map showing both accounts: a card each on the published carte, both in the layout. */
+  async function seedCarte(): Promise<void> {
+    const card = (userId: string) => ({ userId, name: `Name of ${userId}`, role: 'President' });
+    await client.query(
+      `INSERT INTO poster_projects (name, layout, publication) VALUES ('carte', $1::jsonb, $2::jsonb)`,
+      [
+        JSON.stringify({ bubbles: [{ assoId: 'a1', selectedBureau: [ERASED, OTHER] }] }),
+        JSON.stringify({ units: [{ assoId: 'a1', cards: [card(ERASED), card(OTHER)] }] }),
+      ]
+    );
+  }
+
   /** A post by somebody else that MENTIONS the account: in its column, its text and a comment's. */
   async function seedMention(): Promise<void> {
     await client.query(
@@ -264,6 +276,7 @@ maybe('account erasure against PostgreSQL', () => {
   it('leaves no row naming the account, keeps the other account, and is idempotent', async () => {
     await seed();
     await seedMention();
+    await seedCarte();
     expect((await tablesStillNaming(ERASED)).length).toBeGreaterThan(10);
     const submissionsBefore = (await client.query(`SELECT count(*)::int AS n FROM submissions`))
       .rows[0].n;
@@ -291,6 +304,14 @@ maybe('account erasure against PostgreSQL', () => {
     expect(mention.markdown).toBe(`hello @[deleted] and @[${OTHER}]`);
     expect(mention.mentions).toBe(OTHER);
     expect(mention.comments[0].text).toBe('thanks @[deleted]');
+    // The map stays live and keeps the other member; the erased one leaves the card and the layout.
+    const carte = (
+      await client.query(`SELECT layout, publication FROM poster_projects WHERE name = 'carte'`)
+    ).rows[0];
+    expect(carte.layout).toEqual({ bubbles: [{ assoId: 'a1', selectedBureau: [OTHER] }] });
+    expect(carte.publication.units[0].cards).toEqual([
+      { userId: OTHER, name: `Name of ${OTHER}`, role: 'President' },
+    ]);
     // A submission keeps its seat and loses its answers and address.
     const subs = await client.query(
       `SELECT count(*)::int AS seats,

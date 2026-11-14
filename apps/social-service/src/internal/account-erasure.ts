@@ -266,10 +266,17 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     "a form's unpublished revision: the editor's payload, the same content as `forms`"
   ),
   'channel_members.notifLevels': NO_ACCOUNT('channel id -> notification level of one member'),
-  'poster_projects.layout': NO_ACCOUNT('the layout of a poster'),
-  'poster_projects.publication': NO_ACCOUNT(
-    'the normalized map geometry published for portail-etu'
-  ),
+  // A map names people: a bubble's `selectedBureau` lists member ids in the layout, and the
+  // published document carries one card per shown member (`userId`, name, role), served to the
+  // anonymous showcase. Both were classed as holding no account until the audit of 2026-11-14.
+  'poster_projects.layout': {
+    action: 'code',
+    by: 'scrubCarteDocument, over the maps CANDIDATE_CARTES_SQL locks',
+  },
+  'poster_projects.publication': {
+    action: 'code',
+    by: 'scrubCarteDocument, over the maps CANDIDATE_CARTES_SQL locks',
+  },
   'user_tags.metadata': {
     action: 'delete',
     via: 'userId',
@@ -1164,6 +1171,78 @@ export function scrubPolls(polls: unknown, userId: string): { polls: unknown; ch
 }
 
 /**
+ * The maps ("Carte de la vie asso") whose layout or published document may name the account, read
+ * and LOCKED for the scrub. `$1` is {@link jsonStringLikePattern} - a candidate filter only;
+ * {@link scrubCarteDocument} decides.
+ */
+export const CANDIDATE_CARTES_SQL = `SELECT id, layout, publication FROM poster_projects
+  WHERE layout::text LIKE $1 OR publication::text LIKE $1
+  FOR UPDATE`;
+
+/**
+ * Writes one scrubbed map back: `$1` id, `$2` layout JSON, `$3` publication JSON - either NULL when
+ * that document did not change, so an unchanged one is never rewritten from a copy (and a map that
+ * is not live keeps its NULL publication).
+ */
+export const WRITE_SCRUBBED_CARTE_SQL = `UPDATE poster_projects
+  SET layout = COALESCE($2::jsonb, layout), publication = COALESCE($3::jsonb, publication)
+  WHERE id = $1`;
+
+/**
+ * A map document (the editor's layout, or the published carte) without the erased account: every
+ * list loses the entries that ARE the account's id (a bubble's `selectedBureau`) and the objects
+ * whose `userId` is the account (a published member card - its name and role go with it). The walk
+ * is structural, not tied to one schema version, so a document saved by an older editor is scrubbed
+ * the same way. The published map stays live: it loses a face, as it would at the next publication.
+ */
+export function scrubCarteDocument(
+  doc: unknown,
+  userId: string
+): { doc: unknown; changed: boolean } {
+  let changed = false;
+  const names = (v: unknown): boolean =>
+    v === userId ||
+    (typeof v === 'object' &&
+      v !== null &&
+      !Array.isArray(v) &&
+      (v as Record<string, unknown>).userId === userId);
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) {
+      const kept = v.filter((item) => !names(item));
+      if (kept.length !== v.length) changed = true;
+      return kept.map(walk);
+    }
+    if (typeof v === 'object' && v !== null) {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([key, value]) => [key, walk(value)])
+      );
+    }
+    return v;
+  };
+  const next = walk(doc);
+  return { doc: changed ? next : doc, changed };
+}
+
+/**
+ * The parameters that write one candidate map back, or null when the account is not in it (the
+ * LIKE filter matched something else). An unchanged document is passed as NULL, which
+ * {@link WRITE_SCRUBBED_CARTE_SQL} keeps.
+ */
+export function scrubbedCarteParams(
+  carte: { id: string; layout: unknown; publication: unknown },
+  userId: string
+): [string, string | null, string | null] | null {
+  const layout = scrubCarteDocument(carte.layout, userId);
+  const publication = scrubCarteDocument(carte.publication, userId);
+  if (!layout.changed && !publication.changed) return null;
+  return [
+    carte.id,
+    layout.changed ? JSON.stringify(layout.doc) : null,
+    publication.changed ? JSON.stringify(publication.doc) : null,
+  ];
+}
+
+/**
  * The parameters that write one candidate post back, or null when the account left nothing on it.
  * A column that did not change is passed as NULL, which {@link WRITE_SCRUBBED_POST_SQL} keeps.
  */
@@ -1275,6 +1354,19 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
     await db.write(WRITE_SCRUBBED_POST_SQL, params);
     postsScrubbed += 1;
   }
+  // The maps naming the account: its member cards leave the published carte and the layouts.
+  let cartesScrubbed = 0;
+  const cartes = await db.read<{ id: string; layout: unknown; publication: unknown }>(
+    CANDIDATE_CARTES_SQL,
+    [jsonStringLikePattern(userId)]
+  );
+  for (const carte of cartes) {
+    const params = scrubbedCarteParams(carte, userId);
+    if (!params) continue;
+    await db.write(WRITE_SCRUBBED_CARTE_SQL, params);
+    cartesScrubbed += 1;
+  }
+  if (cartesScrubbed > 0) counts.cartes_scrubbed = cartesScrubbed;
   // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
   Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
   return { counts, postsScrubbed, pinsRemoved, liveCashiersErased };

@@ -203,6 +203,13 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   text is not scanned for tokens. A moderation tombstone carries no account, so erasure never finds
   one; when it removes the LAST reply under one, `scrubComments` prunes the empty tombstone too
   (`pruneEmptyTombstones`, [moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)).
+- **A carte de la vie asso loses the account's member card** (2026-11-14): the published document
+  carries one card per shown member (id, name, role) and is served to the anonymous showcase, and a
+  layout lists the members picked for a bubble. Both columns were classed as holding no account, so
+  an erased person stayed on the public map until its next publication. `scrubCarteDocument` removes
+  the cards and the picked ids from every map that names the account (`CANDIDATE_CARTES_SQL`); the
+  map stays live. Between two publications nothing else is withdrawn from a carte - it is a
+  snapshot by decision ([carte-vie-asso](carte-vie-asso.md)) - erasure is the one exception.
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
