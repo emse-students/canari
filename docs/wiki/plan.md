@@ -57,6 +57,7 @@ earliest version, as a checklist.
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
+- [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 
 **P3 - hygiene**
 

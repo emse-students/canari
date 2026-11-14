@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -30,6 +31,7 @@
     type LiveReplaysMode,
   } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
+  import { RETENTION_ADMIN_SETTINGS, type RetentionAdminKey } from '$lib/legal/retention';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
 
@@ -45,7 +47,7 @@
     liveReplaysMode: LiveReplaysMode;
     groupCallsMode: GroupCallsMode;
     callRelay: CallRelay;
-  };
+  } & Record<RetentionAdminKey, number>;
 
   /**
    * The config as the server last answered it. A save sends ONLY the fields that differ from it: a
@@ -73,6 +75,23 @@
   let liveReplaysMode = $state<LiveReplaysMode>('off');
   let groupCallsMode = $state<GroupCallsMode>('off');
   let callRelay = $state<CallRelay>('none');
+  /**
+   * The retention durations in days, keyed as the admin route names them - read at the creation of
+   * each item by the service that stamps its expiry, so a change applies to new content only.
+   */
+  let retention = $state<Record<RetentionAdminKey, number>>({
+    retentionReelDays: 365,
+    retentionLiveReplayDays: 3,
+    retentionChatReelDays: 30,
+    retentionIdleFileDays: 90,
+  });
+  /** One label per retention setting, typed so a new setting cannot reach the form unlabelled. */
+  const RETENTION_LABELS: Record<RetentionAdminKey, () => string> = {
+    retentionReelDays: m.admin_platform_retention_reel_label,
+    retentionLiveReplayDays: m.admin_platform_retention_live_replay_label,
+    retentionChatReelDays: m.admin_platform_retention_chat_reel_label,
+    retentionIdleFileDays: m.admin_platform_retention_idle_media_label,
+  };
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -271,6 +290,9 @@
     liveReplaysMode = data.liveReplaysMode;
     groupCallsMode = data.groupCallsMode;
     callRelay = data.callRelay;
+    retention = Object.fromEntries(
+      RETENTION_ADMIN_SETTINGS.map(({ key }) => [key, data[key]])
+    ) as Record<RetentionAdminKey, number>;
   }
 
   /**
@@ -292,6 +314,7 @@
       liveReplaysMode,
       groupCallsMode,
       callRelay,
+      ...retention,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -643,6 +666,31 @@
           {m.admin_platform_call_relay_hint()}
         </p>
       </div>
+
+      <fieldset class="space-y-3">
+        <legend class="text-text-main text-sm font-bold"
+          >{m.admin_platform_retention_title()}</legend
+        >
+        <p class="text-text-muted text-xs">{m.admin_platform_retention_hint()}</p>
+        {#each RETENTION_ADMIN_SETTINGS as setting (setting.key)}
+          <div class="max-w-xs space-y-1">
+            <Input
+              id={`retention-${setting.key}`}
+              type="number"
+              label={RETENTION_LABELS[setting.key]()}
+              inputmode="numeric"
+              step="1"
+              min={setting.minDays}
+              max={setting.maxDays}
+              required
+              bind:value={retention[setting.key]}
+            />
+            <p class="text-text-muted text-xs">
+              {m.admin_platform_retention_bounds({ min: setting.minDays, max: setting.maxDays })}
+            </p>
+          </div>
+        {/each}
+      </fieldset>
 
       {#if error}
         <p class="text-sm text-red-500" role="alert">{error}</p>
