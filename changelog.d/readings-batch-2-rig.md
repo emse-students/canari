@@ -1,0 +1,3 @@
+### Changed - readings batch 2: the rig readings, taken on the local estate
+
+Seven owed readings passed on the cross-client rig and are closed (CORRUPT-2, the call record's web rows, the ring's waiting seat, the key-group join refusals, a member's new device, a revoked device returning after its record expired, the calendar signer's 503); six stay open with their 2026-11-14 measurement, one of them now a P2 (a frame read before a browser kill is called "never read here"). The rig's salon-access helper follows the Public / Restreint choice of #3289 ([plan](docs/wiki/plan.md), [backlog.d](docs/wiki/backlog.d/README.md)).
