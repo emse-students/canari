@@ -55,6 +55,7 @@ earliest version, as a checklist.
 - [P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)](backlog.d/p3-two-call-resume-edges-the-second-review-of-2148-found-recorded-and-not-built.md)
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
+- [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 
 ### Readings owed
 
@@ -63,9 +64,7 @@ earliest version, as a checklist.
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the "Nouvelle discussion" panel lists people for a typed letter](backlog.d/reading-owed-the-nouvelle-discussion-panel-lists-people-for-a-typed-letter.md)
 - [ ] [launch to fingerprint prompt on Android, 4.9 - 5.7 s on `v0.18.1`](backlog.d/reading-owed-launch-to-fingerprint-prompt-on-android-4-9-5-7-s-on-v0-18-1.md)
-- [ ] [a cold-start export, parse time against the first console line](backlog.d/p2-the-network-for-the-javascript-is-solved-1-62-mb-of-it-still-has-to-be.md)
 - [ ] [a withheld product releases itself when an association's payments become ready](backlog.d/reading-owed-a-withheld-product-releases-itself-when-an-association-s-payments.md)
-- [ ] [one phone cold start of the MLS init behind the avatars](backlog.d/p2-the-mls-init-waited-ten-seconds-behind-twenty-four-avatars-on-v0-18-5-and.md)
 - [ ] [the forms responses table shows the answers](backlog.d/reading-owed-the-forms-responses-table-shows-the-answers.md)
 - [ ] [a returner's devices after the holder election](backlog.d/p1-a-returner-s-devices-one-reading-owed-shipped-in-v0-18-26.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
@@ -127,7 +126,7 @@ earliest version, as a checklist.
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [six service images run as a non-root user](backlog.d/reading-owed-six-service-images-run-as-a-non-root-user.md)
 - [ ] [the uninvited-entry count on production and a waiting-seat ring on dev](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
-- [ ] [the background Welcome staged in the state file (#2329): two things before its stable](backlog.d/reading-owed-the-background-welcome-staged-in-the-state-file-2329-two-things.md)
+- [ ] [the background Welcome staged in the state file (#2329): the app opened inside its round trip](backlog.d/reading-owed-the-background-welcome-staged-in-the-state-file-2329-two-things.md)
 - [ ] [the LEFT edge is excluded from the Android back gesture on every tab root with a section to its left](backlog.d/reading-owed-the-left-edge-is-excluded-from-the-android-back-gesture-on-every.md)
 - [ ] [a revoked device whose refresh cannot name its revocation leaves by the plain sign-out, and the next sign-in's device...](backlog.d/reading-owed-a-revoked-device-whose-refresh-cannot-name-its-revocation-leaves.md)
 - [ ] [the Android background send behind a captive portal](backlog.d/reading-owed-the-android-background-send-behind-a-captive-portal.md)
@@ -187,7 +186,6 @@ earliest version, as a checklist.
 - [ ] [the iOS push rows (O4, TAB-1, HEAL-NEW-5), a development-signed build waits on a Firebase setting](backlog.d/reading-owed-the-ios-push-rows-o4-tab-1-heal-new-5-blocked-on-a-firebase-setting.md)
 - [ ] [two community settings panels](backlog.d/reading-owed-two-community-settings-panels.md)
 - [ ] [the CORRUPT-2 rig row on a build since `v1.3.0`](backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)
-- [ ] [the KeyPackage minting loop on a handset across background and resume](backlog.d/p1-the-minting-loop-has-never-been-observed-on-the-handset-and-a-blob-s-size.md)
 - [ ] [one ring on dev with a pending joiner, the waiting seat not rung](backlog.d/p3-calls-the-waiting-seat-exclusion-is-built-and-has-never-run-against-a-live.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a key-group join reads its seat after the base it builds on](backlog.d/reading-owed-a-key-group-join-reads-its-seat-after-the-base-it-builds-on.md)
@@ -198,7 +196,6 @@ earliest version, as a checklist.
 - [ ] [a salon carries read receipts](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [a tab open across a deploy offers a reload instead of "Erreur"](backlog.d/reading-owed-a-tab-open-across-a-deploy-offers-a-reload-instead-of-erreur.md)
 - [ ] [acknowledging a conversation from the notification shade](backlog.d/reading-owed-acknowledging-a-conversation-from-the-notification-shade.md)
-- [ ] [EXIT-FORTIFY: closing the app on the Mi 9T logged `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, recorded...](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] ["Seen by" heads in groups and salons](backlog.d/reading-owed-seen-by-heads-in-groups-and-salons.md)
