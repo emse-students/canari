@@ -683,8 +683,7 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
   degrades to a heads-up banner (the log line says so).
 - **App Review**: the 1.5.2 notes answer the 2.5.4 refusal of 2026-08-31 - Canari places audio calls,
   and a VoIP push rings a locked iPhone on CallKit; attach a video of it.
-- **Dev secrets**: the three `DEV_APNS_VOIP_*` repository secrets, absent, so a pre-release on dev
-  rings no VoIP device (the FCM generic alert does not stand in for it).
+- **Dev secrets**: the three `DEV_APNS_VOIP_*` repository secrets - DONE, set 2026-10-23 (this line said "absent" until 2026-11-14); a pre-release on dev rings a VoIP device.
 - **No new Apple entitlement and no VoIP certificate**: PushKit and CallKit need none, and the `.p8`
   auth key is team-wide. The production key has never sent a VoIP push: the first K7 proves it signs.
 

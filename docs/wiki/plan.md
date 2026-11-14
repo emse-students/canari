@@ -111,6 +111,7 @@ earliest version, as a checklist.
 - [ ] [a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post"](backlog.d/reading-owed-a-video-filmed-with-the-new-post-composer-s-camera-is-a-canareel.md)
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
+- [ ] [NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send](backlog.d/reading-owed-notif-6c-notif-6d-the-quick-reply-from-a-backgrounded-shade-and-a.md)
 - [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
 - [ ] [the signed history restore and forced-fork rig rows](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
@@ -182,6 +183,7 @@ earliest version, as a checklist.
 - [ ] [IndexedDB message pages by index](backlog.d/reading-owed-indexeddb-message-pages-by-index.md)
 - [ ] [the audiences chantier (#1582, #1584, #1606, #1608)](backlog.d/reading-owed-the-audiences-chantier-1582-1584-1606-1608.md)
 - [ ] [the auto-merge ceiling refuses a major](backlog.d/reading-owed-the-auto-merge-ceiling-refuses-a-major.md)
+- [ ] [the iOS push rows (O4, TAB-1, HEAL-NEW-5), a development-signed build waits on a Firebase setting](backlog.d/reading-owed-the-ios-push-rows-o4-tab-1-heal-new-5-blocked-on-a-firebase-setting.md)
 - [ ] [two community settings panels](backlog.d/reading-owed-two-community-settings-panels.md)
 - [ ] [the CORRUPT-2 rig row on a build since `v1.3.0`](backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)
 - [ ] [the KeyPackage minting loop on a handset across background and resume](backlog.d/p1-the-minting-loop-has-never-been-observed-on-the-handset-and-a-blob-s-size.md)
@@ -197,7 +199,6 @@ earliest version, as a checklist.
 - [ ] [acknowledging a conversation from the notification shade](backlog.d/reading-owed-acknowledging-a-conversation-from-the-notification-shade.md)
 - [ ] [EXIT-FORTIFY: closing the app on the Mi 9T logged `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, recorded...](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
-- [ ] [NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send](backlog.d/reading-owed-notif-6c-notif-6d-the-quick-reply-from-a-backgrounded-shade-and-a.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] ["Seen by" heads in groups and salons](backlog.d/reading-owed-seen-by-heads-in-groups-and-salons.md)
 - [ ] [the `apiFetch` fallback now names its cause](backlog.d/reading-owed-the-apifetch-fallback-now-names-its-cause.md)
@@ -206,7 +207,6 @@ earliest version, as a checklist.
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the iOS app no longer aborts when its accessibility tree is read](backlog.d/reading-owed-the-ios-app-no-longer-aborts-when-its-accessibility-tree-is-read.md)
 - [ ] [the iOS launch logo (#1289 follow-up)](backlog.d/reading-owed-the-ios-launch-logo-1289-follow-up.md)
-- [ ] [the iOS push rows (O4, TAB-1, HEAL-NEW-5), BLOCKED on a Firebase setting](backlog.d/reading-owed-the-ios-push-rows-o4-tab-1-heal-new-5-blocked-on-a-firebase-setting.md)
 - [ ] [the live seen-cipher mark written at the checkpoint](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [ ] [the Mi 9T pass D2 (#1281 a shade reply not re-announced, read watermark merged on resume) and D3 (#1282 the outbox...](backlog.d/reading-owed-the-mi-9t-pass-d2-1281-a-shade-reply-not-re-announced-read.md)
 - [ ] [the native chat socket races IPv6 and IPv4 and closes a connect it abandoned](backlog.d/reading-owed-the-native-chat-socket-races-ipv6-and-ipv4-and-closes-a-connect-it.md)
@@ -361,10 +361,10 @@ earliest version, as a checklist.
 
 **Chantiers, decisions and questions (no severity)**
 
+- [`dev.canari-emse.fr` - the two things that outlived the chantier](backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)
 - [The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)](backlog.d/the-1-5-1-pixel-log-what-the-catch-up-fix-left-2026-10-30.md)
 - [The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
 - [Global search (posts, forms, events, associations, people) - to design for the owner's validation after 1.6.9](backlog.d/global-search-to-design-after-1-6-9.md)
-- [`dev.canari-emse.fr` - the two things that outlived the chantier](backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)
 - [Display follow-ups to the shop pricing (after the tier stack lands)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
 - [The iOS rig adapter (#1284-#1286, #1290, #1291, #1303): no board row has a verdict on the iPhone yet](backlog.d/reading-owed-the-ios-rig-adapter-1284-1286-1290-1291-1303.md)
 

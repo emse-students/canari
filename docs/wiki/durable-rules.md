@@ -1538,6 +1538,7 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A READING NEEDING A PUSH TO A KILLED PHONE RUNS ON DEV, AND IS NEVER MARKED WAITS OR OWNER FOR LACK OF A SENDER.** Dev sends push since 2026-10-21 (FCM) and 2026-10-23 (APNs VoIP key), measured 2026-11-14 (`[PUSH_SEND] ... FCM sent`), and a pre-release store build points at dev ([dev-environment](infrastructure/dev-environment.md)). The one real exception is a DEVELOPMENT-signed iOS build, whose sandbox token needs the APNs key in Firebase's development slot.
 - **A NEW SYSTEM FRAMEWORK IMPORTED BY AN `.mm` FILE IS ADDED TO `canari_iOS`'S FRAMEWORKS PHASE IN
   `project.pbxproj` IN THE SAME COMMIT.** Objective-C++ gets no module auto-linking, so the
   `#import` compiles and only the LINK fails, twenty minutes into "Compile iOS app"

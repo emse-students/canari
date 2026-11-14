@@ -323,7 +323,7 @@ needs the owner at a device** unless Q4 answers that the iPhone cannot be unlock
 | SKEW | A client clock shifted +-2 h (web: `Date` offset injected with `Page.addScriptToEvaluateOnNewDocument`; A1: the clock set by hand in Settings): message order, edits (`editedAt` winner), the undated one-hour margin of the history floor, the refresh ledger. **Instrument limit stated on the row**: an injected `Date` is not the OS clock, and TLS or token validation never sees it | U, B |
 | GR | Graine after 1.4.0: a link joiner reads only the past its proven admission allows (#2273); an answer carries only readable salons' seeds (#2262); a shut phone joins a salon's key group from the push (#2266); history answered to the asking device (#2270) | U, B |
 | LADDER | The old ladder re-run on dev under the NEW board: MSG, TYPE, READ, MUT, SEARCH, MENTION, FWD, GRP, COMM, DEL, TAB, MULTI - on the new build, once, as the regression floor of the non-MLS surface | U |
-| PHONE | LIFE, NOTIF (dev has no APNs key, so iOS push rows wait for one), PIN-4..6, PIN-10, HEAL-NEW-4..6, -13, HEAL-REVOKE-6 | B, PIN |
+| PHONE | LIFE, NOTIF (dev sends push, measured 2026-11-14, and a TestFlight pre-release receives it; only a development-signed bench build's sandbox token would need the dev-slot APNs key, see the owed table), PIN-4..6, PIN-10, HEAL-NEW-4..6, -13, HEAL-REVOKE-6 | B, PIN |
 | CALL | 1:1 audio is on in dev (`calls.mode = audio_video`); CALL-1..20 have no runner | B |
 | CORRUPT | CORRUPT-1 (FAIL), -5, -7..-10 | B |
 | TOK-3, LIFE-5, CALL-12, CALL-13 | an hour of wall clock, or the owner at the phone (reboot left unopened, the lock screen, CallKit) | O |
