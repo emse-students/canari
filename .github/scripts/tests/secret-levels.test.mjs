@@ -18,7 +18,8 @@
  *   refuses to find at repository level - the guard that stops an environment lacking the name from
  *   falling back to a repository copy (the other estate's value);
  * - every table row names a secret something reads, or says `none` under "read by" - a stale row is
- *   a level nobody can check.
+ *   a level nobody can check; and a row saying `none` for a secret a workflow does read is stale too
+ *   (the Cloudflare SFU pair kept "none yet" after its wiring landed, 2026-11-14).
  *
  * Text slicing, no YAML parser: a job is the block under `jobs:` at two spaces of indentation, and
  * its environment is the `environment:` key at four. Comment lines are ignored.
@@ -120,6 +121,10 @@ for (const [name, js] of [...readers].sort()) {
   const where = js.map((j) => `${j.file} :: ${j.job}`).join(', ');
   if (!row) {
     bad(`${name} is read by ${where} and has no row in MIGRATION.md's secret-levels table`);
+    continue;
+  }
+  if (/^none\b/i.test(row.readBy)) {
+    bad(`${name}'s row says "none" but ${where} reads it - name its readers`);
     continue;
   }
   if (!LEVELS.has(row.level)) {
