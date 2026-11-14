@@ -1,6 +1,4 @@
-### Changed - the replica-reload reading closed in production; the edge's three resets traced to the gateway's `disconnect`
+### Fixed - the chat-gateway reads the client's Close after `disconnect`, so the edge logs no reset
 
-The `v1.6.12` deploy logged 0 `no live upstreams` at the edge ([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
-The resets of 2026-11-13 are not a keepalive race - neither proxy pools an idle connection; the one
-readable was a WebSocket the gateway ended before reading the client's Close ([backlog](docs/wiki/backlog.d/p3-the-edge-logs-a-reset-when-the-gateway-ends-a-socket-on-disconnect.md)).
-media-service's volumes were measured root-owned on both estates, and the non-root plan written ([backlog](docs/wiki/backlog.d/p3-two-service-images-still-run-as-root.md)).
+On `disconnect` the gateway now leaves routing at once and ends the socket on the client's Close; dropping it first had the frontend's nginx reset the connection, three times at the edge on 2026-11-13 - not a keepalive race ([chat-gateway](docs/wiki/services/chat-gateway.md#disconnect-ends-the-session-at-once-and-the-socket-on-the-clients-close-2026-11-14)).
+The replica-reload reading closed in production on `v1.6.12` ([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)); media-service's root-owned volumes measured and the non-root plan written ([backlog](docs/wiki/backlog.d/p3-two-service-images-still-run-as-root.md)).

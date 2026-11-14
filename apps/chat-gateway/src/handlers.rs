@@ -606,9 +606,28 @@ async fn handle_socket(
             let mut con_opt = redis_conn;
             // What this connection sent, written once when this task ends or is aborted.
             let mut frames = crate::frame_census::FrameCensus::open(&user_id, &device_id);
+            // Set by a `disconnect` frame: the session is retired and the socket out of routing,
+            // and the loop only waits for the client's Close (see the `"disconnect"` arm).
+            let mut departed = false;
 
             while let Some(msg) = receiver.next().await {
                 match msg {
+                    Ok(Message::Pong(_)) if departed => {
+                        // A retired session is not refreshed: the pong only says the client has
+                        // not yet sent its Close.
+                        continue;
+                    }
+                    Ok(Message::Text(text)) if departed => {
+                        // No client sends anything after `disconnect` but its Close: a frame here
+                        // is a client defect, and it is dropped - this socket is out of routing.
+                        tracing::warn!(
+                            "[presence] {}:{} sent a {}-byte frame after its disconnect - ignored, the socket has left routing",
+                            user_id,
+                            device_id,
+                            text.len()
+                        );
+                        continue;
+                    }
                     Ok(Message::Pong(_)) => {
                         // Client is alive: reset the missed-ping counter and refresh TTL.
                         pong_flag_recv.store(0, Ordering::Relaxed);
@@ -716,13 +735,18 @@ async fn handle_socket(
 
                         match frame.msg_type.as_str() {
                             "disconnect" => {
-                                // Client is going offline intentionally - DEL presence
-                                // immediately so peers see them offline right away,
-                                // then close the connection cleanly.  conn_id lets the
-                                // handler discount this connection and keep the key when
-                                // another tab of the same device is still connected.
+                                // THE SESSION ENDS NOW; THE SOCKET ENDS ON THE CLIENT'S CLOSE.
+                                // Out of local routing first, so no frame published from here on
+                                // is handed to a socket its client is closing; then the session
+                                // is retired in Redis (`conn_id` keeps a sibling tab's presence).
+                                // The loop then reads on: every client follows `disconnect` with
+                                // its Close, and dropping the TCP connection before reading it
+                                // made the frontend's nginx close with that frame unread - a
+                                // reset at the edge (docs/wiki/services/chat-gateway.md).
+                                state.remove_session(&conn_key_recv, conn_id);
                                 handle_disconnect(&state, &user_id, &device_id, conn_id).await;
-                                break;
+                                departed = true;
+                                continue;
                             }
                             retired if is_retired_frame(retired) => {
                                 handle_retired_frame(&user_id, &device_id, &frame);
@@ -741,8 +765,10 @@ async fn handle_socket(
                         log_routing(&user_id, &device_id, &frame);
                     }
                     Ok(Message::Close(c)) => {
+                        // NOT a break: the next read sends the Close reply tungstenite queued and
+                        // then ends the stream, so the handshake completes before the TCP close.
                         tracing::info!("Client closed connection: {:?}", c);
-                        break;
+                        continue;
                     }
                     Err(e) => {
                         match classify_socket_error(&e) {
@@ -1240,6 +1266,62 @@ mod tests {
                 .unwrap()
                 .keys()
                 .collect::<Vec<_>>()
+        );
+    }
+
+    // ── A `disconnect`, as a client sees it ──────────────────────────────
+
+    /// The reset of 2026-11-13 (docs/wiki/services/chat-gateway.md): the gateway answered
+    /// `disconnect` by dropping the TCP connection, before the Close every client sends next was
+    /// read. Now the socket leaves routing at once and ends on the client's Close: the client's
+    /// first frame back is the Close REPLY, which only a server that read the Close can send.
+    #[tokio::test]
+    async fn a_disconnect_leaves_routing_at_once_and_the_socket_ends_on_the_clients_close() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"disconnect"}"#.into()))
+            .await
+            .unwrap();
+
+        // Bounded by a count of turns, so a socket that never leaves routing FAILS instead of
+        // hanging.
+        let mut left = false;
+        for _ in 0..500 {
+            if state.connected_users.lock().unwrap().is_empty() {
+                left = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(left, "the socket was still routable after its disconnect");
+        assert!(
+            state.session_caps.lock().unwrap().is_empty(),
+            "the session's declaration outlived its disconnect"
+        );
+
+        // A frame after `disconnect` is not answered: the application ping gets no pong.
+        socket
+            .send(Message::Text(r#"{"type":"ping"}"#.into()))
+            .await
+            .unwrap();
+        socket.close(None).await.unwrap();
+
+        match socket.next().await {
+            Some(Ok(Message::Close(_))) => {}
+            other => panic!(
+                "the first frame after a disconnect must be the Close reply (the server read the                  client's Close before ending the connection), got {other:?}"
+            ),
+        }
+        assert!(
+            socket.next().await.is_none(),
+            "the socket must end after the closing handshake"
         );
     }
 }
