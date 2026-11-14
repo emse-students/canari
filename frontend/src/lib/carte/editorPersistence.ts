@@ -80,3 +80,50 @@ export function createSerialSaver(persist: () => Promise<void>): SerialSaver {
     },
   };
 }
+
+/** Each placed bubble's bureau picks in a stored layout, by association id. */
+function bureauByAssociation(bubbles: unknown): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  if (!Array.isArray(bubbles)) return out;
+  for (const b of bubbles) {
+    const { assoId, selectedBureau } = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
+    if (typeof assoId !== 'string' || !Array.isArray(selectedBureau)) continue;
+    out.set(assoId, new Set(selectedBureau.filter((u): u is string => typeof u === 'string')));
+  }
+  return out;
+}
+
+/**
+ * The editor's bubbles without the bureau picks the server DROPPED on a save: an id the editor sent
+ * for an association and the stored layout no longer has - someone who left that association, or
+ * whose account was erased, since this editor loaded (the server keeps only current members).
+ *
+ * Adopting them is what keeps the next save from sending the same ids again, to be dropped again
+ * with another WARN on the server. Only what the server took out is removed: a pick the author
+ * added while the save was in flight was never sent, so it stays.
+ *
+ * @param local - The editor's bubbles now (they may have moved since the save was sent).
+ * @param sent - The `bubbles` of the layout the save sent.
+ * @param stored - The `bubbles` of the layout the server answered with.
+ * @returns The bubbles to adopt and how many picks were removed; `local` itself when none was.
+ */
+export function adoptDroppedBureauPicks(
+  local: PositionedBubble[],
+  sent: unknown,
+  stored: unknown
+): { bubbles: PositionedBubble[]; dropped: number } {
+  const before = bureauByAssociation(sent);
+  const after = bureauByAssociation(stored);
+  let dropped = 0;
+  const bubbles = local.map((bubble) => {
+    const was = before.get(bubble.assoId);
+    const kept = after.get(bubble.assoId);
+    if (!was || !bubble.selectedBureau) return bubble;
+    const gone = (id: string) => was.has(id) && !kept?.has(id);
+    const next = bubble.selectedBureau.filter((id) => !gone(id));
+    if (next.length === bubble.selectedBureau.length) return bubble;
+    dropped += bubble.selectedBureau.length - next.length;
+    return { ...bubble, selectedBureau: next };
+  });
+  return dropped > 0 ? { bubbles, dropped } : { bubbles: local, dropped: 0 };
+}

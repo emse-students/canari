@@ -633,14 +633,24 @@ export class PosterService {
     });
   }
 
-  /** Takes a map offline. Idempotent: unpublishing an already-offline map is a no-op. */
+  /**
+   * Takes a map offline. Idempotent: unpublishing an already-offline map is a no-op.
+   *
+   * A targeted write of the three publication columns, never a `save` of the entity the access check
+   * read: `save` writes every column that differs from the row, so a layout an account erasure
+   * scrubbed between that read and this write would come back.
+   */
   async unpublish(id: string, caller: CarteCaller): Promise<PosterProject> {
     this.logger.debug(`unpublish poster project ${id}`);
-    const project = await this.get(id, caller);
-    project.publication = null;
-    project.publishedAt = null;
-    project.publicationFingerprint = null;
-    return this.posterRepo.save(project);
+    await this.get(id, caller);
+    await this.posterRepo.update(id, {
+      publication: null,
+      publishedAt: null,
+      publicationFingerprint: null,
+    });
+    const project = await this.posterRepo.findOne({ where: { id } });
+    if (!project) throw new NotFoundException('Poster project not found');
+    return project;
   }
 
   /**

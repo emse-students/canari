@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adoptDroppedBureauPicks,
   createSerialSaver,
   layoutFingerprint,
   type LayoutFingerprintParts,
@@ -118,5 +119,38 @@ describe('createSerialSaver - a publish may not overtake a save', () => {
 
     expect(await saver.save()).toBe(false);
     expect(await saver.save()).toBe(true);
+  });
+});
+
+describe('adoptDroppedBureauPicks - the editor takes what the server cut from a bureau', () => {
+  it('removes the picks the server dropped, so the next save sends them no more', () => {
+    const local = [bubble({ selectedBureau: ['gone', 'kept'] }), bubble({ assoId: 'a2' })];
+    const sent = [{ assoId: 'a1', selectedBureau: ['gone', 'kept'] }, { assoId: 'a2' }];
+    const stored = [{ assoId: 'a1', selectedBureau: ['kept'] }, { assoId: 'a2' }];
+    const first = adoptDroppedBureauPicks(local, sent, stored);
+    expect(first.dropped).toBe(1);
+    expect(first.bubbles[0].selectedBureau).toEqual(['kept']);
+    expect(first.bubbles[1]).toBe(local[1]);
+    // The next save sends the adopted state; the server keeps it whole, and nothing is dropped.
+    const resent = first.bubbles.map(({ assoId, selectedBureau }) => ({ assoId, selectedBureau }));
+    const second = adoptDroppedBureauPicks(first.bubbles, resent, resent);
+    expect(second).toEqual({ bubbles: first.bubbles, dropped: 0 });
+    expect(second.bubbles).toBe(first.bubbles);
+  });
+
+  it('keeps a pick added while the save was in flight: it was never sent, so never dropped', () => {
+    const local = [bubble({ selectedBureau: ['gone', 'kept', 'added'] })];
+    const out = adoptDroppedBureauPicks(
+      local,
+      [{ assoId: 'a1', selectedBureau: ['gone', 'kept'] }],
+      [{ assoId: 'a1', selectedBureau: ['kept'] }]
+    );
+    expect(out.bubbles[0].selectedBureau).toEqual(['kept', 'added']);
+  });
+
+  it('changes nothing when the server stored what was sent', () => {
+    const local = [bubble({ selectedBureau: ['kept'] })];
+    const layout = [{ assoId: 'a1', selectedBureau: ['kept'] }];
+    expect(adoptDroppedBureauPicks(local, layout, layout)).toEqual({ bubbles: local, dropped: 0 });
   });
 });

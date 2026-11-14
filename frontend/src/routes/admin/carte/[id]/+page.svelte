@@ -76,7 +76,11 @@
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { exactDate } from '$lib/utils/time';
-  import { createSerialSaver, layoutFingerprint } from '$lib/carte/editorPersistence';
+  import {
+    adoptDroppedBureauPicks,
+    createSerialSaver,
+    layoutFingerprint,
+  } from '$lib/carte/editorPersistence';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
     Download,
@@ -728,10 +732,24 @@
     saved = false;
     error = null;
     try {
+      const sent = buildLayout();
       project = await updatePosterProject(project.id, {
-        layout: buildLayout() as unknown as Record<string, unknown>,
+        layout: sent as unknown as Record<string, unknown>,
       });
-      savedFingerprint = pinned;
+      // The server keeps only CURRENT members in a bureau: adopt what it dropped, or every later
+      // save sends the same ids again. Unedited meanwhile, what is now held IS what was stored.
+      const unedited = fingerprint === pinned;
+      const stored = project?.layout?.bubbles;
+      const keptPlaced = adoptDroppedBureauPicks(positioned, sent.bubbles, stored);
+      const keptParked = adoptDroppedBureauPicks(parked, sent.bubbles, stored);
+      if (keptPlaced.dropped + keptParked.dropped > 0) {
+        Log.d('admin.carte.id.persistLayout adopted dropped bureau picks', {
+          dropped: keptPlaced.dropped + keptParked.dropped,
+        });
+        positioned = keptPlaced.bubbles;
+        parked = keptParked.bubbles;
+      }
+      savedFingerprint = unedited ? fingerprint : pinned;
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (e) {
