@@ -82,20 +82,26 @@ export function attachedFormsLoader(
   const asked = new Set<string>();
 
   async function load(src: AttachedFormSource): Promise<void> {
+    // ALWAYS READ, even when the post already names the title: the post's `forms` entry carries no
+    // `opensAt`, and a card without it can neither say "opens on ..." nor offer its reminder bell.
     let title = src.title;
     let opensAt: string | null | undefined;
-    if (!title) {
-      try {
-        const form = await reads.getForm(src.id);
-        title = form.title;
-        opensAt = form.opensAt;
-      } catch (e) {
+    try {
+      const form = await reads.getForm(src.id);
+      title ??= form.title;
+      opensAt = form.opensAt;
+    } catch (e) {
+      if (title === undefined) {
         console.error(
           `[POSTS] attached form ${src.id} could not be read - left as a placeholder`,
           e
         );
         return;
       }
+      console.warn(
+        `[POSTS] attached form ${src.id}: opening date could not be read - drawn as open`,
+        e
+      );
     }
     let submitted = false;
     try {
