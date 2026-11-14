@@ -1,4 +1,5 @@
 ## P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step
+target: 1.7.0
 
 Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, the current stable (no keyboard
 or thread-anchor change on `main` since), with the owner's go. The five most recent DMs, each opened

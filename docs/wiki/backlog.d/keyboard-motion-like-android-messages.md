@@ -1,4 +1,5 @@
 ## P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built
+target: 1.8.0
 
 The owner, 2026-11-14: Messenger stays the reference for the LAYOUT (every size and margin measured
 in [design-reference](../frontend/design-reference.md) holds), but Google Messages does the MOTION
