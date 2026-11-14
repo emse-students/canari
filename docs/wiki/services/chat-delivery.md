@@ -1587,6 +1587,51 @@ request naming no caller refused 401),
 non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
 single and batch, the stream never read).
 
+## Path parameters are declared (2026-11-15)
+
+The mechanism is social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14), with the reasons): each
+controller says what its path parameters are with `@RouteParams`, a global guard answers `400`
+naming the parameter when a `uuid` is not one, before any other guard, and
+`src/route-params.coverage.spec.ts` fails on a parameter no declaration names. That spec imports
+`AppModule` inside `beforeAll`, after setting a placeholder `POSTGRES_URL`: the module reads the
+variable when its decorator is evaluated, and only its metadata is read.
+
+**What is a uuid here, and what is not.**
+
+| Name | Kind | Why |
+| --- | --- | --- |
+| `groupId` | `uuid` | `dm_groups.id`, minted by this service. A salon's `channel_<id>` travels in bodies and push data, never in a path |
+| `scopeId` | `uuid` | the community or salon a key-distribution group belongs to, a uuid column |
+| `sessionId` | `uuid` | the session of the internal sign-out route; its handler still lower-cases it |
+| `dismissedGroupId` | `opaque` | `user_dismissed_groups.groupId` is text, and the un-dismiss route is a "make sure it is not there" a Welcome calls for any id |
+| `userId`, `targetUserId` | `opaque` | the identity provider's subject, not a uuid |
+| `deviceId` | `opaque` | `<platform>-<hex>-...`, not a uuid |
+| `token`, `scope`, `departure`, `mediaId` | `opaque` | an invitation token, an enum, a marker and a media id, each judged by its handler |
+
+**A name means one thing in the whole service**, which the coverage spec holds: the un-dismiss
+route's parameter is `dismissedGroupId`, not `groupId` (the URL does not change), because `groupId`
+is a uuid everywhere else.
+
+**No hand-written check was removed.** This service's own checks do more than judge a shape:
+`isGroupUuid` narrows to the `GroupUuid` type its writers ask for, `sanitizeQueryValue` trims, and
+`assertCallerActsOnGroup` is also reached with ids that arrive in a body. They stay, behind the
+guard.
+
+**What changed for a caller**, all of it on ids no client of ours builds:
+
+- a `groupId` or `scopeId` that is not a uuid is answered `400` before the handler, where most
+  routes handed it to a uuid column and answered the database's refusal as a `500`
+  (`groups.route-params.http.spec.ts` shows it over HTTP: no lookup is built, and the session guard
+  has not run);
+- the routes that go through `assertCallerActsOnGroup` before any query (rename, photo,
+  `revoked-leaves`, ending another user's device membership) answered such an id `403
+  NOT_A_MEMBER`; they answer `400` now. The two exits a client replays (`DELETE mls/groups/:groupId`
+  and `DELETE mls/groups/:groupId/members/:userId`) did NOT answer `403` to a malformed id - their
+  first read is a uuid column - so the client's reading of an exit (`pendingGroupExits`: only a
+  `403` of this service means "already done") is unchanged;
+- the `400` comes before `HeaderAuthGuard`, the internal-secret checks and the per-user throttle: a
+  malformed path is refused whoever asks.
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.
@@ -1690,7 +1735,7 @@ unlocked check followed by a tombstone would end a conversation someone had just
 | GET | `/api/mls/users/:userId/groups` | List user's groups |
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
-| DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
+| DELETE | `/api/mls/users/:userId/dismissed-groups/:dismissedGroupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the group's recorded creator (`createdBy`), into an empty roster |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |

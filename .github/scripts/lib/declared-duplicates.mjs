@@ -66,6 +66,7 @@ export const DECLARED_GROUPS = [
       'apps/social-service/src/common/route-params.ts',
       'apps/core-service/src/common/route-params.ts',
       'apps/media-service/src/common/route-params.ts',
+      'apps/chat-delivery-service/src/common/route-params.ts',
     ],
   },
   {

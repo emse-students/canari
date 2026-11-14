@@ -33,6 +33,7 @@ import {
   sanitizeOptionalQueryValue,
   sanitizeQueryValue,
 } from '../utils/sanitize';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -65,6 +66,7 @@ const UNINVITED_ENTRY_KINDS: readonly string[] = [
 const EVIDENCED_UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning'];
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
+@RouteParams({ groupId: 'uuid', userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
