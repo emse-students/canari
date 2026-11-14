@@ -20,7 +20,7 @@ const COLUMNS: Record<keyof typeof RETENTION_DEFAULTS, string> = {
   reelDays: 'retention_reel_days',
   liveReplayDays: 'retention_live_replay_days',
   chatReelDays: 'retention_chat_reel_days',
-  idleMediaDays: 'retention_idle_media_days',
+  idleFileDays: 'retention_idle_file_days',
 };
 
 describe('the copies of the retention durations', () => {
@@ -69,8 +69,8 @@ describe('the copies of the retention durations', () => {
 describe('parseRetention', () => {
   it('reads the four durations a server publishes', () => {
     expect(
-      parseRetention({ reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleMediaDays: 90 })
-    ).toEqual({ reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleMediaDays: 90 });
+      parseRetention({ reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 })
+    ).toEqual({ reelDays: 180, liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 });
   });
 
   it.each([
@@ -78,8 +78,8 @@ describe('parseRetention', () => {
     null,
     {},
     { reelDays: 180, liveReplayDays: 3, chatReelDays: 30 },
-    { reelDays: 0, liveReplayDays: 3, chatReelDays: 30, idleMediaDays: 90 },
-    { reelDays: '365', liveReplayDays: 3, chatReelDays: 30, idleMediaDays: 90 },
+    { reelDays: 0, liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 },
+    { reelDays: '365', liveReplayDays: 3, chatReelDays: 30, idleFileDays: 90 },
   ])('is null for %j - never a partial answer mixed with defaults', (raw) => {
     expect(parseRetention(raw)).toBeNull();
   });

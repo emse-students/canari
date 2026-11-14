@@ -143,8 +143,8 @@ export class PlatformConfig {
   retentionChatReelDays!: number;
 
   /** See {@link retentionReelDays}: a file sent in a conversation, from its last download. */
-  @Column({ name: 'retention_idle_media_days', type: 'int', default: 90 })
-  retentionIdleMediaDays!: number;
+  @Column({ name: 'retention_idle_file_days', type: 'int', default: 90 })
+  retentionIdleFileDays!: number;
 }
 
 /**

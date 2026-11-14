@@ -396,6 +396,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     retentionReelDays: row.retentionReelDays,
     retentionLiveReplayDays: row.retentionLiveReplayDays,
     retentionChatReelDays: row.retentionChatReelDays,
-    retentionIdleMediaDays: row.retentionIdleMediaDays,
+    retentionIdleFileDays: row.retentionIdleFileDays,
   };
 }

@@ -19,7 +19,7 @@ function makeService(paymentProvider: 'lydia' | 'disabled') {
     retentionReelDays: 365,
     retentionLiveReplayDays: 3,
     retentionChatReelDays: 30,
-    retentionIdleMediaDays: 90,
+    retentionIdleFileDays: 90,
   };
   const platformService = {
     getConfig: jest.fn().mockResolvedValue(config),
@@ -67,7 +67,7 @@ describe('PaymentService provider selection', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     const platformService = {
       getConfig: jest.fn().mockResolvedValue(config),

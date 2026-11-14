@@ -17,7 +17,7 @@ export type RetentionDays = {
   reelDays: number;
   liveReplayDays: number;
   chatReelDays: number;
-  idleMediaDays: number;
+  idleFileDays: number;
 };
 
 /** Each duration, the column that holds it and the value the column is created with. */
@@ -25,7 +25,7 @@ export const RETENTION_COLUMNS = [
   { key: 'reelDays', column: 'retention_reel_days', defaultDays: 365 },
   { key: 'liveReplayDays', column: 'retention_live_replay_days', defaultDays: 3 },
   { key: 'chatReelDays', column: 'retention_chat_reel_days', defaultDays: 30 },
-  { key: 'idleMediaDays', column: 'retention_idle_media_days', defaultDays: 90 },
+  { key: 'idleFileDays', column: 'retention_idle_file_days', defaultDays: 90 },
 ] as const satisfies readonly { key: keyof RetentionDays; column: string; defaultDays: number }[];
 
 /** Whether this process has already accused a missing `platform_config` row. */

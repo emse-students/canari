@@ -16,7 +16,7 @@ describe('readRetentionDays', () => {
     retention_reel_days: 180,
     retention_live_replay_days: 7,
     retention_chat_reel_days: 14,
-    retention_idle_media_days: 60,
+    retention_idle_file_days: 60,
   };
 
   it('reads the four columns as the row holds them', async () => {
@@ -24,7 +24,7 @@ describe('readRetentionDays', () => {
       reelDays: 180,
       liveReplayDays: 7,
       chatReelDays: 14,
-      idleMediaDays: 60,
+      idleFileDays: 60,
     });
   });
 

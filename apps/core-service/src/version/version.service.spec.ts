@@ -26,7 +26,7 @@ describe('VersionService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 14,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     }),
   } as unknown as PlatformService;
 
@@ -67,7 +67,7 @@ describe('VersionService', () => {
       reelDays: 365,
       liveReplayDays: 3,
       chatReelDays: 14,
-      idleMediaDays: 90,
+      idleFileDays: 90,
     });
   });
 

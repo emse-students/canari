@@ -115,7 +115,7 @@ export class UpdatePlatformConfigDto {
 
   @IsOptional()
   @IsInt()
-  @Min(bounds('retentionIdleMediaDays').minDays)
-  @Max(bounds('retentionIdleMediaDays').maxDays)
-  retentionIdleMediaDays?: number;
+  @Min(bounds('retentionIdleFileDays').minDays)
+  @Max(bounds('retentionIdleFileDays').maxDays)
+  retentionIdleFileDays?: number;
 }

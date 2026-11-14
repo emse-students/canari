@@ -137,7 +137,7 @@ describe('createPost - a reel', () => {
         retention_reel_days: 30,
         retention_live_replay_days: 3,
         retention_chat_reel_days: 30,
-        retention_idle_media_days: 90,
+        retention_idle_file_days: 90,
       },
     });
 
@@ -152,7 +152,7 @@ describe('createPost - a reel', () => {
         retention_reel_days: null,
         retention_live_replay_days: 3,
         retention_chat_reel_days: 30,
-        retention_idle_media_days: 90,
+        retention_idle_file_days: 90,
       },
     });
 

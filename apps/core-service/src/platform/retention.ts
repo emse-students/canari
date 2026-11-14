@@ -33,8 +33,8 @@ export const RETENTION_SETTINGS = [
     maxDays: 365,
   },
   {
-    key: 'retentionIdleMediaDays',
-    column: 'retention_idle_media_days',
+    key: 'retentionIdleFileDays',
+    column: 'retention_idle_file_days',
     defaultDays: 90,
     minDays: 1,
     maxDays: 3650,
@@ -55,7 +55,7 @@ export type PublicRetention = {
   reelDays: number;
   liveReplayDays: number;
   chatReelDays: number;
-  idleMediaDays: number;
+  idleFileDays: number;
 };
 
 /** The public shape of {@link RetentionDays}. */
@@ -64,6 +64,6 @@ export function publicRetention(days: RetentionDays): PublicRetention {
     reelDays: days.retentionReelDays,
     liveReplayDays: days.retentionLiveReplayDays,
     chatReelDays: days.retentionChatReelDays,
-    idleMediaDays: days.retentionIdleMediaDays,
+    idleFileDays: days.retentionIdleFileDays,
   };
 }

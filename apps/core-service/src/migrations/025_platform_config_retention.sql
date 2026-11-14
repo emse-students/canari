@@ -7,7 +7,7 @@
 --   retention_live_replay_days  a live replay (`posts.kind = 'replay'`), from the live's end.
 --   retention_chat_reel_days    a CanaReel sent in a conversation (media-service `chat-reel`), from
 --                               its upload or its chat hold.
---   retention_idle_media_days   a file sent in a conversation (media-service `ephemeral`), from its
+--   retention_idle_file_days   a file sent in a conversation (media-service `ephemeral`), from its
 --                               last download.
 --
 -- Each DEFAULT is the value the code applied before this migration, so every estate keeps today's
@@ -33,7 +33,7 @@ ALTER TABLE platform_config
 ALTER TABLE platform_config
   ADD COLUMN IF NOT EXISTS retention_chat_reel_days INTEGER NOT NULL DEFAULT 30;
 ALTER TABLE platform_config
-  ADD COLUMN IF NOT EXISTS retention_idle_media_days INTEGER NOT NULL DEFAULT 90;
+  ADD COLUMN IF NOT EXISTS retention_idle_file_days INTEGER NOT NULL DEFAULT 90;
 
 ALTER TABLE platform_config DROP CONSTRAINT IF EXISTS "CHK_platform_config_retention_reel_days";
 ALTER TABLE platform_config
@@ -47,7 +47,7 @@ ALTER TABLE platform_config DROP CONSTRAINT IF EXISTS "CHK_platform_config_reten
 ALTER TABLE platform_config
   ADD CONSTRAINT "CHK_platform_config_retention_chat_reel_days"
   CHECK (retention_chat_reel_days BETWEEN 1 AND 365);
-ALTER TABLE platform_config DROP CONSTRAINT IF EXISTS "CHK_platform_config_retention_idle_media_days";
+ALTER TABLE platform_config DROP CONSTRAINT IF EXISTS "CHK_platform_config_retention_idle_file_days";
 ALTER TABLE platform_config
-  ADD CONSTRAINT "CHK_platform_config_retention_idle_media_days"
-  CHECK (retention_idle_media_days BETWEEN 1 AND 3650);
+  ADD CONSTRAINT "CHK_platform_config_retention_idle_file_days"
+  CHECK (retention_idle_file_days BETWEEN 1 AND 3650);

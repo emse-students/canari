@@ -878,7 +878,7 @@
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
             <td>
-              {durationLabel(retention.days.idleMediaDays)} sans consultation ; CanaReels de conversation
+              {durationLabel(retention.days.idleFileDays)} sans consultation ; CanaReels de conversation
               : {durationLabel(retention.days.chatReelDays)} après l'envoi. Les fichiers envoyés avant
               octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
               sans limite

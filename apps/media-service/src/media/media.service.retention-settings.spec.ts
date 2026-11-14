@@ -58,10 +58,10 @@ function serviceWith(items: Record<string, Entry>) {
   return { service, internals, deleted, put };
 }
 
-const answer = (chatReelDays: number, idleMediaDays: number) =>
+const answer = (chatReelDays: number, idleFileDays: number) =>
   jest.spyOn(MediaService.prototype, 'readRetention').mockResolvedValue({
     chatReelDays,
-    idleMediaDays,
+    idleFileDays,
   });
 
 describe('an ephemeral upload carries the idle window in force at its upload', () => {
@@ -149,10 +149,10 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
   };
 
   it('reads the two durations social-service relays', async () => {
-    relayAnswers(200, { chatReelDays: 14, idleMediaDays: 60, reelDays: 365 });
+    relayAnswers(200, { chatReelDays: 14, idleFileDays: 60, reelDays: 365 });
     await expect(fetchMediaRetention(logger)).resolves.toEqual({
       chatReelDays: 14,
-      idleMediaDays: 60,
+      idleFileDays: 60,
     });
   });
 
@@ -164,7 +164,7 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
   });
 
   it.each([0, 1.5, '30', null])('THROWS on an unusable value %p, never a default', async (bad) => {
-    relayAnswers(200, { chatReelDays: bad, idleMediaDays: 90 });
+    relayAnswers(200, { chatReelDays: bad, idleFileDays: 90 });
     await expect(fetchMediaRetention(logger)).rejects.toThrow(/chatReelDays/);
   });
 });

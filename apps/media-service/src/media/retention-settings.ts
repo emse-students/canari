@@ -3,7 +3,7 @@ import { ServiceUnavailableException, type Logger } from '@nestjs/common';
 /**
  * The retention durations media-service stamps (owner, 2026-11-14; docs/wiki/retention-settings.md).
  *
- * `platform_config.retention_chat_reel_days` and `retention_idle_media_days` are owned by core-service
+ * `platform_config.retention_chat_reel_days` and `retention_idle_file_days` are owned by core-service
  * (migration 025, moved at `/admin/platform`) and read from the database by social-service;
  * media-service has no database, so it asks social-service's internal relay
  * (`GET /api/internal/retention`, `InternalRetentionController`) at each upload or chat hold that
@@ -15,7 +15,7 @@ export type MediaRetentionDays = {
   /** A CanaReel sent in a conversation (`chat-reel`), from its upload or its chat hold. */
   chatReelDays: number;
   /** A file sent in a conversation (`ephemeral`), from its last download. */
-  idleMediaDays: number;
+  idleFileDays: number;
 };
 
 /** How long the relay may take, in milliseconds: a Docker-network hop, so anything slower is a failure. */
@@ -63,9 +63,9 @@ export async function fetchMediaRetention(logger: Logger): Promise<MediaRetentio
     );
     throw new ServiceUnavailableException();
   }
-  const body = (await res.json()) as { chatReelDays?: unknown; idleMediaDays?: unknown };
+  const body = (await res.json()) as { chatReelDays?: unknown; idleFileDays?: unknown };
   return {
     chatReelDays: wholeDays(body?.chatReelDays, 'chatReelDays'),
-    idleMediaDays: wholeDays(body?.idleMediaDays, 'idleMediaDays'),
+    idleFileDays: wholeDays(body?.idleFileDays, 'idleFileDays'),
   };
 }

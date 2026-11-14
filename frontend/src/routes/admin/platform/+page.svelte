@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -82,14 +83,14 @@
     retentionReelDays: 365,
     retentionLiveReplayDays: 3,
     retentionChatReelDays: 30,
-    retentionIdleMediaDays: 90,
+    retentionIdleFileDays: 90,
   });
   /** One label per retention setting, typed so a new setting cannot reach the form unlabelled. */
   const RETENTION_LABELS: Record<RetentionAdminKey, () => string> = {
     retentionReelDays: m.admin_platform_retention_reel_label,
     retentionLiveReplayDays: m.admin_platform_retention_live_replay_label,
     retentionChatReelDays: m.admin_platform_retention_chat_reel_label,
-    retentionIdleMediaDays: m.admin_platform_retention_idle_media_label,
+    retentionIdleFileDays: m.admin_platform_retention_idle_media_label,
   };
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
@@ -672,20 +673,17 @@
         >
         <p class="text-text-muted text-xs">{m.admin_platform_retention_hint()}</p>
         {#each RETENTION_ADMIN_SETTINGS as setting (setting.key)}
-          <div class="space-y-1">
-            <label for={`retention-${setting.key}`} class="text-text-main block text-sm">
-              {RETENTION_LABELS[setting.key]()}
-            </label>
-            <input
+          <div class="max-w-xs space-y-1">
+            <Input
               id={`retention-${setting.key}`}
               type="number"
+              label={RETENTION_LABELS[setting.key]()}
               inputmode="numeric"
               step="1"
               min={setting.minDays}
               max={setting.maxDays}
               required
               bind:value={retention[setting.key]}
-              class="border-cn-border text-text-main focus:ring-accent/40 w-full max-w-[10rem] rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
             />
             <p class="text-text-muted text-xs">
               {m.admin_platform_retention_bounds({ min: setting.minDays, max: setting.maxDays })}

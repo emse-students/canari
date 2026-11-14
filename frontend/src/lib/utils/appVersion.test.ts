@@ -164,7 +164,7 @@ describe('parseServerVersionInfo', () => {
   });
 
   it('reads the retention durations in force, absent as null, and stores them round-trip', () => {
-    const retention = { reelDays: 180, liveReplayDays: 5, chatReelDays: 14, idleMediaDays: 60 };
+    const retention = { reelDays: 180, liveReplayDays: 5, chatReelDays: 14, idleFileDays: 60 };
     const info = parseServerVersionInfo({ version: '1.6.13', retention });
     expect(info?.retention).toEqual(retention);
     expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.retention).toEqual(retention);

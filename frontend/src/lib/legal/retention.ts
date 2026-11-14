@@ -20,7 +20,7 @@ export interface RetentionDays {
   /** A CanaReel sent in a conversation, from its upload. */
   chatReelDays: number;
   /** A file sent in a conversation, from its last download. */
-  idleMediaDays: number;
+  idleFileDays: number;
 }
 
 /** The value each column is created with (core migration 025). */
@@ -28,7 +28,7 @@ export const RETENTION_DEFAULTS: Readonly<RetentionDays> = {
   reelDays: 365,
   liveReplayDays: 3,
   chatReelDays: 30,
-  idleMediaDays: 90,
+  idleFileDays: 90,
 };
 
 const KEYS = Object.keys(RETENTION_DEFAULTS) as (keyof RetentionDays)[];
@@ -42,7 +42,7 @@ export const RETENTION_ADMIN_SETTINGS = [
   { key: 'retentionReelDays', publicKey: 'reelDays', minDays: 1, maxDays: 3650 },
   { key: 'retentionLiveReplayDays', publicKey: 'liveReplayDays', minDays: 1, maxDays: 365 },
   { key: 'retentionChatReelDays', publicKey: 'chatReelDays', minDays: 1, maxDays: 365 },
-  { key: 'retentionIdleMediaDays', publicKey: 'idleMediaDays', minDays: 1, maxDays: 3650 },
+  { key: 'retentionIdleFileDays', publicKey: 'idleFileDays', minDays: 1, maxDays: 3650 },
 ] as const satisfies readonly {
   key: string;
   publicKey: keyof RetentionDays;

@@ -18,7 +18,7 @@ moved by a global admin at `/admin/platform` ("Durées de conservation"):
 | `retentionReelDays` | `retention_reel_days` | 365 | 1-3650 | a feed CanaReel, from its publication | social-service, `posts."expiresAt"` at `createPost` |
 | `retentionLiveReplayDays` | `retention_live_replay_days` | 3 | 1-365 | a live replay, from the live's end | social-service, `posts."expiresAt"` at `publishReplay` |
 | `retentionChatReelDays` | `retention_chat_reel_days` | 30 | 1-365 | a CanaReel sent in a conversation, from its upload or its chat hold | media-service, the chat hold's `dueAt` on the index entry |
-| `retentionIdleMediaDays` | `retention_idle_media_days` | 90 | 1-3650 | a file sent in a conversation (`ephemeral`), from its last download | media-service, `idleRetentionMs` on the index entry |
+| `retentionIdleFileDays` | `retention_idle_file_days` | 90 | 1-3650 | a file sent in a conversation (`ephemeral`), from its last download | media-service, `idleRetentionMs` on the index entry |
 
 **READ AT CREATION, NEVER AT THE SWEEP.** Each service reads the column when it CREATES the item and
 writes the resulting expiry onto the item; the deleting job reads only the item. So a lowered
@@ -43,7 +43,7 @@ sweep reads the setting.
   its default and bounds, the DTO refuses a value outside them as a `400` (the column's CHECK would
   make it a `500`), and a change is logged at WARN with the actor (`retentionReelDays 365 -> 180 days
   by=...`). `GET /api/version` publishes the four as `retention: { reelDays, liveReplayDays,
-  chatReelDays, idleMediaDays }`.
+  chatReelDays, idleFileDays }`.
 
 `retentionSettingsAgree.test.ts` (frontend) holds the five copies together: the migration's
 defaults and CHECKs, core's list, social-service's reader, the client's defaults, and the two pages

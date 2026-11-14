@@ -167,7 +167,7 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 ## Retention: a 90-day IDLE sweep on CHAT media, and nothing else deletes them
 
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
-`lastAccessAt` is older than its idle window - **the admin setting `retention_idle_media_days`
+`lastAccessAt` is older than its idle window - **the admin setting `retention_idle_file_days`
 (90 days by default) as it stood at the file's UPLOAD**, stamped on the entry as `idleRetentionMs`
 since 2026-11-14, and `RETENTION_MS` = 90 days for a file uploaded before
 ([retention-settings](../retention-settings.md)) - leaving a tombstone that is itself

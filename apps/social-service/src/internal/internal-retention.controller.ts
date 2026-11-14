@@ -27,7 +27,7 @@ export class InternalRetentionController {
     assertInternalSecret(secret);
     const days = await readRetentionDays(this.db.manager, this.logger);
     this.logger.debug(
-      `[RETENTION] relayed to media-service: chatReel=${days.chatReelDays} idleMedia=${days.idleMediaDays}`
+      `[RETENTION] relayed to media-service: chatReel=${days.chatReelDays} idleMedia=${days.idleFileDays}`
     );
     return days;
   }

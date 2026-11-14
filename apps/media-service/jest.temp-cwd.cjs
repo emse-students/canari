@@ -36,5 +36,5 @@ beforeEach(() => {
   const { MediaService } = require('./src/media/media.service');
   jest
     .spyOn(MediaService.prototype, 'readRetention')
-    .mockResolvedValue({ chatReelDays: 30, idleMediaDays: 90 });
+    .mockResolvedValue({ chatReelDays: 30, idleFileDays: 90 });
 });

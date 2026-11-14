@@ -120,7 +120,7 @@ describe('UpdatePlatformConfigDto retention durations', () => {
     ['retentionReelDays', 1, 3650],
     ['retentionLiveReplayDays', 1, 365],
     ['retentionChatReelDays', 1, 365],
-    ['retentionIdleMediaDays', 1, 3650],
+    ['retentionIdleFileDays', 1, 3650],
   ])('%s accepts %d to %d days and nothing else', async (key, min, max) => {
     const errorsFor = (value: unknown) =>
       validate(plainToInstance(UpdatePlatformConfigDto, { [key]: value }));

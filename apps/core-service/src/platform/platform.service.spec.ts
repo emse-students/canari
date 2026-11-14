@@ -53,7 +53,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -75,7 +75,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -101,7 +101,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     });
 
     await service.ensureDefaults();
@@ -185,7 +185,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -245,7 +245,7 @@ describe('PlatformService', () => {
         retentionReelDays: 365,
         retentionLiveReplayDays: 3,
         retentionChatReelDays: 30,
-        retentionIdleMediaDays: 90,
+        retentionIdleFileDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -327,7 +327,7 @@ describe('PlatformService', () => {
         retentionReelDays: 365,
         retentionLiveReplayDays: 3,
         retentionChatReelDays: 30,
-        retentionIdleMediaDays: 90,
+        retentionIdleFileDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -394,7 +394,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -425,7 +425,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 30,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -573,7 +573,7 @@ describe('PlatformService', () => {
       retentionReelDays: 365,
       retentionLiveReplayDays: 3,
       retentionChatReelDays: 14,
-      retentionIdleMediaDays: 90,
+      retentionIdleFileDays: 90,
     });
   });
 

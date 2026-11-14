@@ -42,7 +42,7 @@ const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 // Since 2026-11-14 RETENTION_MS is the window of an `ephemeral` file uploaded BEFORE the duration
 // became an admin setting (an entry with no `idleRetentionMs`); a file uploaded since carries the
-// window in force at its upload (`retention_idle_media_days`, docs/wiki/retention-settings.md).
+// window in force at its upload (`retention_idle_file_days`, docs/wiki/retention-settings.md).
 /**
  * A reel SENT IN A CONVERSATION (`chat-reel`) is deleted this long after it was UPLOADED - not after
  * it was last read. `lastAccessAt` is refreshed by every download, so an idle clock would let a reel
@@ -592,7 +592,7 @@ interface MediaMetaEntry {
   holds?: MediaHolds;
   /**
    * An `ephemeral` file's idle window, in ms, as the admin setting held it at the UPLOAD
-   * (`retention_idle_media_days`, 2026-11-14): a later change never moves it. Absent on a file
+   * (`retention_idle_file_days`, 2026-11-14): a later change never moves it. Absent on a file
    * uploaded before the setting, which keeps {@link RETENTION_MS}.
    */
   idleRetentionMs?: number;
@@ -2975,10 +2975,8 @@ export class MediaService {
     if (retentionClass !== 'ephemeral' && retentionClass !== 'chat-reel') return {};
     const retention = await this.readRetention();
     if (retentionClass === 'ephemeral') {
-      this.logger.debug(
-        `[RETENTION] ephemeral upload: idle window ${retention.idleMediaDays} days`
-      );
-      return { idleRetentionMs: retention.idleMediaDays * DAY_MS };
+      this.logger.debug(`[RETENTION] ephemeral upload: idle window ${retention.idleFileDays} days`);
+      return { idleRetentionMs: retention.idleFileDays * DAY_MS };
     }
     const now = Date.now();
     const windowMs = chatReelWindowMs(retention);
