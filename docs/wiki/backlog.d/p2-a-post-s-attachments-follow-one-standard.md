@@ -6,7 +6,7 @@ The owner: *"homogeneiser un peu les posts"*. A post carrying several attachment
 form, images, a PDF) draws each kind with its own shape, icon, chip, border, spacing and action
 affordance. This is a feed design pass, not a pairing of two form cards. Nothing is built yet.
 
-### Inventory (read from the code, 2026-11-15; phone screenshots still to take)
+### Inventory (read from the code, 2026-11-15; screenshots in the private folder below; dev holds no PDF, no attached form, no event chip, no external link and no ecosystem cover post, so those rows are read from the code only)
 
 Order today in `PostCard`: header, `PostContent` (text, then link previews, then media), actions, `PostPolls`,
 attached forms, comments.
@@ -16,13 +16,13 @@ attached forms, comments.
 | Image, gallery | `PostContent` grid, `PostMedia` | edge to edge, square cells, `gap-0.5`, "+N" past four | none | no border, no side inset | tap opens the viewer |
 | Video, CanaReel | `PostMedia` | edge to edge, 60svh ceiling | play glyph | none | tap plays / opens the reels viewer |
 | Replay | `ReplayCard` | its own card | own | own | opens the reel viewer |
-| PDF / file | document row (`usesCompactDocumentRows`) | row, text's 16 px inset; compact from two files | file glyph | own | tap opens |
+| PDF / file | `PostMedia` file row, drawn by `PostContent`'s `singleMedia` (`usesCompactDocumentRows`) | row on the text's 16 px inset, never in the gallery grid; every file compact from two files | file glyph, name and size, no chip | own border, `rounded-xl` | tap opens or downloads |
 | Link, external | `LinkPreviewCard` | `rounded-2xl` card, 64 px thumb or favicon, host chip | host chip (amber) | `border-black/5`, `p-3 sm:p-4`, `mt-3` | external-link arrow |
 | Link, in-app (post, form, association, profile, route) | `LinkPreviewCard` + `CanariLinkPreviewMedia` | same card, logo tile, kind chip ("Formulaire") | kind chip, accent ring | as above plus `ring-accent/12` | up-right arrow |
 | Link, MiGallery / ecosystem cover | `EcosystemCoverPreview` | blurred cover, stacked tiles, own layout | site label | own | own |
 | Attached form | `PostForms` / `FormCard` | `rounded-2xl` card, 40 px tinted icon tile, NO chip | clipboard / check | `border-black/5`, `p-4`, `px-5 py-3` wrapper, `space-y-3` | external-link or arrow, plus the bell when not open yet |
 | Poll | `PostPolls` | bigger card, `p-5`, `px-5 py-4` wrapper, `space-y-5`, `border-2` options | poll glyph | `border-black/5` | vote buttons |
-| Event chip | to be inventoried (linked event on the header) | | | | |
+| Event chip | `PostCard`, between the header and `PostContent` (`linkedCalendarEvent`) | inline pill, NOT a card, `rounded-xl`, `px-3 py-2`, `text-xs font-bold` | calendar-check glyph, accent tint, text "Event: title - date" | `border-accent/25 bg-accent/10`, wrapper `px-4 pb-3`, sits ABOVE the text | whole pill is the link to the event |
 
 The two non-media card families differ in: thumbnail (64 px photo or logo vs a 40 px glyph tile), chip
 (present vs absent), padding (`p-3 sm:p-4` vs `p-4` vs `p-5`), wrapper inset (none, `px-5`, `px-4`),
