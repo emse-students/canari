@@ -246,15 +246,8 @@
     )
   );
 
+  /** Closes the detail and hands over to `removeEvent`, which owns the ONE confirmation. */
   async function handleDetailDelete(id: string) {
-    if (
-      !(await showConfirm(m.asso_calendar_confirm_delete(), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      }))
-    ) {
-      return;
-    }
     agenda.detailModalOpen = false;
     agenda.detailEvent = null;
     await removeEvent(id);
