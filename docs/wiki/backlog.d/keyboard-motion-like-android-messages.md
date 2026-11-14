@@ -91,6 +91,35 @@ starts from the page's frame, so it hides nothing the resize crops. The hand-off
 waits for the page's frame before padding on the rise; the fall has no hand-off. The first prototype
 step is the fall's hand-off (announce, ride, then pad), read on the Mi 9T frame by frame.
 
+**Answered by reading the code, 2026-11-14: a fall cannot be ridden while the WebView is resized
+for the keyboard, so the WebView must not be.** The fall needs the WebView to GROW before the
+composer can ride down into the space it gains. A grown WebView shows nothing new until the page
+has drawn at the new size: 8 frames on the rise (Mi 9T, 2026-11-13) and 13 frames on the fall
+(Pixel 6a, the composer stuck up for ~220 ms). No order of announce, ride and pad hides that, and
+padding at the END of the fall leaves the composer nowhere to ride. So the ride owes a different
+contract on Android:
+
+- **The content is never padded for the keyboard.** The WebView keeps its full height. The shell
+  announces every keyboard change: its target height, the animation's duration, and its
+  interpolator sampled to points that the page turns into a CSS `linear()` easing. It announces
+  from `onPrepare`, which knows the animation, so before the keys move. No resize means no stale
+  frame in either direction.
+- **The page lays out for the keyboard WITHOUT shrinking the thread's box.** The thread's room for
+  the keyboard is its bottom padding, which `.keyboard-open .chat-messages-scroll` already adds. The
+  composer is placed by the keyboard inset. Then the pieces ride with a FLIP (First, Last, Invert,
+  Play): the composer box, and for the thread its ROWS - the scroller's children, as
+  `createThreadGlide` already animates them. Riding the scroller's BOX would open a gap under the
+  header on a rise (it is translated down), and a box shrunk at once would clip the band the keyboard
+  has not yet covered.
+- **What it costs, and why it needs a go:** every screen with a text field is then laid out by the
+  page's keyboard variables instead of by a resize. Every screen that reads `dvh` or `svh`, or
+  places a `fixed` element at the bottom, must be checked: 25 files use viewport units, and 5
+  place a fixed element at the bottom. Today the snapshot pins `--app-viewport-height` to the
+  visual viewport, so the shell still shrinks. The prototype must switch the Android chat to the
+  overlay path and measure every keyboard screen (chat, salon, comments, forms, the PIN dialog,
+  search). It is reversible (the shell and the page ship in one APK), so it is a lead's call
+  during the owner's absence.
+
 ### iOS, measured on the iPhone 12 (2026-11-14)
 
 Read from WebDriverAgent's MJPEG stream (`mjpegServerFramerate` 60 asked, ~25 frames/s delivered, a
