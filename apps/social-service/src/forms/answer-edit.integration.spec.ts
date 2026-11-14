@@ -40,9 +40,12 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const ASSO = '00000000-0000-4000-8000-0000000000e1';
+/** The association the archive test archives, apart from ASSO so no other test sees it. */
+const ARCHIVED_ASSO = '00000000-0000-4000-8000-0000000000e2';
 const OWNER = 'o'.repeat(64);
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
+const CAROL = 'c'.repeat(64);
 
 /** A text question, a FREE choice, a choice whose second option costs 12 EUR, a conditional text. */
 const ITEMS = [
@@ -98,6 +101,8 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
   let issued = 0;
   /** The file claims an edit asked for, as `[submissionId, fileIds]`. */
   const attached: [string, string[]][] = [];
+  /** Runs while a submit builds its facts - after its first read of the form, before its locks. */
+  let duringFacts: (() => Promise<void>) | null = null;
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -122,6 +127,11 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     await ds.query(migration);
     await ds.query(migration);
     await ds.query('RESET lock_timeout');
+    // The respondent `where` reads the association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
+    await ds.query(`INSERT INTO associations (id) VALUES ($1), ($2)`, [ASSO, ARCHIVED_ASSO]);
 
     service = new FormsService(
       ds.getRepository(Form),
@@ -136,15 +146,23 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
         // The owner manages the association's forms (MANAGE_FORMS, owner 2026-11-14).
         mayAct: async (userId: string) => userId === OWNER,
         noteLydiaRequestIssued: async () => undefined,
+        // The form page's read asks whether online payment is offered now (`paymentsPaused`).
+        collectsNow: async () => true,
+        namesByIds: async () => new Map(),
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       {
-        build: async (input: { answers: Record<string, string[]> }) => ({
-          cursus: [{ promo: null, formation: null }],
-          cotisationTiers: [],
-          answers: input.answers,
-        }),
+        build: async (input: { answers: Record<string, string[]> }) => {
+          const hook = duringFacts;
+          duringFacts = null;
+          if (hook) await hook();
+          return {
+            cursus: [{ promo: null, formation: null }],
+            cotisationTiers: [],
+            answers: input.answers,
+          };
+        },
       } as any,
       ds.getRepository(FormRespondent),
       // FormFilesService: only the claim is read, recorded rather than performed.
@@ -659,6 +677,101 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       expect(after.paymentStatus).toBe('paid');
       expect(after.totalPaid).toBe(1200);
       expect(after.answers).toEqual({ 'q-name': `Apres ${round}`, 'q-meal': 'm-yes' });
+    }
+  });
+
+  /**
+   * AN ARCHIVED ASSOCIATION'S FORM IS CLOSED BY LINK (2026-11-14): its respondents are answered what
+   * an absent form answers - read, check, submit, edit - while its managers keep reading it, its
+   * submitter keeps their own answer, and a payment already issued still settles.
+   */
+  it("an archived association's form: gone for its respondents, kept for its managers, its money still settles", async () => {
+    const paidForm = await makeForm({ associationId: ARCHIVED_ASSO, allowCashPayment: false });
+    const freeForm = await makeForm({
+      associationId: ARCHIVED_ASSO,
+      requiresPayment: false,
+      allowCashPayment: false,
+    });
+    // Before the archive: ALICE's online answer is waiting for its money, BOB answered for free.
+    const pending: any = await service.submit(paidForm, {
+      userId: ALICE,
+      answers: { 'q-name': 'Equipe A', 'q-meal': 'm-yes' },
+    } as any);
+    const requestOfAlice = String(9000 + issued);
+    expect((await row(pending.submissionId)).paymentStatus).toBe('pending');
+    const free: any = await service.submit(freeForm, {
+      userId: BOB,
+      answers: { 'q-name': 'Les Bleus', 'q-meal': 'm-none' },
+    } as any);
+
+    await ds.query(`UPDATE associations SET archived = true WHERE id = $1`, [ARCHIVED_ASSO]);
+    try {
+      const stranger = { userId: BOB, isGlobalAdmin: false };
+      expect(await refusal(service.get(paidForm, stranger))).toEqual({ status: 404 });
+      expect((await service.hasSubmission(paidForm, BOB)).maySubmit).toBe(false);
+      const requestsBefore = issued;
+      expect(
+        await refusal(
+          service.submit(paidForm, {
+            userId: BOB,
+            answers: { 'q-name': 'Equipe B', 'q-meal': 'm-yes' },
+          } as any)
+        )
+      ).toEqual({ status: 404 });
+      expect(issued).toBe(requestsBefore); // no payment request was opened
+      expect(await refusal(service.myEditableAnswers(freeForm, BOB))).toEqual({ status: 404 });
+      expect(
+        await refusal(
+          service.editAnswer(freeForm, free.submissionId, BOB, { 'q-name': 'Les Verts' })
+        )
+      ).toEqual({ status: 404 });
+      expect((await row(free.submissionId)).answers).toMatchObject({ 'q-name': 'Les Bleus' });
+
+      // The submitter still reads their own answer; the managers still read and export.
+      expect(await service.getSubmission(freeForm, BOB)).toMatchObject({ id: free.submissionId });
+      await expect(
+        service.get(paidForm, { userId: OWNER, isGlobalAdmin: false })
+      ).resolves.toMatchObject({ id: paidForm });
+      // The staff gate of every manager read (submissions, export) does not read the archive.
+      await expect(service.assertFormManager(paidForm, OWNER, false)).resolves.toMatchObject({
+        id: paidForm,
+      });
+
+      // The payment issued before the archive lands and is settled: money is never stranded.
+      await service.markPaid(pending.submissionId, requestOfAlice);
+      expect((await row(pending.submissionId)).paymentStatus).toBe('paid');
+    } finally {
+      await ds.query(`UPDATE associations SET archived = false WHERE id = $1`, [ARCHIVED_ASSO]);
+    }
+    // Un-archived, the form answers again: read from state, nothing was rewritten.
+    await expect(
+      service.get(paidForm, { userId: BOB, isGlobalAdmin: false })
+    ).resolves.toMatchObject({ id: paidForm });
+  });
+
+  it('refuses an answer whose association is archived between its first read and its locks', async () => {
+    const formId = await makeForm({
+      associationId: ARCHIVED_ASSO,
+      requiresPayment: false,
+      allowCashPayment: false,
+    });
+    // The archive commits after the submit read the form as answerable, before it takes its locks.
+    duringFacts = async () => {
+      await ds.query(`UPDATE associations SET archived = true WHERE id = $1`, [ARCHIVED_ASSO]);
+    };
+    try {
+      expect(
+        await refusal(
+          service.submit(formId, {
+            userId: CAROL,
+            answers: { 'q-name': 'Tard', 'q-meal': 'm-none' },
+          } as any)
+        )
+      ).toEqual({ status: 404 });
+      expect(await rowsOf(formId)).toBe(0);
+    } finally {
+      duringFacts = null;
+      await ds.query(`UPDATE associations SET archived = false WHERE id = $1`, [ARCHIVED_ASSO]);
     }
   });
 });
