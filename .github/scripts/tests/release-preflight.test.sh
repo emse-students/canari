@@ -13,6 +13,8 @@
 #                          pushes to `main` any more (2026-10-30).
 #   classify_prerelease_currency  gate 2 for a pre-release: nothing with a higher store build
 #                          number was released already - a rerun of a stale alpha would move dev back.
+#   classify_stable_source gate 4 for a stable: it builds EXACTLY its latest pre-release's commit,
+#                          whatever `main` holds (owner, 2026-11-14).
 #   classify_dev_coverage  whether the dev estate has already served the commit being shipped. An
 #                          inverted reading here reports a lagging estate as healthy, which is the
 #                          one thing the check exists to prevent.
@@ -179,6 +181,41 @@ check_latest v1.0.1-alpha.10 1.0.1 v1.0.1-alpha.2 v1.0.1-alpha.10 v1.0.1-alpha.9
 check_latest v1.0.1-alpha.2 1.0.1 v1.0.1-alpha.2 v1.0.2-alpha.7 v1.0.10-alpha.1 v1.0.1
 check_latest '' 1.0.1 v1.0.2-alpha.1 v1.0.1 v1.0.11-alpha.1
 check_latest '' 1.0.1
+
+printf '\na stable builds exactly its latest pre-release, whatever main holds\n'
+# =================================================================================================
+# OWNER, 2026-11-14: "La stable devrait toujours etre build depuis la derniere alpha, independamment
+# de main." The resolve step of release.yml derives the commit; before this gate nothing asserted it,
+# so main's head (what the stable's own tag names when typed against main) passed gates 2 and 4.
+ALPHA=fa1bc265595c88c0a864e0f97168a8383c498c92
+MAIN_HEAD=640aa34b2e09a2d55fe0eac8e87021839d41dab0
+source_of() {
+  local want="$1" what="$2"; shift 2
+  local got; got="$(classify_stable_source "$@")"
+  if [ "$got" = "$want" ]; then pass "$what"; else fail "$what - expected '$want', got '$got'"; fi
+}
+if ! declare -F classify_stable_source >/dev/null; then
+  fail 'classify_stable_source does not exist - nothing asserts which commit a stable builds'
+  classify_stable_source() { printf 'missing\n'; }
+fi
+source_of "exact v1.6.12-alpha.2" "the latest alpha's own commit is what the stable builds" \
+  "$ALPHA" v1.6.12-alpha.2 "$ALPHA"
+source_of "mismatch v1.6.12-alpha.2 $ALPHA" "main's head is refused, even though main contains the alpha" \
+  "$MAIN_HEAD" v1.6.12-alpha.2 "$ALPHA"
+source_of 'undecidable no pre-release of this version exists' 'a stable with no alpha is refused' \
+  "$ALPHA" '' ''
+source_of 'undecidable the commit of v1.6.12-alpha.2 could not be read (nothing)' \
+  'an unreadable alpha commit is not permission' "$ALPHA" v1.6.12-alpha.2 ''
+source_of 'undecidable the target fa1bc265 is not a full commit sha' \
+  'a short target is not compared by prefix' fa1bc265 v1.6.12-alpha.2 "$ALPHA"
+# AND THE PREFLIGHT ASKS IT: a classifier nothing calls asserts nothing.
+# shellcheck disable=SC2016 # the pattern is the script's literal text
+if grep -qF 'SOURCE="$(classify_stable_source "$TARGET_SHA" "$ALPHA_TAG" "$ALPHA_SHA")"' \
+  "$HERE/../release-preflight.sh"; then
+  pass "release-preflight.sh asks gate 4's first question of every stable"
+else
+  fail "release-preflight.sh never compares the stable's commit with its latest pre-release's"
+fi
 
 printf '\na pre-release older than one already released is refused, not redeployed\n'
 # =================================================================================================

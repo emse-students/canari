@@ -1269,7 +1269,7 @@ both store uploads and the version bump itself:
 | 1   | Is the version a version?                            | a typo must not reach a store band computation                                                        |
 | 2   | Is the released commit on `main`?                    | everything downstream reads the trunk                                                                 |
 | 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
-| 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
+| 4   | Is it EXACTLY the latest pre-release's commit, and has the dev estate already served it? (stable only) | **production cannot be ahead of dev**, and a stable is built from its last alpha, never from `main` ([2026-11-14](#the-stables-commit-is-asserted-not-only-derived-2026-11-14)) |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 
@@ -1475,7 +1475,8 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   version (`latest_prerelease_tag`, version order) and resolves THAT commit once; no such tag is an
   error naming the command to cut one. The stable's own tag is not read.
 - **Gates.** 2 asks only that `main` contains the commit (the fast-forward question has nobody
-  asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
+  asking it); 3 reads `CI passed` on it; 4 first asserts the commit IS the latest pre-release's
+  (below), then that dev served it; 5 is unchanged.
 - **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
   contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
   stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs.
@@ -1486,6 +1487,37 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
   retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
   production back. Test: `land-release.test.sh`.
+
+#### The stable's commit is asserted, not only derived (2026-11-14)
+
+Owner, 2026-11-14: _"La stable devrait toujours etre build depuis la derniere alpha, independamment
+de main."_ That was already how the resolve step CHOSE the commit, but nothing CHECKED the choice:
+gate 2 asks only that `main` contains the commit and gate 4 only that dev is at or past it, so
+`main`'s head would have passed both. Gate 4 now opens by re-deriving the latest
+`vX.Y.Z-label` tag and its commit from the API and refusing anything but equality
+(`classify_stable_source` in `lib/release-preconditions.sh`, asserted with the `v1.6.12` pair by
+`release-preflight.test.sh`, which also checks the preflight calls it).
+
+**What raised it, and why it was a misreading.** `v1.6.12` was typed against `main`
+(`gh release create v1.6.12 --generate-notes`), nine pull requests past `v1.6.12-alpha.2`. The run's
+`headSha` and the tag as first fetched both read `main`'s head (`640aa34b`), and `git log
+v1.6.12-alpha.2..v1.6.12` listed nine commits dev never served. The run's own log says otherwise:
+the resolve step printed `Stable 1.6.12 ships v1.6.12-alpha.2`, the preflight ran at `fa1bc265`, the
+bump committed `0b6947d2` on it and moved the tag there, and every arm checked out `0b6947d2`
+(`git log fa1bc265..0b6947d2` is the bump alone; no migration, no group-call code). Two traps to
+read a stable by:
+
+- **A run's `headSha` is the commit the tag named WHEN PUBLISHED**, never what the arms built. Read
+  `Every arm of this release builds <sha>` in the bump job.
+- **`git fetch --tags` never updates a tag that moved** - the stale local `vX.Y.Z` keeps naming the
+  commit the human typed against. `git fetch --tags --force`, or `git ls-remote origin refs/tags/vX.Y.Z`.
+
+**What does come from `main`'s head: the workflow files.** GitHub runs a release event's workflows
+(and every `workflow_call` they make) from the commit the tag named at publication, so `release.yml`,
+`serve-prod.yml` and the rest ran from `640aa34b`. The built tree, the deploy scripts and the
+migrations are the alpha's; only the YAML is not. For `v1.6.12` that meant two extra secrets passed
+by `serve-prod.yml` that the shipped compose file never reads. Typing the stable at the alpha's
+commit (`--target <sha>`) would close it; it is not required by a gate.
 
 ### A pre-release is pinned on its release branch (decided 2026-10-30)
 

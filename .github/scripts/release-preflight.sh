@@ -16,7 +16,9 @@
 #                                           a pre-release must also be the newest release
 #                                           (a rerun of a stale alpha would move dev back)
 #   3. Did the tests pass ON THAT COMMIT? - "if the tests are green" was written nowhere at all
-#   4. Has dev already served it?         - stable releases only, and the reason this file exists
+#   4. Has dev already served it?         - stable releases only, and the reason this file exists;
+#                                           first, is it EXACTLY the latest pre-release's commit
+#                                           (owner, 2026-11-14: built from the last alpha, never main)
 #   5. Are the release notes written?     - stable releases only; Apple REFUSES a submission
 #                                           without them, and finding that out at the end costs
 #                                           the bump, production, Play and a macOS build first
@@ -175,10 +177,38 @@ case "$CHECK_CONCLUSION" in
 esac
 
 # -- 4 -------------------------------------------------------------------------------------------
-step 'the dev estate has already served this commit'
+step 'the stable is its latest pre-release, and the dev estate has already served it'
 if [ "$KIND" != 'stable' ]; then
   ok 'not asked of a pre-release - deploying dev IS what a pre-release is for'
 else
+  # FIRST: the stable builds EXACTLY its latest pre-release's commit, whatever `main` holds (owner,
+  # 2026-11-14). Re-derived here from the API rather than trusted from the resolve step, so the
+  # commit the arms build is asserted and not only computed; `classify_stable_source` carries why.
+  if ALPHA_TAGS="$(gh api "repos/$REPO/git/matching-refs/tags/v${VERSION}-" --jq '.[].ref | sub("^refs/tags/"; "")' 2>&1)"; then
+    ALPHA_TAG="$(printf '%s\n' "$ALPHA_TAGS" | latest_prerelease_tag "$VERSION")"
+  else
+    ALPHA_TAG=''
+  fi
+  ALPHA_SHA=''
+  [ -n "$ALPHA_TAG" ] && { ALPHA_SHA="$(gh api "repos/$REPO/commits/$ALPHA_TAG" --jq '.sha' 2>/dev/null)" || ALPHA_SHA=''; }
+  SOURCE="$(classify_stable_source "$TARGET_SHA" "$ALPHA_TAG" "$ALPHA_SHA")"
+  case "$SOURCE" in
+    'exact '*)
+      ok "the stable builds ${TARGET_SHA:0:8}, precisely ${SOURCE#exact }'s commit - main is not read"
+      ;;
+    'mismatch '*)
+      read -r _ ALPHA_TAG ALPHA_SHA <<<"$SOURCE"
+      refuse "the stable would build ${TARGET_SHA:0:8}, but the latest pre-release $ALPHA_TAG is ${ALPHA_SHA:0:8}"
+      hint 'A stable ships the latest pre-release of its version and nothing else - never the commit its'
+      hint 'own tag names, never main. The resolve step of release.yml and this gate disagree, which is'
+      hint 'a defect of the workflow: fix it there, then publish the stable again.'
+      ;;
+    *)
+      refuse "could not tell which commit the stable must build - ${SOURCE#undecidable }"
+      hint "A stable ships the latest v${VERSION}-alpha.N; cut one first: gh release create v${VERSION}-alpha.1 --prerelease"
+      ;;
+  esac
+
   DEV_SHA="$(gh api "repos/$REPO/git/ref/tags/dev-deployed" --jq '.object.sha' 2>/dev/null)" || DEV_SHA=""
   if [ -z "$DEV_SHA" ]; then
     refuse 'there is no dev-deployed marker, so nothing says the dev estate ever ran anything'
