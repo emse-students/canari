@@ -55,3 +55,5 @@ What closes it:
   backlog included) and the composer with them; a line sent shows on the broadcaster's phone. Switch
   OFF again: within one poll the lines go. The journal shows the changes; every fixture removed
   afterwards.
+
+**Triage 2026-11-14 - left: only the live-chat reading** (a throwaway grantee on a web seat, the Mi 9T going live as the association, a native viewer line; dev; about 40 min). The comment-switch reading and the old-mention count are done above; the privacy-policy question stays the owner's call.

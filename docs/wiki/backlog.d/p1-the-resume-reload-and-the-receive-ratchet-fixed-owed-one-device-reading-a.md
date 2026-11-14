@@ -15,3 +15,5 @@ and the keypackage round after each resume minted nothing. **(1) and (3) are the
 provokable from the phone alone**; the native `live-ahead` refusal stays covered by `mls-core/tests/unsaved_ratchet_advance.rs`.
 **Still owed: (2)**, the duplicate `recevoir_messages_batch` pair, which needs frames RECEIVED from a
 peer during NOTIF-7 - a push sitting.
+
+**Triage 2026-11-14 - left, and only this: (2), on the Mi 9T, about 15 min, in the NOTIF-7 push sitting** (a web seat sends the frames, `adb logcat -v time` on the phone). Readings (1) and (3) are DELETED: measured above, no resume can follow a received frame without a checkpoint (the socket is released while away), so neither can be provoked from the phone, and `mls-core/tests/unsaved_ratchet_advance.rs` pins the native `live-ahead` refusal.

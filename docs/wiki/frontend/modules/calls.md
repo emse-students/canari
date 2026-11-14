@@ -2980,7 +2980,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
+[backlog](../../backlog.d/reading-owed-the-iphone-native-ring-2305-switched-on-by-2727-in-1-5-2-calls.md).
 
 ### One call screen on every platform (2026-10-23)
 
