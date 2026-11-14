@@ -46,6 +46,7 @@ earliest version, as a checklist.
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
+- [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 
 **P3 - hygiene**
 
@@ -190,7 +191,10 @@ earliest version, as a checklist.
 - [ ] [the daily upload bound's refusal rate a week after its release](backlog.d/p2-a-daily-upload-bound-per-member.md)
 - [ ] [a message resent under one `messageId` is stored once](backlog.d/reading-owed-a-message-resent-under-one-messageid-is-stored-once.md)
 - [ ] [a picture in a message keeps its height when the keyboard opens](backlog.d/reading-owed-a-picture-in-a-message-keeps-its-height-when-the-keyboard-opens.md)
+- [ ] [a three-way group call, audio and video, on the Mi 9T and the iPhone 12](backlog.d/reading-owed-a-three-way-group-call-audio-and-video-on-the-bench-phones.md)
+- [ ] [CPU and frame rate of a phone sending its camera to two receivers](backlog.d/reading-owed-cpu-and-fps-of-a-phone-sending-video-to-two-receivers.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
+- [ ] [WebKit opens each participant's frames with that participant's key in a group call](backlog.d/reading-owed-webkit-receiver-transforms-per-peer-in-a-group-call.md)
 - [ ] [the CORRUPT-2 rig row on a build since `v1.3.0`](backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)
 - [ ] [the KeyPackage minting loop on a handset across background and resume](backlog.d/p1-the-minting-loop-has-never-been-observed-on-the-handset-and-a-blob-s-size.md)
 - [ ] [whether the deleted placeholder left a leaf in its conversation's MLS tree](backlog.d/p1-the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is.md)

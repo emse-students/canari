@@ -61,6 +61,10 @@ describe('startPushService - rotation de token FCM', () => {
     // Android takes a wake-up push, and every registration says so: the server writes
     // `push_token.wakeCapable` from it, false when absent.
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).wake).toBe(true);
+    // And the group-call protocol it carries (WP-GC2): the server rings it for a group call only so.
+    expect(
+      JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).groupCallVersion
+    ).toBe(1);
 
     // Re-call (foreground return) without token change -> no re-POST.
     await startPushService('https://api', JWT_AUTH, 'dev-1');

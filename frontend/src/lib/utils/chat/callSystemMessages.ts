@@ -7,7 +7,12 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
-import { callEndReasonFromWire, type CallEndReason, type ICallMsg } from '$lib/proto/codec';
+import {
+  callEndReasonFromWire,
+  groupHangupEndsRecord,
+  type CallEndReason,
+  type ICallMsg,
+} from '$lib/proto/codec';
 import { appendLog } from '$lib/utils/sessionLog';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
@@ -318,6 +323,7 @@ async function finalizeCallRow(
 
 /**
  * Handles an incoming MLS call signal: inserts a start message or updates duration on hangup.
+ * `group`: the signal is a GROUP call's (`group_call`, WP-GC2) - see `groupHangupEndsRecord` (`proto/codec.ts`).
  */
 export async function handleCallSignalForChat(
   ctx: CallSystemMessageContext | null,
@@ -325,7 +331,8 @@ export async function handleCallSignalForChat(
   groupId: string,
   callMsg: ICallMsg,
   currentUserId: string,
-  at: EventTime | null
+  at: EventTime | null,
+  group: boolean = false
 ): Promise<void> {
   if (!ctx || !callMsg?.callId) return;
   // A RECORD IS DATED BY ITS FRAME, never by when this device processed it: a phone draining an
@@ -344,6 +351,12 @@ export async function handleCallSignalForChat(
 
   if (callMsg.hangup) {
     const outcome = callEndReasonFromWire(callMsg.endReason);
+    if (group && !groupHangupEndsRecord(outcome)) {
+      appendLog(
+        `[CallRecord] ${String(callMsg.callId).slice(0, 8)} group hangup from ${senderNorm.slice(0, 8)} (${outcome ?? 'left'}) - the call goes on for the others, no record change`
+      );
+      return;
+    }
     // A device with no "started" row for this call (it was busy, or never saw the invite) still
     // owes its owner a MISSED call when ANOTHER account gave up on it: the caller's own other
     // devices and a ring this account refused elsewhere are not missed calls.
