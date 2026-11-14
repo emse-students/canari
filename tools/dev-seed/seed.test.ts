@@ -203,6 +203,12 @@ const reachSpacesShapeHolds = (r: Record<string, SqlValue>) => {
   const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
   return Array.isArray(v) && v.length > 0;
 };
+/** A retention duration in days (core 025): left out, it takes its in-range column default. */
+const daysWithin =
+  (column: string, min: number, max: number) => (row: Record<string, SqlValue>) => {
+    const v = row[column];
+    return !given(v) || (typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max);
+  };
 const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
 const CAMPUSES = ['saint-etienne', 'gardanne'];
 
@@ -257,6 +263,22 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   CHK_platform_config_call_relay: {
     sql: "call_relay IN ('none', 'call-service')",
     holds: oneOf('call_relay', ['none', 'call-service']),
+  },
+  CHK_platform_config_retention_reel_days: {
+    sql: 'retention_reel_days BETWEEN 1 AND 3650',
+    holds: daysWithin('retention_reel_days', 1, 3650),
+  },
+  CHK_platform_config_retention_live_replay_days: {
+    sql: 'retention_live_replay_days BETWEEN 1 AND 365',
+    holds: daysWithin('retention_live_replay_days', 1, 365),
+  },
+  CHK_platform_config_retention_chat_reel_days: {
+    sql: 'retention_chat_reel_days BETWEEN 1 AND 365',
+    holds: daysWithin('retention_chat_reel_days', 1, 365),
+  },
+  CHK_platform_config_retention_idle_file_days: {
+    sql: 'retention_idle_file_days BETWEEN 1 AND 3650',
+    holds: daysWithin('retention_idle_file_days', 1, 3650),
   },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",

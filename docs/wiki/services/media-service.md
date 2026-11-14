@@ -102,6 +102,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/own-archive-delete` | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - the publish queue's Delete, from social-service's withdrawal, which checked that NO live post or comment cites the ids: each deleted only when it is `ownerId`'s own `archive` object, otherwise `refused`; an unknown or purged one `absent` (`removeOwnArchive`). Not a user route: owner and class do not prove an object uncited (review of #3061; [posts](../frontend/modules/posts.md#the-background-publish-queue)) |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
+| POST   | `/api/media/internal/retention-changed` | `INTERNAL_SECRET` | Re-read the retention durations this service HOLDS and stamps (sent by core-service on an admin change, by social-service at its boot); answers `{ refreshed, readAt }` - [retention-settings](../retention-settings.md#media-service-holds-the-durations-it-stamps) |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
 | POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
@@ -167,7 +168,10 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 ## Retention: a 90-day IDLE sweep on CHAT media, and nothing else deletes them
 
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
-`lastAccessAt` is older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself
+`lastAccessAt` is older than its idle window - **the admin setting `retention_idle_file_days`
+(90 days by default) as it stood at the file's UPLOAD**, stamped on the entry as `idleRetentionMs`
+since 2026-11-14, and `RETENTION_MS` = 90 days for a file uploaded before
+([retention-settings](../retention-settings.md)) - leaving a tombstone that is itself
 trimmed after 90 days. It runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with
 `MEDIA_RETENTION_SWEEP_MS`); a `download()` judges only its OWN entry (below). **It was 30 days until 2026-09-23** - what
 moved it, and why moving it is not the same decision as the one taken in August, is §6 of

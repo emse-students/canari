@@ -44,6 +44,7 @@
     chatViewCountLine,
     chatViewEntryLine,
     isPinnedToBottom,
+    ownMessageAppended,
     respondToNewMessage,
     stickToBottomAfterScroll,
     threadReach,
@@ -447,6 +448,8 @@
   /** The entry's `[CHAT_VIEW] ... entry settled` line is still to be written (one per entry). */
   let entryReportOwed = false;
   let lastMessageCount = $state(0);
+  /** The newest message's id at the last run of the message effect: what tells an append from an older page. */
+  let lastNewestMessageId: string | undefined;
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
   /** Messages at or before this time do not play the "just received" animation. */
@@ -1442,6 +1445,7 @@
       if (!c) {
         lastConversationKey = '';
         lastMessageCount = 0;
+        lastNewestMessageId = undefined;
         catchupWasActive = false;
         return;
       }
@@ -1505,7 +1509,7 @@
               entering,
               catchupActive,
               isNearBottom,
-              ownMessageAdded: c.messages.at(-1)?.isOwn === true,
+              ownMessageAdded: ownMessageAppended(lastNewestMessageId, c.messages.at(-1)),
             });
         viewResponse = response;
         if (response !== 'stay') {
@@ -1531,6 +1535,7 @@
 
       lastConversationKey = convoKey;
       lastMessageCount = messageCount;
+      lastNewestMessageId = c.messages.at(-1)?.id;
     });
   });
 

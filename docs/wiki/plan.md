@@ -55,9 +55,9 @@ earliest version, as a checklist.
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
-- [P2 - an older page throws a reader whose last message was their own back to the bottom](backlog.d/p2-an-older-page-throws-a-reader-whose-last-message-was-their-own-to-the-bottom.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
+- [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 
 **P3 - hygiene**
 
@@ -68,7 +68,6 @@ earliest version, as a checklist.
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
-- [P3 - a post naming a malformed association id answers 500](backlog.d/p3-a-post-with-a-malformed-association-id-answers-500.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 
 ### Readings owed
