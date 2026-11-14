@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
-import { createThreadGlide, glideTravel, observeThreadGrowth } from './threadGrowthObserver';
+import {
+  createThreadGlide,
+  glideTravel,
+  observeThreadGrowth,
+  takeThreadGlideOff,
+} from './threadGrowthObserver';
 
 /**
  * THE THREAD'S GLIDE, AGAINST A LAYOUT THAT COUNTS IT IN ITS OVERFLOW (review of #3490, B1, S5, S6).
@@ -181,6 +186,25 @@ describe('observeThreadGrowth - the glide of an arrival', () => {
     expect(new Set(live().map((a) => a.px))).toEqual(new Set([105]));
     expect(live().every((a) => a.currentTime === 0)).toBe(true);
     stop();
+  });
+
+  it('a keyboard ride takes a glide in flight off for good: nothing resumes it', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    expect(takeThreadGlideOff(scroller)).toBe(false); // nothing in flight yet
+    addRow(70);
+    await flush();
+    now = 55;
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    expect(live()).toHaveLength(0);
+    // The ride's layout change reaches the observer: it pins, and leaves the rows to the ride.
+    layout.box -= 100;
+    fireResize();
+    expect(scroller.scrollTop).toBe(layoutReach());
+    expect(live()).toHaveLength(0);
+    stop();
+    expect(takeThreadGlideOff(scroller)).toBe(false); // a thread no longer followed
   });
 
   it('a finished glide is gone: a later change does not replay it', async () => {

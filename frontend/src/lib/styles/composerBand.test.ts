@@ -69,8 +69,9 @@ describe('the composer band', () => {
    */
   it('keeps reserving the composer height, so the thread still ends above the bar at rest', () => {
     const scroller = css.slice(at('.chat-messages-scroll {'));
-    expect(scroller.slice(0, scroller.indexOf('\n}'))).toContain(
-      'padding-bottom: var(--chat-composer-height'
+    // The keyboard's room is added to it (Android's layout inset, 0 elsewhere - keyboard ride).
+    expect(scroller.slice(0, scroller.indexOf('\n}'))).toMatch(
+      /padding-bottom: (calc\(\s*)?var\(--chat-composer-height/
     );
   });
 });

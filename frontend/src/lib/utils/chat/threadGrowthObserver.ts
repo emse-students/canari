@@ -75,6 +75,7 @@ export function observeThreadGrowth(
 
   let previousClientHeight = scroller.clientHeight;
   const glide = createThreadGlide(scroller);
+  glidesByScroller.set(scroller, glide);
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
    * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
@@ -170,8 +171,22 @@ export function observeThreadGrowth(
     mutations.disconnect();
     boxes.disconnect();
     glide.stop();
+    glidesByScroller.delete(scroller);
     scroller.style.overflowAnchor = previousAnchoring;
   };
+}
+
+/** The glide of every thread `observeThreadGrowth` follows, for {@link takeThreadGlideOff}. */
+const glidesByScroller = new WeakMap<Element, ThreadGlide>();
+
+/**
+ * Takes a glide still in flight off a followed thread's rows, for good - the keyboard ride is about to
+ * move the same rows (`keyboardRide.ts`), and two transforms on one row would fight. The ride reads the
+ * rows' DRAWN top first, so it starts from where the reader saw them; the observer's next `follow`
+ * finds no glide to resume. True when one was running.
+ */
+export function takeThreadGlideOff(scroller: Element): boolean {
+  return glidesByScroller.get(scroller)?.suspend() != null;
 }
 
 /** Reads a `--motion-*` duration token (`220ms`) as milliseconds, or null if it is not one. */

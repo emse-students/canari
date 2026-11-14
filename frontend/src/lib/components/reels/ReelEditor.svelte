@@ -671,7 +671,7 @@
   <div
     bind:this={tray}
     data-reel-tray
-    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
+    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
   >
     {#if composing}
       <form

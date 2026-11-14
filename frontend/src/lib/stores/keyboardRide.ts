@@ -1,7 +1,17 @@
 /**
- * THE COMPOSER AND THE THREAD RIDE DOWN WITH A FALLING KEYBOARD, ON iOS
- * (docs/wiki/frontend/keyboard-and-send-motion.md, section 5).
+ * THE COMPOSER AND THE THREAD RIDE THE KEYBOARD: DOWN WITH IT ON iOS, BOTH WAYS ON ANDROID
+ * (docs/wiki/frontend/keyboard-and-send-motion.md).
  *
+ * ANDROID (2026-11-14): the WebView is never resized for the keyboard. The shell announces every
+ * change of the keyboard's inset with the animation's duration and its interpolator sampled to points
+ * (`window.canariImeTarget({ px, durationMs, curve })`, `imeTarget.ts`); the page captures every
+ * riding piece, lays itself out over the keyboard at once, and rides each piece from where it stood to
+ * its new place on a CSS `linear()` easing built from those points ({@link linearEasing}) - up on a
+ * rise, down on a fall. The thread rides its ROWS ({@link captureKeyboardRide}'s `lastRow: 'rows'`),
+ * never its box: the box keeps its height (its room for the keyboard is its bottom padding), so
+ * riding it would open a gap under the header on a rise.
+ *
+ * iOS (section 5):
  * Messenger iOS keeps its composer on the keys while they fall and scrolls the thread with it. Canari
  * relays out full height on the fall's first frame, so its composer jumped to the bottom and the keys
  * slid off over it (iPhone 12, 2026-11-13). The shell (`canari_ios.mm`, `CanariHandKeyboardFallToPage`)
@@ -14,11 +24,15 @@
  * WHILE A PIECE RIDES IT IS A CONTAINING BLOCK: a transform makes an element the containing block of
  * its `position: fixed` descendants, so for the ride's ~250 ms a fixed panel inside the composer band
  * or the thread would be placed against the piece, not the screen. The ride is cancelled - every piece
- * jumps to its place - on any pointer press and on any rise, which is how a picker opens.
+ * jumps to its place - on any pointer press, on any iOS rise and on any new Android announcement,
+ * which is how a picker opens.
  *
  * `keyboardViewport.svelte.ts` owns the state and wires the hooks; this module holds the decisions and
  * the DOM steps, each testable on its own.
  */
+
+import { takeThreadGlideOff } from '$lib/utils/chat/threadGrowthObserver';
+import { Log } from '$lib/utils/Log';
 
 /** What `window.canariKeyboardFall` receives: the keyboard animation's own parameters. */
 export type KeyboardFallSpec = {
@@ -106,16 +120,34 @@ export function fallRefusal(
 const RIDE_MIN_PX = 1;
 
 /**
- * How far a piece moved down when the page went full height - its probe's new top minus the top
- * captured before the resize - or null when that is no move at all (that piece does not ride).
+ * How far a piece moved when the page took its new layout - its probe's new top minus the top
+ * captured before - SIGNED: positive down (a fall), negative up (an Android rise). Null when that is
+ * no move at all (that piece does not ride).
  */
 export function rideDistancePx(topBefore: number, topAfter: number): number | null {
   const distance = topAfter - topBefore;
-  return distance > RIDE_MIN_PX ? distance : null;
+  return Math.abs(distance) > RIDE_MIN_PX ? distance : null;
+}
+
+/** The fewest and the most points a keyboard curve may carry (the shell sends 24). */
+const CURVE_MIN_POINTS = 2;
+const CURVE_MAX_POINTS = 64;
+
+/**
+ * The CSS easing of a keyboard curve sampled by the Android shell: `linear(p0, p1, ...)`, the points
+ * evenly spaced in time (Chromium 113+), which reproduces the system's interpolator at the shell's
+ * sampling. Null for anything that is not 2 to 64 finite numbers - the caller then does not ride.
+ * The string is built HERE, from numbers: no CSS ever crosses the bridge.
+ */
+export function linearEasing(points: unknown): string | null {
+  if (!Array.isArray(points)) return null;
+  if (points.length < CURVE_MIN_POINTS || points.length > CURVE_MAX_POINTS) return null;
+  if (!points.every((p) => typeof p === 'number' && Number.isFinite(p))) return null;
+  return `linear(${(points as number[]).map((p) => String(Math.round(p * 10000) / 10000)).join(', ')})`;
 }
 
 /**
- * The keyframes of one riding piece: from where it stood (its new place, translated back up by ITS
+ * The keyframes of one riding piece: from where it stood (its new place, translated back by ITS
  * distance) to its new place. Ending on `none` leaves no transform behind, so a ride cut short leaves
  * the piece as its own style.
  */
@@ -126,8 +158,18 @@ export function rideKeyframes(distancePx: number): Keyframe[] {
 /** Dispatched on `window` when a ride starts; `detail.finished` settles when every piece has landed. */
 export const KEYBOARD_RIDE_EVENT = 'canari:keyboard-ride';
 
-/** One piece that may ride: the element moved, and the element whose top says how far it moved. */
-type Rider = { el: HTMLElement; probe: HTMLElement; topBefore: number };
+/**
+ * What moves when a `last-row` piece rides: the scroller's BOX (the iOS fall, unchanged since #3492)
+ * or its ROWS, the scroller's children, as `createThreadGlide` moves them (the Android ride, whose
+ * scroller keeps its height).
+ */
+export type LastRowRide = 'box' | 'rows';
+
+/**
+ * One piece that may ride: the element, the element whose top says how far it moved, and whether its
+ * children move rather than itself.
+ */
+type Rider = { el: HTMLElement; probe: HTMLElement; topBefore: number; rows: boolean };
 
 /** What a ride needs from the moment the fall was announced, before the page went full height. */
 export type KeyboardRideCapture = {
@@ -152,42 +194,62 @@ function probeOf(el: HTMLElement): HTMLElement {
 }
 
 /**
- * Records every `[data-keyboard-ride]` piece under `root` as it stands NOW, before the resize. Null
- * when the screen has none - nothing to ride.
+ * Records every `[data-keyboard-ride]` piece under `root` as it stands NOW, before the layout changes.
+ * Null when the screen has none - nothing to ride.
+ *
+ * With `lastRow: 'rows'` a thread's glide still in flight (`takeThreadGlideOff`) is taken off its rows
+ * AFTER their drawn top is read: the ride then starts from where the reader saw them, and the glide's
+ * transform is not left fighting the ride's on the same rows.
  */
 export function captureKeyboardRide(
   root: ParentNode,
   durationMs: number,
-  easing: string
+  easing: string,
+  lastRow: LastRowRide = 'box'
 ): KeyboardRideCapture | null {
   const riders: Rider[] = [];
   for (const el of root.querySelectorAll<HTMLElement>('[data-keyboard-ride]')) {
     const probe = probeOf(el);
-    riders.push({ el, probe, topBefore: probe.getBoundingClientRect().top });
+    const rows = lastRow === 'rows' && el.dataset.keyboardRide === 'last-row';
+    riders.push({ el, probe, topBefore: probe.getBoundingClientRect().top, rows });
+    if (rows && takeThreadGlideOff(el)) {
+      Log.d('keyboardRide', 'a thread glide in flight was taken off its rows for the ride');
+    }
   }
   return riders.length > 0 ? { riders, durationMs, easing } : null;
+}
+
+/** The elements a rider's ride animates: itself, or its children for a thread that rides its rows. */
+function moversOf(rider: Rider): Element[] {
+  return rider.rows ? Array.from(rider.el.children) : [rider.el];
 }
 
 /** A started ride: its animations (cancellable) and the distance each piece rides. */
 export type KeyboardRide = { animations: Animation[]; distances: number[] };
 
 /**
- * Starts the ride once the page has its full-height layout AND every reaction to it (the thread's
- * bottom pin) has run: each captured piece that moved rides from where it stood by ITS OWN move, over
- * the keyboard's duration and curve. A piece that did not move, or is gone, does not ride. Null when
- * none moved.
+ * Starts the ride once the page has its new layout AND every reaction to it (the thread's bottom pin)
+ * has run: each captured piece that moved rides from where it stood by ITS OWN move, over the
+ * keyboard's duration and curve. A piece that did not move, or is gone, does not ride. Null when none
+ * moved.
  */
 export function startKeyboardRide(capture: KeyboardRideCapture): KeyboardRide | null {
   const animations: Animation[] = [];
   const distances: number[] = [];
-  for (const { el, probe, topBefore } of capture.riders) {
+  for (const rider of capture.riders) {
+    const { el, probe, topBefore } = rider;
     if (!el.isConnected || !probe.isConnected) continue;
     const distance = rideDistancePx(topBefore, probe.getBoundingClientRect().top);
     if (distance === null) continue;
     distances.push(distance);
-    animations.push(
-      el.animate(rideKeyframes(distance), { duration: capture.durationMs, easing: capture.easing })
-    );
+    for (const mover of moversOf(rider)) {
+      animations.push(
+        mover.animate(rideKeyframes(distance), {
+          duration: capture.durationMs,
+          easing: capture.easing,
+        })
+      );
+    }
   }
   if (animations.length === 0) return null;
   const finished = Promise.allSettled(animations.map((a) => a.finished));

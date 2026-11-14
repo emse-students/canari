@@ -5,6 +5,7 @@ import {
   fallRefusal,
   followKeyboardRides,
   KEYBOARD_RIDE_EVENT,
+  linearEasing,
   parseKeyboardFall,
   rideDistancePx,
   rideKeyframes,
@@ -12,6 +13,9 @@ import {
   UIKIT_KEYBOARD_CURVE_EASING,
   uikitCurveEasing,
 } from './keyboardRide';
+
+const glide = vi.hoisted(() => ({ takeOff: vi.fn((_scroller: Element) => false) }));
+vi.mock('$lib/utils/chat/threadGrowthObserver', () => ({ takeThreadGlideOff: glide.takeOff }));
 
 describe('keyboardRide - what the iOS shell may send', () => {
   it('takes the keyboard animation parameters as they come from UIKit', () => {
@@ -68,17 +72,46 @@ describe('keyboardRide - which falls are ridden, and which refusals are worth a 
 });
 
 describe('keyboardRide - the geometry', () => {
-  it('a piece rides the distance IT moved down, and nothing for a rounding', () => {
-    expect(rideDistancePx(508, 787)).toBe(279);
+  it('a piece rides the distance IT moved, signed, and nothing for a rounding', () => {
+    expect(rideDistancePx(508, 787)).toBe(279); // down: a fall
+    expect(rideDistancePx(787, 508)).toBe(-279); // up: an Android rise
     expect(rideDistancePx(508, 508.6)).toBeNull();
-    expect(rideDistancePx(508, 400)).toBeNull();
+    expect(rideDistancePx(508, 507.4)).toBeNull();
   });
 
-  it('starts translated back up by the distance and ends with no transform left', () => {
+  it('starts translated back by the distance, either way, and ends with no transform left', () => {
     expect(rideKeyframes(279)).toEqual([
       { transform: 'translateY(-279px)' },
       { transform: 'none' },
     ]);
+    expect(rideKeyframes(-279)).toEqual([
+      { transform: 'translateY(279px)' },
+      { transform: 'none' },
+    ]);
+  });
+});
+
+describe('keyboardRide - the easing built from the numbers the Android shell sends', () => {
+  it('is a CSS linear() of the points, rounded to four decimals', () => {
+    expect(linearEasing([0, 0.123456, 1])).toBe('linear(0, 0.1235, 1)');
+    expect(linearEasing([0, 1.0625, 1])).toBe('linear(0, 1.0625, 1)'); // an overshoot is kept
+  });
+
+  it('takes 2 to 64 points, all finite, and nothing else', () => {
+    expect(linearEasing([0, 1])).toBe('linear(0, 1)');
+    expect(linearEasing(Array(64).fill(1))).not.toBeNull();
+    for (const bad of [
+      [0],
+      Array(65).fill(1),
+      [0, Number.NaN],
+      [0, Number.POSITIVE_INFINITY],
+      [0, '1'],
+      'linear(0, 1)',
+      null,
+      undefined,
+    ]) {
+      expect(linearEasing(bad)).toBeNull();
+    }
   });
 });
 
@@ -158,6 +191,49 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
     await expect(
       (heard.mock.calls[0][0] as CustomEvent<{ finished: Promise<unknown> }>).detail.finished
     ).resolves.toBeDefined();
+  });
+
+  it('an Android ride moves a thread by its ROWS, never its box, and the composer by its box', () => {
+    const composer = rider('box');
+    const t = thread();
+    const moveComposer = at(composer.el, 787);
+    const moveRow = at(t.row, 749);
+    const childAnimates = Array.from(t.el.children).map((child) => {
+      const animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn() }));
+      (child as unknown as { animate: typeof animate }).animate = animate;
+      return animate;
+    });
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows')!;
+    moveComposer(508); // the rise: both moved UP by the keyboard
+    moveRow(470);
+    expect(startKeyboardRide(capture)?.distances).toEqual([-279, -279]);
+    const timing = { duration: 285, easing: 'linear(0, 1)' };
+    expect(composer.animate).toHaveBeenCalledWith(rideKeyframes(-279), timing);
+    expect(t.animate).not.toHaveBeenCalled();
+    for (const animate of childAnimates) {
+      expect(animate).toHaveBeenCalledWith(rideKeyframes(-279), timing);
+    }
+  });
+
+  it('takes a glide in flight off the rows AFTER reading where they are drawn, on Android only', () => {
+    const t = thread();
+    const order: string[] = [];
+    vi.spyOn(t.row, 'getBoundingClientRect').mockImplementation(() => {
+      order.push('read');
+      return { top: 470 } as DOMRect;
+    });
+    glide.takeOff.mockImplementation(() => {
+      order.push('take-off');
+      return true;
+    });
+    captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows');
+    expect(glide.takeOff).toHaveBeenCalledWith(t.el);
+    expect(order).toEqual(['read', 'take-off']);
+    glide.takeOff.mockClear();
+    captureKeyboardRide(document, 250, 'ease-out');
+    expect(glide.takeOff).not.toHaveBeenCalled();
+    glide.takeOff.mockReset();
+    glide.takeOff.mockImplementation(() => false);
   });
 
   it('a screen with no riding piece captures nothing; nothing moved rides nothing', () => {
