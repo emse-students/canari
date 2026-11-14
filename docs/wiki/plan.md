@@ -48,6 +48,7 @@ earliest version, as a checklist.
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
+- [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 
 **P3 - hygiene**
 

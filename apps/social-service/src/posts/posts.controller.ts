@@ -19,7 +19,6 @@ import { FeedAudienceGuard } from './feed-audience.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
-import { reelLimits } from './reel.constants';
 import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
@@ -126,14 +125,14 @@ export class PostsController {
   }
 
   /**
-   * The CanaReels numbers (longest reel, retention, "about to expire" window), so no client is
-   * built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
+   * The CanaReels numbers (longest reel, retention IN FORCE, "about to expire" window), so no client
+   * is built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
    * segment here.
    */
   @UseGuards(NginxAuthGuard)
   @Get('reel-limits')
   getReelLimits() {
-    return reelLimits();
+    return this.service.reelLimitsInForce();
   }
 
   /**

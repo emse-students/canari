@@ -188,7 +188,7 @@ describe('isExpiredPost', () => {
 
 describe('reelLimits - the numbers a client reads', () => {
   it('serves the chat cap (60 s, D-size) next to the published reel cap (90 s)', () => {
-    expect(reelLimits()).toMatchObject({
+    expect(reelLimits(365)).toMatchObject({
       maxDurationMs: 90_000,
       chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
     });
@@ -196,13 +196,13 @@ describe('reelLimits - the numbers a client reads', () => {
     expect(CHAT_REEL_MAX_DURATION_MS).toBeLessThan(REEL_MAX_DURATION_MS);
   });
 
-  it('serves the vertical rule and the one-year lifetime (owner, 2026-11-09)', () => {
-    expect(reelLimits()).toMatchObject({ maxAspectRatio: 0.8, retentionDays: 365 });
+  it('serves the vertical rule and the lifetime it is GIVEN - the admin setting in force (2026-11-14)', () => {
+    expect(reelLimits(180)).toMatchObject({ maxAspectRatio: 0.8, retentionDays: 180 });
     expect(REEL_RETENTION_DAYS).toBe(365);
   });
 
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {
-    expect(reelLimits().chatReelMaxTargets).toBe(CHAT_REEL_MAX_TARGETS);
+    expect(reelLimits(365).chatReelMaxTargets).toBe(CHAT_REEL_MAX_TARGETS);
     expect(CHAT_REEL_MAX_TARGETS).toBe(15);
   });
 });

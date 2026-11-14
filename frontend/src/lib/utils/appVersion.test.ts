@@ -94,6 +94,7 @@ describe('parseServerVersionInfo', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      retention: null,
     });
   });
 
@@ -160,6 +161,14 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo({ version: '1.6.12', eventReach: 'yes' })?.eventReach).toBe(
       false
     );
+  });
+
+  it('reads the retention durations in force, absent as null, and stores them round-trip', () => {
+    const retention = { reelDays: 180, liveReplayDays: 5, chatReelDays: 14, idleMediaDays: 60 };
+    const info = parseServerVersionInfo({ version: '1.6.13', retention });
+    expect(info?.retention).toEqual(retention);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.retention).toEqual(retention);
+    expect(parseServerVersionInfo({ version: '1.6.12' })?.retention).toBeNull();
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -272,6 +281,7 @@ describe('buildAppVersionCheckResult', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      retention: null,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -300,6 +310,7 @@ describe('buildAppVersionCheckResult', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      retention: null,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -376,6 +387,7 @@ describe('fetchServerAppVersionReliable', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      retention: null,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

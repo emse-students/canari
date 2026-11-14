@@ -14,7 +14,7 @@
  * member chose them.
  */
 import type { CreatePostPayload, ReelLimits } from '$lib/posts/api';
-import { m } from '$lib/paraglide/messages';
+import { durationLabel } from '$lib/legal/retentionLabel';
 
 /** The two numbers the rule reads, as the server served them. */
 export interface ReelRule {
@@ -112,8 +112,5 @@ export function reelDeclarationFor(
  * server's `retentionDays` is the number, this only words it.
  */
 export function reelLifetimeLabel(days: number): string {
-  if (days > 0 && days % 365 === 0) {
-    return m.reels_lifetime_years({ count: days / 365 });
-  }
-  return m.reels_lifetime_days({ count: days });
+  return durationLabel(days);
 }
