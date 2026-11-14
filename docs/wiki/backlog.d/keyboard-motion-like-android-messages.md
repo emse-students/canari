@@ -91,12 +91,22 @@ two shapes that give ONE owner:
 Shape 2 is the smaller change and keeps the white-band fix untouched. Shape 1 is the cleaner one if
 the prototype says Chromium behaves.
 
-### iOS
+### iOS, measured on the iPhone 12 (2026-11-14)
 
-Same idea, a different source: `UIKeyboardWillChangeFrame` carries the duration and the curve, and
+Read from WebDriverAgent's MJPEG stream (`mjpegServerFramerate` 60 asked, ~25 frames/s delivered, a
+frame every 40 ms), so a curve is coarse but its shape is plain. A full screen in both apps.
+
+| | keyboard opening | keyboard closing |
+| --- | --- | --- |
+| **Apple Messages** | the thread LEADS: ~75 % of its 309 pt travel in the first 40 ms, the rest eased; the composer rides the keyboard with a spring, ~16 pt past its rest (302) then 286 pt; ~300 ms in all | only by dragging the thread down: the keyboard follows the finger (interactive dismissal). No key, no tap and no drag from the composer closes it |
+| **Canari `1.6.12`** (store build) | the composer jumps to its FINAL place in one frame while the keyboard is a quarter up, a blank band under it for ~3 frames; the GIF near the end is drawn WHITE for ~4 frames (160 ms) as the WebView's frame shrinks and WebKit repaints; the thread then rises over ~6 frames | a tap on the thread closes it: in the FIRST frame of the fall the whole page drops to its final layout, so the composer is hidden under the still-falling keyboard for ~3 frames |
+
+So iOS shows the Android defect mirrored: the shrink applied at once on the rise, the growth applied
+at once on the fall, and a repaint that blanks media in between. The same design applies, with a
+different source: `UIKeyboardWillChangeFrame` carries the duration and the curve, and
 `CanariApplyKeyboardLayout` ([mobile](../frontend/mobile.md#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice))
-shrinks the WebView's frame in one step today. Whether Apple Messages moves the same way, and how
-Canari's iPhone 12 compares, is **not measured**. That reading comes before any iOS design.
+resizes the WebView's frame in one step today. Messages' spring on the composer is the platform's
+keyboard curve; the thread leading is a choice Canari need not copy.
 
 ### Readings owed before and after a build
 
