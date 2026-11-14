@@ -91,3 +91,28 @@ répéter"*). Each line names where its detail lives.
   server and in the logs; closes "Should a device that dropped a frame say so?".
 - **Read receipts keep today's shape** (the first mark at once, the next ones coalesced over 2 s) -
   closes the read-receipt decision; the window's only failure cost is traffic, never a lost receipt.
+- **Which video is a CanaReel: vertical OR 90 s or shorter** (a short landscape video, shown with bars,
+  and a long vertical one both are), from the camera or the gallery.
+- **Retroactive: every gallery video already posted becomes a CanaReel that expires one year after
+  its publication** (owner chose "Oui, toutes", knowing the ones older than a year then go at once) -
+  a held, destructive migration.
+- **Every retention duration becomes a platform admin setting, and the privacy policy renders the
+  values in force from the same source**, so the two can never disagree; a lowered duration applies
+  to new content only.
+- **#3506: an association's form whose author lacks "Gérer les formulaires" leaves that author's
+  hands** (1 of 15 live forms in production); the association's managers keep it and can grant the
+  permission back.
+
+### The privacy chantier - "the server knows as little as possible"
+
+- **Order, after the readings:** (1) content-free push (Android, then salons and social, then iOS);
+  (2) DM reactions travel as an MLS frame, never as a plaintext push side channel; (3) salon
+  mentions computed on the device; (4) shorter retention durations; (5) group and community photos
+  encrypted, ALL of them (owner: *"Oui, toutes"*); (6) group names encrypted; (7) a sealed community
+  state - name, photo, salons, role labels and community nicknames, read by members only.
+  Steps 2 to 5 are independent of one another.
+- **There is no community directory**: a community is entered only by an invitation or a member's
+  opaque invite link (`/c/join/<token>`). Nothing forces any community name or photo to stay public,
+  and the internal `slug` (derived from the name, never shown in a link) goes with step 7.
+- **The people directory stays on the server** (names, promo, campus, formation from MiConnect): it
+  is how a person is found, and every audience rule reads it.
