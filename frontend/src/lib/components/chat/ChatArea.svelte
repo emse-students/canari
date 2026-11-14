@@ -1175,21 +1175,20 @@
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
       const token = ++olderLoadToken;
       isLoadingOlder = true;
+      // THE READER'S PLACE ACROSS THIS PREPEND IS THE GROWTH OBSERVER'S ROW ANCHOR, as for the window
+      // step above - never a `scrollTop` captured before the await (2026-11-14). That write restored
+      // the pane as it stood BEFORE the store answered: a keyboard rising meanwhile, and the thread
+      // taken to its end for it, were undone, and the reader landed a keyboard height up, on older
+      // messages (`threadGrowthObserver.test.ts`, "an older page prepended").
       try {
-        const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
-        const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
         if (token !== olderLoadToken) {
-          Log.d('ChatArea', 'older-history load retired by a conversation switch - no restore');
+          Log.d('ChatArea', 'older-history load retired by a conversation switch');
           return;
         }
         if (!hasMore) hasMoreInDb = false;
-        // New messages were prepended - restore scroll position so the
-        // viewport doesn't jump back to the top.
+        // The prepend is rendered while `isLoadingOlder` still holds the observer to `keep-row`.
         await tick();
-        if (chatContainer && token === olderLoadToken) {
-          chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
-        }
       } finally {
         if (token === olderLoadToken) isLoadingOlder = false;
       }

@@ -106,7 +106,9 @@ arrive as a return value but later, as an ordinary bundle, by which time nothing
 anchor. So a reader who asked for older history was slid down the page by exactly the height of what
 they had asked for. `scrollTop` cannot tell a prepend from an append, so a ROW is anchored instead:
 the growth observer keeps a row and asks how far it moved (`anchorShift`). That covers all three
-mechanisms without knowing which one ran. **Since 2026-10-02 the row is the one at the top of the
+mechanisms without knowing which one ran (and since 2026-11-14 it is the ONLY compensation of the
+IndexedDB page: `loadOlderGroups`' own restore, captured before its await, undid a keyboard rise -
+[chat](modules/chat.md#a-short-thread-sits-at-the-bottom-and-asks-for-its-past-at-entry-2026-11-14)). **Since 2026-10-02 the row is the one at the top of the
 viewport and the browser's own `overflow-anchor` is switched OFF on the pane** - Chromium and Safari
 27 anchor natively and the two compensations added up (measured, [media-frame](media-frame.md#4-the-pane-keeps-the-readers-row-whatever-grows)).
 

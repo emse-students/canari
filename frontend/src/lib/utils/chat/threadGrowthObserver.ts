@@ -122,9 +122,8 @@ export function observeThreadGrowth(
         reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
       });
     }
-    // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
-    // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
-    // therefore lands on the same pixel whether or not this ran first - it cannot double-count.
+    // A PREPEND - the window step or the store's page in `loadOlderGroups` - is kept HERE and only
+    // here: nothing else writes `scrollTop` for it (2026-11-14).
     else if (shift !== 0) scroller.scrollTop += shift;
     // TWO ARRIVALS INSIDE ONE GLIDE (S5): the new glide starts where the rows are DRAWN - what the
     // running one had left to travel, plus the new row - so nothing jumps. Otherwise the held glide

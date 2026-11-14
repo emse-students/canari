@@ -27,7 +27,7 @@ export interface ThreadGrowth {
    * content growing under a stationary reader fires none.
    */
   wasNearBottom: boolean;
-  /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
+  /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
@@ -86,9 +86,9 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
-  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
-  // restores `scrollTop` by exactly that much; following the bottom here would throw away the
-  // history it had just fetched and land them where they already were.
+  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
+  // and the row anchor keeps their row; following the bottom here would throw away the history it
+  // had just fetched.
   if (growth.isLoadingOlder) return 'keep-row';
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';

@@ -93,8 +93,8 @@ describe('threadGrowthResponse', () => {
 
   /**
    * THE ONE CASE WHERE GROWTH MEANS THE OPPOSITE, and the reason this is a predicate rather than a
-   * comparison at the call site: `loadOlderGroups` adds height ABOVE the reader and puts `scrollTop`
-   * back by exactly that much. On a conversation short enough for the reader to be near the bottom
+   * comparison at the call site: `loadOlderGroups` adds height ABOVE the reader, whose row is kept
+   * where it stood. On a conversation short enough for the reader to be near the bottom
    * while also being near the top, following the bottom would discard the history it just fetched.
    */
   it('refuses while older messages are being prepended, even from the bottom', () => {
@@ -118,7 +118,7 @@ describe('threadGrowthResponse', () => {
     );
   });
 
-  it('still leaves a prepend during the entry to its own restore', () => {
+  it('still keeps the row for a prepend during the entry', () => {
     expect(threadGrowthResponse({ ...grew(4000), isEntering: true, isLoadingOlder: true })).toBe(
       'keep-row'
     );

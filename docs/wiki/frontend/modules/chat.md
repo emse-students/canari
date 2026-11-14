@@ -4762,8 +4762,16 @@ cannot be scrolled.**
   `scrollbackState`. **It ends on a fact, not a count.**
 - `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it: an exhausted store is asked
   once with no scroll, a growing one until the pane overflows, and an overflowing pane is never asked.
-  Both fill cases fail without the change. **Owed: one reading on the Mi 9T, a short DM, keyboard open
-  and closed.**
+  Both fill cases fail without the change.
+- **The store's page keeps the reader's place by the row anchor alone.** `loadOlderGroups` used to
+  capture `scrollTop` and `scrollHeight`, await the store, then write `prevTop + delta`. A keyboard
+  rising during that await, with the thread taken to its end for it, was undone by the write: the
+  reader landed a keyboard height up, on older messages - one candidate cause of the photo DM that
+  "lands on older messages when the keyboard opens" (Pixel 6a, 2026-11-14), and a load this fill now
+  starts at entry would have made it likelier. The growth observer's row anchor already kept the
+  reader's place for the window step, which never had a restore; the store's page is left to it too
+  (`threadGrowthObserver.test.ts`, "an older page prepended").
+- **Owed: one reading on the Mi 9T, a short DM and the photo DM, keyboard open and closed.**
 
 ### A picture keeps its height when the keyboard opens (2026-11-13)
 
