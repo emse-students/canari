@@ -110,7 +110,36 @@ The events twin of the entry above.
   `[CARTE] account erasure of user=... withheld N legacy directory line(s) of live map <id> until
   its next publication`, and the refusal's WARN `[CARTE] publish of map <id> refused:
   CARTE_ROSTER_UNSTRUCTURED`.
-- **Removal condition.** No map stores a line-only entry any more - this count reads `0`:
+- **The step that closes the past (owner, 2026-11-14).** An account erased BEFORE this change is
+  still on the live maps - a card with its id, a name in a line - and no later erasure matches its
+  id. So the lead REPUBLISHES EVERY LIVE MAP ONCE, right after the release carrying #3526: a publish
+  by the new editor keeps current members only and stores rosters, so those cards and the legacy
+  lines go. No migration. It is done when both counts below read `0` (cards and roster members whose
+  `userId` has no `users` row) and the line-only count of the removal condition reads `0`:
+
+  ```sql
+  SELECT
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication -> 'units') = 'array'
+                                      THEN p.publication -> 'units' ELSE '[]'::jsonb END) u,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(u.value -> 'cards') = 'array'
+                                      THEN u.value -> 'cards' ELSE '[]'::jsonb END) c
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(c.value ->> 'userId')))
+      AS cards_of_no_account,
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication #> '{directory,zones}') = 'array'
+                                      THEN p.publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(a.value -> 'members') = 'array'
+                                      THEN a.value -> 'members' ELSE '[]'::jsonb END) m
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(m.value ->> 'userId')))
+      AS roster_members_of_no_account;
+  ```
+
+- **Removal condition.** No map stores a line-only entry any more - this count reads `0` - **and no
+  restorable backup predates this change**: a restore brings line-only entries back, and the
+  erasure replay that follows it must still blank them.
 
   ```sql
   SELECT count(*) FROM poster_projects

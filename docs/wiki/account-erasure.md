@@ -201,7 +201,11 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   removed card for up to five minutes after the erasure commits; and the portail's own avatar proxy
   caches a photo by account id for longer, on its side (outside this repository). Between two
   publications nothing else is withdrawn from a carte - it is a snapshot by decision - erasure is the
-  one exception.
+  one exception. **An account erased BEFORE this change is still on the live maps** (a card with its
+  id, a name in a line), and no later erasure matches its id: the owner's decision of 2026-11-14 is
+  that the lead republishes every live map once, right after the release carrying #3526 - a publish
+  keeps current members only, so those cards and the legacy lines go. No migration; the counts that
+  prove it done are in [legacy-compatibility](legacy-compatibility.md).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 
