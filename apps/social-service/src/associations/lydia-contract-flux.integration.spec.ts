@@ -33,12 +33,16 @@ const PLAIN = '00000000-0000-4000-8000-0000000003c1'; // enrolled, no bridge
 const WAITING = '00000000-0000-4000-8000-0000000003c2'; // bridge 'historical', enrolled one pending
 const SWITCHED = '00000000-0000-4000-8000-0000000003c3'; // bridge 'switched'
 const LATE = '00000000-0000-4000-8000-0000000003c4'; // links after the migration
+// A historical account collecting with NO bridge row yet (bridges are opened by hand, after
+// migration 167 ships with 168): no dashboard URL, the proof `business/create` leaves.
+const UNBRIDGED = '00000000-0000-4000-8000-0000000003c5';
 const T_PLAIN = 'vendor-token-plain';
 const T_WAITING_HIST = 'vendor-token-waiting-historical';
 const T_WAITING_NEW = 'vendor-token-waiting-enrolled';
 const T_SWITCHED_HIST = 'vendor-token-switched-historical';
 const T_SWITCHED_NEW = 'vendor-token-switched-enrolled';
 const T_LATE = 'vendor-token-late';
+const T_UNBRIDGED_HIST = 'vendor-token-unbridged-historical';
 
 /** The made-up contract year of these tests: [2031-03-05, 2032-03-05), Paris midnights. */
 const FROM = '2031-03-05';
@@ -135,14 +139,27 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
     await others.initialize();
     await others.destroy();
     await admin.query(
-      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL)`
+      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL,
+         "lydiaDashboardUrl" varchar NULL)`
     );
     await admin.query(migration('120_lydia_refunds.sql'));
     await admin.query(migration('167_lydia_account_bridge.sql'));
     await admin.query(
-      `INSERT INTO associations (id, name, "lydiaAccountId") VALUES
-         ($1, 'Plain', $5), ($2, 'Waiting', $6), ($3, 'Switched', $7), ($4, 'Late', NULL)`,
-      [PLAIN, WAITING, SWITCHED, LATE, T_PLAIN, T_WAITING_HIST, T_SWITCHED_NEW]
+      `INSERT INTO associations (id, name, "lydiaAccountId", "lydiaDashboardUrl") VALUES
+         ($1, 'Plain', $5, 'https://dashboard.example/plain'), ($2, 'Waiting', $6, NULL),
+         ($3, 'Switched', $7, 'https://dashboard.example/switched'), ($4, 'Late', NULL, NULL),
+         ($8, 'Unbridged', $9, NULL)`,
+      [
+        PLAIN,
+        WAITING,
+        SWITCHED,
+        LATE,
+        T_PLAIN,
+        T_WAITING_HIST,
+        T_SWITCHED_NEW,
+        UNBRIDGED,
+        T_UNBRIDGED_HIST,
+      ]
     );
     await admin.query(
       `INSERT INTO lydia_account_bridges ("associationId", "historicalVendorToken", "enrolledVendorToken", state)
@@ -170,12 +187,19 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
     await ds.query(`DELETE FROM purchase_records`);
   });
 
-  it('backfills the enrolled Businesses and never a historical account, in either bridge state', async () => {
+  it('backfills the enrolled Businesses and never a historical account, bridged or not', async () => {
     const rows = (await ds.query(
       `SELECT "vendorToken", source FROM lydia_enrolled_businesses ORDER BY "vendorToken"`
     )) as Array<{ vendorToken: string; source: string }>;
     expect(rows.map((r) => r.vendorToken)).toEqual([T_PLAIN, T_SWITCHED_NEW, T_WAITING_NEW].sort());
     expect(rows.every((r) => r.source === 'backfill')).toBe(true);
+    // The historical account with no bridge row yet is left out: no dashboard URL, no proof.
+    expect(rows.map((r) => r.vendorToken)).not.toContain(T_UNBRIDGED_HIST);
+  });
+
+  it('excludes a payment on a historical account no bridge names yet', async () => {
+    await form(900, T_UNBRIDGED_HIST, '2031-06-01T10:00:00Z');
+    expect(await measure()).toMatchObject({ paidCents: 0, excludedCents: 900, excludedCount: 1 });
   });
 
   it('counts payments on enrolled Businesses and excludes the historical accounts, switched or not', async () => {

@@ -278,7 +278,9 @@ of `AssociationsService.setLydiaReadiness` (`standbyReadinessStep`, `switchBackO
 re-issue in `ProductsService.openCheckoutAttempt` and in `FormsService`'s paid submit, the code
 `LYDIA_BUSINESS_PENDING_VALIDATION` (social, core, the contract, the frontend), the admin panel in
 `LydiaBusinessOnboardingForm.svelte`, the `meta.bridge` wording in `NotificationRow.svelte`, the strip
-in `copy-strips.sh`, and the table `lydia_account_bridges` (migration 167).
+in `copy-strips.sh`, the historical-account exclusion of the platform's flux
+(`measureLydiaFlux`'s `h` join, `lydia-contract-flux.ts`), and the table `lydia_account_bridges`
+(migration 167).
 **What it humours:** an association that collected through a Lydia account it held before Canari's
 enrolment (the BDE and Le Cercle): it keeps collecting there until Lydia validates the Business the
 enrolment created, then switches by itself

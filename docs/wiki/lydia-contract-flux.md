@@ -33,6 +33,10 @@ written): a typo in a confidential rate is caught at the write or nowhere. A sto
 longer parses (a hand edit) is read as not configured and logged at ERROR. The write is logged at
 WARN with the actor and WHICH values are set, never a value.
 
+**A copy of production carries no terms.** `copy-strips.sh` clears `lydia_contract` and the anniversary,
+and empties `lydia_enrolled_businesses` with the other live Lydia identifiers, so dev's counter
+and estimate say "not configured" until someone enters made-up values there.
+
 **No default for any value but the anniversary.** A value not entered is said to be not configured -
 by the counter (`missing`), by the payout estimate - and the server logs it at WARN each time an
 estimate or a counter is asked without it: a fallback is a signal, never a path.
@@ -110,20 +114,42 @@ a Business (a form answer before migration 120, a boutique purchase before 101) 
 and logged at ERROR as `untraceable`.
 
 **The backfill (migration 168, HELD for the owner).** Businesses linked before the ledger existed are
-backfilled once: every association's active `lydiaAccountId` except a bridge's historical account,
-plus every bridge's enrolled Business. It is right only if every association still collecting
-through a historical account has its bridge row open when it runs. **Before approving its
-checksum**, the approver checks on production that no association's active Business is a historical
-account without a bridge - the associations with an active Business and no bridge row:
+backfilled once, from an ALLOWLIST: an association's active `lydiaAccountId` only when it carries the
+proof of `business/create` - its dashboard URL, which Lydia hands out in that answer alone and without
+which the enrolment refuses to link (enrolment lot 1) - and never a bridge's historical account; plus
+every bridge's enrolled Business. The first draft took every active `lydiaAccountId` except a bridge's
+historical account, a denylist: migration 167 ships in the same release and its bridges are opened by
+hand afterwards, so the denylist would have been EMPTY when it ran and every historical account still
+collecting would have been counted. Measured read-only on 2026-11-14: production held 5 linked
+associations, 2 of them historical accounts with no dashboard URL (and no bridge table yet); dev held
+1, with no dashboard URL. With the proof, the backfill takes 3 on production and 0 on dev.
+
+**Before approving its checksum**, the approver lists what the backfill would leave out - every linked
+association without the proof - and checks each is a historical account:
 
 ```sql
-SELECT a.id, a.name, a."lydiaAccountId" FROM associations a
- WHERE a."lydiaAccountId" IS NOT NULL
-   AND NOT EXISTS (SELECT 1 FROM lydia_account_bridges b WHERE b."associationId" = a.id);
+SELECT a.id, a.name FROM associations a
+ WHERE a."lydiaAccountId" IS NOT NULL AND a."lydiaDashboardUrl" IS NULL;
 ```
 
-Each listed association must have enrolled through Canari. A Business enrolled and unlinked before
-the migration is not recovered: no table names it.
+and what it would take, each of which must have enrolled through Canari (its cashier rows were added
+by Canari under that Business):
+
+```sql
+SELECT a.id, a.name, (SELECT count(*) FROM lydia_cashiers c WHERE c."vendorToken" = a."lydiaAccountId")
+       AS cashiers
+  FROM associations a
+ WHERE a."lydiaAccountId" IS NOT NULL AND a."lydiaDashboardUrl" IS NOT NULL;
+```
+
+A Business left out is reported as `excluded` on the counter, and a person who knows it was enrolled
+adds it by hand (`INSERT INTO lydia_enrolled_businesses ("vendorToken", "associationId") VALUES (...)`).
+A Business enrolled and unlinked before the migration is not recovered: no table names it.
+
+**A Business put into a bridge BY HAND** (the second step of
+[opening a bridge](frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13),
+for a Business created before the bridge existed) does not pass through `setLydiaAccountId`, so the
+same transaction inserts its ledger row; otherwise its payments are `excluded`.
 
 ### What the counter cannot see
 

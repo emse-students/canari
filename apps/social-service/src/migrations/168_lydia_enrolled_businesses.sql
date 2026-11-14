@@ -18,13 +18,20 @@
 -- deleted: an unlinked or switched-away Business stays enrolled, so the payments it took in a
 -- contract year keep counting in that year.
 --
--- THE BACKFILL (why this file is HELD): every Business linked before this migration. By the owner's
--- decision of 2026-10-23 a Business reaches an association only through the enrolment, the bridge's
--- historical account being the one exception, so the backfill takes the active `lydiaAccountId` of
--- every association EXCEPT a bridge's historical account, plus every bridge's enrolled Business.
--- It is right ONLY IF every association still collecting through a historical account has its
--- bridge row open when it runs - a historical account linked with no bridge row would be counted.
--- The approver checks that first (the query is in the wiki page above), then approves the checksum.
+-- THE BACKFILL (why this file is HELD): every Business linked before this migration that CARRIES
+-- THE PROOF OF `business/create` - its dashboard URL. Lydia hands `dashboard_url` out only in
+-- `business/create`'s answer (migration 063), the enrolment refuses to link a Business without one
+-- (`business/create answered no dashboard_url`, enrolment lot 1), and a historical account put into
+-- an association by hand carries none. A bridge's enrolled Business is taken too, and a bridge's
+-- historical account never. NOT "every active lydiaAccountId except a bridge's historical account":
+-- migration 167 ships with this one and its bridges are opened BY HAND afterwards, so at this
+-- migration's run no bridge exists yet and every historical account still collecting would have been
+-- counted (measured read-only 2026-11-14 on production: 5 linked associations, 2 of them historical
+-- accounts, neither with a dashboard URL).
+-- An allowlist, never a denylist: a Business left out is reported by the counter as `excluded`, and a
+-- person who knows it was enrolled adds its row by hand; a historical account wrongly let in would
+-- count silently.
+-- The approver runs the check query in the wiki page above, then approves the checksum.
 -- A Business enrolled and unlinked before this migration is not recovered: no table names it.
 --
 -- ROLLBACK: an older image never reads this table, and the rows it holds change no behaviour.
@@ -43,6 +50,7 @@ INSERT INTO lydia_enrolled_businesses ("vendorToken", "associationId", source)
 SELECT a."lydiaAccountId", a.id, 'backfill'
   FROM associations a
  WHERE a."lydiaAccountId" IS NOT NULL
+   AND a."lydiaDashboardUrl" IS NOT NULL
    AND NOT EXISTS (
      SELECT 1 FROM lydia_account_bridges b WHERE b."historicalVendorToken" = a."lydiaAccountId"
    )

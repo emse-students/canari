@@ -1498,7 +1498,11 @@ that button names the enrolled Business); then `INSERT INTO lydia_account_bridge
 outside a live enrolment can be put PENDING directly: `UPDATE lydia_account_bridges SET
 "enrolledVendorToken" = <token>, "standbyKeyCiphertext" = <its sealed key, bound to <id>:<token>>,
 "standbyDashboardUrl" = <url>, "standbyReady" = false WHERE "associationId" = <id> AND state =
-'historical' AND "enrolledVendorToken" IS NULL`, and its cashier rows re-inserted under its token.
+'historical' AND "enrolledVendorToken" IS NULL`, its cashier rows re-inserted under its token, and,
+in the same transaction, its row in the platform's flux ledger (`INSERT INTO lydia_enrolled_businesses
+("vendorToken", "associationId") VALUES (<token>, <id>) ON CONFLICT DO NOTHING`, migration 168,
+[lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)) - the link
+writes it for an enrolment, a hand edit must.
 **Removing the historical account**, later, by an admin: `DELETE FROM lydia_account_bridges WHERE
 "associationId" = <id> AND state = 'switched'`, once no payment it took can still be refunded. A copy
 of production empties the table (`copy-strips.sh`).

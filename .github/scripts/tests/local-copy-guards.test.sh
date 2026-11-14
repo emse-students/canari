@@ -60,8 +60,16 @@ else
     # characters `$sql` as they appear in the source file, and expanding them would search for the
     # value of a variable this script does not have.
     # shellcheck disable=SC2016
+    #
+    # A property mapped to a column of another name (`@Column({ name: 'snake_case' })`, core's
+    # platform_config) is stripped under THAT name, unquoted in the SQL: the decorator a few lines
+    # right above the declaration names it.
+    column_name=$({ grep -rhE -B1 "^[[:space:]]+$col[?!]?[[:space:]]*:" --include='*.entity.ts' apps 2>/dev/null |
+      grep -oE "name: '[a-z0-9_]+'" | tail -1 | sed -E "s/name: '([a-z0-9_]+)'/\1/"; } || true)
     if grep '"\$sql"' "$STRIPS" | grep -F "\\\"$col\\\"" >/dev/null; then
       ok "$col is stripped"
+    elif [ -n "$column_name" ] && grep '"\$sql"' "$STRIPS" | grep -E "SET ([a-z_]+ = NULL, )*$column_name = NULL" >/dev/null; then
+      ok "$col is stripped (as $column_name)"
     else
       fail "$col is declared by an entity and NOT stripped by the local copy - a live identifier would reach a developer's laptop"
     fi
