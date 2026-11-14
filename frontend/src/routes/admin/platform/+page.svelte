@@ -632,7 +632,7 @@
           value={callRelay}
           options={CALL_RELAY_OPTIONS}
           label={m.admin_platform_call_relay_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             const relay = CALL_RELAYS.find((known) => known === v);
             if (relay) callRelay = relay;
