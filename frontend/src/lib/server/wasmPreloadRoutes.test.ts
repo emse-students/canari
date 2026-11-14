@@ -47,6 +47,34 @@ describe('the routes whose first screen waits for the MLS engine', () => {
   });
 });
 
+describe('the routes that touch MLS without waiting for it (audited 2026-11-14)', () => {
+  // Each of these reaches the engine only AFTER its first screen drew, so none loses a preload:
+  // - settings/[section]: the security section's device badge calls `ensureMls()` in a poll that
+  //   swallows "not ready" and the page draws without it;
+  // - g/join/[token]: preview and accept are plain HTTP (`mls/groupInvites.ts`), no engine;
+  // - c/join/[token]: the preview is `channelService`; the engine is needed only on the client
+  //   navigation to `/communities` that follows, by which time the in-bundle prefetch has run;
+  // - lives/[liveId], camera, forms, shop, calendar, posts: no MLS import on the first screen.
+  // A route added to the list above must leave this set (the test below fails otherwise).
+  const AUDITED_NOT_FIRST_SCREEN = [
+    '/settings/[section]',
+    '/g/join/[token]',
+    '/c/join/[token]',
+    '/lives/[liveId]',
+    '/camera',
+    '/posts',
+    '/',
+  ];
+
+  it('exist as routes and are not in the preload list', () => {
+    const routes = new Set(pageFiles(ROUTES_DIR).map(routeOf));
+    for (const route of AUDITED_NOT_FIRST_SCREEN) {
+      expect(routes.has(route), `${route} no longer exists: update the audit`).toBe(true);
+      expect(MLS_FIRST_SCREEN_ROUTES).not.toContain(route);
+    }
+  });
+});
+
 describe('the served marker, per route', () => {
   it('is filled where the first screen waits for the engine', () => {
     for (const route of MLS_FIRST_SCREEN_ROUTES) {

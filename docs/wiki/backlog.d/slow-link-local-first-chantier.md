@@ -90,7 +90,7 @@ and relaunch rows on a shaped link
 Re-measured 2026-11-09 ([section 23](../frontend/offline-and-weak-network.md#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)):
 the WASM preload took 12-13 s of the JavaScript's bandwidth on Slow 3G, so it now runs only on `/chat`
 and `/communities` and a cold `/` boots at 33.1 s instead of 46.1 s; owed, the real-phone reading of
-a cold `/` on a throttled link; next there, a bundle budget (WP-W5) and the on-demand features.
+a cold `/` on a throttled link (the route list re-checked against `main` on 2026-11-14, no other route waits on the engine for its first screen); next there, a bundle budget (WP-W5) and the on-demand features.
 
 **Carried from the attachment-path audit (2026-10-10, its entry closed into this one on
 2026-11-11).** The upload bubble, the 8 MiB body budget, navigation never waiting on a post and

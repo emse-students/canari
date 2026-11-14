@@ -1200,6 +1200,16 @@ bundle has run, on every route. Event-ordered, no timer. **The list is derived, 
 `wasmPreloadRoutes.test.ts` reads `src/routes` and fails when the set of routes mounting
 `MainChatPage` and the list differ (checked against a list missing `/communities`: it fails).
 
+**Re-checked against `main` on 2026-11-14** (nothing changed the answer): the routes that emit the
+preload are `/chat` and `/communities`, the only two importing `MainChatPage`. Every other page was
+read for an MLS dependency on its first screen: `/settings/[section]` (the security section's device
+badge polls `ensureMls()` and swallows "not ready", the page draws without it), `/g/join/[token]`
+(plain HTTP), `/c/join/[token]` (HTTP preview; the engine is needed on the client navigation to
+`/communities` afterwards, after the in-bundle prefetch has started it), `/lives/[liveId]`, `/camera`
+and the rest import no engine. `wasmPreloadRoutes.test.ts` pins that audited set as NOT in the list.
+The PIN gate of an enrolled browser on a non-chat route is the one case where the binary now starts
+at bundle end rather than with it; the gate itself draws without it. Not measured.
+
 **What this does not measure:** an h2 path that honours the low priority would make the `/chat`
 cost smaller than 12 s, and production is h2 behind the host proxy - whether that proxy schedules by
 priority is not known (the `/posts` change holds either way: a transfer the screen does not need is
