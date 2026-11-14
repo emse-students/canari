@@ -113,13 +113,14 @@ the App Store, Play and the GitHub release body through ONE implementation, read
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev, or when its tag is not typed ON that alpha's commit** (`--target`: GitHub runs the workflow files from it, [cicd](docs/wiki/cicd.md#the-stables-commit-is-asserted-not-only-derived-2026-11-14)), so the ordinary
 sequence is two releases:
 
 ```sh
 gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + testers, moves the marker
 # wait for it to be green; merging to main meanwhile is fine - the stable ships THIS pre-release
-gh release create v0.16.2 --generate-notes                        # -> production + both stores
+ALPHA=$(gh api repos/emse-students/canari/commits/v0.16.2-alpha.1 --jq .sha)  # the LATEST alpha's commit
+gh release create v0.16.2 --target "$ALPHA" --generate-notes     # -> production + both stores
 ```
 
 **The six gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
