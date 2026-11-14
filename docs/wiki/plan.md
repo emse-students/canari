@@ -66,7 +66,6 @@ earliest version, as a checklist.
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
-- [P3 - a post naming a malformed association id answers 500](backlog.d/p3-a-post-with-a-malformed-association-id-answers-500.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 
 ### Readings owed
