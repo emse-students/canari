@@ -343,8 +343,8 @@ row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
 
 | Row | Do | PASS when | FAIL when |
 | --- | --- | --- | --- |
-| R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
-| R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
+| R1a. Swift lines in clear, the extension ([entry](#the-iphone-12-batch-6-readings-of-2026-11-14)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
+| R1b. Swift lines in clear, a plugin ([entry](#the-iphone-12-batch-6-readings-of-2026-11-14)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
 | R2. `push_context.json` follows an account switch ([entry](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
 | R3a. No more sandbox refusal ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
 | R3b. A marker from before a reboot ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
@@ -352,6 +352,50 @@ row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
 R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
 (its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
 drain reports either a `killed` line or the `pid liveness not provable` warning.
+
+## The iPhone 12 batch 6 readings of 2026-11-14
+
+TestFlight `1.6.12-alpha.2` (About reads "Canari version 1.6.12-alpha.2"), dev estate, bench accounts
+gamma and delta, driven over WDA (`tools/ios-device`), native lines from `pymobiledevice3 syslog live`
+(processes `Canari` and `CanariNotifications`), the sender a harness Chrome. Evidence is outside the
+repository. The bench iPhone has no passcode and no SIM; Wi-Fi was turned off for one row and back on.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Status bar and home indicator under the glass chrome | **`PASS`** | The clock, signal and battery stay legible over the feed, a DM and a salon; the glass tab pill ends at 823 pt and the composer at 810 pt, above the indicator (about 833 pt on the lock screen; `safe area ... bottom 34 pt` is published) |
+| PIN gate at the largest standard text size | **`PASS`** | At XXXL (`DYNAMIC_TYPE` 0.545, held through `pymobiledevice3 developer accessibility settings set`, which reverts when the process ends) "Saisie manuelle" and "PIN oublie ?" sit under the sticky Unlock at first; one scroll of 126 pt brings them clear of it with the four dots still on screen |
+| Left-edge swipe over a sheet and over a gate | **`PASS`** | Over the Nicknames bottom sheet one swipe closed the sheet and left "Conversation info" open; over the PIN gate nothing moved. Observation: the "Conversation info" panel itself (a side panel, not a `Modal`) does not close on an edge swipe |
+| Rear lens preview | **`PASS`, dark scene** | Front and rear show the same rounded card (225-2305 px high, edge to edge) over the blurred backdrop, and the rear scene reaches the card edges. The phone lay flat, so the rear image is dim |
+| DM ending in a tall card, keyboard up (3 rounds) | **`PASS` geometry** | "+" and "Envoyer" both at y=487 pt, header at y=55 pt. The log line and the salon are not read (entry deleted, below) |
+| Sign in as a different account on a live process | **`PASS`** | gamma signed out and delta signed in without a relaunch: the PIN gate is shown, the previous key is not reused |
+| One MLS state per account, A -> B -> A -> B | **`PASS`, lines not read** | gamma, delta, gamma, delta: each sign-in meets its own PIN, then opens its own conversations and decrypts them. The `[MLS_ACCOUNT]` lines are app-log lines, not in the syslog, and a TestFlight WebView is not inspectable |
+| R1a. Extension lines in clear | **`PASS`** | `[CanariNSE] didReceive type=message`, `message shape isGroup=false`, `applyBadgeCount: badge=1`, `outcome=decrypted cause=- stage=attach peakMB=3`, every value readable, 4 of 4 pushes to the killed app |
+| R1b. Plugin lines in clear | **`PASS`** | `[CustomTabsPlugin] openCustomTab: presenting a session`, `session completed - re-dispatching the callback to the app scheme`, `callback re-dispatched`, in `Canari{Canari}`, none `<private>` |
+| R2. `push_context.json` follows an account switch | **`PASS`** | gamma -> delta in the foreground, `terminate`, DMs to delta: the lock-screen banner reads the sender and the text, and the line is `outcome=decrypted` (3 of 3) |
+| R3a. No sandbox refusal | **`PASS`** | No `kern.bootsessionuuid unreadable` from Canari in 4 runs |
+| R3b. A marker from before a reboot | **deleted, cannot be provoked** | One run lasts about 250 ms (`peakMB=3`); no power-off can be landed in it |
+| iOS no longer aborts on an accessibility-tree read | **`PASS`** | `[CanariPush] APNs token received (32 bytes) -> FIRMessaging` after `registerForRemoteNotifications`, and `became active: app delegate is the kept-alive one`, with the tree read hundreds of times in the same sitting |
+| Silent frames: hook and banner clear | **`PASS`** | `[CanariPush] remote notification hook installed on AppDelegate (chained=0)`; a DM raised a lock-screen banner while the app was backgrounded, and reading the message on the same account's web client removed the banner within 15 s with the app still in the background |
+| Reaction-failure toast | **deleted, cannot be provoked on this bench** | Wi-Fi off: the pill stays and no toast, in a DM and a salon (the reaction is held offline) |
+| Waiting share locked with the device | **`NOT-READ`** | No passcode on the bench iPhone |
+| Share in, Safari URL | **partial `PASS`** | Card, banner, tap opens the picker warm; the suggestions row lists four conversations ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) |
+| Emoji pictures, rows 1-3 on the iPhone | **`PASS`** | Seven emoji kinds all drawn as pictures, flag and family one picture each |
+| Trills | **`DELETED`** | Delivery proved (6 of 6 pushes arrive with the requested sound); the sound itself is not judged (owner, 2026-11-14) |
+
+**Entries deleted with their reason (owner directive of 2026-11-14).** R3b (cannot be provoked, above); the
+reaction-failure toast (offline the reaction is held, an API refused while the phone believes itself online
+needs a proxy the iPhone bench has not got; the web code is the one the Mi 9T read on 2026-10-06); the tall-card
+DM (geometry read 3 of 3; the `compensating a document scroll` line is an app-log line that a store build does
+not expose, and the salon shares the DM's `ChatArea` piece); the Firebase-slot row (the sender works for a
+TestFlight build, the O4, TAB-1 and HEAL-NEW-5 rows live on the cross-client iOS board, not here).
+
+**Delivery to a TestFlight build works on dev.** Pushes sent from dev reached the killed iPhone (banner
+and `decrypted`) 6 of 6, so the backlog row that blames a missing development-slot APNs key concerns
+the dev-signed bench build only.
+
+**Bench notes.** An edge swipe started beyond the screen's height leaves the app for the previous app;
+a WDA session left on another app answers "not running" until it is deleted; a tap on a CanaReel card
+in a DM opens the viewer.
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
