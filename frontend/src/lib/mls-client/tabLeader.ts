@@ -503,6 +503,10 @@ function queueForPromotion(log: (msg: string) => void): void {
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', signal: request.signal }, async () => {
       if (promotionRequest === request) promotionRequest = null;
+      // GRANTED, THEN WITHDRAWN: a freeze aborted the request after the browser granted it but
+      // before this callback ran - the abort is then ignored. A page that withdrew does not lead:
+      // returning releases the lock to the next tab, and its resume queues this page again.
+      if (request.signal.aborted) return;
       if (leadership === 'leader') return;
       decide('leader');
       log('[TAB] Promoted to leader (Web Locks).');

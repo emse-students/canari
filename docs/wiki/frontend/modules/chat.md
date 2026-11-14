@@ -1571,14 +1571,30 @@ IndexedDB finishes before the new leader's later read of the same store starts. 
 writes nothing until its reload reads the disk (`promotedSinceLoad`). So the two documents' writes
 never interleave: nothing reconciles them afterwards, the overlap does not exist. The old leader
 also keeps RUNNING after a hand-over (unlike an unload), and two of its tails had to be closed:
-- **a drain that ends after the lead left does not acknowledge** (`announceAck` reads
-  `refusesCommitsHere()` at the last step before its request, `[ACK] N id(s) not acknowledged: this
-  tab no longer owns the MLS state`): what it decrypted is in no checkpoint, and the ack would delete
-  from the server the one copy the new leader's state still needs. Left queued, the leader's pull
-  reads it;
+- **an ack never runs ahead of the disk where the disk is the only copy** (`DrainAckHold`,
+  review of #3321). An ack deletes the row from the server, and a drain used to acknowledge a COMMIT
+  or a WELCOME at its end while the checkpoint holding it was still sealing: a kill there - and, with
+  the hand-over and the freeze, a ROUTINE lead change, whose old leader's checkpoint is refused at the
+  put - reloaded a state behind a commit the server no longer had. Now every drained id carries the
+  count of frames applied when it was (`inboundApplied`); a checkpoint claims the count read before
+  it EXPORTS and raises `durableApplied` once it lands. A commit or Welcome is acknowledged only once
+  a landed checkpoint holds it - the drain's own, which `endBulkIngest` started; the ack chain waits
+  for it, the drain never does. An application frame is acknowledged at the drain's end as before
+  (the history archive is its second copy, read by the replay) - unless this document no longer owns
+  the state by then, when it is held like a commit. A held id whose checkpoint is refused or fails
+  stays on the server (`[ACK] N id(s) not acknowledged: no landed checkpoint holds what they
+  changed`) and the tab that writes the state reads it; an id a LANDED checkpoint holds is
+  acknowledged whatever the lead, so the new leader never meets a frame its disk has spent
+  (`SecretReuseError`, a false `LOST frame` and a history-diff repair). This is why neither the
+  hand-over nor the freeze waits for a checkpoint before the lead moves: nothing the old leader did
+  is lost, only what it did not make durable is done again by the new one. The cost: a pull issued
+  behind a drain that applied a commit waits for that drain's checkpoint (`ackInFlight`);
 - **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
   from the grant, but holds the lock until the asker steals it, and an asker that closed in between
-  never will. Frozen with that hold, it left every tab a follower until it was thawed.
+  never will. Frozen with that hold, it left every tab a follower until it was thawed;
+- **a promotion request granted and then withdrawn by a freeze does not lead**: the abort lands
+  after the browser granted it, so it is ignored; the callback reads its own aborted signal, lets the
+  lock go, and the page queues again at `resume`.
 
 **The cost, accepted:** the asking tab reloads once it is promoted, as every promotion does. A tab
 switch reloads nothing unless the queue holds a due entry and the leader is hidden.
@@ -1592,7 +1608,16 @@ switch reloads nothing unless the queue holds a due entry and the leader is hidd
 
 **Still not covered:**
 - a leader whose main thread is wedged, which runs no handler and answers nothing;
-- a leader in an engine that suspends it without dispatching `freeze`, which also cannot answer.
+- a leader in an engine that suspends it without dispatching `freeze`, which also cannot answer;
+- **the send ledger across the move**: a frame the old leader encrypted and sent after its last
+  landed checkpoint is repaired by the new leader's burn of the ledger, a `localStorage` entry written
+  before the frame left. `localStorage` is not ordered with `BroadcastChannel` or a Web Lock across
+  processes, so that the new leader's reload reads the entry is not PROVED - it reads it after a
+  steal, a reload and a login, the same exposure an unload release always had. A checkpoint before
+  the grant would narrow it but not close it (a send between that export and the decision);
+- **the steal does not know whom it takes the lock from**: if the old leader released a hand-over
+  at a freeze before the asker stole it, the lock may already be another queued tab's, which the
+  steal then demotes (one extra reload). Web Locks name no holder, so this is not cheap to check.
 
 No clock is added for either: a timeout would be a guess about a live document.
 
@@ -1617,7 +1642,10 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
     writes nothing before its reload;
   - a lead handed to an asker that never takes it is released at `freeze`, and a stolen hold is
     forgotten.
-- `BaseMlsService.leadLostAck.test.ts`: an ack reaching its request after the lead left is withheld.
+- `BaseMlsService.leadLostAck.test.ts`: a commit is acknowledged only after the drain's checkpoint
+  lands, and stays on the server when it is refused; the message beside it does not wait; once the
+  lead left, an uncovered message is withheld and a covered one acknowledged; a checkpoint claims
+  what it held at its export; and the drain wires it through the persister.
 - the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
 - `outbox.test.ts`: the line is said once, a lead lost during the gates leaves the entry queued, and
   an offline follower does not ask for the lead.

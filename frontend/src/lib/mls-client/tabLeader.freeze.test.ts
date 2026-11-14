@@ -499,3 +499,37 @@ describe('tabLeader x stateAuthority - the lead moves, the MLS state never has t
     expect(hidden.logs.some((l) => l.includes('nobody took yet'))).toBe(false);
   });
 });
+
+describe('tabLeader - a freeze that lands between the grant and its callback', () => {
+  const origLocks = navigator.locks;
+  afterEach(() => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: origLocks });
+    vi.restoreAllMocks();
+  });
+
+  it('a request granted and then withdrawn does not take the lead - it lets the lock go and queues again at resume', async () => {
+    // The follower is frozen AT the grant, before its callback runs - the browser's own order when
+    // the grant and the freeze land in one task.
+    let freezeAtGrant: (() => void) | null = null;
+    const manager = fakeLockManager(() => {
+      const freeze = freezeAtGrant;
+      freezeAtGrant = null;
+      freeze?.();
+    });
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: manager.locks });
+    const leader = await openDocument();
+    const follower = await openDocument();
+
+    freezeAtGrant = () => follower.fire('freeze');
+    leader.fire('beforeunload');
+    await settle();
+
+    expect(follower.mod.getTabLeadership()).toBe('follower');
+    expect(follower.promoted).toBe(0);
+    expect(manager.isHeld()).toBe(false);
+
+    follower.fire('resume');
+    await settle();
+    expect(follower.mod.getTabLeadership()).toBe('leader');
+  });
+});
