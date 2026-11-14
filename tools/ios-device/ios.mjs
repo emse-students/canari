@@ -28,8 +28,21 @@
  *   bun tools/ios-device/ios.mjs type -                 type stdin into the focused field (secrets)
  *   bun tools/ios-device/ios.mjs long x y [ms]          press and hold a point
  *   bun tools/ios-device/ios.mjs gesture '<json>'       one W3C touch sequence (pointerMove/Down/Up, pause)
+ *   bun tools/ios-device/ios.mjs hold <label> [seconds] touch-and-hold the element whose label contains <label> (default 1 s):
+ *                                                       a notification expands into its card with "Repondre" / "Marquer comme lu"
+ *   bun tools/ios-device/ios.mjs nc                     open Notification Center (a W3C pull from y=1; a second call closes it)
  *   bun tools/ios-device/ios.mjs webview                the app's WKWebView rectangle, in points
  *   bun tools/ios-device/ios.mjs url <url>              open a URL / deep link without launching anything first
+ *
+ * NOTIFICATIONS (read on the iPhone 12, 2026-11-14, `docs/wiki/device-verification.md#the-iphone-12-batch-7-readings-of-2026-11-14`):
+ *   - a BANNER is opened by a plain `tap x,y` within about 4 s of its arrival (it opens the app);
+ *   - a ROW in Notification Center or on the lock screen is NOT: a plain tap only expands a stack or
+ *     slides a lone row to an "Open" button that does not answer. `hold <label>` then a `tap` on the
+ *     expanded card opens the app, and the card's "Repondre" / "Marquer comme lu" are plain taps;
+ *   - `long x y` (a coordinate press) fails on a banner: it falls through to the home screen and starts
+ *     the icons' jiggle mode (`button home` ends it). Hold the ELEMENT, never the point;
+ *   - the display sleeps 8-10 s after a push wakes it and a `tree` costs about 1 s: do wake, find and
+ *     tap inside ONE process (import the functions below), a couple of seconds after the send.
  *
  * Coordinates are POINTS, not pixels: the iPhone 12 is 390x844 points for 1170x2532 pixels, so a
  * screenshot pixel divided by 3 is the point to tap. It is the one unit difference from adb.
@@ -445,6 +458,39 @@ export async function perform(sid, actions) {
 }
 
 /**
+ * Touch-and-hold on the ELEMENT whose label contains `label` (the last match: the innermost one, the
+ * notification platter rather than its list cell), through XCTest rather than a coordinate press.
+ * WHY: a coordinate press on a banner falls through to the home screen (jiggle mode), while the element
+ * hold expands the notification into its card with the "Repondre" / "Marquer comme lu" actions.
+ * Throws when nothing matches, listing nothing: the caller reads `tree` to see why.
+ */
+export async function holdElement(sid, label, seconds = 1) {
+  console.error(`[ios] hold: looking for an element labelled "${label}", ${seconds}s`);
+  const predicate = `label CONTAINS '${String(label).replace(/'/g, "\'")}'`;
+  const found = await wda('POST', `/session/${sid}/elements`, { using: 'predicate string', value: predicate });
+  const els = found.value ?? [];
+  if (!els.length) throw new Error(`hold: nothing on screen is labelled "${label}"`);
+  const id = elementId(els[els.length - 1]);
+  await wda('POST', `/session/${sid}/wda/element/${id}/touchAndHold`, { duration: seconds });
+  console.error(`[ios] hold: held ${els.length} match(es), the last one`);
+}
+
+/**
+ * Opens Notification Center (the cover sheet): a W3C pull from y=1 - WDA's drag endpoint (`swipe`) does
+ * not start the system gesture, and y=2 is unreliable. Calling it again closes the sheet.
+ */
+export async function openNotificationCenter(sid) {
+  console.error('[ios] nc: pulling the cover sheet down from y=1');
+  await perform(sid, [
+    { type: 'pointerMove', duration: 0, x: 60, y: 1 },
+    { type: 'pointerDown' },
+    { type: 'pause', duration: 150 },
+    { type: 'pointerMove', duration: 500, x: 60, y: 650 },
+    { type: 'pointerUp' },
+  ]);
+}
+
+/**
  * The app's WKWebView rectangle on screen, in POINTS - the origin every CSS pixel is measured from.
  * The first `XCUIElementTypeWebView` in the front app: the Canari shell has exactly one.
  */
@@ -475,7 +521,7 @@ async function stdinText() {
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd) {
-    throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size|state|active|terminate|locked|unlock|flat|long|gesture|webview|url> ...');
+    throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size|state|active|terminate|locked|unlock|flat|long|gesture|hold|nc|webview|url> ...');
   }
   if (cmd === 'locked') {
     // Unscoped: asking whether the phone is locked must not create a session, which launches the app.
@@ -495,7 +541,7 @@ async function main() {
   // warm start dressed as a cold one, which is the one thing COMM-18 measures.
   // `type` too: it types into whatever holds focus - a sign-in sheet, a notification's reply field -
   // and launching the app first would take that focus away.
-  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size', 'long', 'gesture', 'url', 'webview', 'type', 'tabs'].includes(cmd);
+  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size', 'long', 'gesture', 'hold', 'nc', 'url', 'webview', 'type', 'tabs'].includes(cmd);
   const sid = await session(cmd === 'launch' && args[0] ? args[0] : observing ? null : DEFAULT_APP);
   switch (cmd) {
     case 'launch':
@@ -541,6 +587,12 @@ async function main() {
     }
     case 'long':
       await longPressAt(sid, Number(args[0]), Number(args[1]), args[2] ? Number(args[2]) : undefined);
+      break;
+    case 'hold':
+      await holdElement(sid, args[0], args[1] ? Number(args[1]) : undefined);
+      break;
+    case 'nc':
+      await openNotificationCenter(sid);
       break;
     case 'gesture':
       await perform(sid, JSON.parse(args[0]));
