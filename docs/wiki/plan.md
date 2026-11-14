@@ -70,6 +70,7 @@ earliest version, as a checklist.
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
+- [P3 - A channel invite sends a rendered sentence as the `memberAdded` frame data, which is not JSON: receivers draw nothing and the archive replay parses it bare (2026-11-14)](backlog.d/p3-a-channel-invite-sends-a-sentence-as-the-memberadded-data.md)
 - [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [P3 - comment pushes after the first on one post raised no banner on the iPhone (read 2026-11-14)](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)

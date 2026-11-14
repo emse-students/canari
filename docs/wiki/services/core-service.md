@@ -159,6 +159,14 @@ Three properties carry it, and each is asserted in `users.batch.spec.ts`:
   `user_deleted_label`. An answer with NO `deleted` field is an older server's (rolling deploy,
   rollback, a store build live before production): absence is the plain 404 it always was, cached
   and quiet - a dated shim in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-profile-batch-answered-without-deleted-by-a-server-older-than-2026-10-18).
+  **ONLY A WELL-FORMED ID CAN BE DELETED** (2026-11-14): the answer is `{ users, deleted, malformed }`.
+  An id that breaks the one mint rule (`user-id.ts`: visible ASCII, no colon - a name, a sentence) is a
+  DEFECT of the asker, never an account: it is not queried, it is named in `malformed`, logged at warn
+  (count and lengths, never the strings), and the store rejects it with `MalformedUserIdError`
+  (`UserProfileFetchError(400)`: not absent, not cached as an answer, the resolver's ordinary failure
+  warn). It used to be listed in `deleted` and rendered "Compte supprimé" for the whole session. A
+  server older than this has no `malformed` field and a client treats the missing field as an empty
+  list - harmless, since such a server never named one.
   Only an id in NEITHER list from a server that SENDS `deleted` is a contract breach: it rejects
   502, is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
 
