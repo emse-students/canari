@@ -206,7 +206,7 @@ async fn main() {
              estate serves its clients from."
         );
     }
-    // What one connection may send. A value that is not a positive integer is REFUSED by name and
+    // What one connection may send. A value that is not an integer above its floor is REFUSED by name and
     // its default kept: the gateway serves, and this line is the only sign the setting was lost.
     let (frame_limits, unusable) = frame_census::FrameLimits::from_values(
         std::env::var("WS_MAX_FRAME_BYTES").ok().as_deref(),
@@ -214,9 +214,10 @@ async fn main() {
     );
     for refused in unusable {
         tracing::error!(
-            "{} is {:?}, which is not a positive integer - its default is used instead",
+            "{} is {:?}, which is not an integer of at least {} - its default is used instead",
             refused.name,
-            refused.raw
+            refused.raw,
+            refused.min
         );
     }
     tracing::info!(

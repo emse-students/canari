@@ -83,6 +83,28 @@ fn classify_socket_error(err: &axum::Error) -> SocketEnd {
     }
 }
 
+/// Whether a connection whose minute now holds `in_minute` frames is past its rate, said ONCE as
+/// a `[WS LIMIT]` line: the caller ends the socket, and the census line that follows carries the
+/// connection's counts.
+fn over_frame_rate(
+    in_minute: u64,
+    limits: &crate::frame_census::FrameLimits,
+    user_id: &str,
+    device_id: &str,
+) -> bool {
+    if in_minute <= limits.max_frames_per_minute {
+        return false;
+    }
+    tracing::warn!(
+        "[WS LIMIT] {}:{} sent {} frames in one minute, over the {} a connection may send - ending the socket",
+        user_id,
+        device_id,
+        in_minute,
+        limits.max_frames_per_minute
+    );
+    true
+}
+
 // ── Cookie helper ─────────────────────────────────────────────────────────
 
 /// Extract the value of a named cookie from the `Cookie` HTTP header.
@@ -619,6 +641,20 @@ async fn handle_socket(
             let mut departed = false;
 
             while let Some(msg) = receiver.next().await {
+                // EVERY inbound frame counts toward the minute, not the text ones alone: a pong
+                // refreshes the presence, so an unasked one costs what a heartbeat costs. Text is
+                // counted in its own arm, with its size; a Close ends the socket by itself.
+                if matches!(
+                    msg,
+                    Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))
+                ) && over_frame_rate(
+                    frames.note_other(),
+                    &state.frame_limits,
+                    &user_id,
+                    &device_id,
+                ) {
+                    break;
+                }
                 match msg {
                     Ok(Message::Pong(_)) if departed => {
                         // A retired session is not refreshed, and the missed-ping counter is NOT
@@ -658,17 +694,12 @@ async fn handle_socket(
                         continue;
                     }
                     Ok(Message::Text(text)) => {
-                        let in_minute = frames.note(text.len());
-                        if in_minute > state.frame_limits.max_frames_per_minute {
-                            // Said once: the loop ends here, and the census line that follows
-                            // carries the connection's counts.
-                            tracing::warn!(
-                                "[WS LIMIT] {}:{} sent {} frames in one minute, over the {} a connection may send - ending the socket",
-                                user_id,
-                                device_id,
-                                in_minute,
-                                state.frame_limits.max_frames_per_minute
-                            );
+                        if over_frame_rate(
+                            frames.note(text.len()),
+                            &state.frame_limits,
+                            &user_id,
+                            &device_id,
+                        ) {
                             break;
                         }
                         // Any inbound data frame proves the client is reachable
@@ -1402,5 +1433,184 @@ mod tests {
             }
         }
         assert!(state.connected_users.lock().unwrap().is_empty());
+    }
+
+    /// What the gateway logs on this thread while the guard lives. The tests run on a
+    /// current-thread runtime, so the server's tasks log here too.
+    #[derive(Clone, Default)]
+    struct Logged(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Logged {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logged {
+        type Writer = Logged;
+        fn make_writer(&'a self) -> Logged {
+            self.clone()
+        }
+    }
+
+    impl Logged {
+        fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+            let logged = Logged::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(logged.clone())
+                .with_ansi(false)
+                .finish();
+            (logged, tracing::subscriber::set_default(subscriber))
+        }
+
+        /// Waits until a logged line contains `needle`; panics with the log when none does.
+        async fn line_with(&self, needle: &str) -> String {
+            for _ in 0..500 {
+                let text = String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned();
+                if let Some(line) = text.lines().find(|line| line.contains(needle)) {
+                    return line.to_string();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!(
+                "no logged line contains {needle:?}:\n{}",
+                String::from_utf8_lossy(&self.0.lock().unwrap())
+            );
+        }
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// A gateway whose connections may send what `limits` says, and one open socket to it.
+    async fn socket_under(limits: crate::frame_census::FrameLimits) -> ClientSocket {
+        let mut state = state();
+        state.frame_limits = limits;
+        let url = serve(Arc::new(state)).await;
+        let (socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .expect("the socket opens");
+        socket
+    }
+
+    /// Sends one application heartbeat and returns the gateway's answer to it.
+    async fn heartbeat(socket: &mut ClientSocket) -> String {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        socket
+            .send(ClientMessage::Text(r#"{"type":"ping"}"#.into()))
+            .await
+            .expect("the heartbeat is sent");
+        loop {
+            match socket.next().await.expect("the socket is open").unwrap() {
+                ClientMessage::Text(text) => return text.to_string(),
+                _ => continue,
+            }
+        }
+    }
+
+    /// Reads until the gateway has ended the socket: the stream is over, or errors, or closes.
+    async fn until_ended(socket: &mut ClientSocket) {
+        use futures::StreamExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let ended = async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_)) | Some(Ok(ClientMessage::Close(_))) => return,
+                    Some(Ok(_)) => continue,
+                }
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), ended)
+            .await
+            .expect("the gateway ends the socket");
+    }
+
+    #[tokio::test]
+    async fn a_frame_over_the_size_limit_ends_the_socket_and_is_said_as_a_limit() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (logged, _guard) = Logged::capture();
+        let mut socket = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 64,
+            max_frames_per_minute: 240,
+        })
+        .await;
+        // The control: a frame under the limit is answered.
+        assert_eq!(heartbeat(&mut socket).await, r#"{"type":"pong"}"#);
+
+        let long = format!(r#"{{"type":"typing","groupId":"{}"}}"#, "g".repeat(200));
+        // The send may itself fail if the gateway has already hung up; the end is what is asserted.
+        let _ = socket.send(ClientMessage::Text(long.into())).await;
+        until_ended(&mut socket).await;
+
+        let line = logged
+            .line_with("sent a frame over the 64 bytes a connection may send")
+            .await;
+        assert!(line.contains("[WS LIMIT] user-1:device-1"), "{line}");
+        assert!(line.contains("WARN"), "{line}");
+    }
+
+    #[tokio::test]
+    async fn a_burst_over_the_rate_limit_ends_the_socket_and_names_its_count() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (logged, _guard) = Logged::capture();
+        let mut socket = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 4_096,
+            max_frames_per_minute: 5,
+        })
+        .await;
+        // The control: every frame up to the limit is answered.
+        for _ in 0..5 {
+            assert_eq!(heartbeat(&mut socket).await, r#"{"type":"pong"}"#);
+        }
+
+        let _ = socket
+            .send(ClientMessage::Text(r#"{"type":"ping"}"#.into()))
+            .await;
+        until_ended(&mut socket).await;
+
+        let line = logged
+            .line_with("sent 6 frames in one minute, over the 5 a connection may send")
+            .await;
+        assert!(line.contains("[WS LIMIT] user-1:device-1"), "{line}");
+        assert!(line.contains("WARN"), "{line}");
+        // And the census line that follows carries the connection's counts.
+        logged.line_with("frames=6 heartbeats=5").await;
+    }
+
+    #[tokio::test]
+    async fn frames_that_are_not_text_are_held_to_the_same_rate() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let (logged, _guard) = Logged::capture();
+        let mut socket = socket_under(crate::frame_census::FrameLimits {
+            max_frame_bytes: 4_096,
+            max_frames_per_minute: 5,
+        })
+        .await;
+        // Unasked pongs and a binary frame: none is text, each is counted.
+        for _ in 0..5 {
+            let _ = socket.send(ClientMessage::Pong(vec![].into())).await;
+        }
+        let _ = socket.send(ClientMessage::Binary(vec![0].into())).await;
+        until_ended(&mut socket).await;
+
+        logged
+            .line_with("sent 6 frames in one minute, over the 5 a connection may send")
+            .await;
+        // None of them is a text frame in the census.
+        logged.line_with("frames=0 heartbeats=0").await;
     }
 }

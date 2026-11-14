@@ -306,17 +306,25 @@ with it, the second is written for every ending, including the ones with no clos
 | Limit | Default | Variable | Past it |
 | --- | --- | --- | --- |
 | the size of one inbound frame | 4096 bytes | `WS_MAX_FRAME_BYTES` | the socket refuses the frame before buffering it; `[WS LIMIT] ... sent a frame over the N bytes` at WARN, the socket ends |
-| inbound frames in one fixed minute | 240 | `WS_MAX_FRAMES_PER_MINUTE` | `[WS LIMIT] ... sent N frames in one minute` at WARN, the socket ends |
+| inbound frames of any kind (text, binary, ping, pong) in one fixed minute | 240 | `WS_MAX_FRAMES_PER_MINUTE` | `[WS LIMIT] ... sent N frames in one minute` at WARN, the socket ends |
 
 Both live in `FrameLimits` (`frame_census.rs`), read once at boot and said in one `[WS LIMIT]` INFO
-line. A value that is not a positive integer is refused by name at ERROR and its default kept. A
-client whose socket is ended reconnects on its own delay; nothing else changes for it.
+line. A value that is not an integer of at least 256 bytes, or 60 frames, is refused by name at
+ERROR and its default kept: under the heartbeat's own size or rate every client would be ended
+and reconnect every few seconds. A client whose socket is ended reconnects on its own delay, and
+an open socket resets that delay - so the rate bounds a CONNECTION, and a client that reconnects
+gets a fresh count (admission still bounds its sockets). The socket ends without a close code;
+the `[WS LIMIT]` line is where the reason is.
 
 **The structural bound, from the code.** A client sends three frames on this socket: the
 heartbeat (`{"type":"ping"}`), `typing` (its type, a conversation id, `start` or `stop`) and
 `disconnect`. Messages, commits and Welcomes travel over HTTP to chat-delivery and never cross it.
 So the longest legitimate frame is a `typing` naming its conversation, and the rate is the
-heartbeat plus the typing signals of one person.
+heartbeat (one every 8 s) plus the typing signals of one person (a `start` at most every 3 s
+while typing, a `stop` when the field empties): about 28 frames a minute. The one input whose
+frames follow keystrokes is a field emptied and refilled again and again - one frame per change,
+so four changes a second for a whole minute would reach the limit; the cost is a reconnect.
+`peakPerMinute` counts every inbound frame, as the limit does.
 
 **The measurement** (production, 2026-11-14, read-only aggregates of `[WS FRAMES]` over the three
 hours after the `1.6.12` deploy: 389 closed connections of 145 devices):

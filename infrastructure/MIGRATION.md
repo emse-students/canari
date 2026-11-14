@@ -183,7 +183,7 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 
 **Two more of the same kind, read by chat-gateway:** `WS_MAX_FRAME_BYTES` and
 `WS_MAX_FRAMES_PER_MINUTE`, the largest frame and the most frames per minute one socket may send.
-Unset (the state of both estates), the gateway uses 4096 and 240
+Unset (the state of both estates), the gateway uses 4096 and 240; a value under 256 or 60 is refused
 ([chat-gateway](../docs/wiki/services/chat-gateway.md#what-one-connection-may-send-2026-11-14)).
 
 ## 3bis. Repository settings that are not secrets, and that no file in the tree carries
