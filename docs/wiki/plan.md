@@ -179,6 +179,7 @@ earliest version, as a checklist.
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [a salon's settings are offered only to who may change them](backlog.d/reading-owed-a-salon-s-settings-are-offered-only-to-who-may-change-them.md)
 - [ ] [IndexedDB message pages by index](backlog.d/reading-owed-indexeddb-message-pages-by-index.md)
+- [ ] [a notification names a member by their nickname in that conversation](backlog.d/reading-owed-nicknames-in-notifications.md)
 - [ ] [the audiences chantier (#1582, #1584, #1606, #1608)](backlog.d/reading-owed-the-audiences-chantier-1582-1584-1606-1608.md)
 - [ ] [the auto-merge ceiling refuses a major](backlog.d/reading-owed-the-auto-merge-ceiling-refuses-a-major.md)
 - [ ] [the iOS push rows (O4, TAB-1, HEAL-NEW-5), a development-signed build waits on a Firebase setting](backlog.d/reading-owed-the-ios-push-rows-o4-tab-1-heal-new-5-blocked-on-a-firebase-setting.md)
