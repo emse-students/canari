@@ -466,7 +466,8 @@ export async function perform(sid, actions) {
  */
 export async function holdElement(sid, label, seconds = 1) {
   console.error(`[ios] hold: looking for an element labelled "${label}", ${seconds}s`);
-  const predicate = `label CONTAINS '${String(label).replace(/'/g, "\'")}'`;
+  // A quote in the label is escaped for the NSPredicate string literal (`\'`), or it ends the literal.
+  const predicate = `label CONTAINS '${String(label).replace(/'/g, "\\'")}'`;
   const found = await wda('POST', `/session/${sid}/elements`, { using: 'predicate string', value: predicate });
   const els = found.value ?? [];
   if (!els.length) throw new Error(`hold: nothing on screen is labelled "${label}"`);
