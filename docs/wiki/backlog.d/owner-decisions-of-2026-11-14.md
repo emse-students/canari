@@ -30,7 +30,7 @@ répéter"*). Each line names where its detail lives.
 
 - *"J'aimerais que le serveur sache le moins possible de choses, et le moins possible de choses en
   clair."* The inventory of what the servers still hold in clear, why, and what can move to the
-  device is [server-knowledge-inventory](../server-knowledge-inventory.md) (being written).
+  device is server-knowledge-inventory (being written).
 - **Notifications are composed by the device, never by the server.** *"Tout pourrait être donné par
   l'appareil et rien par le serveur, ce serait plus homogène."* No server push path reads a nickname.
 - **Nicknames reach notifications, all of them, as on Messenger** - this reverses the 2026-11-08
@@ -62,3 +62,32 @@ répéter"*). Each line names where its detail lives.
   exactly what is sent, black borders included ([live](../frontend/modules/live.md)).
 - Forms: the submitted footer's status and edit link sit on one line; the payment wording appears
   only on a paid form.
+
+### Content-free push - the order (answers of the afternoon)
+
+- **The wake mode is switched on (dev, then production, Android) only AFTER all the owed readings**,
+  not right after the Mi 9T reading (owner chose "Après toutes les lectures").
+- **iOS: one iPhone 12 reading replaces the withdrawn P1 iOS-notifications entry as the gate** for
+  `PUSH_WAKE_DECLARED.ios` - notifications received with the app killed, in wake mode on dev. That
+  entry was withdrawn on 2026-11-03, so the old condition could never be met.
+- **Step 2's Android client (WP-W4: salons, social, bell) is built after the readings**, not in
+  parallel.
+- **A salon notification names the author of each line, resolved by the device** from the sender
+  id (profile name, or nickname), never carried by the push - closes the "naming the author of each
+  line inside a salon's stacked notification" decision of
+  [open-questions](../open-questions.md).
+
+### Other open questions answered
+
+- **CanaReels cover every short or vertical video, from the camera AND the gallery** (owner: *"Toute
+  vidéo verticale et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie"*); the feed
+  CanaReel retention is already **one year** (`REEL_RETENTION_DAYS = 365`, owner 2026-11-09) - the
+  open-questions entry that still said 30 days was stale. Asked next: whether every retention
+  duration should live in the admin settings, kept in line with the privacy policy.
+- **An institution's "Personnel" public reaches every staff account of the ticked spaces' campuses**
+  (staff by campus) - closes that open question
+  ([profiles-and-access](../profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
+- **A device that dropped a frame says nothing to the user** - the loss stays reported on the
+  server and in the logs; closes "Should a device that dropped a frame say so?".
+- **Read receipts keep today's shape** (the first mark at once, the next ones coalesced over 2 s) -
+  closes the read-receipt decision; the window's only failure cost is traffic, never a lost receipt.
