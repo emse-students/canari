@@ -27,6 +27,7 @@ import type { Response } from 'express';
 import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { RouteParams } from '../common/route-params';
 import { isInReviewCohort, profileOpenAcrossCohort } from '../review-cohort';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
@@ -113,6 +114,26 @@ export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
 export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
+/**
+ * Every path parameter of this controller, by kind (`RouteParams`): each `uuid` is the key of a
+ * row, checked by the global guard before `GlobalAdminOrAssociationRoleGuard` asks the database
+ * about `:id`; a user id is not a uuid in this service, and a slug is a word.
+ */
+@RouteParams({
+  id: 'uuid',
+  cardId: 'uuid',
+  checkoutId: 'uuid',
+  childId: 'uuid',
+  deliveryId: 'uuid',
+  docId: 'uuid',
+  entryId: 'uuid',
+  eventId: 'uuid',
+  productId: 'uuid',
+  purchaseId: 'uuid',
+  tagId: 'uuid',
+  userId: 'opaque',
+  slug: 'opaque',
+})
 @Controller('associations')
 export class AssociationsController {
   private readonly logger = new Logger(AssociationsController.name);
