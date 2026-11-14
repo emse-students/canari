@@ -303,3 +303,66 @@ describe('ChatArea keeps the place of a reader across a profile', () => {
     expect(scrollerOf(second.target).classList.contains('opacity-100')).toBe(true);
   });
 });
+
+/** `count` messages whose newest is the reader's own. */
+function ownNewestConversation(count: number): Conversation {
+  const conversation = conversationOf(count);
+  conversation.messages[count - 1] = { ...conversation.messages[count - 1], isOwn: true };
+  return conversation;
+}
+
+/** The same conversation with `count` OLDER messages joined above it: a page of history. */
+function withOlderPage(conversation: Conversation, count: number): Conversation {
+  const first = conversation.messages[0].timestamp.getTime();
+  const older: ChatMessage[] = Array.from({ length: count }, (_, i) => ({
+    id: `${conversation.id}old${String(i).padStart(4, '0')}`,
+    senderId: 'alice',
+    content: `older ${i}`,
+    timestamp: new Date(first - (count - i) * 1000),
+    isOwn: false,
+  }));
+  return { ...conversation, messages: [...older, ...conversation.messages] };
+}
+
+describe('ChatArea follows the bottom for a message the reader just sent, and for nothing else', () => {
+  /** A reader who went up to read a thread whose newest message is their own. */
+  async function readerAboveTheirOwnLastMessage() {
+    const area = mountArea();
+    area.props.conversation = ownNewestConversation(THREAD);
+    flushSync();
+    await settleEntry();
+    await scrollTo(scrollerOf(area.target), 900);
+    await scrollTo(scrollerOf(area.target), 410);
+    return area;
+  }
+
+  const newestRowTop = (target: HTMLElement) => {
+    const rows = rowsOf(target);
+    return rows[rows.length - 1].getBoundingClientRect().top;
+  };
+
+  it('an older page joining under an own newest message leaves the reader where they read', async () => {
+    const area = await readerAboveTheirOwnLastMessage();
+    expect(newestRowTop(area.target)).toBeGreaterThan(PANE_PX);
+
+    area.props.conversation = withOlderPage(area.props.conversation, 50);
+    flushSync();
+    await settleEntry();
+
+    // The newest message is still below the pane: nothing took the reader to the bottom.
+    expect(newestRowTop(area.target)).toBeGreaterThan(PANE_PX);
+  });
+
+  it('a message the reader sends while reading above still takes them to the bottom', async () => {
+    const area = await readerAboveTheirOwnLastMessage();
+    const sent = conversationOf(THREAD + 1);
+    sent.messages[THREAD - 1] = { ...sent.messages[THREAD - 1], isOwn: true };
+    sent.messages[THREAD] = { ...sent.messages[THREAD], isOwn: true };
+
+    area.props.conversation = sent;
+    flushSync();
+    await settleEntry();
+
+    expect(newestRowTop(area.target)).toBeLessThan(PANE_PX);
+  });
+});

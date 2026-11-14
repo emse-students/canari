@@ -5,6 +5,7 @@ import {
   firstRowBelow,
   isPinnedToBottom,
   keyboardChangeResponse,
+  ownMessageAppended,
   respondToNewMessage,
   stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
@@ -179,6 +180,25 @@ const settledReader: NewMessageState = {
   isNearBottom: true,
   ownMessageAdded: false,
 };
+
+describe('ownMessageAppended', () => {
+  const mine = { id: 'm9', isOwn: true };
+
+  it('is true when a message of the reader became the newest', () => {
+    expect(ownMessageAppended('m8', mine)).toBe(true);
+    expect(ownMessageAppended(undefined, mine)).toBe(true);
+  });
+
+  it('is false when the list grew and the newest message did not change: an older page', () => {
+    expect(ownMessageAppended('m9', mine)).toBe(false);
+  });
+
+  it('is false when the message that became the newest is somebody else', () => {
+    expect(ownMessageAppended('m8', { id: 'm9', isOwn: false })).toBe(false);
+    expect(ownMessageAppended('m8', { id: 'm9' })).toBe(false);
+    expect(ownMessageAppended('m8', undefined)).toBe(false);
+  });
+});
 
 describe('respondToNewMessage', () => {
   it('follows the bottom for a live message under a reader who is at the bottom', () => {
