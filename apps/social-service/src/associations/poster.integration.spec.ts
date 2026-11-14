@@ -472,6 +472,23 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     );
     const carte = (await db.query(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).rows.map((r) => r.id);
     expect(directory).toContain(ID.archived); // archived, audience reaching saint-etienne
+    // A LIST follows the same rule since 2026-11-14: of the directory when its audience reaches the
+    // space, of no other space's, and never of the carte (type `association` only).
+    const list = randomUUID();
+    await db.query(`INSERT INTO associations (id, slug, type) VALUES ($1, 'liste-icm', 'list')`, [
+      list,
+    ]);
+    await db.query(
+      `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', 'saint-etienne')`,
+      [list]
+    );
+    const idsOf = async (sql: string, params: unknown[]) =>
+      (await db.query(sql, params)).rows.map((r) => r.id);
+    expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).toContain(list);
+    expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['FSSS', 'saint-etienne'])).not.toContain(list);
+    expect(await idsOf(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).not.toContain(list);
+    await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [list]);
+    await db.query(`DELETE FROM associations WHERE id = $1`, [list]);
     expect(carte).not.toContain(ID.archived);
     expect(directory).not.toContain(offSpace);
     await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [offSpace]);

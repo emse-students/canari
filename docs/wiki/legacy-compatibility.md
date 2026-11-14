@@ -340,7 +340,9 @@ otherwise the call is a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`), never a guess
 **The cost while it stands:** a second space publishing a map makes that old showcase lose its map
 (the 400) - the right failure, and the reason the window is short.
 **Removal condition:** the portail-etu deploy that sends `PUBLIC_CANARI_CARTE_SPACE` is in production,
-then a week with no `[LEGACY] GET public/carte` line. Then make `space` required, delete the method,
+then a week with no `[LEGACY] GET public/carte` line. **Re-dated 2026-11-14:** the portail's `v1.0.8`
+names its space for the carte only; its directory (`/api/public/associations`, the slug page) is
+read with no space until `v1.0.9`, so the week is counted from the deploy of `v1.0.9`. Then make `space` required, delete the method,
 its branch, their spec cases and this entry.
 
 ### Removal when the floor passes the release carrying `scheduled-to-edit` - `GET /api/posts/my-scheduled` (2026-11-13)

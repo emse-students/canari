@@ -29,9 +29,15 @@ export interface PublicSpaceKey {
 }
 
 /**
- * THE ASSOCIATIONS OF A SPACE: every association of type `association` one of whose audience rules
- * reaches the space - "who addresses this space", the same reading every per-space surface makes
- * (`ruleReachesSpaceSql`). Answers `id`, ordered by id.
+ * THE ENTITIES OF A SPACE: every entity one of whose audience rules reaches the space - "who
+ * addresses this space", the same reading every per-space surface makes (`ruleReachesSpaceSql`).
+ * Answers `id`, ordered by id.
+ *
+ * WHICH TYPES, AN EXPLICIT CHOICE OF THE READER TOO (owner, 2026-11-14): a carte draws type
+ * `association` only (`'associations'`); the portail's directory is filtered for EVERY type
+ * (`'every-type'`) - a list or an institution that does not address the space is not of its portail
+ * either ("Filtrer comme les assos"). Until that day lists and institutions were served whatever the
+ * space, so the portail of one space listed every campus's lists.
  *
  * ARCHIVED, AN EXPLICIT CHOICE OF THE READER (owner, 2026-11-08): a carte offers only the living
  * associations (`'active'`); the portail's directory lists the archived ones of its space too, in its
@@ -41,25 +47,35 @@ export interface PublicSpaceKey {
  * governs four), so its children say nothing about WHICH space is meant, while the audience says
  * exactly who reaches it.
  *
+ * @param types - `'associations'` for type `association` alone, `'every-type'` for all three.
  * @param spaceMatch - The condition selecting the ONE space on alias `cas` - `cas.id = $1` for a
  *   map's space, `cas.formation = $1 AND cas.campus = $2` for a space named in a public URL. Always a
  *   literal written in this codebase, never user input.
  */
-export function offeredAssociationsSql(spaceMatch: string, archived: 'active' | 'any'): string {
+export function offeredAssociationsSql(
+  spaceMatch: string,
+  archived: 'active' | 'any',
+  types: 'associations' | 'every-type'
+): string {
+  const narrowing = [
+    ...(types === 'associations' ? [`ca.type = 'association'`] : []),
+    ...(archived === 'active' ? ['NOT ca.archived'] : []),
+  ].map((condition) => `${condition} AND `);
   return `SELECT ca.id FROM associations ca
-  WHERE ca.type = 'association'${archived === 'active' ? ' AND NOT ca.archived' : ''}
-    AND EXISTS (SELECT 1 FROM association_audiences car JOIN spaces cas ON ${spaceMatch}
+  WHERE ${narrowing.join('')}EXISTS (SELECT 1 FROM association_audiences car JOIN spaces cas ON ${spaceMatch}
       WHERE car."associationId" = ca.id AND ${ruleReachesSpaceSql('car', 'cas')})
   ORDER BY ca.id`;
 }
 
 /**
  * {@link offeredAssociationsSql} for a space named by its natural key (`$1` formation, `$2` campus),
- * archived ones INCLUDED: the portail's directory splits active and archived itself.
+ * archived ones INCLUDED (the portail's directory splits active and archived itself) and EVERY type:
+ * associations, lists and institutions alike.
  */
 export const OFFERED_BY_SPACE_KEY_SQL = offeredAssociationsSql(
   'cas.formation = $1 AND cas.campus = $2',
-  'any'
+  'any',
+  'every-type'
 );
 
 /**

@@ -148,12 +148,15 @@ export class PublicController {
   /**
    * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
    *
-   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps, among rows of type `association`, only
-   * those whose audience reaches the space - a carte's set of that space, plus its archived ones,
-   * which the showcase lists in its archived section (`spaces/public-space.ts`); lists and
-   * institutions are not filtered by it. The portail-etu showcase sends its space; without the
-   * parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap and SEO read
-   * it too. A malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`).
+   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps only the rows whose audience reaches the
+   * space, archived ones included - which the showcase lists in its archived section
+   * (`spaces/public-space.ts`). EVERY TYPE since 2026-11-14 (owner: "Filtrer comme les assos"): a
+   * list or an institution that does not address the space is left out like an association.
+   * Without the parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap
+   * and SEO read it too - AND BECAUSE THE PORTAIL-ETU SHOWCASE DID NOT SEND IT for the directory
+   * until its `v1.0.9` (measured 2026-11-14: only its carte named a space), a shim
+   * `docs/wiki/legacy-compatibility.md` dates. A malformed `space` is a typed 400
+   * (`PUBLIC_SPACE_INVALID`).
    */
   @Get('associations')
   async listAssociations(
@@ -169,27 +172,22 @@ export class PublicController {
     const rows = await this.associations.list(filter);
     if (!space) return rows.map(toPublic);
     const offered = await this.associations.offeredInSpace(space);
-    return rows.filter((a) => a.type !== 'association' || offered.has(a.id)).map(toPublic);
+    return rows.filter((a) => offered.has(a.id)).map(toPublic);
   }
 
   /**
    * One association/list by slug, with its public members.
    *
-   * With `?space=`, an association (type `association`, archived or not) whose audience does not
-   * reach the space answers 404, the
-   * same as an unknown slug: the showcase of a space must not render another space's association
-   * by URL. Without it, every association answers - Canari's own pages read it.
+   * With `?space=`, an entity of any type (archived or not) whose audience does not reach the space
+   * answers 404, the same as an unknown slug: the showcase of a space must not render another
+   * space's association, list or institution by URL. Without it, every association answers - Canari's own pages read it.
    */
   @Get('associations/slug/:slug')
   async getBySlug(@Param('slug') slug: string, @Query('space') rawSpace?: unknown) {
     const space = parsePublicSpaceParam(rawSpace, 'GET public/associations/slug');
     this.logger.debug(`public getBySlug ${slug}`);
     const a = await this.associations.findBySlug(slug);
-    if (
-      space &&
-      a.type === 'association' &&
-      !(await this.associations.offeredInSpace(space)).has(a.id)
-    ) {
+    if (space && !(await this.associations.offeredInSpace(space)).has(a.id)) {
       this.logger.debug(
         `public getBySlug ${slug}: not offered by ${space.formation}:${space.campus} - 404`
       );
