@@ -49,6 +49,8 @@ function makeService(opts: {
   claim?: () => Promise<{ refused: string[] }>;
   purge?: () => Promise<Record<string, string>>;
   saveFails?: boolean;
+  /** The `platform_config` row the reel's lifetime is read from; absent = no row (the defaults). */
+  retentionRow?: Record<string, unknown>;
   /** A working page cache (MGET/SETEX over a map) - off by default, so every list reads the database. */
   cache?: Map<string, string>;
 }) {
@@ -69,6 +71,9 @@ function makeService(opts: {
         if (/SELECT NOW\(\) AS now/.test(sql)) return Promise.resolve([{ now: new Date(NOW) }]);
         // The one-row visibility read (WP6b): every reader here is inside the reel's audience.
         if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+        if (sql.includes('FROM platform_config')) {
+          return Promise.resolve(opts.retentionRow ? [opts.retentionRow] : []);
+        }
         return Promise.resolve([]);
       }),
     },
@@ -124,6 +129,36 @@ describe('createPost - a reel', () => {
     expect(retention.claimReelFor).toHaveBeenCalledWith('alice', [BLOB]);
     expect(saved[0]).toMatchObject({ kind: 'reel', durationMs: 30_000 });
     expect((saved[0].expiresAt as Date).getTime()).toBe(NOW + REEL_RETENTION_DAYS * DAY_MS);
+  });
+
+  it('stamps the lifetime IN FORCE from platform_config, not a constant (owner, 2026-11-14)', async () => {
+    const { service, saved } = makeService({
+      retentionRow: {
+        retention_reel_days: 30,
+        retention_live_replay_days: 3,
+        retention_chat_reel_days: 30,
+        retention_idle_media_days: 90,
+      },
+    });
+
+    await service.createPost(reelBody(), false);
+
+    expect((saved[0].expiresAt as Date).getTime()).toBe(NOW + 30 * DAY_MS);
+  });
+
+  it('refuses the publish, and claims nothing, when the lifetime cannot be read', async () => {
+    const { service, retention, saved } = makeService({
+      retentionRow: {
+        retention_reel_days: null,
+        retention_live_replay_days: 3,
+        retention_chat_reel_days: 30,
+        retention_idle_media_days: 90,
+      },
+    });
+
+    await expect(service.createPost(reelBody(), false)).rejects.toThrow(/retention_reel_days/);
+    expect(retention.claimReelFor).not.toHaveBeenCalled();
+    expect(saved).toEqual([]);
   });
 
   it("refuses with 400 a blob that is not the author's - and stores nothing", async () => {

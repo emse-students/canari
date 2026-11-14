@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
+import { publicRetention, type PublicRetention } from '../platform/retention';
 import type {
   CallsMode,
   CheckpointSkipMode,
@@ -75,6 +76,12 @@ export type AppVersionResponse = {
   liveReplays: {
     mode: LiveReplaysMode;
   };
+  /**
+   * The retention durations in force, in days (`platform_config.retention_*`, migration 025). The
+   * privacy policy renders them, so the text a member reads is the value the services apply; each
+   * service reads the column itself at the creation of an item. Absent from an older server.
+   */
+  retention: PublicRetention;
   /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
    * `POST /api/auth/oidc/callback` to MiConnect. A client sends a `code_challenge` only to a server
@@ -183,6 +190,7 @@ export class VersionService {
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },
+      retention: publicRetention(platform),
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,

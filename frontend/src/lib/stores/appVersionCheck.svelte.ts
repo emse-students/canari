@@ -12,6 +12,7 @@ import {
   type LiveReplaysMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import type { RetentionDays } from '$lib/legal/retention';
 
 const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
@@ -120,6 +121,18 @@ export function serverLivesMode(): LivesMode {
  */
 export function serverLiveReplaysMode(): LiveReplaysMode {
   return lastCheck?.liveReplaysMode ?? 'off';
+}
+
+/**
+ * The retention durations the server applies to new content, as the last `/api/version` answer gave
+ * them - THE CACHED ANSWER COUNTS, for {@link serverPresencePost}'s reason (offline, `lastCheck` is
+ * adopted only for a blocking verdict). `null` before any answer this session and from a server older
+ * than the field. Read through `retentionInForce` (`$lib/legal/retention`), which says when it has to
+ * show the defaults instead.
+ */
+export function serverRetention(): RetentionDays | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.retention;
+  return loadCachedServerInfo()?.retention ?? null;
 }
 
 /**

@@ -125,6 +125,26 @@ export class PlatformConfig {
    */
   @Column({ name: 'lydia_contract', type: 'jsonb', nullable: true })
   lydiaContract!: unknown;
+
+  /**
+   * The retention durations, in days (migration 025, `../retention.ts`): read at the CREATION of each
+   * item by the service that stamps its expiry, so a change applies to new content only. Published by
+   * `GET /api/version` as `retention`, which the privacy policy renders.
+   */
+  @Column({ name: 'retention_reel_days', type: 'int', default: 365 })
+  retentionReelDays!: number;
+
+  /** See {@link retentionReelDays}: a live replay, from the live's end. */
+  @Column({ name: 'retention_live_replay_days', type: 'int', default: 3 })
+  retentionLiveReplayDays!: number;
+
+  /** See {@link retentionReelDays}: a CanaReel sent in a conversation, from its upload or hold. */
+  @Column({ name: 'retention_chat_reel_days', type: 'int', default: 30 })
+  retentionChatReelDays!: number;
+
+  /** See {@link retentionReelDays}: a file sent in a conversation, from its last download. */
+  @Column({ name: 'retention_idle_media_days', type: 'int', default: 90 })
+  retentionIdleMediaDays!: number;
 }
 
 /**

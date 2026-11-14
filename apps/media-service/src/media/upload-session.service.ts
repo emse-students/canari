@@ -567,6 +567,9 @@ export class UploadSessionService {
         await this.mutex.run(`${id}:meta`, () => this.persist(session));
       }
       const mediaId = session.intendedMediaId;
+      // The retention in force, read before the store is touched: an unreadable duration leaves the
+      // session open for a retried `complete`, never a file kept under a window nobody chose.
+      const stamp = await this.media.retentionStampFor(session.retentionClass);
       try {
         await this.storage.putFileStream(mediaId, dataPath, session.totalBytes);
       } catch (err) {
@@ -579,7 +582,8 @@ export class UploadSessionService {
         ownerId,
         session.retentionClass,
         session.totalBytes,
-        session.release
+        session.release,
+        stamp
       );
       session.release();
       session.completed = { mediaId, at: Date.now() };

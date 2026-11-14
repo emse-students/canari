@@ -11,6 +11,7 @@ import {
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { StorageService, type StoredObject } from './storage.service';
+import { fetchMediaRetention, type MediaRetentionDays } from './retention-settings';
 import { parseByteRange } from './byte-range';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
@@ -39,6 +40,9 @@ const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
  * Only the `ephemeral` class ever reaches this clock - see {@link isSweepable}.
  */
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+// Since 2026-11-14 RETENTION_MS is the window of an `ephemeral` file uploaded BEFORE the duration
+// became an admin setting (an entry with no `idleRetentionMs`); a file uploaded since carries the
+// window in force at its upload (`retention_idle_media_days`, docs/wiki/retention-settings.md).
 /**
  * A reel SENT IN A CONVERSATION (`chat-reel`) is deleted this long after it was UPLOADED - not after
  * it was last read. `lastAccessAt` is refreshed by every download, so an idle clock would let a reel
@@ -51,6 +55,11 @@ const CHAT_REEL_RETENTION_MS = positiveIntEnv(
   'MEDIA_CHAT_REEL_RETENTION_MS',
   CHAT_REEL_RETENTION_DAYS * 24 * 60 * 60 * 1000
 );
+// Since 2026-11-14 CHAT_REEL_RETENTION_MS is the window of a `chat-reel` uploaded BEFORE the duration
+// became an admin setting (no written hold); a file uploaded or held since carries the due time in
+// force at that moment (`retention_chat_reel_days`). The env override, a bench's way to cross the
+// window in seconds, still wins over the setting when it is set (`chatReelWindowMs`).
+const CHAT_REEL_RETENTION_OVERRIDDEN = (process.env.MEDIA_CHAT_REEL_RETENTION_MS ?? '') !== '';
 /**
  * The `code` of the ONE 429 that is a verdict, the daily `chat-reel` budget (RC-13): the client's
  * `CHAT_REEL_OVER_BUDGET` in `frontend/src/lib/utils/mediaErrors.ts` is the other copy of this string.
@@ -581,6 +590,30 @@ interface MediaMetaEntry {
   size?: number;
   /** The holds on a shared reel file; absent means "read them from the class" ({@link holdsOf}). */
   holds?: MediaHolds;
+  /**
+   * An `ephemeral` file's idle window, in ms, as the admin setting held it at the UPLOAD
+   * (`retention_idle_media_days`, 2026-11-14): a later change never moves it. Absent on a file
+   * uploaded before the setting, which keeps {@link RETENTION_MS}.
+   */
+  idleRetentionMs?: number;
+}
+
+/**
+ * What an upload stamps on its new index entry from the retention in force - fixed at creation, so a
+ * later change of a duration applies to new files only (owner, 2026-11-14). Empty for a class whose
+ * life no admin duration decides.
+ */
+export interface RetentionStamp {
+  idleRetentionMs?: number;
+  chatHold?: ChatHold;
+}
+
+/**
+ * A chat reel's window in ms from the durations in force - unless a bench set
+ * `MEDIA_CHAT_REEL_RETENTION_MS`, which wins so the window can be crossed in seconds.
+ */
+function chatReelWindowMs(retention: MediaRetentionDays): number {
+  return CHAT_REEL_RETENTION_OVERRIDDEN ? CHAT_REEL_RETENTION_MS : retention.chatReelDays * DAY_MS;
 }
 
 /**
@@ -729,13 +762,16 @@ export class MediaService {
     ownerId?: string,
     retentionClass?: RetentionClass
   ): Promise<string> {
+    // Read BEFORE the bytes are stored: an unreadable duration refuses the upload, never a file kept
+    // under a window nobody chose.
+    const stamp = await this.retentionStampFor(retentionClass);
     const release = this.reserveUploadBudgets(retentionClass, ownerId, encryptedBytes.length);
     const mediaId = uuidv4();
     try {
       await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
       // Registered in the same synchronous run that releases the reservation (`finally`), so the
       // bytes are never invisible to a concurrent check: counted as reserved, then as an entry.
-      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, encryptedBytes.length);
+      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, encryptedBytes.length, stamp);
     } finally {
       release();
     }
@@ -1772,6 +1808,9 @@ export class MediaService {
       return judged.outcome;
     }
 
+    // The window IN FORCE now (the admin setting), fixed on the hold: read before the size, so an
+    // unreadable duration refuses the hold before anything is charged.
+    const chatWindowMs = chatReelWindowMs(await this.readRetention());
     // The budget needs the file's size, which the index holds for a `chat-reel` upload only.
     let size: number | null;
     try {
@@ -1797,7 +1836,7 @@ export class MediaService {
     }
     const entry = again.entry;
     const release = this.reserveChatReelBudget('chat-reel', ownerId, size);
-    const dueAt = now + CHAT_REEL_RETENTION_MS;
+    const dueAt = now + chatWindowMs;
     try {
       entry.size = size;
       writeHolds(entry, { post: holdsOf(entry)?.post ?? false, chat: { heldAt: now, dueAt } });
@@ -2037,9 +2076,10 @@ export class MediaService {
     ownerId: string,
     retentionClass: RetentionClass | undefined,
     size: number,
-    onRegistered: () => void
+    onRegistered: () => void,
+    stamp?: RetentionStamp
   ): Promise<void> {
-    this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size);
+    this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size, stamp);
     onRegistered();
     await this.persistMetadata();
   }
@@ -2600,10 +2640,13 @@ export class MediaService {
           }
         }
         const mediaId = uuidv4();
+        // Read before the store is touched: an unreadable duration leaves the staged bytes for a
+        // re-ask rather than a file kept under a window nobody chose.
+        const stamp = await this.retentionStampFor(retentionClass);
 
         await this.storage.putFileStream(mediaId, tempFile, stat.size);
 
-        this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
+        this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size, stamp);
         // THE RECORD IS WRITTEN BEFORE THE STAGING IS REMOVED: a crash between the two leaves the
         // record (a re-ask answers from it) and the staging (swept at 24 h), never neither.
         const recorded = await this.writeCompletedChunkUpload(uploadId, { mediaId, ownerId });
@@ -2838,7 +2881,7 @@ export class MediaService {
     if (entry.retentionClass === 'poster-pending') {
       return entry.createdAt + POSTER_PENDING_TTL_MS < now;
     }
-    return entry.lastAccessAt < now - RETENTION_MS;
+    return entry.lastAccessAt < now - (entry.idleRetentionMs ?? RETENTION_MS);
   }
 
   /**
@@ -2894,7 +2937,8 @@ export class MediaService {
     now: number,
     ownerId?: string,
     retentionClass?: RetentionClass,
-    size?: number
+    size?: number,
+    stamp?: RetentionStamp
   ) {
     const current = this.meta.items[mediaId];
     this.meta.items[mediaId] = {
@@ -2907,7 +2951,39 @@ export class MediaService {
       // Conditional for the same reason as ownerId: `download()` and `touch()` call this with
       // neither argument, and an unconditional spread would strip the class on every read.
       ...(retentionClass ? { retentionClass } : {}),
+      // The window in force at the upload, written once: only an upload passes a stamp.
+      ...(stamp?.idleRetentionMs !== undefined ? { idleRetentionMs: stamp.idleRetentionMs } : {}),
+      ...(stamp?.chatHold ? { holds: { post: false, chat: stamp.chatHold } } : {}),
     };
+  }
+
+  /**
+   * The retention durations in force, read from social-service's relay (`fetchMediaRetention`, which
+   * fails closed). A method so the specs can answer it without a network.
+   */
+  readRetention(): Promise<MediaRetentionDays> {
+    return fetchMediaRetention(this.logger);
+  }
+
+  /**
+   * What a NEW file of `retentionClass` is stamped with, from the durations in force now: an
+   * `ephemeral` file its idle window, a `chat-reel` its chat hold (due one window after the upload).
+   * Any other class is kept or deleted by something else, so nothing is read for it. Called before
+   * the bytes are stored, so an unreadable duration refuses the upload with nothing kept.
+   */
+  async retentionStampFor(retentionClass: RetentionClass | undefined): Promise<RetentionStamp> {
+    if (retentionClass !== 'ephemeral' && retentionClass !== 'chat-reel') return {};
+    const retention = await this.readRetention();
+    if (retentionClass === 'ephemeral') {
+      this.logger.debug(
+        `[RETENTION] ephemeral upload: idle window ${retention.idleMediaDays} days`
+      );
+      return { idleRetentionMs: retention.idleMediaDays * DAY_MS };
+    }
+    const now = Date.now();
+    const windowMs = chatReelWindowMs(retention);
+    this.logger.debug(`[RETENTION] chat-reel upload: due in ${msToDays(windowMs)} days`);
+    return { chatHold: { heldAt: now, dueAt: now + windowMs } };
   }
 
   /**

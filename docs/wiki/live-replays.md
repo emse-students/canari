@@ -48,8 +48,9 @@ stays a cut of a live, with its strike, and deletes the replay first; D7 covers 
 les vidéos du genre ? 90 s et vidéos verticales ?"*: every vertical video of 90 s or less is a
 CanaReel, and CanaReels are kept one year, the existing ones too. That work moves
 `REEL_RETENTION_DAYS` and the `kind = 'reel'` rows; **a replay is untouched by it**: its
-`expiresAt` is written once from `LIVE_REPLAY_RETENTION_DAYS` (3) at its publication, never from
-`REEL_RETENTION_DAYS`, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
+`expiresAt` is written once at its publication from the admin setting `retention_live_replay_days`
+(3 by default, a constant until 2026-11-14 - [retention-settings](retention-settings.md)), never from
+the reels' own setting, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
 
 ## 1. What a replay costs, measured
 

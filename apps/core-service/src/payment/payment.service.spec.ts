@@ -16,6 +16,10 @@ function makeService(paymentProvider: 'lydia' | 'disabled') {
     liveReplaysMode: 'off',
     groupCallsMode: 'off',
     callRelay: 'none',
+    retentionReelDays: 365,
+    retentionLiveReplayDays: 3,
+    retentionChatReelDays: 30,
+    retentionIdleMediaDays: 90,
   };
   const platformService = {
     getConfig: jest.fn().mockResolvedValue(config),
@@ -60,6 +64,10 @@ describe('PaymentService provider selection', () => {
       liveReplaysMode: 'off',
       groupCallsMode: 'off',
       callRelay: 'none',
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     const platformService = {
       getConfig: jest.fn().mockResolvedValue(config),

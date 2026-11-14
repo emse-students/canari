@@ -56,6 +56,7 @@ earliest version, as a checklist.
 - [P2 - an older page throws a reader whose last message was their own back to the bottom](backlog.d/p2-an-older-page-throws-a-reader-whose-last-message-was-their-own-to-the-bottom.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
+- [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 
 **P3 - hygiene**
 
