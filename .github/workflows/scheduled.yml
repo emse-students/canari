@@ -39,8 +39,10 @@ on:
     # window, last night's backups, hours after the 03:30 and 04:00 runs they judge, and the 90-day
     # ceiling on technical logs.
     - cron: '30 7 * * *'
-    # Daily. A new advisory can land against code nobody touched, which is the half the
-    # pull-request path cannot see.
+    # Daily, and THREE jobs read this one. A new advisory can land against code nobody touched,
+    # which is the half the pull-request path cannot see (`analysis`, `alerts`); and a ruleset is a
+    # repository SETTING, changed in a browser with no commit, so only a clock re-reads it
+    # (`arming-bypass`).
     - cron: '0 2 * * *'
     # Sundays, and TWO jobs read this one. The Actions cache quota is 10 GB and buildkit entries
     # are never evicted; GHCR image versions never expire either.
@@ -67,7 +69,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh, sfu-probe]
+        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, arming-bypass, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh, sfu-probe]
       upstream_targets:
         description: "upstream only: replace the probed targets (name|url lines) - for a drill; with dry_run unchecked it really opens and closes issues"
         type: string
@@ -381,6 +383,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/github-alerts-report.sh code-scanning
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DOES THE ARMING APP BYPASS A SIBLING'S RULESET WHILE THAT SIBLING STILL ARMS WITH `--auto`?
+  #
+  # The four repositories share `arm-auto-merge.yml` minus one declared difference: Canari arms with
+  # GitHub's mutation, Sky, MiGallery and Portail-etu with `gh pr merge --auto`, which merges by
+  # itself when a pull request looks mergeable. That is sound there for ONE reason - the App is not
+  # a bypass actor of their rulesets, so the ruleset judges that merge (measured 2026-11-14,
+  # docs/wiki/ecosystem-convergence.md) - and that reason is a setting nobody commits. This job
+  # re-reads it, with the App's own token, and goes red the day it stops being true.
+  #
+  # WHY THE APP'S TOKEN AND NOT `GITHUB_TOKEN`. The question is "can THIS actor bypass", which is
+  # what `current_user_can_bypass` answers for whoever asks; and `GITHUB_TOKEN` reaches no other
+  # repository. The token is narrowed to reading. The script's CONTROL asks the same question of
+  # this repository, where the answer is known to be yes: a token that cannot see that one is not
+  # believed about the others.
+  #
+  # A RED RUN IS THE REPORT, like `alerts`: a refused API, a missing field or a repository with no
+  # ruleset fails under its own title and never passes for "no bypass".
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  arming-bypass:
+    name: The arming App bypasses no sibling ruleset
+    if: >
+      github.event.schedule == '0 2 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "arming-bypass"]'), inputs.job))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Mint the App identity whose bypass is the question
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          # This repository is the control; the three others are what is judged.
+          repositories: |
+            ${{ github.event.repository.name }}
+            Sky
+            MiGallery
+            refonte-portail-etu
+          # Reading only, whatever the installation grants.
+          permission-contents: read
+
+      - name: Read each ruleset as the App and judge it
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPO: ${{ github.repository }}
+          SIBLINGS: 'emse-students/Sky emse-students/MiGallery emse-students/refonte-portail-etu'
+        run: bash .github/scripts/sibling-arming-bypass.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE ACTIONS CACHE QUOTA IS 10 GB, AND BUILDKIT NEVER EVICTS

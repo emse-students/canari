@@ -1208,6 +1208,31 @@ lockfile refresh of a Dependabot cargo bump, inside a `# canari-only:` region th
 first, so every edit outside it still forks ([cicd](cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18)).
 The siblings commit no `Cargo.lock` at all (measured 2026-10-19), so they have nothing to complete.
 
+**The arming line is a declared difference too, and it rests on one measured fact (decided
+2026-11-14).** Canari arms with GitHub's `enablePullRequestAutoMerge` mutation and merges only
+behind its own reads ([cicd](cicd.md#package-1-opening-a-pull-request-ciyml)); the three siblings
+keep `gh pr merge --auto`, which merges by itself when a pull request looks mergeable to it. The
+difference is not a debt, because of who may bypass each ruleset, read from the API on 2026-11-14:
+
+| Repository | Ruleset | Bypass actors | Required check |
+| --- | --- | --- | --- |
+| Canari | 22152902 | the admin role AND the arming App | `CI passed` |
+| Sky | 22233778 | the admin role | `CI passed` |
+| MiGallery | 22233779 | the admin role | `CI passed` |
+| Portail-etu | 10687261 (also requires signed commits) | the admin role | `CI passed` |
+
+Where the App bypasses nothing, a merge `gh` chooses is judged by the ruleset itself, so by
+`CI passed`: the short step is correct. Porting the mutation alone would break the siblings - it
+refuses a pull request that is already mergeable, and without Canari's gated merge that pull
+request would never land - and porting all of it is about 350 lines per repository for a hazard
+they do not have. **What holds the fact**: a ruleset is a setting changed in a browser, with no
+commit for `shape.mjs` to compare, so `scheduled.yml`'s `arming-bypass` job re-reads it daily with
+the App's own token (`.github/scripts/sibling-arming-bypass.sh`) and goes red if the App can bypass
+a sibling whose step still calls `gh pr merge --auto`. A refused API, a missing field or a
+repository with no ruleset is red too, and the same token must see Canari's own bypass (the
+control) before a "never" is believed. The day it goes red, the answer is to port Canari's whole
+step to that sibling or to take the App out of its bypass actors - not to quiet the job.
+
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
 ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Actions email OFF, and
 Watching email OFF. Deleting `CODEOWNERS` stopped the review REQUESTS; nothing in a repository can
