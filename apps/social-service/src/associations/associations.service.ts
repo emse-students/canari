@@ -5810,6 +5810,58 @@ ${rejectionReason}`
     };
   }
 
+  /**
+   * Whether a purchase refused `PAYMENT_ROUTING_CHANGED` was moved by a bridge's SWITCH BACK - and
+   * if so counts its re-issue (`reissueCount`), in ONE statement, so the proof and the count are
+   * the same write. True only when every fact agrees: the same payee association, provider and
+   * delegation on both sides, `from` naming that association's bridge's ENROLLED Business, `to` its
+   * HISTORICAL account, and the bridge reading `historical` now. Any other routing change is false:
+   * the caller keeps the 409 (lead, 2026-11-14, docs/wiki/frontend/modules/payments.md). Never
+   * throws: a failure is an ERROR line and false, so the payer gets the 409 as before.
+   */
+  async countReissueAfterSwitchBack(from: PaymentTarget, to: PaymentTarget): Promise<boolean> {
+    const shapeAgrees =
+      from.provider === 'lydia' &&
+      to.provider === 'lydia' &&
+      from.targetAssociationId === to.targetAssociationId &&
+      from.delegated === to.delegated &&
+      to.ready &&
+      !!from.connectAccountId &&
+      !!to.connectAccountId &&
+      from.connectAccountId !== to.connectAccountId;
+    if (!shapeAgrees) {
+      this.logger.debug(
+        `${LYDIA_BRIDGE_LOG_TAG} routing change on ${sanitizeLog(from.targetAssociationId)} -> ` +
+          `${sanitizeLog(to.targetAssociationId)} is not a switch back - the 409 stands`
+      );
+      return false;
+    }
+    try {
+      const updated: unknown[] = await this.assoRepo.query(
+        `UPDATE lydia_account_bridges SET "reissueCount" = "reissueCount" + 1
+          WHERE "associationId" = $1 AND state = 'historical'
+            AND "enrolledVendorToken" = $2 AND "historicalVendorToken" = $3
+          RETURNING "associationId"`,
+        [from.targetAssociationId, from.connectAccountId, to.connectAccountId]
+      );
+      // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+      const rows = Array.isArray(updated[0]) ? (updated[0] as unknown[]) : updated;
+      const switchedBack = rows.length > 0;
+      this.logger.log(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: routing ` +
+          `change ${switchedBack ? 'IS its switch back - re-issue counted' : 'is not its switch back - the 409 stands'}`
+      );
+      return switchedBack;
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: reading a ` +
+          `routing change against its bridge FAILED - the 409 stands: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  }
+
   /** Counts one payment re-issued on a bridge's historical account (`reissueCount`, migration 167). */
   private async countBridgeReissue(manager: EntityManager, associationId: string): Promise<void> {
     await manager.query(

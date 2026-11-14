@@ -31,6 +31,7 @@ import {
   ASSOCIATION_ARCHIVED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
+  PaymentRoutingChangedException,
   productCheckoutLookup,
   PURCHASE_PRICING_CHANGED,
   PURCHASE_ALREADY_CLOSED,
@@ -2265,7 +2266,10 @@ export class ProductsService {
    * back owes (owner, 2026-11-13): Lydia answered error 5 for the Business a switch had made
    * active, BEFORE any request existed, so nothing is payable on it; the attempt was released and
    * the historical account collects again - the same purchase is opened once more, re-resolved and
-   * re-decided from the start, and never a third time.
+   * re-decided from the start, and never a third time. The same single re-entry follows a typed
+   * `PAYMENT_ROUTING_CHANGED` whose two routings the bridge's durable state proves to be ITS switch
+   * back (prepared on the enrolled Business, decided on the historical one: lead, 2026-11-14,
+   * `AssociationsService.countReissueAfterSwitchBack`); any other routing change stays the 409.
    */
   private async openCheckoutAttempt(
     associationId: string,
@@ -2324,6 +2328,29 @@ export class ProductsService {
           productId,
           userId,
           'another attempt was opened at the same time'
+        );
+      }
+      if (
+        err instanceof PaymentRoutingChangedException &&
+        !bridgeReissue &&
+        (await this.associationsService.countReissueAfterSwitchBack(err.from, err.to))
+      ) {
+        // The decision refused BEFORE its row and before any request (both come after this
+        // transaction, which rolled back): nothing was issued on the stale routing. A bridge's
+        // switch back moved it, so the owner's re-issue applies (lead, 2026-11-14), once.
+        this.logger.warn(
+          `${LYDIA_BRIDGE_LOG_TAG} product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}: ` +
+            `prepared on the enrolled Business, decided after a switch back - the SAME purchase ` +
+            `is re-issued once on the historical account (nothing was issued on the first)`
+        );
+        return this.openCheckoutAttempt(
+          associationId,
+          productId,
+          userId,
+          customAmountCents,
+          callbackUrls,
+          payerEmail,
+          true
         );
       }
       throw err;
@@ -3233,10 +3260,7 @@ export class ProductsService {
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'
       );
-      throw new ConflictException({
-        code: PAYMENT_ROUTING_CHANGED,
-        message: 'The payment account of this association changed while the purchase was opened.',
-      });
+      throw new PaymentRoutingChangedException(paymentTarget, now);
     }
 
     // Re-read under the lock, like the routing: an archive committed while the purchase was being
