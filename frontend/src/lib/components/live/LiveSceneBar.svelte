@@ -16,6 +16,7 @@
     Video,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import type { LiveStudio } from '$lib/live/liveStudio.svelte';
   import {
@@ -64,57 +65,56 @@
     void studio.selectScene(scene);
   }
 
-  const chip =
-    'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50';
+  /**
+   * A choice is a `ui/Button` (controls.md): the chosen one wears the fill, the others the quiet
+   * filled secondary - each group is a radio group, so ONE fill per group says which is on.
+   */
+  function variantOf(chosen: boolean): 'primary' | 'soft' {
+    return chosen ? 'primary' : 'soft';
+  }
 </script>
 
 <div class="flex flex-col gap-2" data-live-scene-bar>
   <div class="flex flex-wrap gap-1.5" role="radiogroup" aria-label={m.live_scene_bar_label()}>
     {#each LIVE_SCENES as scene (scene)}
       {@const Icon = SCENE_ICON[scene]}
-      <button
-        type="button"
+      <Button
+        variant={variantOf(studio.scene === scene)}
+        size="compact"
         role="radio"
         aria-checked={studio.scene === scene}
         disabled={studio.choosingScreen}
-        class="{chip} {studio.scene === scene
-          ? 'bg-white text-black'
-          : 'bg-black/50 text-white hover:bg-black/70'}"
         onclick={() => choose(scene)}
         data-live-scene={scene}
       >
         <Icon size={16} strokeWidth={2.25} />
         {SCENE_LABEL[scene]()}
-      </button>
+      </Button>
     {/each}
   </div>
   {#if studio.scene === 'screen-camera'}
     <div class="flex flex-wrap items-center gap-1.5" data-live-overlay-options>
       <div class="flex gap-1" role="radiogroup" aria-label={m.live_scene_overlay_size_label()}>
         {#each SIZES as size (size)}
-          <button
-            type="button"
+          <Button
+            variant={variantOf(studio.overlay.size === size)}
+            size="compact"
             role="radio"
             aria-checked={studio.overlay.size === size}
-            class="{chip} {studio.overlay.size === size
-              ? 'bg-white text-black'
-              : 'bg-black/50 text-white hover:bg-black/70'}"
             onclick={() => studio.setOverlay({ size })}
             data-live-overlay-size={size}
           >
             {SIZE_LABEL[size]()}
-          </button>
+          </Button>
         {/each}
       </div>
       <div class="flex gap-1" role="radiogroup" aria-label={m.live_scene_overlay_shape_label()}>
         {#each SHAPES as shape (shape)}
-          <button
-            type="button"
+          <Button
+            variant={variantOf(studio.overlay.shape === shape)}
+            size="compact"
             role="radio"
             aria-checked={studio.overlay.shape === shape}
-            class="{chip} {studio.overlay.shape === shape
-              ? 'bg-white text-black'
-              : 'bg-black/50 text-white hover:bg-black/70'}"
             onclick={() => studio.setOverlay({ shape })}
             data-live-overlay-shape={shape}
           >
@@ -124,7 +124,7 @@
               <RectangleHorizontal size={14} strokeWidth={2.25} />
             {/if}
             {SHAPE_LABEL[shape]()}
-          </button>
+          </Button>
         {/each}
       </div>
     </div>

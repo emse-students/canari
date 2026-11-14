@@ -76,8 +76,12 @@
 </script>
 
 {#if box}
-  <button
-    type="button"
+  <!-- A drag surface, not a button in controls.md's sense: it has no box of its own (it IS the
+       overlay's outline, sized and placed by the frame), so `ui/Button` cannot draw it. It keeps a
+       button's role and keyboard path (the arrow keys) for a screen reader and a keyboard. -->
+  <div
+    role="button"
+    tabindex="0"
     class="absolute flex cursor-grab touch-none items-center justify-center border-2 border-dashed border-white/70 text-white/0 outline-none hover:text-white/90 focus-visible:text-white/90 focus-visible:ring-2 focus-visible:ring-white active:cursor-grabbing {studio
       .overlay.shape === 'round'
       ? 'rounded-full'
@@ -95,5 +99,5 @@
     data-live-overlay-handle
   >
     <Move size={22} strokeWidth={2.25} />
-  </button>
+  </div>
 {/if}

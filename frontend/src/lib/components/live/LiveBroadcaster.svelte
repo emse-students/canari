@@ -646,14 +646,15 @@
         {#if studio.micPhase === 'error'}
           <div class="flex items-center justify-between gap-3" role="alert" data-live-mic-fault>
             <p class="text-sm text-white/80">{m.live_mic_fault()}</p>
-            <button
-              type="button"
-              class="{pill} shrink-0 bg-white/15 hover:bg-white/25"
+            <Button
+              variant="secondary"
+              size="compact"
+              class="shrink-0"
               onclick={() => void studio.reopenMicrophone()}
             >
               <RefreshCcw size={16} strokeWidth={2.5} />
               {m.reels_camera_retry()}
-            </button>
+            </Button>
           </div>
         {/if}
       {/if}
@@ -818,26 +819,26 @@
       data-live-onair-scenes
     >
       {#if !studio.audioRunning}
-        <button
-          type="button"
-          class="{pill} bg-red-600/80 hover:bg-red-600"
+        <Button
+          variant="danger-outline"
+          size="compact"
           onclick={() => studio.wakeAudio()}
           data-live-audio-suspended
         >
           <Volume2 size={16} strokeWidth={2.5} />
           {m.live_audio_suspended()}
-        </button>
+        </Button>
       {/if}
       {#if studio.micPhase === 'error'}
-        <button
-          type="button"
-          class="{pill} bg-red-600/80 hover:bg-red-600"
+        <Button
+          variant="danger-outline"
+          size="compact"
           onclick={() => void studio.reopenMicrophone()}
           data-live-mic-fault
         >
           <RefreshCcw size={16} strokeWidth={2.5} />
           {m.live_mic_fault()}
-        </button>
+        </Button>
       {/if}
       <LiveSceneBar {studio} />
     </div>

@@ -705,7 +705,7 @@ describe('LiveOverlayHandle - drag and snap (owner, 2026-11-14)', () => {
     mounted.push(
       mount(LiveOverlayHandle, { target, props: { studio, display: { width: 1280, height: 720 } } })
     );
-    return { studio, el: () => q<HTMLButtonElement>('[data-live-overlay-handle]')! };
+    return { studio, el: () => q<HTMLElement>('[data-live-overlay-handle]')! };
   }
 
   afterEach(() => vi.unstubAllGlobals());
