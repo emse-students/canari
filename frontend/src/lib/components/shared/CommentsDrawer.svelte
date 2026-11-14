@@ -22,7 +22,9 @@
    * the Android app's keyboard covers without resizing it), so the composer stays above the keys.
    * It RIDES the keyboard (`data-keyboard-ride="box"`, `keyboardRide.ts`): it moves with the keys'
    * own duration and curve, at their phase, instead of jumping to its new place a frame late (#3556,
-   * N4, Mi 9T: a jump 68 ms after the announcement on a rise, 138 ms on a fall).
+   * N4, Mi 9T: a jump 68 ms after the announcement on a rise, 138 ms on a fall). It rides by its
+   * BOTTOM edge (`rideEdgeOf`): the cap above also shrinks it as the keyboard rises, and ridden by its
+   * top its bottom stood ~57 px above the keys at the ride's start.
    */
   import { onMount, tick, type Snippet } from 'svelte';
   import { X } from '@lucide/svelte';

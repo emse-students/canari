@@ -4,6 +4,8 @@ import {
   isDoubleReport,
   keyboardFreeViewportHeight,
   keyboardInsetBottom,
+  keyboardMoved,
+  keyboardRevealOnUpdate,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
 
@@ -233,5 +235,51 @@ describe('an overlay keyboard (the Android app): the shell keeps its height, the
     expect(keyboardInsetBottom(over(kb), baseline)).toBe(kb);
     // The layout is the baseline: `svh` is already the keyboard-free height.
     expect(keyboardFreeViewportHeight(true, over(kb).winH, baseline)).toBeNull();
+  });
+});
+
+/**
+ * The reveal before N3 (main at 97f017767): a later update with the keyboard up and a field focused
+ * revealed `smooth`, whatever the update changed.
+ */
+function revealBefore(isOpen: boolean, hasFocus: boolean): ScrollBehavior | null {
+  return isOpen && hasFocus ? 'smooth' : null;
+}
+
+describe('the web and iOS reveal exactly what they revealed before, unless nothing moved (second review of #3556)', () => {
+  it('a later update between any two web or iOS shapes reveals as before whenever the keyboard moved', () => {
+    let changed = 0;
+    for (const a of MEASURED)
+      for (const b of MEASURED) {
+        if (a.baseline !== b.baseline || a.threshold !== b.threshold) continue;
+        const before = computeSnapshot(a.m, a.baseline, a.threshold);
+        const after = computeSnapshot(b.m, b.baseline, b.threshold);
+        // The opening and the hand-off reveal `auto` on both sides; the later update is the question.
+        if (after.isOpen && !before.isOpen) continue;
+        const visible =
+          before.viewportHeight !== after.viewportHeight ||
+          before.insetBottom !== after.insetBottom;
+        const now = keyboardRevealOnUpdate({
+          isOpen: after.isOpen,
+          openedNow: false,
+          targetSpent: false,
+          hasFocus: true,
+          keyboardMoved: keyboardMoved(before, after),
+        });
+        // The N3 change, and only it: an update that moved nothing a reader sees reveals nothing.
+        expect(now, `${a.what} -> ${b.what}`).toBe(
+          visible ? revealBefore(after.isOpen, true) : null
+        );
+        if (visible && after.isOpen) changed++;
+      }
+    expect(changed).toBeGreaterThan(0);
+  });
+
+  it('an iOS keyboard growing while open moves only the visible height, and that is a move', () => {
+    // iPhone 12: the 301 px keyboard, then the emoji keyboard ~40 px taller - the WebView resized.
+    const before = computeSnapshot({ winH: 543, vvHeight: 543, offsetTop: 0, scale: 1 }, 844, 100);
+    const after = computeSnapshot({ winH: 503, vvHeight: 503, offsetTop: 0, scale: 1 }, 844, 100);
+    expect([before.insetBottom, after.insetBottom]).toEqual([0, 0]);
+    expect(keyboardMoved(before, after)).toBe(true);
   });
 });

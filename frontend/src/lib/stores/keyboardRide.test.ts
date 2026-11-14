@@ -132,7 +132,9 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
   /** A box whose top `moveTo` can change between the capture and the ride. */
   function at(el: HTMLElement, top: number) {
     let current = top;
-    vi.spyOn(el, 'getBoundingClientRect').mockImplementation(() => ({ top: current }) as DOMRect);
+    vi.spyOn(el, 'getBoundingClientRect').mockImplementation(
+      () => ({ top: current, bottom: current }) as DOMRect
+    );
     return (next: number) => (current = next);
   }
 
@@ -228,7 +230,7 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
     const order: string[] = [];
     vi.spyOn(t.row, 'getBoundingClientRect').mockImplementation(() => {
       order.push('read');
-      return { top: 470 } as DOMRect;
+      return { top: 470, bottom: 470 } as DOMRect;
     });
     glide.takeOff.mockImplementation(() => {
       order.push('take-off');
@@ -254,7 +256,7 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
     for (const r of [a, b]) {
       vi.spyOn(r.el, 'getBoundingClientRect').mockImplementation(() => {
         order.push('read');
-        return { top } as DOMRect;
+        return { top, bottom: top } as DOMRect;
       });
       r.animate.mockImplementation(() => {
         order.push('animate');
@@ -279,8 +281,10 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
     expect(composer.animate).toHaveBeenCalledWith(rideKeyframes(-358), {
       duration: 285,
       easing: 'linear(0, 1)',
-      delay: -68,
     });
+    // Its start IS the keyboard's: whichever frame first draws it draws the keyboard's phase there.
+    // A delay of -68 measured now would draw 68 ms in on the NEXT frame, a frame behind the keys.
+    expect(composer.animate.mock.results[0].value.startTime).toBe(1000);
   });
 
   it('a ride that could only start after the keyboard landed does not animate: the piece just stands', () => {
@@ -305,6 +309,31 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
       duration: 250,
       easing: 'ease-out',
     });
+    // Left pending: it starts with the frame that first draws it.
+    expect(composer.animate.mock.results[0].value.startTime).toBeUndefined();
+  });
+
+  it('a box that shrinks as it rises rides by its BOTTOM: on the keys from the first frame (the comments drawer)', () => {
+    // Mi 9T: the drawer is 60dvh (567 px) at rest; with the 358 px keyboard its max-height caps it at
+    // ~510. Before: 378..945. After the layout: 77..587.
+    const drawer = rider('box');
+    let rect = { top: 378, bottom: 945 };
+    vi.spyOn(drawer.el, 'getBoundingClientRect').mockImplementation(() => rect as DOMRect);
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows', 1000)!;
+    rect = { top: 77, bottom: 587 };
+    startKeyboardRide(capture, () => 1000);
+    // First frame: translated back by 358, its bottom at 587 + 358 = 945 - where the keys' top is at
+    // phase 0. By its top it rode 301 and its bottom stood 57 px above the keys, the scrim under it.
+    expect(drawer.animate).toHaveBeenCalledWith(rideKeyframes(-358), expect.anything());
+  });
+
+  it('a box that keeps its height rides the same distance by either edge (the composer band)', () => {
+    const band = rider('box');
+    let rect = { top: 880, bottom: 945 };
+    vi.spyOn(band.el, 'getBoundingClientRect').mockImplementation(() => rect as DOMRect);
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)')!;
+    rect = { top: 522, bottom: 587 };
+    expect(startKeyboardRide(capture)?.distances).toEqual([522 - 880]);
   });
 
   it('a thread riding its rows registers the ride with its observer, from its starting offset (F8)', () => {

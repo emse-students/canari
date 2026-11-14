@@ -65,7 +65,8 @@ describe('the Android keyboard ride, wired', () => {
     const el = document.createElement('div');
     vi.spyOn(el, 'getBoundingClientRect').mockImplementation(() => {
       trace?.push('read');
-      return { top: top() } as DOMRect;
+      const at = top();
+      return { top: at, bottom: at } as DOMRect;
     });
     const animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel }));
     (el as unknown as { animate: typeof animate }).animate = animate;
@@ -176,9 +177,12 @@ describe('the Android keyboard ride, wired', () => {
     expect(composerAnimate).not.toHaveBeenCalled();
     clock = 1068; // the layout reactions run 68 ms after the announcement arrived
     for (const start of deferred) start();
-    expect(composerAnimate).toHaveBeenCalledWith(rideKeyframes(-KB), { ...TIMING, delay: -68 });
+    // Started at the arrival itself, on the keyboard's timeline - never a delay measured now (D1).
+    expect(composerAnimate).toHaveBeenCalledWith(rideKeyframes(-KB), TIMING);
+    expect(composerAnimate.mock.results[0].value.startTime).toBe(1000);
     for (const animate of rowAnimates) {
-      expect(animate).toHaveBeenCalledWith(rideKeyframes(-KB), { ...TIMING, delay: -68 });
+      expect(animate).toHaveBeenCalledWith(rideKeyframes(-KB), TIMING);
+      expect(animate.mock.results[0].value.startTime).toBe(1000);
     }
   });
 
@@ -256,6 +260,30 @@ describe('the Android keyboard ride, wired', () => {
     expect(heard).toHaveBeenCalledTimes(2);
   });
 
+  it("the WebView's no-op resizes after an announcement reveal nothing; a keyboard that grows does (N3, second review)", () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    // A field outside the shell's layout (a modal's), which only the store reveals.
+    const field = document.createElement('input');
+    const scrollIntoView = vi.fn();
+    field.scrollIntoView = scrollIntoView;
+    document.body.append(field);
+    field.focus();
+    const behaviours = () =>
+      scrollIntoView.mock.calls.map((c) => (c[0] as ScrollIntoViewOptions).behavior);
+    hooks().canariImeTarget?.({ px: KB });
+    expect(behaviours()).toEqual(['auto']);
+    // ~15 ms later, Mi 9T: a window and a visual-viewport resize with no size changed.
+    window.dispatchEvent(new Event('resize'));
+    window.visualViewport?.dispatchEvent(new Event('resize'));
+    expect(behaviours()).toEqual(['auto']);
+    // The emoji keyboard, 40 px taller.
+    hooks().canariImeTarget?.({ px: KB + 40 });
+    expect(behaviours()).toEqual(['auto', 'smooth']);
+  });
+
   it('a press during a ride cancels it', () => {
     hooks().canariImeTarget?.(RISE);
     window.dispatchEvent(new Event('pointerdown'));
@@ -276,6 +304,23 @@ describe('the Android keyboard ride, wired', () => {
     expect(hooks().canariImeTarget?.({ px: KB, durationMs: 285 })).toBe(false);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(inset()).toBe(0);
+  });
+
+  it('a refused ANIMATED announcement asks the shell again, once; a refused height does not (second review)', () => {
+    teardown();
+    const pageReady = vi.fn();
+    (window as unknown as { canariIme?: unknown }).canariIme = { pageReady };
+    teardown = initKeyboardViewport({ now: () => clock });
+    // A new document says it is ready.
+    expect(pageReady).toHaveBeenCalledTimes(1);
+    // Half an animation: the shell re-announces the inset without one, which the page takes.
+    expect(hooks().canariImeTarget?.({ px: KB, durationMs: 285 })).toBe(false);
+    expect(pageReady).toHaveBeenCalledTimes(2);
+    expect(hooks().canariImeTarget?.({ px: KB })).toBe(true);
+    // A refusal with no animation in it would only be refused again: it does not ask.
+    expect(hooks().canariImeTarget?.({ px: -1 })).toBe(false);
+    expect(pageReady).toHaveBeenCalledTimes(2);
+    delete (window as unknown as { canariIme?: unknown }).canariIme;
   });
 
   it('teardown takes the occlusion variable away with the others', () => {

@@ -26,8 +26,11 @@
  * once the layout reactions have run, a frame or more later (60-75 ms on the Mi 9T), and starting it
  * from 0 then left the composer under the keys on the rise and a band of nothing on the fall, the
  * thread landing ~70 ms after the keyboard. So the capture carries the arrival time and each ride
- * animation starts that far into its curve (a negative `delay`): its first frame is the keyboard's
- * phase and both end together. A ride that could only start after the keyboard landed does not
+ * animation's `startTime` IS that arrival: whatever frame it is first drawn in, it is drawn at the
+ * keyboard's phase in that frame, and both end together. (A negative `delay` measured when the ride is
+ * created was a frame late: a pending animation starts on the NEXT frame, from 0 plus the delay.)
+ * `document.timeline` and `performance.now` share their origin, the document's time origin, and the
+ * arrival is taken on the latter. A ride that could only start after the keyboard landed does not
  * animate at all. The animation's own end is still its termination; the clock only says WHERE in a
  * known animation the first frame is.
  *
@@ -130,12 +133,12 @@ export function fallRefusal(
 const RIDE_MIN_PX = 1;
 
 /**
- * How far a piece moved when the page took its new layout - its probe's new top minus the top
- * captured before - SIGNED: positive down (a fall), negative up (an Android rise). Null when that is
- * no move at all (that piece does not ride).
+ * How far a piece moved when the page took its new layout - its probe's new BOTTOM edge minus the one
+ * captured before ({@link rideEdgeOf}) - SIGNED: positive down (a fall), negative up (an Android
+ * rise). Null when that is no move at all (that piece does not ride).
  */
-export function rideDistancePx(topBefore: number, topAfter: number): number | null {
-  const distance = topAfter - topBefore;
+export function rideDistancePx(edgeBefore: number, edgeAfter: number): number | null {
+  const distance = edgeAfter - edgeBefore;
   return Math.abs(distance) > RIDE_MIN_PX ? distance : null;
 }
 
@@ -176,10 +179,27 @@ export const KEYBOARD_RIDE_EVENT = 'canari:keyboard-ride';
 export type LastRowRide = 'box' | 'rows';
 
 /**
- * One piece that may ride: the element, the element whose top says how far it moved, and whether its
+ * One piece that may ride: the element, the element whose edge says how far it moved, and whether its
  * children move rather than itself.
  */
-type Rider = { el: HTMLElement; probe: HTMLElement; topBefore: number; rows: boolean };
+type Rider = { el: HTMLElement; probe: HTMLElement; edgeBefore: number; rows: boolean };
+
+/**
+ * The edge a piece rides by: its probe's BOTTOM, as drawn (`getBoundingClientRect` includes a
+ * transform).
+ *
+ * THE BOTTOM, BECAUSE THE KEYBOARD PUSHES FROM BELOW (second review of #3556). A piece that keeps its
+ * height moves its top and its bottom by the same distance - the composer band, the thread's newest
+ * row - so for it the two edges ride identically. A piece that also SHRINKS does not: the comments
+ * drawer's `max-height` subtracts the keyboard (60dvh, ~567 px, against a cap of ~510 on the Mi 9T),
+ * so its top rises 57 px less than its bottom. Ridden by its top, its bottom stood ~57 px above the
+ * keys on the rise's first frame, the scrim showing under it. Ridden by its bottom, its bottom is on
+ * the keys on every frame, and only its new height shows from the start - a sheet that was cut by the
+ * cap at its new place.
+ */
+export function rideEdgeOf(probe: Element): number {
+  return probe.getBoundingClientRect().bottom;
+}
 
 /** What a ride needs from the moment the fall was announced, before the page went full height. */
 export type KeyboardRideCapture = {
@@ -194,7 +214,7 @@ export type KeyboardRideCapture = {
 };
 
 /**
- * The element whose top is a piece's position. `data-keyboard-ride="box"`: the piece itself (the
+ * The element whose edge is a piece's position. `data-keyboard-ride="box"`: the piece itself (the
  * composer band). `data-keyboard-ride="last-row"`: its last child (the thread's newest row) - a scroll
  * container's box does not move when it grows, its CONTENT does, and only by what the bottom pin
  * actually scrolled: nothing for a thread shorter than its box, the overflow for one that overflows by
@@ -227,14 +247,14 @@ export function captureKeyboardRide(
   for (const el of root.querySelectorAll<HTMLElement>('[data-keyboard-ride]')) {
     const probe = probeOf(el);
     const rows = lastRow === 'rows' && el.dataset.keyboardRide === 'last-row';
-    riders.push({ el, probe, topBefore: probe.getBoundingClientRect().top, rows });
+    riders.push({ el, probe, edgeBefore: rideEdgeOf(probe), rows });
   }
   return riders.length > 0 ? { riders, durationMs, easing, announcedAt } : null;
 }
 
 /**
  * Takes a thread's glide still in flight off the rows a capture will ride (`takeThreadGlideOff`),
- * AFTER their drawn top was read: the ride then starts from where the reader saw them, and the
+ * AFTER their drawn edge was read: the ride then starts from where the reader saw them, and the
  * glide's transform is not left fighting the ride's on the same rows.
  */
 export function releaseThreadGlides(capture: KeyboardRideCapture): void {
@@ -270,7 +290,8 @@ export function ridePhaseMs(capture: KeyboardRideCapture, now: number): number |
 /**
  * Starts the ride once the page has its new layout AND every reaction to it (the thread's bottom pin)
  * has run: each captured piece that moved rides from where it stood by ITS OWN move, over the
- * keyboard's duration and curve, from the keyboard's phase ({@link ridePhaseMs}). A piece that did not
+ * keyboard's duration and curve, started at the keyboard's own start (`startTime = announcedAt`, so
+ * each frame draws the keyboard's phase; {@link ridePhaseMs} says where the first is). A piece that did not
  * move, or is gone, does not ride. Null when none moved or the keyboard has landed.
  *
  * Every probe is read before the first `animate`: an animation started dirties style, and a read
@@ -278,7 +299,8 @@ export function ridePhaseMs(capture: KeyboardRideCapture, now: number): number |
  * observer (`attachThreadRide`), so a message arriving mid-ride takes the rows on from where the ride
  * drew them.
  *
- * @param now the clock `announcedAt` was taken on (`performance.now`).
+ * @param now the clock `announcedAt` was taken on (`performance.now`, whose origin `document.timeline`
+ *   shares).
  */
 export function startKeyboardRide(
   capture: KeyboardRideCapture,
@@ -291,19 +313,21 @@ export function startKeyboardRide(
   }
   const moves: { rider: Rider; distance: number }[] = [];
   for (const rider of capture.riders) {
-    const { el, probe, topBefore } = rider;
+    const { el, probe, edgeBefore } = rider;
     if (!el.isConnected || !probe.isConnected) continue;
-    const distance = rideDistancePx(topBefore, probe.getBoundingClientRect().top);
+    const distance = rideDistancePx(edgeBefore, rideEdgeOf(probe));
     if (distance !== null) moves.push({ rider, distance });
   }
-  const timing: KeyframeAnimationOptions = {
-    duration: capture.durationMs,
-    easing: capture.easing,
-    ...(phaseMs > 0 ? { delay: -phaseMs } : {}),
-  };
+  const timing: KeyframeAnimationOptions = { duration: capture.durationMs, easing: capture.easing };
+  const { announcedAt } = capture;
   const animations: Animation[] = [];
   for (const { rider, distance } of moves) {
-    const own = moversOf(rider).map((mover) => mover.animate(rideKeyframes(distance), timing));
+    const own = moversOf(rider).map((mover) => {
+      const animation = mover.animate(rideKeyframes(distance), timing);
+      // On the keyboard's timeline: see the module's comment (D1). The iOS fall starts at 0, pending.
+      if (announcedAt !== null) animation.startTime = announcedAt;
+      return animation;
+    });
     if (rider.rows) attachThreadRide(rider.el, -distance, own);
     animations.push(...own);
   }
