@@ -980,10 +980,9 @@ export class ProductsService {
     const all = await this.productRepo
       .createQueryBuilder('p')
       .where('p.isActive = true')
-      .andWhere(
-        associationVisibleToViewerSql('"p"."associationId"', ':viewerId', { readGrants: true }),
-        { viewerId: userId }
-      )
+      .andWhere(associationVisibleToViewerSql('"p"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
       .orderBy('p.associationId', 'ASC')
       .addOrderBy('p.sortOrder', 'ASC')
       .addOrderBy('p.createdAt', 'ASC')

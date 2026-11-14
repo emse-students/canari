@@ -6,6 +6,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 
 - **The on-device look** at the Audience tab, the profile campus prompt and the `/admin/read-access` grid.
 - **The 8 dev checks of the read grants PASSED on 2026-10-09** ([verdicts](../profiles-and-access.md#the-eight-dev-checks-2026-10-09-devcanari-emsefr-on-121-alpha1-same-code-as-v121)). Check 2 (no personal post) passed on the predicate only; an end-to-end reading needs a personal post by a gardanne account, and `canari-test-epsilon`'s credentials are NOT in `<harness-dir>/test-accounts.json`. **User:** add them there (never on a command line).
-- **Decided (owner, 2026-11-14) and built:** a grant widens the association directory, the shop and the partnerships of its cell ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)); a booking space is not widened.
+- **Decided (owner, 2026-11-14) and built:** a grant widens the association directory, the shop, the partnerships and the association booking spaces of its cell ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)).
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).

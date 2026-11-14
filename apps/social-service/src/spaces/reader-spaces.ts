@@ -985,18 +985,13 @@ export function liveVisibleToViewerSql(
 /**
  * Association `association` is visible to the viewer whose id is the placeholder `viewer`.
  *
- * `opts.readGrants` also counts a nominative read grant whose cell the association's rules reach.
- * The surfaces a named reader is SHOWN pass it - the association directory, the shop and the
- * partnerships (owner, 2026-11-14: a grant opens everything of its cell), beside the posts and the
- * agenda, which have their own predicates. A booking space does not: it was not part of that
- * decision.
+ * A READ PATH, so it counts nominative read grants like every other `*ToViewerSql` (owner,
+ * 2026-11-14: a grant opens everything of its cell): the association directory, the shop, the
+ * partnerships and the association booking spaces all ask it. What must NOT count a grant - who is
+ * notified, who is suggested an association - asks {@link associationVisibleToUserSql}, plain.
  */
-export function associationVisibleToViewerSql(
-  association: string,
-  viewer: string,
-  opts: Pick<ReadOpts, 'readGrants'> = {}
-): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer', opts)})`;
+export function associationVisibleToViewerSql(association: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer', { readGrants: true })})`;
 }
 
 /**

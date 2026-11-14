@@ -28,22 +28,18 @@ async function askOne(
 
 /**
  * Whether association `associationId` is visible to `userId` (`associationVisibleToViewerSql`: a
- * member of it, D21, or its rules reach one of the user's spaces) - the directory's and the
+ * member of it, D21, its rules reach one of the user's spaces, or a nominative read grant of the
+ * user reaches it) - the directory's and the
  * agenda's predicate, asked for ONE association by a path that acts on one row by its id (a
  * partnership claim, a booking). A review account has no real space, so for it this is
  * membership alone, which is what the review cohort's own narrowing says too.
- *
- * `opts.readGrants` also counts a nominative read grant (owner, 2026-11-14): the partnership claim
- * passes it, since a card a named reader is listed must not be refused at the claim; a booking does
- * not.
  */
 export async function associationVisibleTo(
   manager: Pick<EntityManager, 'query'>,
   associationId: string,
-  userId: string,
-  opts: { readGrants?: boolean } = {}
+  userId: string
 ): Promise<boolean> {
-  const visible = await askOne(manager, associationVisibleToViewerSql('$1::uuid', '$2', opts), [
+  const visible = await askOne(manager, associationVisibleToViewerSql('$1::uuid', '$2'), [
     associationId,
     userId,
   ]);

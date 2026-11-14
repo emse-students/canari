@@ -34,12 +34,6 @@ through its event's card). What is left, each a defect to fix or a decision alre
 
 ### Dead zones and inconsistencies
 
-- **An unknown formation is accepted at sign-in** (`parseProfileClaims`: any non-empty string, so
-  `Master` or `icm`), while the admin edit is strict. The person then holds a cursus that matches
-  no space: neither a student of a space nor staff, and nothing is logged. An absent claim clears
-  campus and cursus with a debug line only. Its own pull request keeps the entry (it is what tells a
-  student from staff), logs it, and logs a profile that loses its spaces at WARN; delete this line
-  when it merges.
 - **A stored formation criterion can match nobody**: a form's `formation.values` accepts any string,
   so one saved with the legacy `Master` refuses every submitter.
 - **A default audience may be "everyone" on an association**: `smallestRules` collapses "all ten
