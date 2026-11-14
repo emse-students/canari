@@ -36,6 +36,23 @@ removal does (under each group's seat lock, the seat generation moved, the inter
 copies each row whole to `dm_group_members_removed_051` first, logs the counts (never an id), and
 carries its rollback, which `051_departed_seats_removed.integration.spec.ts` runs.
 
+**What its adversarial review (2026-11-14) changed.** The decision was 18 seats, not a predicate: the
+shape grows with every last-device revocation, and a key-package loss elsewhere would make the
+predicate match live people, so **more than 18 matches RAISES and removes nothing** (the deploy stops;
+a larger set is a new question). The copy names people, so each row is **bound to the interval it
+closed by a foreign key `ON DELETE CASCADE`**: the account erasure already deletes a person's intervals
+and a group's purge the group's, so the copy goes with them and the rollback never restores an erased
+person - no erasure code names a temporary table; a seat with no open interval is therefore not
+removed (production: none). The re-read under the locks is confined to the groups whose lock was
+taken (a seat that came to match in between was removed unlocked). The rollback no longer fails
+beside a person re-added since (a second open interval broke the partial unique index). And the
+scanner was already holding the file without its marker (`DELETE FROM` inside `DO $$`, `ON COMMIT
+DROP`); `deploy-migrations.test.sh` now pins that shape. **11 of the 18 sit in 2-member
+conversations**: there the remaining member keeps a one-seat conversation, a returning peer is
+refused re-entry (`handleWelcomeRequest` reads the roster), and if the departed person later erases
+their account the conversation is no longer tombstoned for the other (the erasure finds it through a
+seat). The table the owner decided from carried the 11; written here so the cost is on record.
+
 **What wrote them, and whether it can again: yes, by design.** The 16 still have an account (one a
 session); 13 lost their last device to a revocation, 12 of them in the week of the fourth orphan pass,
 3 to the 90-day GC. A conversation seat outlives its person's devices on purpose, so recovery re-invites
@@ -47,5 +64,6 @@ not built.
 
 **Owed, in order:** the approval line (owner, or the lead under the 2026-11-03 delegation, after an
 adversarial review), the pass on dev through a pre-release (0 rows there: it proves the file runs),
-the production NOTICE read at the deploy (`18 matched` expected, fewer if someone came back), then a
-migration dropping `dm_group_members_removed_051`, which names people.
+the production NOTICE read at the deploy (`18 matched` expected, fewer if someone came back; more
+refuses the deploy), then a migration dropping `dm_group_members_removed_051`, which names people
+(an erasure already takes a person's rows meanwhile).

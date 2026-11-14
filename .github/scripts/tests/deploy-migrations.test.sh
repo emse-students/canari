@@ -300,6 +300,8 @@ classify plain drop-index-concurrently 'DROP INDEX CONCURRENTLY IF EXISTS public
   classify held block-comment-in-a-dollar-literal 'SELECT $$ /* $$; DROP TABLE users; -- */\n'
   classify held drop-glued-to-a-dollar-tag 'DO $x$BEGIN DROP TABLE users; END$x$;\n'
   classify held drop-in-a-dollar-body-over-lines 'DO $body$\nBEGIN\n  DROP TABLE users;\nEND\n$body$;\n'
+  # Migration 051's shape: the DELETE lives in a DO body; the file must hold with no marker at all.
+  classify held delete-in-a-dollar-body 'DO $$\nBEGIN\n    DELETE FROM dm_group_members m USING departed d WHERE m.id = d.id;\nEND $$;\n'
   classify held unterminated-dollar-quote 'DO $$ BEGIN PERFORM 1;\n'
   classify plain dollar-body-additive 'DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = $q$e$q$) THEN CREATE TYPE e AS ENUM ($q$a$q$); END IF; END $$;\n'
   classify plain dollar-sign-in-an-identifier 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a$b$ int;\n'

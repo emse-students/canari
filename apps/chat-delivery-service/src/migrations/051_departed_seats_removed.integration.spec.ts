@@ -4,9 +4,11 @@
  * MIGRATION 051 AGAINST A REAL POSTGRESQL: the departed-seat ALLOWLIST removes exactly the seat of a
  * person who holds no device anywhere, and keeps every seat that differs from it by ONE fact - a live
  * member, a pending join, a person with a device row in another group, a person who enrolled a device
- * again (a key package, no row yet), an open ask. A removal is a removal: the group's seat generation
- * moves, the open interval closes at it, and the copy holds the row whole. The rollback written in
- * the file's header restores the seat and reopens the interval. A second run is a no-op.
+ * again (a key package, no row yet), an open ask, a seat with no open interval. A removal is a
+ * removal: the group's seat generation moves, the open interval closes at it, and the copy holds the
+ * row whole, bound to that interval so an account erasure takes it. The rollback written in the
+ * file's header restores the seat and reopens the interval, and still runs beside a person re-added
+ * since. A second run is a no-op, and more than the 18 decided seats refuses the whole file.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads:
  * skipped without it, and run by the `test-chat-delivery-integration` job in `ci.yml`, which refuses
@@ -69,17 +71,25 @@ maybe('migration 051 (departed seats) against PostgreSQL', () => {
   const G2 = randomUUID();
   const G3 = randomUUID();
 
-  const seat = (groupId: string, userId: string, awaitingAdmission = false) =>
-    q(
+  const seat = (
+    groupId: string,
+    userId: string,
+    awaitingAdmission = false,
+    withInterval = true,
+    run: (sql: string, params: unknown[]) => Promise<unknown> = q
+  ) =>
+    run(
       `INSERT INTO dm_group_members (id, "groupId", "userId", role, "awaitingAdmission", "joinedAt")
        VALUES ($1, $2, $3, 'member', $4, '2026-10-01T10:00:00')`,
       [randomUUID(), groupId, userId, awaitingAdmission]
     ).then(() =>
-      q(
-        `INSERT INTO dm_group_membership_intervals (id, "groupId", "userId", "joinedAt")
-         VALUES ($1, $2, $3, '2026-10-01T10:00:00')`,
-        [randomUUID(), groupId, userId]
-      )
+      withInterval
+        ? run(
+            `INSERT INTO dm_group_membership_intervals (id, "groupId", "userId", "joinedAt")
+             VALUES ($1, $2, $3, '2026-10-01T10:00:00')`,
+            [randomUUID(), groupId, userId]
+          )
+        : undefined
     );
   const device = (groupId: string, userId: string, deviceId: string, status: string) =>
     q(
@@ -126,6 +136,7 @@ maybe('migration 051 (departed seats) against PostgreSQL', () => {
     'G2:u-device-elsewhere',
     'G2:u-pending',
     'G3:u-device-elsewhere',
+    'G3:u-no-interval',
     'G3:u-reenrolled',
   ];
 
@@ -164,6 +175,8 @@ maybe('migration 051 (departed seats) against PostgreSQL', () => {
     await keyPackage('u-reenrolled', 'd-new');
     // KEPT: an open ask with no device - a Decline's, not this file's.
     await seat(G2, 'u-awaiting', true);
+    // KEPT: departed, but with no open interval - the copy is bound to that row, so no copy, no removal.
+    await seat(G3, 'u-no-interval', false, false);
 
     const seeded = await roster();
     if (seeded.join() !== BEFORE.join()) throw new Error(`fixture seeded ${seeded.join()}`);
@@ -193,14 +206,18 @@ maybe('migration 051 (departed seats) against PostgreSQL', () => {
     expect((await interval(G2, 'u-pending')).leftAt).toBeNull();
   });
 
-  it('keeps a whole copy of each removed row, with the interval it closed', async () => {
-    const rows = await q<{ seat: { groupId: string; userId: string }; n: number }>(
-      `SELECT seat, cardinality("closedIntervalIds") AS n FROM dm_group_members_removed_051`
+  it('keeps a whole copy of each removed row, bound to the interval it closed', async () => {
+    const rows = await q<{ seat: { groupId: string; userId: string }; closed: boolean }>(
+      `SELECT r.seat, i."leftAt" IS NOT NULL AS closed
+         FROM dm_group_members_removed_051 r
+         JOIN dm_group_membership_intervals i ON i.id = r."intervalId"`
     );
     expect(
       rows.map((r) => `${r.seat.groupId === G1 ? 'G1' : 'G2'}:${r.seat.userId}`).sort()
     ).toEqual(['G1:u-departed', 'G2:u-departed']);
-    expect(rows.every((r) => Number(r.n) === 1)).toBe(true);
+    expect(rows.every((r) => r.closed)).toBe(true);
+    // The joined interval id is not part of the seat: the rollback populates a roster row from it.
+    expect(rows.every((r) => !('openIntervalId' in r.seat))).toBe(true);
   });
 
   it('is a no-op the second time', async () => {
@@ -219,5 +236,55 @@ maybe('migration 051 (departed seats) against PostgreSQL', () => {
 
     expect(await roster()).toEqual(BEFORE);
     expect(await interval(G1, 'u-departed')).toEqual({ leftAt: null, leftAtSeatGeneration: null });
+  });
+
+  it('refuses, and removes nothing, when more seats match than the 18 the owner decided on', async () => {
+    const runner = ds.createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const G4 = randomUUID();
+      await runner.query(`INSERT INTO dm_groups (id) VALUES ($1)`, [G4]);
+      // u-departed's two seats (restored above) plus 17 more: 19.
+      for (let i = 0; i < 17; i += 1) {
+        await seat(G4, `u-gone-${i}`, false, true, (sql, params) => runner.query(sql, params));
+      }
+      await expect(runner.query(MIGRATION)).rejects.toThrow(/more than the 18/);
+    } finally {
+      await runner.rollbackTransaction();
+      await runner.release();
+    }
+    expect(await roster()).toEqual(BEFORE);
+  });
+
+  it('rolls back beside a person re-added since: their new seat and interval stand, nothing breaks', async () => {
+    await ds.query(MIGRATION);
+    // A member re-adds u-departed in G1: a new seat and a new open interval.
+    await seat(G1, 'u-departed');
+
+    await ds.query(rollbackSql());
+
+    expect(await roster()).toEqual(BEFORE);
+    const open = await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM dm_group_membership_intervals
+        WHERE "groupId" = $1 AND "userId" = 'u-departed' AND "leftAt" IS NULL`,
+      [G1]
+    );
+    expect(open[0].n).toBe(1);
+    expect((await interval(G2, 'u-departed')).leftAt).toBeNull();
+  });
+
+  it("loses its copy with the person's intervals, as an account erasure deletes them - and restores nobody", async () => {
+    await ds.query(MIGRATION);
+    // `deleteUserData`: `membershipIntervalRepo.delete({ userId })`.
+    await q(`DELETE FROM dm_group_membership_intervals WHERE "userId" = 'u-departed'`);
+
+    const [{ n }] = await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM dm_group_members_removed_051
+        WHERE seat->>'userId' = 'u-departed'`
+    );
+    expect(n).toBe(0);
+    await ds.query(rollbackSql());
+    expect(await roster()).toEqual(BEFORE.filter((s) => !s.endsWith(':u-departed')));
   });
 });
