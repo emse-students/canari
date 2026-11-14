@@ -2212,6 +2212,31 @@
   "carte_publish_refused_outside": "The map holds an association that is switched off or outside its space. Reload the editor, then publish again.",
   "carte_publish_refused_unattached": "Attach the map to a space before publishing it.",
   "carte_publish_refused_roster": "The map's directory was prepared by an older version of the editor. Reload the editor, then publish again.",
+  "carte_roster_stale": "its members changed since the editor opened",
+  "carte_roster_failed_title": "Some of the map's data could not be loaded",
+  "carte_roster_failed_body": "An association whose members are missing is not an empty association: the map cannot be published or exported until they are loaded.",
+  "carte_roster_unlisted": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} association shown on the map could not be loaded. Reload the editor.",
+        "countPlural=other": "{count} associations shown on the map could not be loaded. Reload the editor."
+      }
+    }
+  ],
+  "carte_publish_blocked_rosters": "The members of {names} could not be loaded: retry loading them before publishing or exporting the map.",
+  "carte_publish_blocked_unlisted": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} association shown on the map could not be loaded: reload the editor before publishing or exporting the map.",
+        "countPlural=other": "{count} associations shown on the map could not be loaded: reload the editor before publishing or exporting the map."
+      }
+    }
+  ],
+  "carte_publish_refused_roster_missing": "The server refused the publication: an association's member list was sent empty although it has members. Reload the editor, then publish again.",
   "carte_desktop_only_title": "Editing is desktop-only",
   "carte_desktop_only_body": "Bubbles are placed with a mouse: open this map on a computer to change it. Here you can view it, export it to PDF and publish it.",
   "carte_desktop_only_short": "Creating a map is desktop-only.",

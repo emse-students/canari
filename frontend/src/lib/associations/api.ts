@@ -190,6 +190,11 @@ export interface AssociationMember {
   id: string;
   associationId: string;
   userId: string;
+  /**
+   * Set on the rows of a review account, only for a caller allowed to see them (the platform admin):
+   * no public roster carries one, so the carte leaves them out.
+   */
+  reviewAccount?: boolean;
   displayName: string | null;
   /** Given name from the users mirror, when the mirror has one. */
   firstName: string | null;
@@ -541,7 +546,13 @@ export class SocialApiError extends ApiRefusalError {
      * definition refusal names its grid), so the editor draws the refusal under that question
      * instead of only in the page banner. Null when the body names none.
      */
-    readonly itemId: string | null = null
+    readonly itemId: string | null = null,
+    /**
+     * The associations a carte publish refused `CARTE_ROSTER_MISSING` names (`associationIds`): their
+     * rosters were sent empty while they have members, so the editor re-reads exactly those. Null
+     * when the body names none ({@link associationIdsOf}).
+     */
+    readonly associationIds: string[] | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
@@ -559,6 +570,15 @@ export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
  * payments may still land (at most about 35 minutes after it was opened).
  */
 export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the `associationIds` string array a refusal body carries; `null` when it carries none. */
+export function associationIdsOf(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object') return null;
+  const { associationIds } = body as Record<string, unknown>;
+  if (!Array.isArray(associationIds)) return null;
+  const ids = associationIds.filter((id): id is string => typeof id === 'string');
+  return ids.length > 0 ? ids : null;
+}
 
 /** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
 export function holderCountOf(body: unknown): number | null {
@@ -603,6 +623,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
   let holderCount: number | null = null;
+  let associationIds: string[] | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -626,10 +647,20 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     amountBounds = amountBoundsOf(parsed);
     // A tier delete refused for its holders carries how many, as a number.
     holderCount = holderCountOf(parsed);
+    // A carte publish refused for a roster sent empty names the associations, as ids.
+    associationIds = associationIdsOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
+  return new SocialApiError(
+    message,
+    code,
+    res.status,
+    amountBounds,
+    holderCount,
+    null,
+    associationIds
+  );
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -3190,6 +3221,8 @@ export const CARTE_REFUSAL = {
   NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
   /** A directory line with no roster: an editor older than the structured roster - reload it. */
   ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
+  /** An association with members sent with an empty roster: the editor did not load it. */
+  ROSTER_MISSING: 'CARTE_ROSTER_MISSING',
 } as const;
 
 /**

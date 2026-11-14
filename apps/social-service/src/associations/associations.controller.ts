@@ -541,7 +541,11 @@ export class AssociationsController {
       { isGlobalAdmin: ga === 'true' }
     );
     const members = await this.service.listMembers(id, { includePermissions, callerId: userId });
-    if (ga === 'true' || isInReviewCohort(userId)) return members;
+    // A caller who sees the review accounts is told which rows they are (`reviewAccount`), so a
+    // screen that builds something PUBLIC from a roster (the carte) can leave them out.
+    if (ga === 'true' || isInReviewCohort(userId)) {
+      return members.map((m) => (isInReviewCohort(m.userId) ? { ...m, reviewAccount: true } : m));
+    }
     return members.filter((m) => !isInReviewCohort(m.userId));
   }
 

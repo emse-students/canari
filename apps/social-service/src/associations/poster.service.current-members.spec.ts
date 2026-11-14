@@ -12,8 +12,8 @@ describe('PosterService - only current members reach a map', () => {
   const FP = 'b'.repeat(64);
   /** An association of the space: ids are uuids, as the membership query compares them. */
   const A1 = '00000000-0000-4000-8000-0000000000a1';
-  /** The memberships `association_members` holds: `A1` has `u1` only. */
-  const MEMBERS = [{ assoId: A1, userId: 'u1' }];
+  /** The memberships `association_members` holds: `A1` has `u1` only, unless a test says otherwise. */
+  let MEMBERS: { assoId: string; userId: string }[];
   let queries: { sql: string; params: unknown[] }[];
   let updates: { where: unknown; patch: Record<string, unknown> }[];
   let saved: PosterProject | undefined;
@@ -81,6 +81,7 @@ describe('PosterService - only current members reach a map', () => {
   }
 
   beforeEach(() => {
+    MEMBERS = [{ assoId: A1, userId: 'u1' }];
     queries = [];
     updates = [];
     saved = undefined;
@@ -143,6 +144,50 @@ describe('PosterService - only current members reach a map', () => {
     ).rejects.toMatchObject({ response: { code: 'CARTE_ROSTER_UNSTRUCTURED' } });
     expect(updates).toEqual([]);
     expect(queries).toEqual([]);
+  });
+
+  /** A document whose one directory entry sends `A1` with an EMPTY roster. */
+  function emptyRoster() {
+    return {
+      ...carte(),
+      units: [{ assoId: A1, cards: [] }],
+      directory: { zones: [{ label: 'Z', assos: [{ assoId: A1, line: '', members: [] }] }] },
+    };
+  }
+
+  // An empty roster is either an empty association or a roster the editor never received (a
+  // transport failure): only the membership table tells them apart, so it is read, not believed.
+  it('refuses an empty roster for an association that has members, typed, and writes nothing', async () => {
+    const warn = jest.spyOn(
+      (service as unknown as { logger: { warn: () => void } }).logger,
+      'warn'
+    );
+    await expect(
+      service.publish('p1', { carte: emptyRoster(), fingerprint: FP }, ADMIN)
+    ).rejects.toMatchObject({
+      response: { code: 'CARTE_ROSTER_MISSING', associationIds: [A1] },
+    });
+    expect(updates).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('CARTE_ROSTER_MISSING'));
+  });
+
+  it('publishes an empty roster for an association that really has nobody', async () => {
+    MEMBERS = [];
+    await service.publish('p1', { carte: emptyRoster(), fingerprint: FP }, ADMIN);
+    expect(updates.find((u) => u.where === 'p1')!.patch.publicationFingerprint).toBe(FP);
+  });
+
+  it('does not count a review account: the roster route hides it, so the editor rightly sends nobody', async () => {
+    const before = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    try {
+      MEMBERS = [{ assoId: A1, userId: 'reviewer' }];
+      await service.publish('p1', { carte: emptyRoster(), fingerprint: FP }, ADMIN);
+      expect(updates.find((u) => u.where === 'p1')).toBeDefined();
+    } finally {
+      if (before === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = before;
+    }
   });
 
   it('accepts a directory entry that names nobody, with no roster', async () => {
