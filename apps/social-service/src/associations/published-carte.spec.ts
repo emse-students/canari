@@ -1,4 +1,13 @@
-import { sanitizePublishedCarte, PUBLISHED_CARTE_VERSION } from './published-carte';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  directoryLine,
+  keepCurrentMembers,
+  publicCarte,
+  publishedMemberPairs,
+  sanitizePublishedCarte,
+  PUBLISHED_CARTE_VERSION,
+} from './published-carte';
 
 /** A minimal, valid v2 publication payload; individual tests override the field under test. */
 function payload(overrides: Record<string, unknown> = {}) {
@@ -303,5 +312,95 @@ describe('sanitizePublishedCarte', () => {
       'version',
     ]);
     expect(out?.units[0]).not.toHaveProperty('pii');
+  });
+});
+
+describe('the directory roster', () => {
+  const roster = [
+    { userId: 'u2', name: 'Zoe Bernard', role: 'Presidente' },
+    { userId: 'u1', name: 'Alice Martin', role: 'Membre' },
+  ];
+  const withDirectory = (assos: unknown[]) =>
+    payload({ directory: { heading: 'Annuaire', zones: [{ label: 'Z', assos }] } });
+
+  it('stores the roster and DERIVES the line from it, whatever line was sent', () => {
+    const out = sanitizePublishedCarte(
+      withDirectory([{ assoId: 'a1', line: 'forged', members: roster }])
+    );
+    expect(out?.directory?.zones[0].assos[0]).toEqual({
+      assoId: 'a1',
+      line: 'Zoe Bernard (Presidente) - Alice Martin',
+      members: roster,
+    });
+  });
+
+  // The sanitizer keeps a line-only entry as is; PosterService.publish refuses it (CARTE_ROSTER_UNSTRUCTURED).
+  it('keeps a line-only entry as is and invents no roster', () => {
+    const out = sanitizePublishedCarte(withDirectory([{ assoId: 'a1', line: 'Zoe Bernard' }]));
+    expect(out?.directory?.zones[0].assos[0]).toEqual({ assoId: 'a1', line: 'Zoe Bernard' });
+  });
+
+  it('drops a roster member with no user id and caps a name', () => {
+    const out = sanitizePublishedCarte(
+      withDirectory([
+        {
+          assoId: 'a1',
+          members: [{ name: 'Ghost' }, { userId: 'u1', name: 'x'.repeat(500), role: 7 }],
+        },
+      ])
+    );
+    expect(out?.directory?.zones[0].assos[0].members).toEqual([
+      { userId: 'u1', name: 'x'.repeat(200), role: '' },
+    ]);
+  });
+
+  // One line, two implementations: the editor's `rosterLine` reads the same cases.
+  it('formats every shared case exactly as the editor does', () => {
+    const { cases } = JSON.parse(
+      readFileSync(join(__dirname, 'directory-line.cases.json'), 'utf8')
+    ) as { cases: { members: { name: string; role: string }[]; line: string }[] };
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) expect(directoryLine(c.members)).toBe(c.line);
+  });
+
+  it('never serves the roster: the public document has { assoId, line } per entry, keys in place', () => {
+    const stored = sanitizePublishedCarte(
+      withDirectory([
+        { assoId: 'a1', members: roster },
+        { assoId: 'a2', line: 'Legacy' },
+      ])
+    )!;
+    const served = publicCarte(stored);
+    expect(served.directory?.zones[0].assos).toEqual([
+      { assoId: 'a1', line: 'Zoe Bernard (Presidente) - Alice Martin' },
+      { assoId: 'a2', line: 'Legacy' },
+    ]);
+    expect(JSON.stringify(served)).not.toContain('"members"');
+    expect(Object.keys(served)).toEqual(Object.keys(stored));
+    expect(publicCarte({ ...stored, directory: null }).directory).toBeNull();
+  });
+
+  it('keeps only current members on the cards and in the rosters, re-deriving the line', () => {
+    const stored = sanitizePublishedCarte(
+      withDirectory([
+        { assoId: 'a1', members: roster },
+        { assoId: 'a2', line: 'Unchecked' },
+      ])
+    )!;
+    const out = keepCurrentMembers(stored, (assoId, userId) => assoId === 'a1' && userId === 'u1');
+    expect(out.droppedCards).toBe(0); // the card's `u1` is current in `a1`
+    expect(out.droppedMembers).toBe(1);
+    expect(out.carte.directory?.zones[0].assos).toEqual([
+      { assoId: 'a1', line: 'Alice Martin', members: [roster[1]] },
+      { assoId: 'a2', line: 'Unchecked' },
+    ]);
+    const none = keepCurrentMembers(stored, () => false);
+    expect(none.droppedCards).toBe(1);
+    expect(none.carte.units[0].cards).toEqual([]);
+    expect(publishedMemberPairs(stored)).toEqual([
+      { assoId: 'a1', userId: 'u1' },
+      { assoId: 'a1', userId: 'u2' },
+      { assoId: 'a1', userId: 'u1' },
+    ]);
   });
 });

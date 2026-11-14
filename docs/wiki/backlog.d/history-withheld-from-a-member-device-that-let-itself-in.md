@@ -1,5 +1,7 @@
 ## History withheld from a member device that let itself in (built 2026-10-27): what is still owed
 
+target: 1.9.0
+
 The device ask of the 2026-10-27 interim is DELETED (owner, 2026-10-31: the gate is on the user,
 never the device - [the decision](../protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 What stays from it, NARROWED on 2026-11-01 (review of #2832): a further device of a member asks

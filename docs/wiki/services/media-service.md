@@ -102,6 +102,8 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/own-archive-delete` | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - the publish queue's Delete, from social-service's withdrawal, which checked that NO live post or comment cites the ids: each deleted only when it is `ownerId`'s own `archive` object, otherwise `refused`; an unknown or purged one `absent` (`removeOwnArchive`). Not a user route: owner and class do not prove an object uncited (review of #3061; [posts](../frontend/modules/posts.md#the-background-publish-queue)) |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
+| POST   | `/api/media/internal/retention-changed` | `INTERNAL_SECRET` | Re-read the retention durations this service HOLDS and stamps (sent by core-service on an admin change, by social-service at its boot); answers `{ refreshed, readAt }` - [retention-settings](../retention-settings.md#media-service-holds-the-durations-it-stamps) |
+| GET    | `/api/media/internal/retention` | `INTERNAL_SECRET` | The retention durations this service HOLDS and when it read them, `{ held, readAt }` (`held: null` before its first read) - core-service compares them with the columns for the admin page's "pas encore appliqué aux fichiers" - [retention-settings](../retention-settings.md#media-service-holds-the-durations-it-stamps) |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
 | POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
@@ -167,7 +169,10 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 ## Retention: a 90-day IDLE sweep on CHAT media, and nothing else deletes them
 
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
-`lastAccessAt` is older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself
+`lastAccessAt` is older than its idle window - **the admin setting `retention_idle_file_days`
+(90 days by default) as it stood at the file's UPLOAD**, stamped on the entry as `idleRetentionMs`
+since 2026-11-14, and `RETENTION_MS` = 90 days for a file uploaded before
+([retention-settings](../retention-settings.md)) - leaving a tombstone that is itself
 trimmed after 90 days. It runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with
 `MEDIA_RETENTION_SWEEP_MS`); a `download()` judges only its OWN entry (below). **It was 30 days until 2026-09-23** - what
 moved it, and why moving it is not the same decision as the one taken in August, is §6 of
@@ -287,6 +292,12 @@ and a protected document's 410 read as a wrong password.
 **Recovery is a restore, not code.** Snapshots of the object store taken while that blob existed still
 exist in the backups, and so does the row holding what is needed to decrypt it. Whether to restore is the
 user's call ([backup](../infrastructure/backup.md)).
+
+**Read on production, 2026-11-14, read-only.** All 8 vault documents (`association_documents`) have
+a metadata entry of class `association`, none tombstoned; `association` is its own class in the
+index (8 entries beside 516 `ephemeral`, 323 `archive`, 180 public assets) and its own line on
+`/admin/storage` (`associationCount`); the 61 `retention_expired` tombstones name no document,
+and the access log held no `410` at all over the 12 hours it kept.
 
 ### The archive class: the feed is not a conversation (2026-09-23)
 
@@ -864,6 +875,19 @@ orphan purge once wiped another file's staged upload. `jest.temp-cwd.cjs`, loade
 after. The runtime directories are ignored by `.gitignore`, never tracked: the service makes them at
 boot (`ensureDirSync`).
 
+## The daily upload bound per member (2026-11-13)
+
+One member uploads at most 2 GB per rolling 24 hours, every class and route together
+(`MEDIA_MEMBER_DAILY_UPLOAD_BYTES`, below; decided by the lead under the owner's delegation,
+reversible). **Chosen from** one read-only aggregate of production's media index over the 60 days
+before 2026-11-13: 853 uploads by 123 members on 351 member-days, uploads per member per day p50 1,
+p95 8, p99 13, max 22; with the 100 MB per-file ceiling the busiest day stays under the bound unless
+its files averaged more than 90 MB. **It reports itself**: a refusal is one `[MEMBER_UPLOAD_BUDGET]`
+WARN naming the member's uploads and bytes, and the thread says why the message failed, so a value
+that is too low surfaces without a watch. **Read 2026-11-14** (read-only): 0 such lines on
+production since the `1.6.12` deploy and 0 on dev. A line on an ordinary day of use raises the value
+through the variable.
+
 ## Environment variables
 
 | Variable                                | Required | Description                                                                                                                                                                                                  |
@@ -879,6 +903,7 @@ boot (`ensureDirSync`).
 | `MEDIA_CHAT_REEL_RETENTION_MS`          | no       | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds                                                                                                                     |
 | `MEDIA_PENDING_REEL_TTL_MS`             | no       | How long an unclaimed `reel-pending` upload lives (default 24 h). Milliseconds; under 1 h (3600000) the service REFUSES TO START, and the effective value is logged at boot                                  |
 | `MEDIA_CHAT_REEL_DAILY_BYTES`           | no       | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB)                                                                                                                                       |
+| `MEDIA_MEMBER_DAILY_UPLOAD_BYTES`       | no       | Per-member bound per rolling 24 h on every class and every MEMBER upload route together (plain, legacy chunked, resumable sessions; default 2 GB). Outside it on purpose: public assets (no owner), and the server-to-server routes `internal/form-file` and `internal/live`, which have their own caps; a refusal is a 422 with `code: member-upload-over-budget` (a 422 because an app older than the code retries an attachment's 429 each minute and fails a 422 for good) and one `[MEMBER_UPLOAD_BUDGET]` WARN line Chosen from 60 days of production's index read on 2026-11-13 (853 uploads by 123 members; per member per day p50 1, p95 8, max 22 uploads, 100 MB a file at most). The refusal is a 422 carrying `code: member-upload-over-budget`, not a 429, because an app released before the code retries a 429 without end and fails a 422 for good. Read on production on 2026-11-14, three hours after the `1.6.12` deploy that carries it: no `[MEMBER_UPLOAD_BUDGET]` line, and the largest total one member had uploaded with a recorded size was 0.7 MB. A refusal writes that WARN line with the member's uploads and bytes of the day; one for an ordinary day of use means the value is too low. |
 | `MEDIA_RETENTION_SWEEP_MS`              | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
 | `MEDIA_UPLOAD_SESSION_DIR`              | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10))                               |
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |

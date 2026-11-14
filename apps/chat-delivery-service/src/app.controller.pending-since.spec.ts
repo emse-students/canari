@@ -15,6 +15,7 @@ import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
+import { memoryAccusationLedger } from './testing/memoryAccusationLedger';
 import { STALE_PENDING_INVITATION_MS, STRANDED_PENDING_MEMBERSHIP_MS } from './retention.constants';
 
 /**
@@ -85,7 +86,10 @@ describe('AppController - the seat clocks read pendingSince, never updatedAt', (
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(Group),
+          useValue: { ...emptyRepo(), manager: memoryAccusationLedger() },
+        },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },

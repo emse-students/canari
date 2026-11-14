@@ -1,6 +1,38 @@
 <script lang="ts">
   import LegalDocument from '$lib/components/legal/LegalDocument.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { onMount } from 'svelte';
+  import { refreshAppVersionCheck, serverRetention } from '$lib/stores/appVersionCheck.svelte';
+  import { retentionInForce } from '$lib/legal/retention';
+  import { durationLabel } from '$lib/legal/retentionLabel';
+  import { getLocale } from '$lib/paraglide/runtime';
+
+  /**
+   * THE DURATIONS AN ADMIN SETS ARE RENDERED FROM THE SAME SOURCE THE SERVICES READ (owner,
+   * 2026-11-14): `GET /api/version`'s `retention`, from `platform_config` - never a number typed in
+   * this text, so the policy and the code cannot disagree. The page has no prerendered or
+   * server-rendered body (`ssr = false` in the root layout), so it shows the live answer, else this
+   * session's cached one DATED ("valeurs du ..."), else - offline with no answer ever read here - the
+   * values each setting is created with, and says so above the table (docs/wiki/retention-settings.md).
+   */
+  const retention = $derived(retentionInForce(serverRetention()));
+  const readOn = $derived(
+    retention.readAt === null
+      ? ''
+      : new Intl.DateTimeFormat(getLocale(), { dateStyle: 'long', timeStyle: 'short' }).format(
+          retention.readAt
+        )
+  );
+
+  onMount(() => {
+    void refreshAppVersionCheck().then(() => {
+      if (serverRetention()?.live !== true) {
+        console.warn(
+          `[privacy] the retention durations could not be read from the server - ${serverRetention() ? 'an earlier answer of this session is shown, dated' : 'the defaults are shown'}, and the page says so`
+        );
+      }
+    });
+  });
 
   /**
    * The document's own sections, in order. Numbered here because the DOCUMENT numbers
@@ -30,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="10/11/2026"
+  updated="14/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -81,10 +113,13 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
-          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
-          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
-          déconnexion, et il n'apparaît jamais dans une notification.
+          l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
+          l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
+          jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
+          réponse perdue. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
+          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
+          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
+          jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -104,22 +139,25 @@
         <dt>Publications, commentaires, réactions, sondages, CanaReels</dt>
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
-          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
-          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
-          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
-          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
-          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
-          personne et il est conservé sans limite de durée, même après la suppression de votre
-          compte. Une association, une liste ou une institution peut vous demander de relayer une de
-          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
-          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
-          première fois et, pour une institution, son public possible) vous est adressée, et rien
-          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
-          d'une institution, votre publication est vue de son public, y compris de ses membres qui
-          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
-          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
-          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          plateforme selon l'audience choisie. Une institution (l'École, une Maison des Élèves,
+          l'association des alumni) choisit pour chacune de ses publications les espaces qu'elle
+          vise et son public (étudiants, personnel ou tous) ; les publics « Personnel » et « Tous »
+          atteignent tout le personnel du campus d'un espace coché. Les fichiers joints sont
+          chiffrés avant l'envoi. Une publication en cours d'envoi attend sur votre appareil, avec
+          ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une
+          simple déconnexion la conserve, la suppression de votre compte l'efface. Quand une
+          publication est supprimée, le serveur garde son identifiant et la date de suppression,
+          sans auteur ni contenu, pour qu'un envoi encore en route ne la fasse pas réapparaître ;
+          cet identifiant ne désigne plus personne et il est conservé sans limite de durée, même
+          après la suppression de votre compte. Une association, une liste ou une institution peut
+          vous demander de relayer une de vos publications personnelles : la demande (l'association,
+          la liste ou l'institution, le membre qui l'a faite, la publication, le nombre de personnes
+          qui la verraient pour la première fois et, pour une institution, son public possible) vous
+          est adressée, et rien n'est montré à son public tant que vous n'avez pas accepté. Si vous
+          acceptez la demande d'une institution, votre publication est vue de son public, y compris
+          de ses membres qui font partie du personnel ; si ce public a changé depuis que vous l'avez
+          lu, votre acceptation est refusée et le nouveau public vous est montré. Une fois le relais
+          accepté, ceux qui voient votre publication suivent le public et les membres ACTUELS de
           l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
           nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
           la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
@@ -166,13 +204,14 @@
           donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
           serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
           feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
-          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
-          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
-          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
-          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
-          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
-          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
-          lecture.
+          réactions. Lorsque les rediffusions sont activées sur Canari, un direct d'au moins 30
+          secondes reste visible en rediffusion pendant la durée indiquée en section 6, par le même
+          public ; sinon, un direct n'est pas enregistré. Avant votre premier direct, vous acceptez
+          les règles de publication : la version acceptée et sa date sont conservées. Pour limiter
+          les abus, le serveur garde aussi l'heure de chacun de vos démarrages pendant une heure.
+          Les journaux techniques notent les débuts et fins de direct, les coupures et les retraits
+          de spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
         </dd>
       </div>
       <div>
@@ -329,7 +368,9 @@
       <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
-          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
+          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires (et, si le
+          formulaire vous laisse modifier votre réponse, la date de votre dernière modification,
+          visible de ceux qui le gèrent, sans historique des versions précédentes) et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
           attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
@@ -349,7 +390,10 @@
           effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
           cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
           formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
-          supprimé avec le formulaire.
+          supprimé avec le formulaire. Quand le BDE de votre espace publie la carte de la vie
+          associative, votre nom, votre photo de profil et votre rôle dans les associations qui y
+          figurent peuvent y être affichés, visibles de tous sans compte sur le portail, jusqu'à la
+          prochaine publication ou la suppression de votre compte, qui les en retire.
         </dd>
       </div>
       <div>
@@ -418,7 +462,10 @@
           nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
           créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
           bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
-          a été supprimé entre-temps.
+          a été supprimé entre-temps. Quand vous demandez un lien d'abonnement à l'agenda, Canari
+          enregistre votre identifiant et l'agenda choisi (campus, formation ou association) jusqu'à
+          ce que vous révoquiez vos liens, que l'association soit supprimée ou que votre compte le
+          soit ; quiconque détient ce lien voit ce que vous voyez de cet agenda, et rien de plus.
         </dd>
       </div>
       <div>
@@ -570,7 +617,8 @@
           <tr>
             <td>Compte, profil, annuaire</td>
             <td
-              >Vous reconnaître, vous permettre de trouver et d'être trouvé par les autres membres</td
+              >Vous reconnaître, vous permettre de trouver et d'être trouvé par tout membre
+              connecté, grâce à l'annuaire des membres</td
             >
             <td>Exécution du service (6.1.b)</td>
           </tr>
@@ -779,6 +827,14 @@
   <!-- 6 -->
   <section id="retention">
     <h2>6. Durées de conservation</h2>
+    <p>{m.legal_privacy_retention_settings_note()}</p>
+    {#if retention.source === 'defaults'}
+      <p role="status"><strong>{m.legal_privacy_retention_defaults_notice()}</strong></p>
+    {:else if retention.source === 'cached'}
+      <p role="status">
+        <strong>{m.legal_privacy_retention_cached_notice({ date: readOn })}</strong>
+      </p>
+    {/if}
     <div class="legal-table-wrap">
       <table class="legal-table">
         <thead>
@@ -820,6 +876,10 @@
             <td>90 jours au plus</td>
           </tr>
           <tr>
+            <td>Trace d'un message privé envoyé (expéditeur, appareil, identifiant aléatoire)</td>
+            <td>90 jours au plus ; avant, avec la conversation ou le compte de l'expéditeur</td>
+          </tr>
+          <tr>
             <td>Messages de salon (chiffrés)</td>
             <td>365 jours, sauf messages épinglés ; ou jusqu'à leur suppression</td>
           </tr>
@@ -833,14 +893,25 @@
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
             <td>
-              90 jours sans consultation ; CanaReels de conversation : 30 jours. Les fichiers
-              envoyés avant octobre 2026, ou par une version de l'application antérieure, sont pour
-              l'instant conservés sans limite
+              {durationLabel(retention.days.idleFileDays)} sans consultation ; CanaReels de conversation
+              : {durationLabel(retention.days.chatReelDays)} après l'envoi. Les fichiers envoyés avant
+              octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
+              sans limite
             </td>
           </tr>
           <tr>
             <td>Publications, commentaires, médias des publications</td>
-            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : un an</td>
+            <td>
+              Jusqu'à leur suppression ou celle du compte ; CanaReels du fil :
+              {durationLabel(retention.days.reelDays)} après leur publication
+            </td>
+          </tr>
+          <tr>
+            <td>Rediffusion d'un direct (lorsque les rediffusions sont activées)</td>
+            <td>
+              {durationLabel(retention.days.liveReplayDays)} après la fin du direct, puis supprimée avec
+              sa vidéo ; ou avant, à sa suppression
+            </td>
           </tr>
           <tr>
             <td>Démineur : parties classées, scores, exclusions du classement</td>

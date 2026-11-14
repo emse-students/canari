@@ -87,7 +87,8 @@ maybe('the agenda reached spaces against PostgreSQL', () => {
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
-        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
+        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "reachPublic" varchar(16), "reachSpaces" jsonb);
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         event_id uuid NOT NULL, association_id uuid NOT NULL);
     `);

@@ -10,8 +10,7 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
-    aggregatedCalendarFeedIcsAbsoluteUrl,
-    icsSubscriptionRangeISO,
+    agendaSubscriptionIcsAbsoluteUrl,
     listEventCoOrganisers,
     getEventWriteSide,
     type AssociationCalendarEvent,
@@ -54,7 +53,8 @@
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
-  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
+  import { eventReachOffered } from '$lib/calendar/eventReach';
+  import { createSubscriptionLink } from '$lib/calendar/subscriptionLink.svelte';
   import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -77,6 +77,13 @@
      * anyone else (`CALENDAR_NEUTRAL_NOT_A_BDE`, and the route's PROPOSE_EVENT).
      */
     canPresentNeutral?: boolean;
+    /** This association's name: the reach picker names it. */
+    associationName?: string;
+    /**
+     * This association's type. An INSTITUTION chooses each event's spaces and public (owner,
+     * 2026-11-13); every other type files to its whole audience.
+     */
+    associationType?: string | null;
   }
 
   let {
@@ -85,6 +92,8 @@
     canEdit = false,
     canDeclareBreak = false,
     canPresentNeutral = false,
+    associationName = '',
+    associationType = null,
   }: Props = $props();
 
   /**
@@ -139,17 +148,22 @@
     // Only this BDE's OWN events: one it co-organises belongs to another association, which is
     // never a BDE's to present as "Campus".
     canSetPresentation: canPresentNeutral && formValues.targetAssociationId === associationId,
+    // Only this institution's OWN events: one it co-organises is another owner's to reach.
+    canSetReach:
+      eventReachOffered(associationType) && formValues.targetAssociationId === associationId,
   });
 
   let showSubscribeModal = $state(false);
 
-  /** ~15 months window for feed subscription (server max ~18 months). */
-  const feedSigner = createFeedSigner(() => (showSubscribeModal ? { associationId } : null));
-  const calendarIcsUrl = $derived.by(() => {
-    if (!browser || !feedSigner.sig) return '';
-    const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId, sig: feedSigner.sig });
-  });
+  /** The reader's own link to this association's agenda (2026-11-14): made when they ask, in the modal. */
+  const subscriptionLink = createSubscriptionLink(() =>
+    showSubscribeModal ? { associationId } : null
+  );
+  const calendarIcsUrl = $derived(
+    browser && subscriptionLink.token
+      ? agendaSubscriptionIcsAbsoluteUrl(subscriptionLink.token)
+      : ''
+  );
 
   function associationPageUrl(): string {
     if (!browser || !associationSlug?.trim()) return '';
@@ -233,15 +247,8 @@
     )
   );
 
+  /** Closes the detail and hands over to `removeEvent`, which owns the ONE confirmation. */
   async function handleDetailDelete(id: string) {
-    if (
-      !(await showConfirm(m.asso_calendar_confirm_delete(), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      }))
-    ) {
-      return;
-    }
     agenda.detailModalOpen = false;
     agenda.detailEvent = null;
     await removeEvent(id);
@@ -611,6 +618,7 @@
   savingLabel={m.asso_calendar_saving_label()}
   onSubmit={submitEvent}
   onWithdraw={formValues.writeSide === 'partner' ? withdrawFromEvent : null}
+  ownerName={associationName}
   onClose={closeModal}
 />
 
@@ -618,6 +626,9 @@
   open={showSubscribeModal}
   onClose={() => (showSubscribeModal = false)}
   icsUrl={calendarIcsUrl}
-  signing={feedSigner.status}
+  signing={subscriptionLink.status}
+  onAsk={subscriptionLink.ask}
+  revokeStatus={subscriptionLink.revokeStatus}
+  onRevoke={subscriptionLink.revoke}
   intro={m.asso_calendar_subscribe_intro()}
 />

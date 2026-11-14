@@ -18,6 +18,7 @@ import { GroupMembershipInterval } from './entities/group-membership-interval.en
 import { SeatEviction } from './entities/seat-eviction.entity';
 import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
+import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -61,6 +62,7 @@ const SWEPT = [
   SeatEviction,
   JoinAskPush,
   RevokedDeviceGroup,
+  SentFrameReceipt,
   UserDismissedGroup,
 ];
 
@@ -82,6 +84,7 @@ const FAKE_TABLE = new Map<unknown, string>([
   [SeatEviction, 'table_of_seat_eviction'],
   [JoinAskPush, 'table_of_join_ask_push'],
   [RevokedDeviceGroup, 'table_of_revoked_device_group'],
+  [SentFrameReceipt, 'table_of_sent_frame_receipt'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 

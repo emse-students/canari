@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adoptDroppedPeople,
+  bureauPicksByAssociation,
   createSerialSaver,
   layoutFingerprint,
+  publishedPeopleByAssociation,
   type LayoutFingerprintParts,
 } from './editorPersistence';
 import type { PositionedBubble } from './layout';
@@ -118,5 +121,95 @@ describe('createSerialSaver - a publish may not overtake a save', () => {
 
     expect(await saver.save()).toBe(false);
     expect(await saver.save()).toBe(true);
+  });
+});
+
+describe('adoptDroppedPeople - the editor takes whom the server cut, from a save or a publish', () => {
+  const member = (userId: string) => ({ userId });
+  const people = (positioned: PositionedBubble[], parked: PositionedBubble[] = []) => ({
+    positioned,
+    parked,
+    members: { a1: [member('gone'), member('kept')], a2: [member('other')] },
+  });
+
+  it('removes the bureau picks a SAVE dropped, and the roster entry, so the next save sends them no more', () => {
+    const local = people([bubble({ selectedBureau: ['gone', 'kept'] }), bubble({ assoId: 'a2' })]);
+    const sent = [{ assoId: 'a1', selectedBureau: ['gone', 'kept'] }, { assoId: 'a2' }];
+    const stored = [{ assoId: 'a1', selectedBureau: ['kept'] }, { assoId: 'a2' }];
+    const first = adoptDroppedPeople(
+      local,
+      bureauPicksByAssociation(sent),
+      bureauPicksByAssociation(stored)
+    );
+    expect(first.dropped).toBe(1);
+    expect(first.people.positioned[0].selectedBureau).toEqual(['kept']);
+    expect(first.people.positioned[1]).toBe(local.positioned[1]);
+    expect(first.people.members.a1).toEqual([member('kept')]);
+    expect(first.people.members.a2).toBe(local.members.a2);
+    // The next save sends the adopted state; the server keeps it whole, and nothing is dropped.
+    const resent = bureauPicksByAssociation(first.people.positioned);
+    const second = adoptDroppedPeople(first.people, resent, resent);
+    expect(second).toEqual({ people: first.people, dropped: 0 });
+    expect(second.people).toBe(first.people);
+  });
+
+  it('removes whom a PUBLISH cut from the cards and the rosters, from placed and parked bubbles alike', () => {
+    const local = people(
+      [bubble({ selectedBureau: ['gone', 'kept'] })],
+      [bubble({ assoId: 'a2', selectedBureau: ['other'] })]
+    );
+    const sent = {
+      units: [{ assoId: 'a1', cards: [{ userId: 'gone' }, { userId: 'kept' }] }],
+      directory: {
+        zones: [
+          {
+            assos: [
+              { assoId: 'a1', line: 'x', members: [{ userId: 'gone' }, { userId: 'kept' }] },
+              { assoId: 'a2', line: 'y', members: [{ userId: 'other' }] },
+            ],
+          },
+        ],
+      },
+    };
+    const stored = {
+      units: [{ assoId: 'a1', cards: [{ userId: 'kept' }] }],
+      directory: {
+        zones: [
+          {
+            assos: [
+              { assoId: 'a1', line: 'x', members: [{ userId: 'kept' }] },
+              { assoId: 'a2', line: '', members: [] },
+            ],
+          },
+        ],
+      },
+    };
+    const out = adoptDroppedPeople(
+      local,
+      publishedPeopleByAssociation(sent),
+      publishedPeopleByAssociation(stored)
+    );
+    expect(out.dropped).toBe(2);
+    expect(out.people.positioned[0].selectedBureau).toEqual(['kept']);
+    expect(out.people.parked[0].selectedBureau).toEqual([]);
+    expect(out.people.members).toEqual({ a1: [member('kept')], a2: [] });
+  });
+
+  it('keeps a pick added while the request was in flight: it was never sent, so never dropped', () => {
+    const local = people([bubble({ selectedBureau: ['gone', 'kept', 'added'] })]);
+    const out = adoptDroppedPeople(
+      local,
+      bureauPicksByAssociation([{ assoId: 'a1', selectedBureau: ['gone', 'kept'] }]),
+      bureauPicksByAssociation([{ assoId: 'a1', selectedBureau: ['kept'] }])
+    );
+    expect(out.people.positioned[0].selectedBureau).toEqual(['kept', 'added']);
+  });
+
+  it('changes nothing when the server stored what was sent, and reads a malformed document as naming nobody', () => {
+    const local = people([bubble({ selectedBureau: ['kept'] })]);
+    const layout = bureauPicksByAssociation([{ assoId: 'a1', selectedBureau: ['kept'] }]);
+    expect(adoptDroppedPeople(local, layout, layout)).toEqual({ people: local, dropped: 0 });
+    expect(publishedPeopleByAssociation(null).size).toBe(0);
+    expect(publishedPeopleByAssociation({ units: 'x', directory: { zones: [null] } }).size).toBe(0);
   });
 });

@@ -25,6 +25,8 @@ const SUBMITTER_FIELDS = [
   'paymentMethod',
   'cashExpiresAt',
   'createdAt',
+  // When the respondent last changed the answer (migration 166): the managers' "modifiee le".
+  'editedAt',
 ] as const;
 
 /**

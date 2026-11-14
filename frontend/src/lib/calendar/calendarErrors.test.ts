@@ -36,6 +36,19 @@ describe('calendarErrorMessage', () => {
     }
   );
 
+  // An institution's event reach (owner, 2026-11-13) answers with the posts' four codes.
+  it.each([
+    ['institution_reach_required'],
+    ['institution_reach_not_offered'],
+    ['institution_reach_invalid'],
+    ['institution_reach_outside_audience'],
+  ])('translates the reach refusal %s', (code) => {
+    const out = calendarErrorMessage(new SocialApiError(RAW, code, 400), fallback);
+
+    expect(out).not.toBe('FALLBACK');
+    expect(out).not.toContain(RAW);
+  });
+
   it('falls back for a code nobody has translated yet, rather than showing the English', () => {
     // The half that closes the defect: translating the three known codes fixes three sentences,
     // refusing to print the server's text is what stops the fourth.

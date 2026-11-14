@@ -34,7 +34,6 @@ const ALLOWED: Record<string, string> = {
   post_poll_max_selections_badge: 'a limit exists for two answers or more only',
   post_poll_selection_full_hint: 'a limit exists for two answers or more only',
   calendar_owners_and_others: 'shown for three owners or more (the first is named)',
-  directory_results_truncated: 'a truncation never leaves one result',
   notif_grouped_many_others: 'a grouped notification carries at least two others',
   reel_sendto_cap: 'the send cap is a fixed number above one',
   reel_sendto_failed_in_many: 'chosen only when more than one conversation failed',

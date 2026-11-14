@@ -1,5 +1,7 @@
 ## P2 - governance follows reach: an association reaching two BDEs' spaces is governed by either (proposal written 2026-11-02)
 
+target: 1.10.0
+
 The owner chose "the BDE of origin alone" for content crossing spaces, but `holdsBdeFlagOverSql`
 (`apps/social-service/src/spaces/bde.ts`) grants validation and management to the BDE of ANY space
 an association's audience reaches; on a campus split between two BDEs the default whole-campus

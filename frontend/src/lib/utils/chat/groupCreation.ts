@@ -13,7 +13,11 @@ import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { captureGroupReadyAnnouncer } from './groupReadyAnnouncer';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
-import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
+import {
+  buildConversationRow,
+  findDirectConversationByPeer,
+  isRawId,
+} from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
@@ -1283,11 +1287,9 @@ export async function startNewConversation(
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return { ok: true, key: null };
 
-  // Check local map first
-  const existingDirect = Array.from(conversations.entries()).find(([, convo]) => {
-    if ((convo.conversationType ?? 'group') !== 'direct') return false;
-    return (convo.directPeerId ?? convo.contactName).toLowerCase() === contact;
-  });
+  // Check local map first. A retired DM with this contact is not one (`findDirectConversationByPeer`):
+  // the server check below decides whether a live group stands, and otherwise a new one is created.
+  const existingDirect = findDirectConversationByPeer(conversations, contact);
 
   if (existingDirect) {
     const [existingKey, existingConvo] = existingDirect;

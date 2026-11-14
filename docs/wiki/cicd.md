@@ -78,6 +78,52 @@ sha, the NEWEST of them, concluded `success` - not any app's, not one green amon
 left is the instant between those reads and the merge call (a re-run started on the same commit),
 on a commit that was already green. `arm-auto-merge-app.test.sh` B33 pins each refusal.
 
+**A BASE THAT MOVES UNDER THE ARMING IS A REASON TO ASK AGAIN, AND THE ONLY ONE (2026-11-14, Canari
+only).** On a pull request that is already mergeable, `gh pr merge --auto` merges at once, and GitHub
+refuses that merge when `main` took another one in the same seconds ("Base branch was modified",
+measured on #3519, run 43605328429). The step used to treat it as final and to print a cause it had
+not observed, so a ready, green pull request stayed unarmed. One attempt is now a function; the step
+reads the tip of the base before and after it, **as data, never from the prose of the refusal**, and
+asks again only when the pull request is still open, ready, on the judged head AND that tip changed.
+Each further attempt therefore answers one observed change of that tip, there are four attempts at
+most, and nothing waits. Every other refusal fails once and names what was read: the pull request's state and
+merge state, whether its head moved, whether the base moved, and the `CI passed` reading when that
+is what refused the immediate merge. A pull request found merged after a refusal ends the step
+green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal text never varies. **What it
+does not close**: right after a base moves GitHub reads the merge state `UNKNOWN` for a moment, and a
+refusal met there with the base standing still fails once, naming `UNKNOWN`.
+
+**THE ARMING IS GITHUB'S MUTATION, NEVER `gh pr merge --auto`: THE STEP CAN ARM, OR MERGE BEHIND ITS
+OWN READS, AND NOTHING ELSE DECIDES (2026-11-14, Canari first).** `gh pr merge --auto` reads the merge
+state itself and, when the pull request looks mergeable to it, sends `mergePullRequest` instead of
+arming - the refusal measured on #3519 (run 43605328429, attempt 1) was signed `(mergePullRequest)` although the step had only
+asked to arm. With an App that bypasses the ruleset, that merge was judged by `gh`'s reading alone,
+beside the strict reads described above. The step now sends
+[`enablePullRequestAutoMerge`](https://docs.github.com/en/graphql/reference/pulls) through
+`gh api graphql`, with `mergeMethod: SQUASH` (the documented default is MERGE) and `expectedHeadOid`
+set to the head the guard judged. That mutation arms or refuses. When it refuses, the step reads the
+state as data, as before, and the ONLY merge it ever makes is the explicit
+`gh pr merge --squash --match-head-commit` behind `mergeStateStatus` and its own `CI passed` read.
+**What the documentation does not say**: what the mutation answers on a pull request that is already
+mergeable. That it refuses is a measurement (#3202, "unstable status"), not a documented fact, and
+the step does not depend on the wording: any refusal leads to the same reads.
+**Observed on the first two real pull requests, both already mergeable when the step ran
+(2026-11-14).** #3559, run 43637460344: the mutation was refused (`Pull request Pull request is in
+unstable status`), the step logged `#3559 is already UNSTABLE and CI passed is green on eec504e... -
+merging it now.` and its explicit merge landed. #3560, run 43637462313, met the same refusal and the
+same read, then its explicit merge was refused, `Base branch was modified. Review and try the merge
+again. (mergePullRequest)` - #3559 had just landed - so the step logged `main moved during attempt 1
+(fe4a472... -> 5274f25...) and the pull request is not armed - asking again.`, and the second
+attempt's mutation was ACCEPTED: `Auto-merge armed. GitHub will squash-merge #3560 as soon as CI
+passed goes green.` GitHub merged it thirteen seconds after #3559. So each path was seen once: the
+refusal followed by the gated merge, and the mutation arming; the retry was justified by a base tip
+that had been read to move, not by a clock.
+`arm-auto-merge-app.test.sh` B32 fails if a `gh pr merge --auto` comes back, and B36 that across
+every case of the step none was sent, that an accepted arming merges nothing, and that a refused one
+on a clean, green pull request is followed by exactly one explicit merge. **Sky, MiGallery and
+Portail-etu still call `gh pr merge --auto`**: the line is a declared `# canari-only:shared`
+difference until each takes this same step, in its own pull request.
+
 **THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
 REQUEST** (user: _"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
 dependabot"_). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
@@ -278,6 +324,16 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+A rollback also runs the services in the SAME order as a forward deploy (`replace-modes.py`, from
+`depends_on`), so a contract a newer core-service serves and a newer social-service reads has a window
+on the way back that it has not on the way forward: the older core-service is up while the newer
+social-service still runs. **Known window (D32, 2026-11-14):** social-service reads `cursusViews` from
+core-service's internal profile; across a rollback past the release carrying D32, every operation priced
+on a profile (a form's `/check` and submit, a boutique purchase, a booking space's listing) answers
+`503` with the typed code `PRICING_CORE_BEHIND` - logged `[PRICING] PRICING_CORE_BEHIND ... core-service
+older than the cursus views` - for the minutes social-service's own replacement takes. Failing closed
+is deliberate: pricing on no cursus would overcharge every student
+([forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong)).
 
 #### A migration the owner must approve is held (2026-11-01)
 
@@ -359,8 +415,8 @@ or the file is reverted. That is the design: the yes is asked where it can no lo
   request number, so it describes whatever the head was at that read**: the head is read after it,
   and the run arms only while that head is still the event's own commit. A head that moved means a
   newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
-  owner's file). And the arming itself names that commit (`gh pr merge --auto --match-head-commit`,
-  as the Dependabot path always did), so a push between the guard and the arming call makes GitHub
+  owner's file). And the arming itself names that commit (`expectedHeadOid` on the
+  `enablePullRequestAutoMerge` mutation; `--match-head-commit` on the explicit merge), so a push between the guard and the arming call makes GitHub
   refuse it: that run fails, and the run the push raised judges the new head.
 - **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
   its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads
@@ -659,6 +715,15 @@ its 300 reloads. On the targets with an address for the take-out: 0 failures in 
 300. On the targets with a container name and the API switch: 0 failures in 37 018 POSTs across
 300. Case 2 alone crosses four such reloads, which is why the window showed once in 58 runs.
 
+**Read in production (2026-11-14, the `v1.6.12` deploy, read-only).** Across the deploy job
+(about 09:07-09:14Z) and the six minutes after it, the production edge - the one proxy that stays up
+through a release - logged 0 `no live upstreams`, 0 `connect() failed`, 0 resets and 0 lines of
+error class, through 5 clean reloads while the `frontend` and `frontend-ssr` replicas were recreated.
+Said with its limit: it is the edge's log, read after the fact; the retired replicas' own logs went
+with them. An earlier attempt had found the `v1.6.11` window unreadable (the edge was recreated by
+that deploy, and the archive is taken before the first `up -d`), which is why this one was taken on
+a deploy that kept the edge.
+
 **The load cases run the fixture frontend, not the real image** - a gap, said. The real
 `Dockerfile.frontend` needs every service it routes to; the fixture (`rolling-fixture/frontend.conf`)
 carries what decides a reload's behaviour: the `auth_request` every API location makes before choosing
@@ -708,6 +773,14 @@ declaration cannot hold:
 | `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` |
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory), adminer (built here while upstream lacks a fixed `libpq`, [legacy](legacy-compatibility.md)) | -                                                            |
 | `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, `edge`                                                                     | not an image this repository builds                          |
+
+**A PINNED DIGEST THAT MOVES IS PULLED BEFORE ANY `up`, THROUGH THE REGISTRY RETRY.** The release's
+pull names only what it built, so the day a pinned digest moves the host does not hold the image.
+`deploy-environment.sh` asks the daemon which pinned images it lacks (`image inspect`, a fact, so an
+ordinary release pulls nothing) and pulls those through `with_registry_retry` before the database is
+touched: a registry that does not answer exits 75 with nothing changed, instead of failing inside the
+`up` that replaces postgres. The gap a moved datastore pin costs is then a stop and a start
+(`deploy-registry-retry.test.sh`).
 
 **THE HOST PORT MOVED TO A CONTAINER THAT NEVER CHANGES.** Two replicas cannot both bind
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
@@ -1242,7 +1315,7 @@ both store uploads and the version bump itself:
 | 1   | Is the version a version?                            | a typo must not reach a store band computation                                                        |
 | 2   | Is the released commit on `main`?                    | everything downstream reads the trunk                                                                 |
 | 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
-| 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
+| 4   | Is it EXACTLY the latest pre-release's commit, and has the dev estate already served it? (stable only) | **production cannot be ahead of dev**, and a stable is built from its last alpha, never from `main` ([2026-11-14](#the-stables-commit-is-asserted-not-only-derived-2026-11-14)) |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 
@@ -1448,7 +1521,8 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   version (`latest_prerelease_tag`, version order) and resolves THAT commit once; no such tag is an
   error naming the command to cut one. The stable's own tag is not read.
 - **Gates.** 2 asks only that `main` contains the commit (the fast-forward question has nobody
-  asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
+  asking it); 3 reads `CI passed` on it; 4 first asserts the commit IS the latest pre-release's
+  (below), then that dev served it; 5 is unchanged.
 - **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
   contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
   stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs.
@@ -1459,6 +1533,41 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
   retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
   production back. Test: `land-release.test.sh`.
+
+#### The stable's commit is asserted, not only derived (2026-11-14)
+
+Owner, 2026-11-14: _"La stable devrait toujours etre build depuis la derniere alpha, independamment
+de main."_ That was already how the resolve step CHOSE the commit, but nothing CHECKED the choice:
+gate 2 asks only that `main` contains the commit and gate 4 only that dev is at or past it, so
+`main`'s head would have passed both. Gate 4 now opens by re-deriving the latest
+`vX.Y.Z-label` tag and its commit from the API and refusing anything but equality
+(`classify_stable_source` in `lib/release-preconditions.sh`, asserted with the `v1.6.12` pair by
+`release-preflight.test.sh`, which also checks the preflight calls it).
+
+**What raised it, and why it was a misreading.** `v1.6.12` was typed against `main`
+(`gh release create v1.6.12 --generate-notes`), nine pull requests past `v1.6.12-alpha.2`. The run's
+`headSha` and the tag as first fetched both read `main`'s head (`640aa34b`), and `git log
+v1.6.12-alpha.2..v1.6.12` listed nine commits dev never served. The run's own log says otherwise:
+the resolve step printed `Stable 1.6.12 ships v1.6.12-alpha.2`, the preflight ran at `fa1bc265`, the
+bump committed `0b6947d2` on it and moved the tag there, and every arm checked out `0b6947d2`
+(`git log fa1bc265..0b6947d2` is the bump alone; no migration, no group-call code). Two traps to
+read a stable by:
+
+- **A run's `headSha` is the commit the tag named WHEN PUBLISHED**, never what the arms built. Read
+  `Every arm of this release builds <sha>` in the bump job.
+- **`git fetch --tags` never updates a tag that moved** - the stale local `vX.Y.Z` keeps naming the
+  commit the human typed against. `git fetch --tags --force`, or `git ls-remote origin refs/tags/vX.Y.Z`.
+
+**What does come from `main`'s head: the workflow files.** GitHub runs a release event's workflows
+(and every `workflow_call` they make) from the commit the tag named at publication, so `release.yml`,
+`serve-prod.yml` and the rest ran from `640aa34b`. The built tree, the deploy scripts and the
+migrations are the alpha's; only the YAML is not. For `v1.6.12` that meant two extra secrets passed
+by `serve-prod.yml` that the shipped compose file never reads. **Closed the same day (lead):** gate 4
+also judges the commit the tag was published on (`PUBLISHED_SHA`, `github.sha`) with the same
+classifier, and refuses a stable not typed ON the latest alpha's commit; the refusal names the
+command, `gh release create vX.Y.Z --target <alpha sha> --generate-notes`, after
+`gh release delete vX.Y.Z --cleanup-tag`. `release-preflight.test.sh` asserts the refusal and that
+`release.yml` hands `PUBLISHED_SHA` in.
 
 ### A pre-release is pinned on its release branch (decided 2026-10-30)
 
@@ -1708,7 +1817,9 @@ here rather than fixed silently.
 ## Release workflow
 
 ```
-gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gesture, and the last one
+gh release create vX.Y.Z-alpha.N --prerelease --generate-notes   <- a pre-release: main's head
+gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
+                                                     <- a stable: ON its alpha, or gate 4 refuses
   |
   '- Release (release.yml), ONE run
        |
@@ -1948,6 +2059,17 @@ one composite action with one pinned toolchain
 the same defect wearing a different hat - two toolchains put two cryptos back in the fleet.
 
 ## Dependency updates, and the auto-merge that ships them
+
+**A third-party action is named by a commit, with its version beside it** (`uses: owner/action@<40 hex> # v2.2.0`).
+A tag is a name its publisher may move, and a step runs with the job's token and secrets; a commit
+id names one tree. Actions of GitHub's own organisations (`actions/`, `github/`) keep their tag, and
+a local reference needs no pin. Dependabot's `github-actions` ecosystem moves the commit and the
+comment together, so the pins are updated by the same pull requests as before - for every directory
+its entry names: `/` is the workflows, and `/.github/actions/*` the composite actions, whose pins
+would otherwise stay frozen.
+`.github/scripts/tests/action-pins.test.mjs` fails `make test-ci-scripts` on a third-party
+reference that is a tag, a branch, a short commit, or a commit with no version comment, and on a
+file holding a pin that no directory of that Dependabot entry reads.
 
 Dependabot opens the pull requests (`.github/dependabot.yml`); **from there they are the same as
 anybody's**. `arm-auto-merge.yml` arms GitHub's own auto-merge on every pull request in the
@@ -2869,7 +2991,7 @@ and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN`
   `brotli-libs@1.2.0-r1` so a later build is not covered: the inventory shows only libcurl (all four)
   and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
   in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
-  ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+  ([backlog](backlog.d/p3-bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-1-2-1-2026-10-24.md)).
 - Later the same day, two more on every pull request. **`CVE-2026-109869`**, `undici` 6.28.0 in
   `node:24-alpine`, is npm's own copy (`usr/local/lib/node_modules/npm/node_modules/undici`) and the
   tag was already the newest Node 24 (24.22.1, npm 11.19.1): **allowlisted** by path with the other
@@ -2877,7 +2999,7 @@ and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN`
   not that file. **`CVE-2026-111497` again**, as Debian's `libbrotli1` 1.1.0-2+b7 in
   `goauthentik/server:2026.8.5` (fixed in 1.1.0-2+deb13u1): 2026.8.5 is the newest authentik release,
   so **allowlisted** by purl
-  ([backlog](backlog.md#p3---bump-authentik-when-a-release-ships-debians-libbrotli1-110-2deb13u1-2026-10-24)).
+  ([backlog](backlog.d/p3-bump-authentik-when-a-release-ships-debian-s-libbrotli1-1-1-0-2-deb13u1-2026.md)).
   One id on two packages exposed a hole in the retirement: the id check stays satisfied while EITHER
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
@@ -2898,7 +3020,7 @@ digest plus `apk upgrade --no-cache libpq`, built and pushed by every release li
 builds it and reads the result. It goes the day upstream ships the fix
 ([legacy-compatibility](legacy-compatibility.md#removal-once-upstream-adminer-ships-libpq--187-r0---the-adminer-image-this-repository-builds-owner-2026-11-13)).
 
-**2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+**2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.d/p3-bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-1-2-1-2026-10-24.md)).
 
 **Trivy's Dockerfile misconfiguration scan is not run; its two findings are asserted instead.**
 Measured the same day, it found `DS-0002` (no non-root `USER`) in all eight Dockerfiles and `DS-0029`
@@ -2987,7 +3109,7 @@ runtime bump and stops being this recipe.
 
 ### Five audit advisories are suppressed on one edge of media-service, and why each is unreachable
 
-The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire-themselves); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
+The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire.md); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
 
 - `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. It is ignored for that one service only: nothing in the chain can move (minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2`), and the fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot instead of at audit.
 - `GHSA-qr28-fpjm-wq7f` (high, denial of service; added 2026-10-29 when it turned every pull request red) is quadratic replacement of percent-encoded runs in the same `decode-uri-component`, every version at or below 0.5.0, on the same edge. Its fix, 0.5.1, is `type: module` as well, so the override stays refused for the same reason, and it rides the same premise: minio's dist calls query-string only as `stringify`, which never reaches `decodeComponent`.

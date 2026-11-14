@@ -18,6 +18,7 @@ import {
   DirectoryUserRow,
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
+import { cursusEntryFilter } from './cursus-filter';
 import { UserBlocksService } from './user-blocks.service';
 import {
   EMPTY_PROFILE,
@@ -272,7 +273,18 @@ export class UsersService implements OnModuleInit {
       if (firstName && user.firstName !== firstName) changes.firstName = firstName;
       if (lastName && user.lastName !== lastName) changes.lastName = lastName;
       if (!sameProfile(user)) {
-        this.logger.debug(`OIDC profile changed for ${id}: campus=${profile.campus}`);
+        this.logger.debug(`OIDC profile changed for ${id.slice(0, 8)}: campus=${profile.campus}`);
+        // Every audience decision reads these two columns: a sign-in that takes away the campus,
+        // or the whole cursus, takes away every space - and an emptied cursus with a campus kept
+        // makes the person STAFF. It is the provider's answer and it is applied (WP3), but it
+        // accuses: a mapping that stopped emitting looks exactly the same.
+        const lostCampus = !!user.campus && !profile.campus;
+        const lostCursus = (user.cursus ?? []).length > 0 && profile.cursus.length === 0;
+        if (lostCampus || lostCursus) {
+          this.logger.warn(
+            `[OIDC_PROFILE_SHRANK] ${id.slice(0, 8)} lost ${[lostCampus && 'its campus', lostCursus && 'its whole cursus'].filter(Boolean).join(' and ')} at sign-in: the profile it signed in with opens no space`
+          );
+        }
         Object.assign(changes, profile, { promo, formation });
       }
       if (Object.keys(changes).length > 0) {
@@ -282,7 +294,7 @@ export class UsersService implements OnModuleInit {
           // The row is gone since the read: the caller refuses the sign-in, nothing is re-created.
           if (err instanceof UserRowGoneError) throw err;
           // Any other database refusal costs the refresh of the claims, never the sign-in.
-          this.logger.warn(`OIDC upsert of ${id} not saved: ${String(err)}`);
+          this.logger.warn(`OIDC upsert of ${id.slice(0, 8)} not saved: ${String(err)}`);
         }
         Object.assign(user, changes);
       }
@@ -389,22 +401,22 @@ export class UsersService implements OnModuleInit {
    * Hides the people this caller may not be shown from a TARGET PICKER: those they blocked, and
    * those who blocked them.
    *
-   * THIS SURFACE ONLY, and deliberately not the directory. `search` is what feeds the New chat
-   * modal, the salon invitation field and the mention autocomplete - it exists to pick somebody to
-   * act on. The directory is a browsing view with promo and cursus filters, and punching a hole in
-   * it would make a block visible in a screen that has nothing to do with it.
+   * Applied by `search` (the New chat modal, the salon invitation field, the mention autocomplete)
+   * AND, since 2026-11-13, by the directory: it was open to staff only, and opening it to every
+   * signed-in member would let someone find, by name, a person who blocked them.
    *
    * The exclusion is SYMMETRIC. Hiding only the blocked party would let them keep finding the
    * blocker, and hiding only the blocker would let the blocker re-open a conversation they closed.
    */
   private async applyBlockVisibility(
     qb: SelectQueryBuilder<User>,
-    requesterId?: string
+    requesterId: string | undefined,
+    caller: 'search' | 'directory'
   ): Promise<void> {
     if (!requesterId) return;
     const hidden = await this.blocksService.invisibleUserIdsFor(requesterId);
     if (hidden.length === 0) return;
-    this.logger.debug(`[search] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
+    this.logger.debug(`[${caller}] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
     qb.andWhere('user.id NOT IN (:...blockedIds)', { blockedIds: hidden });
   }
 
@@ -437,7 +449,7 @@ export class UsersService implements OnModuleInit {
     if (!applied) return [];
 
     await this.applyReviewCohortVisibility(qb, requesterId);
-    await this.applyBlockVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'search');
 
     return qb.take(10).getMany();
   }
@@ -445,7 +457,7 @@ export class UsersService implements OnModuleInit {
   /**
    * Paginated directory search with optional promo, formation and association filters.
    * Requires at least one filter or a name query of ≥ 2 characters. Includes the caller
-   * (requesterId) in results - the directory is a browsing view, not a target picker.
+   * (requesterId) in results, minus accounts blocked in either direction.
    */
   async directory(
     query: DirectoryQueryDto,
@@ -500,15 +512,11 @@ export class UsersService implements OnModuleInit {
       applyFuzzyNameSearch(qb, q);
     }
 
-    if (query.promo != null) {
-      qb.andWhere('user.promo = :promo', { promo: query.promo });
-    }
-
-    if (formation.length > 0) {
-      qb.andWhere('unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))', {
-        formation: `%${formation}%`,
-      });
-    }
+    // Promo and formation are read from EVERY cursus entry OR the legacy columns (D32, the union a
+    // price reads), and from the SAME place when both are asked: "ICM 2024" finds an ICM 2024
+    // student, never someone in ICM since 2021 and in another cursus since 2024.
+    const cursusFilter = cursusEntryFilter(query.promo, formation);
+    if (cursusFilter) qb.andWhere(cursusFilter.sql, cursusFilter.params);
 
     if (query.campus) {
       qb.andWhere('user.campus = :campus', { campus: query.campus });
@@ -523,11 +531,15 @@ export class UsersService implements OnModuleInit {
     }
 
     await this.applyReviewCohortVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId, 'directory');
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {
       qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
     }
+    // The id is the tie-break of BOTH orderings: with two people of the same name an offset page
+    // would otherwise be free to repeat one and skip the other between two requests.
+    qb.addOrderBy('user.id', 'ASC');
 
     const total = await qb.getCount();
     const rows = await qb.skip(offset).take(limit).getMany();

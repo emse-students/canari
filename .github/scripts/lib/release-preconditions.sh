@@ -139,6 +139,42 @@ latest_prerelease_tag() {
   printf '%s\n' "${tags[@]}" | sort -V | tail -1
 }
 
+# DOES THE STABLE BUILD EXACTLY ITS LATEST PRE-RELEASE'S COMMIT? Gate 4's first question, stables
+# only (owner, 2026-11-14: *"La stable devrait toujours etre build depuis la derniere alpha,
+# independamment de main."*).
+#
+# `release.yml`'s resolve step DERIVES the commit (`latest_prerelease_tag`, then the tag's commit),
+# and until 2026-11-14 nothing ASSERTED the result: gate 2 asks only that `main` contains the commit
+# and gate 4 only that dev is at or past it, so `main`'s head - which the stable's own tag names when
+# it is typed against `main` - would have passed both. The preflight re-derives the pair from the API
+# itself and hands it here; anything but equality refuses, so the stable's commit is decided by its
+# alpha and by nothing `main` holds.
+#
+# args:   <target sha> <latest pre-release tag of this version, or empty> <that tag's commit sha>
+# stdout: `exact <tag>`                     the stable builds precisely that pre-release's commit
+#         `mismatch <tag> <its sha>`        it would build something else - REFUSE
+#         `undecidable <why>`               no evidence either way, which is not permission
+classify_stable_source() {
+  local target="${1-}" tag="${2-}" tag_sha="${3-}"
+  if [ -z "$tag" ]; then
+    printf 'undecidable no pre-release of this version exists\n'
+    return 0
+  fi
+  if ! [[ "$target" =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'undecidable the target %s is not a full commit sha\n' "${target:-(empty)}"
+    return 0
+  fi
+  if ! [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'undecidable the commit of %s could not be read (%s)\n' "$tag" "${tag_sha:-nothing}"
+    return 0
+  fi
+  if [ "$target" = "$tag_sha" ]; then
+    printf 'exact %s\n' "$tag"
+  else
+    printf 'mismatch %s %s\n' "$tag" "$tag_sha"
+  fi
+}
+
 # IS THIS PRE-RELEASE STILL THE NEWEST RELEASE? Gate 2's second question, pre-releases only
 # (2026-10-30).
 #

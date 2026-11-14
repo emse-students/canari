@@ -130,21 +130,24 @@ import {
   storedGuestFields,
 } from './guest-identity';
 import {
-  bucketFor,
+  describeCursus,
   dimensionsNeedProfile,
   needsProfile,
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
+import { displaySlices, quoteSubmission, sliceOffersNothing, type CursusSlice } from './form-quote';
 import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
-  pricedQuestionIds,
-  pricingViewFor,
-  resolveCellPrice,
-  type CellValue,
-  type PriceMatrix,
-  type PricingView,
-} from '../pricing/price-matrix';
+  answerEditOff,
+  answerLocked,
+  answerNotEditable,
+  answerNotFound,
+  priceSnapshot,
+  rowLockedItemIds,
+  sameAnswer,
+} from './answer-edit';
+import { pricedQuestionIds, type PriceMatrix, type PricingView } from '../pricing/price-matrix';
 import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
 import {
   answerSelections,
@@ -167,6 +170,7 @@ import {
   ANSWER_MAX_TEXT_LENGTH,
   assertFormItemsShape,
   FORM_ANSWER_MISSING,
+  FORM_ANSWER_PAID,
   FORM_ANSWER_TOO_LONG,
   FORM_ANSWER_TOO_MANY_SELECTIONS,
   FORM_CLOSED,
@@ -177,6 +181,7 @@ import {
   FORM_SIGN_IN_REQUIRED,
   formRefusal,
   isQuestionAnswered,
+  PAID_SUBMISSION_STATUSES,
   withNormalisedGridAnswers,
 } from './answer-bounds';
 import { coreUrl } from '../internal/service-urls';
@@ -188,6 +193,7 @@ import {
   PROVIDER_MAX_AMOUNT_CENTS,
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
+import { LYDIA_BRIDGE_LOG_TAG } from '../associations/lydia-account-bridge';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import {
@@ -200,15 +206,15 @@ import {
   normaliseProductGridItems,
   priceProductGridAnswer,
   productGridItems,
-  productGridOrderEmpty,
   productGridPriceFingerprint,
-  productGridPricesFor,
   productGridsCharge,
   productGridsNameCotisation,
   productGridsNeedProfile,
   respondentItems,
+  type ProductGridFormContext,
 } from './product-grid';
 import {
+  productGridOrdered,
   productGridTotalCents,
   type ProductGridLine,
   type ProductGridPrices,
@@ -274,6 +280,50 @@ export function priceFingerprint(form: CreateFormDto): string {
   });
 }
 
+/** Whether a form takes answers now: past its opening, before its end (`closedAt`). */
+function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
+  const now = new Date();
+  if (form.opensAt && new Date(form.opensAt) > now) return false;
+  return !(form.closedAt && new Date(form.closedAt) < now);
+}
+
+/**
+ * Refuses an answer - a submit or an edit - to a form that is not open: before its opening, or
+ * after its end (`closedAt`, its end date or the manager's close). Typed, worded by the page.
+ */
+function assertFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): void {
+  if (form.opensAt && new Date(form.opensAt) > new Date()) {
+    throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
+  }
+  if (form.closedAt && new Date(form.closedAt) < new Date()) {
+    throw formRefusal(FORM_CLOSED, 'The form is closed.');
+  }
+}
+
+/**
+ * Validates answer sizes to prevent oversized payloads, for a submit and an edit alike. The DTO
+ * already bounds them for an HTTP caller (`IsValidAnswers`); this holds for any caller, with the
+ * typed code the page words (the textarea's `maxlength` keeps a person from ever meeting it).
+ */
+function assertAnswerSizes(answers: Record<string, unknown> | undefined): void {
+  for (const [key, value] of Object.entries(answers ?? {})) {
+    if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
+      throw formRefusal(
+        FORM_ANSWER_TOO_LONG,
+        `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
+        key
+      );
+    }
+    if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
+      throw formRefusal(
+        FORM_ANSWER_TOO_MANY_SELECTIONS,
+        `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
+        key
+      );
+    }
+  }
+}
+
 /**
  * The options of a form that can rule each other out, as the ONE shared rule reads them
  * (`form-option-rules.ts`, the editor's copy byte for byte). `takesPayment` counts every price
@@ -290,6 +340,7 @@ function formOptionStateOf(input: CreateFormDto & { anonymous?: boolean }): Form
     restrictsAudience:
       input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion),
     hasFileQuestion: hasFileQuestion(input.items),
+    allowsAnswerEdit: input.allowAnswerEdit === true,
   };
 }
 
@@ -316,6 +367,8 @@ const FORM_CONFLICT_MESSAGE: Record<FormSaveConflict, string> = {
     'An anonymous form cannot grant a cotisation: a cotisation is granted to an account.',
   FORM_ANONYMOUS_FILE:
     'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
+  FORM_ANONYMOUS_ANSWER_EDIT:
+    'An anonymous form cannot let an answer be changed: its answers name nobody who could reopen one.',
   FORM_PUBLIC_AUDIENCE:
     'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
     'against.',
@@ -359,8 +412,10 @@ export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
 
 /**
- * The 403 refusing to move a DRAFT between associations when the actor is not a member of BOTH the
- * association it leaves and the one it joins - the creation rule, applied to each side.
+ * The 403 refusing a form for an association whose forms the actor does not manage: a create naming
+ * it, or a DRAFT moved from or to it, needs MANAGE_FORMS there (`mayAct`: a BDE super-admin and a
+ * global admin included). Owner, 2026-11-14: only the members holding "gérer les formulaires"
+ * manage an association's forms - membership alone never did.
  */
 export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
 
@@ -714,7 +769,7 @@ export class FormsService {
    */
   private async normalisedProductGrids<T extends { type?: string }>(
     items: readonly T[] | null | undefined,
-    form: { isPublic: boolean; requiresPayment: boolean; associationId: string | null }
+    form: ProductGridFormContext
   ): Promise<T[]> {
     const list = [...(items ?? [])];
     const tiers =
@@ -722,9 +777,14 @@ export class FormsService {
         ? await this.userTagService.listCotisationTiers(form.associationId)
         : [];
     const normalised = normaliseProductGridItems(list, criteriaContextFor(tiers, []), form);
-    const grids = productGridItems(normalised).length;
-    if (grids > 0)
-      this.logger.debug(`[FORMS] save: ${grids} product grid(s) judged and normalised`);
+    const grids = productGridItems(normalised);
+    if (grids.length > 0) {
+      const required = grids.filter((g) => (g as { required?: unknown }).required === true).length;
+      this.logger.debug(
+        `[FORMS] save: ${grids.length} product grid(s) judged and normalised, ${required} required` +
+          (form.requiredSwitch ? '' : ' (an editor without the switch: stored flags kept)')
+      );
+    }
     return normalised;
   }
 
@@ -751,27 +811,6 @@ export class FormsService {
       answers,
       needProfile,
     });
-  }
-
-  /**
-   * The base price this submitter pays, in cents, and the buckets that decided it.
-   *
-   * The single answer behind both the quote shown before submitting and the amount actually
-   * charged. It was two byte-identical copies when it was one boolean; a grid makes a second copy
-   * unthinkable.
-   */
-  private priceFor(
-    form: Form,
-    facts: PricingFacts
-  ): { baseCents: CellValue; appliedBuckets: { dimensionId: string; label: string }[] } {
-    if (!form.priceMatrix) return { baseCents: form.basePrice, appliedBuckets: [] };
-    const baseCents = resolveCellPrice(form.priceMatrix, facts);
-    const appliedBuckets = form.priceMatrix.dimensions.map((d) => {
-      const bucketId = bucketFor(d, facts);
-      const bucket = d.buckets.find((b) => b.id === bucketId);
-      return { dimensionId: d.id, label: bucket?.label ?? 'Autres' };
-    });
-    return { baseCents, appliedBuckets };
   }
 
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
@@ -868,10 +907,7 @@ export class FormsService {
 
   private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
     if (input.associationId && !isGlobalAdmin) {
-      const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
-      if (!member) {
-        throw new ForbiddenException('You are not a member of this association.');
-      }
+      await this.assertManagesAssociationForms(input.ownerId!, input.associationId, 'create');
     }
     // A DRAFT is asked for by a client that publishes separately; a client that predates drafts
     // sends nothing and its form is published at once, as it always was (`form-status.ts`).
@@ -894,6 +930,8 @@ export class FormsService {
         isPublic: input.isPublic === true,
         requiresPayment: input.requiresPayment === true,
         associationId: input.associationId?.trim() || null,
+        requiredSwitch: input.gridRequiredSwitch === true,
+        storedItems: null,
       }),
     };
     // Whether the association may collect, and collect NOW, is judged at PUBLICATION for a draft
@@ -905,7 +943,14 @@ export class FormsService {
       userId: input.ownerId!,
       isGlobalAdmin,
     });
-    const { opensAt: opensAtRaw, closedAt: closedAtRaw, draft: _draft, ...rest } = input;
+    // `gridRequiredSwitch` is read by the save (`normalisedProductGrids`), never stored.
+    const {
+      opensAt: opensAtRaw,
+      closedAt: closedAtRaw,
+      draft: _draft,
+      gridRequiredSwitch: _gridRequiredSwitch,
+      ...rest
+    } = input;
     const form = this.formRepo.create({
       ...rest,
       status,
@@ -972,8 +1017,9 @@ export class FormsService {
   }
 
   /**
-   * Everything the user may manage, newest first: their own forms, and the forms of associations
-   * where they hold MANAGE_FORMS.
+   * Everything the user may manage, newest first: their own PERSONAL forms, and the forms of
+   * associations where they hold MANAGE_FORMS (`managesForm`: an association's form they created
+   * is listed only while they may manage it).
    *
    * That second group is the point. `assertFormManager` has always accepted MANAGE_FORMS, so those
    * forms were editable and exportable by API while appearing in no list on any screen - reachable
@@ -1009,13 +1055,42 @@ export class FormsService {
     // The two sets overlap - a form you own in an association you administer is in both - so they
     // are merged by id rather than concatenated.
     const byId = new Map<string, Form>();
+    // An owned association form whose association does not list them as a manager: asked by the
+    // same predicate as `managesForm` (a BDE super-admin's governed association included).
+    const ownedElsewhere = [
+      ...new Set(
+        owned
+          .map((f) => f.associationId)
+          .filter((id): id is string => !!id && !managedIds.includes(id))
+      ),
+    ];
+    const mayStill =
+      ownedElsewhere.length === 0
+        ? new Set<string>()
+        : await this.associationsService.mayActOnAny(
+            ownerId,
+            ownedElsewhere,
+            AssociationPermissionFlag.MANAGE_FORMS
+          );
     for (const form of [...owned, ...viaAssociation]) {
+      if (
+        form.associationId &&
+        !managedIds.includes(form.associationId) &&
+        !mayStill.has(form.associationId)
+      ) {
+        continue;
+      }
       byId.set(form.id, form);
     }
     const merged = [...byId.values()].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     return this.withAssociationNames(merged);
+  }
+
+  /** The display names of the associations these forms name, by association id. */
+  private associationNamesOf(forms: Pick<Form, 'associationId'>[]) {
+    return this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean));
   }
 
   /**
@@ -1025,7 +1100,7 @@ export class FormsService {
    */
   private async withAssociationNames(forms: Form[]) {
     const [names, changed] = await Promise.all([
-      this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean)),
+      this.associationNamesOf(forms),
       formsWithUnpublishedChanges(
         this.formRepo.manager,
         forms.map((f) => f.id)
@@ -1068,7 +1143,10 @@ export class FormsService {
         cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
       });
     const paymentsPaused = await this.paymentsPaused(form);
-    return { ...form, submissionCount, cotisationDisabled, paymentsPaused };
+    // The name too (the SAME lookup as the list): a link-preview card says "Ouvert · <association>".
+    const names = await this.associationNamesOf([form]);
+    const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
+    return { ...form, submissionCount, cotisationDisabled, paymentsPaused, associationName };
   }
 
   /**
@@ -1117,8 +1195,7 @@ export class FormsService {
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
     // recomputes what is charged, from the same facts.
-    const guestFacts = await this.factsFor(form, undefined);
-    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, guestFacts) : null;
+    const guestSlices = displaySlices(form, await this.factsFor(form, undefined));
     // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
     // to anybody holding the link until someone adds it here. The price fields are what the page
     // needs to show a total; nothing names the owner, the association or its payment account.
@@ -1139,8 +1216,12 @@ export class FormsService {
       basePrice: form.basePrice,
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
-      pricing,
-      productGridPrices: productGridPricesFor(form.items, guestFacts),
+      // A guest has no cursus: one slice. `cursusSlices` is what a current page totals from;
+      // [LEGACY] `pricing` and `productGridPrices` are the same slice, for a page older than D32
+      // (legacy-compatibility.md, "the single pricing slice of a fill page").
+      cursusSlices: guestSlices,
+      pricing: guestSlices[0].pricing,
+      productGridPrices: guestSlices[0].productGridPrices,
       paymentsPaused: await this.paymentsPaused(form),
     };
   }
@@ -1160,22 +1241,52 @@ export class FormsService {
     throw new ForbiddenException('You are not allowed to manage this form');
   }
 
-  /** Whether `viewer` manages `form`: its owner, a global admin, or MANAGE_FORMS on its association. */
+  /**
+   * Whether `viewer` manages `form`: a global admin; for an ASSOCIATION's form, MANAGE_FORMS on that
+   * association (`mayAct`), whoever created it - owner, 2026-11-14: only the members holding "gérer
+   * les formulaires" manage an association's forms, so its creator who does not hold it (or no
+   * longer does) is not one; for a PERSONAL form, its owner.
+   */
   private async managesForm(
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
   ): Promise<boolean> {
     if (!viewer?.userId) return false;
-    if (viewer.isGlobalAdmin || form.ownerId === viewer.userId) return true;
-    return (
-      !!form.associationId &&
-      (await this.associationsService.mayAct(
-        viewer.userId,
-        form.associationId,
-        AssociationPermissionFlag.MANAGE_FORMS,
-        { isGlobalAdmin: viewer.isGlobalAdmin }
-      ))
+    if (viewer.isGlobalAdmin) return true;
+    if (!form.associationId) return form.ownerId === viewer.userId;
+    return this.associationsService.mayAct(
+      viewer.userId,
+      form.associationId,
+      AssociationPermissionFlag.MANAGE_FORMS,
+      { isGlobalAdmin: viewer.isGlobalAdmin }
     );
+  }
+
+  /**
+   * Refuses (403 `FORM_ASSOCIATION_NOT_YOURS`) unless `userId` manages `associationId`'s forms
+   * (MANAGE_FORMS, `mayAct`) - what a create naming it and a draft moved from or to it need.
+   */
+  private async assertManagesAssociationForms(
+    userId: string,
+    associationId: string,
+    what: string
+  ): Promise<void> {
+    if (
+      await this.associationsService.mayAct(
+        userId,
+        associationId,
+        AssociationPermissionFlag.MANAGE_FORMS
+      )
+    ) {
+      return;
+    }
+    this.logger.log(
+      `[FORMS] ${what} refused: user=${userId.slice(0, 8)} does not manage the forms of ${assocLabel(associationId)}`
+    );
+    throw new ForbiddenException({
+      code: FORM_ASSOCIATION_NOT_YOURS,
+      message: "Only a member allowed to manage this association's forms may create or move one.",
+    });
   }
 
   /**
@@ -1230,16 +1341,7 @@ export class FormsService {
     }
     if (!isGlobalAdmin) {
       for (const side of [stored, next]) {
-        if (side && !(await this.associationsService.isMember(userId, side))) {
-          this.logger.log(
-            `[FORMS] draft ${formLabel} not moved (${move}): user=${userId.slice(0, 8)} is no member of ${assocLabel(side)}`
-          );
-          throw new ForbiddenException({
-            code: FORM_ASSOCIATION_NOT_YOURS,
-            message:
-              'Moving a draft between associations needs membership of the one it leaves and of the one it joins.',
-          });
-        }
+        if (side) await this.assertManagesAssociationForms(userId, side, `move of ${formLabel}`);
       }
     }
     this.logger.log(
@@ -1330,6 +1432,7 @@ export class FormsService {
       submitCondition:
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
       allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
+      allowAnswerEdit: input.allowAnswerEdit ?? form.allowAnswerEdit,
       allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
       allowOnlinePayment: input.allowOnlinePayment ?? form.allowOnlinePayment,
       // `!== undefined`, not `??`: an explicit null CLEARS the deadline when the form is saved, so
@@ -1371,6 +1474,9 @@ export class FormsService {
       isPublic: input.isPublic ?? form.isPublic,
       requiresPayment: input.requiresPayment ?? form.requiresPayment,
       associationId,
+      // An absent list re-judges the stored grids, which keep their flag either way.
+      requiredSwitch: input.gridRequiredSwitch === true,
+      storedItems: form.items,
     });
     if (input.items !== undefined) input = { ...input, items: gridItems };
 
@@ -1410,6 +1516,7 @@ export class FormsService {
       ownerId: _ownerId,
       associationId: _associationId,
       anonymous: _anonymous,
+      gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
     const citedBefore = questionImageIds(form.items);
@@ -1939,6 +2046,25 @@ export class FormsService {
     ) {
       try {
         const delivered = await this.formTierDelivered(form, submission, seatGiven, grant);
+        // The Business the answer's request was issued to (migration 169): kept on the record, so
+        // the payment keeps it if the answer is ever deleted. `select: false` on the answer.
+        const lydiaVendorToken =
+          how.paymentMethod === 'online'
+            ? ((
+                (await this.submissionRepo.findOne({
+                  where: { id: submission.id },
+                  select: { id: true, lydiaVendorToken: true },
+                })) ?? null
+              )?.lydiaVendorToken ?? null)
+            : null;
+        if (how.paymentMethod === 'online' && !lydiaVendorToken) {
+          // Since migration 120 every issued request writes it: an online payment without one is
+          // a writer that skipped it, and the platform's flux will count this payment nowhere.
+          this.logger.error(
+            `[PurchaseRecord] submission ${submission.id}: online payment recorded with NO Business ` +
+              '(lydiaVendorToken) - counted nowhere by the Lydia flux'
+          );
+        }
         await this.purchaseRecordService.create({
           userId: submission.userId,
           source: 'form',
@@ -1949,6 +2075,7 @@ export class FormsService {
           status: receivedStatus(delivered),
           associationId: form.associationId,
           productName: form.title ?? 'Formulaire',
+          lydiaVendorToken,
         });
       } catch (e) {
         this.logger.error(
@@ -2097,6 +2224,12 @@ export class FormsService {
      * the page shows and totals them, `submit` recomputes what is charged. Never another category's.
      */
     productGridPrices: ProductGridPrices;
+    /**
+     * EVERY distinct slice the person's cursus give (D32, `displaySlices`): the page totals each for
+     * the answers given and shows the cheapest, with `submit`'s own rule. `pricing` and
+     * `productGridPrices` above are [LEGACY] - the FIRST slice, for a page older than D32.
+     */
+    cursusSlices: CursusSlice[];
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2108,6 +2241,7 @@ export class FormsService {
         maySubmit: false,
         refusalCode: null,
         productGridPrices: {},
+        cursusSlices: [],
       };
 
     // Check global capacity independently of per-user state
@@ -2117,19 +2251,25 @@ export class FormsService {
     }
 
     const facts = await this.factsFor(form, userId);
-    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, facts) : null;
-    // A profile row where EVERY combination is unavailable is a form this person cannot answer
-    // whatever they click, which is the same outcome as an audience condition refusing them - so it
-    // is reported the same way rather than shown as a form with no price.
-    const noCombinationAvailable =
-      !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
+    // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
+    // the first is also served alone, for a page older than D32.
+    const cursusSlices = displaySlices(form, facts);
+    const { pricing, productGridPrices } = cursusSlices[0];
+    if (cursusSlices.length > 1) {
+      this.logger.debug(
+        `[FORMS] check form=${form.id.slice(0, 8)} slices=${cursusSlices.length} (one per distinct cursus)`
+      );
+    }
+    // A profile row where EVERY combination is unavailable - through every cursus - is a form this
+    // person cannot answer whatever they click, which is the same outcome as an audience condition
+    // refusing them - so it is reported the same way rather than shown as a form with no price.
+    const noCombinationAvailable = cursusSlices.every(sliceOffersNothing);
     // The same classification `submit` refuses with, so the page and the 403 are one fact.
     const refusalCode = submitRefusalCode(form.submitCondition, facts);
     const maySubmit = refusalCode === null && !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
-    const productGridPrices = productGridPricesFor(form.items, facts);
 
     if (form.allowMultipleSubmissions)
       return {
@@ -2140,6 +2280,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
@@ -2155,6 +2296,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
     }
 
@@ -2183,6 +2325,7 @@ export class FormsService {
       maySubmit,
       refusalCode,
       productGridPrices,
+      cursusSlices,
     };
   }
 
@@ -2225,33 +2368,8 @@ export class FormsService {
       }
     }
 
-    if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
-    }
-
-    if (form.closedAt && new Date(form.closedAt) < new Date()) {
-      throw formRefusal(FORM_CLOSED, 'The form is closed.');
-    }
-
-    // Validate answer sizes to prevent oversized payloads. The DTO already bounds them for an HTTP
-    // caller (`IsValidAnswers`); this holds for any caller of `submit`, with the typed code the
-    // page words (the textarea's `maxlength` keeps a person from ever meeting it).
-    for (const [key, value] of Object.entries(input.answers ?? {})) {
-      if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
-        throw formRefusal(
-          FORM_ANSWER_TOO_LONG,
-          `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
-          key
-        );
-      }
-      if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
-        throw formRefusal(
-          FORM_ANSWER_TOO_MANY_SELECTIONS,
-          `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
-          key
-        );
-      }
-    }
+    assertFormOpen(form);
+    assertAnswerSizes(input.answers);
 
     // Who a guest says they are, ONLY what the form asks (`guest-identity.ts`): every asked field
     // required, an unasked one refused, and a member carrying any of them refused - a member is
@@ -2312,7 +2430,19 @@ export class FormsService {
     );
     const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
-    const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
+    // The WHOLE price, once per cursus, and the cheapest wins (D32): the base cell and every grid's
+    // lines below are read from that ONE cursus, so what is stored is what was charged.
+    const quote = quoteSubmission(
+      form,
+      { ...facts, answers: visibleAnswers },
+      visible,
+      input.answers ?? {}
+    );
+    const { baseCents } = quote.quote;
+    this.logger.debug(
+      `[FORMS] submit form=${form.id.slice(0, 8)} priced on ${describeCursus(quote)} ` +
+        `total=${quote.cents ?? 'unavailable'}`
+    );
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
     // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
     if (baseCents === null) {
@@ -2344,10 +2474,6 @@ export class FormsService {
     // The priced grids' lines, computed HERE from the stored grid and this person's category - never
     // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
     const gridLines: ProductGridLine[] = [];
-    // The ORDER rule is the form's, not a grid's: a form of several grids (one per article) is
-    // ordered from whichever the buyer wants, and only the VISIBLE grids together must hold a unit.
-    let visibleGrids = 0;
-    let orderedUnits = 0;
     for (const item of form.items) {
       // A question this submitter never saw neither charges them nor blocks them.
       if (!visible.has(item.id)) continue;
@@ -2355,11 +2481,17 @@ export class FormsService {
       // A priced grid is judged by its own rule (declared cells, 0..maxPerCell, no closed cell) with
       // a CODED refusal - an app that cannot draw it sends a non-object and is told to update
       // (`PRODUCT_GRID_ANSWER_MISSING`). An untouched grid (no answer, `{}`) is accepted and stores
-      // nothing; what is stored otherwise is the answer as judged: the ordered cells only.
+      // nothing; what is stored otherwise is the answer as judged: the ordered cells only. A grid
+      // switched "Obligatoire" demands ONE unit of its own, refused like any required question
+      // (owner, 2026-11-13: no rule over the whole order).
       if (isProductGridItem(item)) {
-        const priced = priceProductGridAnswer(item, answer, facts);
-        visibleGrids += 1;
-        orderedUnits += priced.units;
+        const priced = priceProductGridAnswer(item, answer, quote.view);
+        if (item.required && !productGridOrdered(priced.answer)) {
+          this.logger.debug(
+            `[FORMS] submit refused: required grid ${item.id} holds no unit form=${form.id.slice(0, 8)}`
+          );
+          throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+        }
         if (priced.units > 0) storedAnswers[item.id] = priced.answer;
         else delete storedAnswers[item.id];
         gridLines.push(...priced.lines);
@@ -2381,14 +2513,10 @@ export class FormsService {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
     }
-    if (visibleGrids > 0 && orderedUnits === 0) {
-      this.logger.debug(
-        `[FORMS] submit refused: an empty order across ${visibleGrids} visible grid(s) ` +
-          `form=${form.id.slice(0, 8)}`
-      );
-      throw productGridOrderEmpty();
-    }
     const lines = gridLines.length > 0 ? gridLines : null;
+    // What the price depends on NOW, kept with the row it prices (migration 166): an answer change
+    // reads it, so a supplement removed later still locks its question here (`rowLockedItemIds`).
+    const priceLockedItemIds = priceSnapshot(form);
     if (lines) {
       const gridCents = productGridTotalCents(lines);
       totalCents += gridCents;
@@ -2604,6 +2732,7 @@ export class FormsService {
             ...guestIdentity,
             answers: storedAnswers,
             lines,
+            priceLockedItemIds,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -2618,6 +2747,7 @@ export class FormsService {
         existingPending.answers = storedAnswers;
         // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
         existingPending.lines = lines;
+        existingPending.priceLockedItemIds = priceLockedItemIds;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -2644,6 +2774,7 @@ export class FormsService {
           ...guestIdentity,
           answers: storedAnswers,
           lines,
+          priceLockedItemIds,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
@@ -2700,6 +2831,8 @@ export class FormsService {
       // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
       // readiness of the HOLDER of the vendor token the request was sent to.
       let connectAccountId: string | undefined;
+      // Whether that revert already ran (the bridge's re-issue below runs it itself).
+      let reverted = false;
       try {
         // If the form belongs to an association, route payment via its connected account
         if (form.associationId) {
@@ -2733,8 +2866,6 @@ export class FormsService {
               `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
           );
         }
-        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
-        const idempotencyKey = formOrderRef(savedSubmission.id);
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
         // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
@@ -2759,22 +2890,59 @@ export class FormsService {
               `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
               frontendUrl
             );
-        const res = await axios.post(
-          checkoutUrl,
-          {
-            lineItems: singleLineItem,
-            successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
-            cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
-            metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
+        let idempotencyKey = formOrderRef(savedSubmission.id);
+        const issueOn = (account: string | undefined, orderRef: string) =>
+          axios.post(
+            checkoutUrl,
+            {
+              lineItems: singleLineItem,
+              successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
+              cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
+              metadata: {
+                submissionId: savedSubmission.id,
+                formId: id,
+                userId: input.userId ?? '',
+              },
+              connectAccountId: account,
+              idempotencyKey: orderRef,
+              // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
+              payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
+              // The request dies before the seat is released (`seat-hold.ts`).
+              expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
+            },
+            internalCoreRequestConfig()
+          );
+        let res;
+        try {
+          res = await issueOn(connectAccountId, idempotencyKey);
+        } catch (err: unknown) {
+          const cause = lydiaReadinessRefusal(err);
+          if (!cause || !connectAccountId || !form.associationId) throw err;
+          reverted = true;
+          const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
             connectAccountId,
-            idempotencyKey,
-            // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
-            payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
-            // The request dies before the seat is released (`seat-hold.ts`).
-            expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
-          },
-          internalCoreRequestConfig()
-        );
+            cause,
+            { path: guest ? 'form-guest' : 'form', id: savedSubmission.id }
+          );
+          if (!reissue) throw err;
+          // A bridge's switch back (owner, 2026-11-13): error 5 on the Business a switch made
+          // active, answered before any request existed. The SAME answer is issued ONCE on the
+          // account that collects now - re-resolved and re-checked, with a new order_ref - and a
+          // refusal of that one is the ordinary revert below. NOT a fallback: logged and counted.
+          await this.associationsService.assertPaymentsReady(form.associationId);
+          const historical = await this.associationsService.getPaymentAccountId(form.associationId);
+          if (!historical || historical === connectAccountId) throw err;
+          this.logger.warn(
+            `${LYDIA_BRIDGE_LOG_TAG} submission ${savedSubmission.id}: error 5 on the Business a ` +
+              `bridge switch made active, switched back - the SAME payment is re-issued once on ` +
+              `the historical account (nothing was issued on the first)`
+          );
+          connectAccountId = historical;
+          idempotencyKey = formOrderRef(savedSubmission.id);
+          reverted = false;
+          res = await issueOn(connectAccountId, idempotencyKey);
+        }
 
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;
@@ -2807,12 +2975,17 @@ export class FormsService {
           });
         }
 
+        // Lydia issued a request on this Business: the proof a bridge switch waits for before
+        // telling its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+        if (connectAccountId) {
+          await this.associationsService.noteLydiaRequestIssued(connectAccountId);
+        }
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: unknown) {
         // No request was issued, so nothing is payable: the row stops holding a seat for it.
         await this.releaseUnissuedRow(savedSubmission.id);
         const cause = lydiaReadinessRefusal(err);
-        if (cause && connectAccountId) {
+        if (cause && connectAccountId && !reverted) {
           await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
             path: guest ? 'form-guest' : 'form',
             id: savedSubmission.id,
@@ -2823,6 +2996,188 @@ export class FormsService {
     }
 
     return { submissionId: savedSubmission.id };
+  }
+
+  /**
+   * The caller's own answers to a form that lets them be changed, each with the questions an edit
+   * may not touch (`rowLockedItemIds`) - what the fill page reopens. Empty when the form does not
+   * allow it, is anonymous, or is not open: nothing could be changed, so nothing is offered. Every
+   * row that IS an answer (`answerHoldingWhere`) is listed, newest first: one on a single-answer
+   * form, each separately on a form taking several.
+   */
+  async myEditableAnswers(formId: string, userId: string) {
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.allowAnswerEdit || form.anonymous || !isFormOpen(form)) {
+      this.logger.debug(
+        `[FORM_EDIT] no editable answer on form=${formId.slice(0, 8)}: ` +
+          `switch=${form.allowAnswerEdit} anonymous=${form.anonymous} open=${isFormOpen(form)}`
+      );
+      return [];
+    }
+    const rows = await this.submissionRepo.find({
+      where: answerHoldingWhere(formId, { userId }),
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((row) => ({
+      ...toSubmitterView(row),
+      lockedItemIds: [...rowLockedItemIds(form, row)],
+    }));
+  }
+
+  /**
+   * A respondent changes their OWN answer (owner, 2026-11-13; forms.md, "A respondent changes their
+   * own answer"). The changed answer goes through the submit's checks - sizes, grids, visibility,
+   * the audience's answer criterion, `required`, declared options, file ownership - and only the
+   * ANSWERS move: never the price, the lines, the status, the seat or the payment request.
+   *
+   * - **Who**: the row's own account, on a form whose switch is on and that is not anonymous (a
+   *   guest's row has no account and is never anyone's). Another person's row answers exactly what
+   *   an absent one does (404 `FORM_ANSWER_NOT_FOUND`).
+   * - **When**: while the form is open (`assertFormOpen`), and while the row IS an answer
+   *   (`answerHoldingWhere`: not cancelled, expired or refunded).
+   * - **What**: every question that touches the price is LOCKED (`rowLockedItemIds`): the stored
+   *   answer stays, a payload may repeat or omit it, and one that changes it is 409
+   *   `FORM_ANSWER_LOCKED` naming the question.
+   * - **Admission**: only the ANSWER criterion of `submitCondition` is judged again. Who the person
+   *   is (promo, formation, cotisation) was judged when they answered, and a form selling a
+   *   cotisation to people without it would otherwise refuse every buyer's edit once the cotisation
+   *   it sold them is held.
+   * - **Concurrency**: written under the form lock then the row lock, the order `submit` and
+   *   `markPaid` take them; the row is re-read there, and the locked answers are compared with the
+   *   row as it is THEN - a cash validation, a payment or a retry committed meanwhile is seen.
+   * - **Files**: a NEW file id is claimed as at submit (`FormFilesService.attach`); one kept is not
+   *   claimed again, so its retention keeps counting from its first claim. A replaced file stays
+   *   attached to this answer and goes with the existing retention purge.
+   */
+  async editAnswer(
+    formId: string,
+    submissionId: string,
+    userId: string,
+    answersIn: Record<string, unknown>
+  ): Promise<{ submissionId: string; editedAt: Date | null }> {
+    const tag = `form=${formId.slice(0, 8)} answer=${submissionId.slice(0, 8)} user=${userId.slice(0, 8)}`;
+    this.logger.log(`[FORM_EDIT] edit asked ${tag}`);
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.allowAnswerEdit || form.anonymous) {
+      this.logger.log(`[FORM_EDIT] refused ${tag}: the form does not allow it`);
+      throw answerEditOff();
+    }
+    assertFormOpen(form);
+    assertAnswerSizes(answersIn);
+
+    // Judged OUTSIDE the locks (the profile read may call core-service), against the row as read
+    // now; the write below re-reads it under its lock and re-checks every locked answer.
+    const before = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
+    if (!before || before.userId !== userId) {
+      this.logger.log(`[FORM_EDIT] refused ${tag}: not the caller's answer`);
+      throw answerNotFound();
+    }
+    const { stored, newFiles } = await this.judgeEdit(form, before, answersIn, tag);
+
+    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await lockFormSeats(manager, formId);
+      const row = await manager.findOne(Submission, {
+        where: { id: submissionId, formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row || row.userId !== userId) throw answerNotFound();
+      const isAnswer = await manager.count(Submission, {
+        where: answerHoldingWhere(formId, { id: row.id }),
+      });
+      if (isAnswer === 0) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: the row is ${row.paymentStatus}, no answer`);
+        throw answerNotEditable();
+      }
+      // The invariant, on the row as it is NOW: every locked answer is written back unchanged. A
+      // retry that re-priced the row, or a grant that locked one more question, since the read above
+      // is seen here and refuses rather than overwrites.
+      for (const itemId of rowLockedItemIds(form, row)) {
+        if (!sameAnswer(stored[itemId], row.answers?.[itemId])) {
+          this.logger.warn(`[FORM_EDIT] refused ${tag}: locked ${itemId} moved under the edit`);
+          throw answerLocked(itemId);
+        }
+      }
+      const claimed = newFiles.filter((file) => row.answers?.[file.itemId] !== file.fileId);
+      if (claimed.length > 0) {
+        await this.formFiles.attach(manager, row, formId, userId, claimed);
+      }
+      await manager.update(Submission, row.id, {
+        answers: stored as Record<string, any>,
+        editedAt: () => 'now()',
+      });
+      const written = await manager.findOne(Submission, {
+        where: { id: row.id },
+        select: { id: true, editedAt: true },
+      });
+      this.logger.log(
+        `[FORM_EDIT] answer changed ${tag} status=${row.paymentStatus} files=${claimed.length}`
+      );
+      return { submissionId: row.id, editedAt: written?.editedAt ?? null };
+    });
+  }
+
+  /**
+   * The answers an edit WILL store, judged by the submit's own rules over the merged answer: the
+   * locked questions carried from the stored row (a different value refused), every other question
+   * from the payload. Also the new file answers it cites, for the write to claim.
+   */
+  private async judgeEdit(
+    form: Form,
+    row: Submission,
+    answersIn: Record<string, unknown>,
+    tag: string
+  ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
+    const items = form.items ?? [];
+    const locked = rowLockedItemIds(form, row);
+    const sent = withNormalisedGridAnswers(items, answersIn);
+    const merged: Record<string, unknown> = { ...sent };
+    for (const itemId of locked) {
+      if (itemId in sent && !sameAnswer(sent[itemId], row.answers?.[itemId])) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: question ${itemId} decides the price`);
+        throw answerLocked(itemId);
+      }
+      delete merged[itemId];
+      if (row.answers?.[itemId] !== undefined) merged[itemId] = row.answers[itemId];
+    }
+
+    const fileAnswers = fileAnswersOf(items, merged);
+    const selections = answerSelections(items, merged);
+    const facts = await this.factsFor(form, row.userId ?? undefined, selections);
+    // Admission's ANSWER half only: who the person is was judged when they answered.
+    const answerCriterion = form.submitCondition?.answer
+      ? { answer: form.submitCondition.answer }
+      : null;
+    this.assertMaySubmit({ ...form, submitCondition: answerCriterion } as Form, facts);
+
+    const visible = visibleItemIds(items, facts);
+    const editable = new Set([...visible].filter((id) => !locked.has(id)));
+    assertDeclaredOptionAnswers(items, merged as never, editable, form.priceMatrix);
+    // As at submit, an answer the person cannot see is not kept - except a locked one, which is
+    // what was priced and stays whatever their profile says today.
+    const declared = new Set(items.map((item) => item.id));
+    const stored = Object.fromEntries(
+      Object.entries(merged).filter(
+        ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
+      )
+    );
+    for (const item of items) {
+      if (!editable.has(item.id) || isProductGridItem(item)) continue;
+      if (item.required && !isQuestionAnswered(item, stored[item.id])) {
+        this.logger.log(`[FORM_EDIT] refused ${tag}: required ${item.id} left empty`);
+        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+      }
+    }
+    const newFiles = fileAnswers.filter(
+      (file) => file.itemId in stored && row.answers?.[file.itemId] !== file.fileId
+    );
+    const dropped = Object.keys(merged).length - Object.keys(stored).length;
+    this.logger.debug(
+      `[FORM_EDIT] judged ${tag}: ${locked.size} locked, ${dropped} hidden answer(s) dropped, ` +
+        `${newFiles.length} new file(s)`
+    );
+    return { stored, newFiles };
   }
 
   /**
@@ -2978,7 +3333,17 @@ export class FormsService {
     }
   }
 
-  /** Deletes a submission. Requires form manager access. */
+  /**
+   * Deletes a submission. Requires form manager access. AN ANSWER WHOSE PAYMENT WAS RECEIVED IS NEVER
+   * DELETED (owner, 2026-11-14): it is refunded or cancelled instead, so the money it carries keeps
+   * its trace - a typed 409 `FORM_ANSWER_PAID`. The status is tested IN the delete's own WHERE, so a
+   * payment confirmed between the read and the delete is refused too, never deleted.
+   *
+   * A `pending` answer is CANCELLED first, by `cancelSubmission`'s rules (D2): its request is settled
+   * at Lydia, so a request left payable cannot land on an answer that no longer exists - a payment
+   * nothing would record. Paid meanwhile, it is the 409 above; a request that cannot be settled, or
+   * one a retry issued between the cancel and the delete, is `PREVIOUS_PAYMENT_OPEN`.
+   */
   async deleteSubmission(
     submissionId: string,
     callerId: string,
@@ -2987,7 +3352,35 @@ export class FormsService {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
     await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
-    await this.submissionRepo.delete(submissionId);
+    if (sub.paymentStatus === 'pending') {
+      // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
+      await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
+    }
+    const deleted = (await this.submissionRepo.query(
+      `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+      [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
+    )) as unknown[];
+    if (deleted.length === 0) {
+      const now = await this.submissionRepo.findOne({
+        where: { id: submissionId },
+        select: { id: true, paymentStatus: true },
+      });
+      if (!now) throw new NotFoundException('Submission not found');
+      if (now.paymentStatus === 'pending') {
+        throw this.previousPaymentOpen(
+          submissionId,
+          'a manager deletes it while a request is live'
+        );
+      }
+      this.logger.warn(
+        `[Forms] Submission ${submissionId} NOT deleted by ${callerId}: its payment was received ` +
+          `(${now.paymentStatus}) - refund or cancel it instead`
+      );
+      throw new ConflictException({
+        code: FORM_ANSWER_PAID,
+        message: 'This answer was paid: refund or cancel it instead of deleting it.',
+      });
+    }
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
@@ -3909,6 +4302,18 @@ export class FormsService {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
       headers.push({ header: labels.status, key: 'status', width: 14 });
     }
+    // When the respondent last changed the answer (migration 166): on a form that allows it, or
+    // holding an answer changed while it did. Blank on an answer never changed. No history is kept.
+    const editedColumn = form.allowAnswerEdit || submissions.some((s) => s.editedAt != null);
+    if (editedColumn) {
+      if (!labels.edited) throw new BadRequestException('export label "edited" is required');
+      headers.push({
+        header: labels.edited,
+        key: 'editedAt',
+        width: 22,
+        style: { numFmt: 'dd/mm/yyyy hh:mm:ss' },
+      });
+    }
 
     form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
@@ -3954,6 +4359,7 @@ export class FormsService {
           );
         row.status = label ?? sub.paymentStatus;
       }
+      if (editedColumn) row.editedAt = sub.editedAt ? new Date(sub.editedAt) : null;
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
       form.items.forEach((item: FormItemLike) => {

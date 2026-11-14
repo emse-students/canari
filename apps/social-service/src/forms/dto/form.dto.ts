@@ -210,6 +210,17 @@ export class CreateFormDto {
   @IsOptional()
   clientCreateId?: string;
 
+  /**
+   * `true` from an editor that draws each priced grid's "Obligatoire" switch (owner, 2026-11-13):
+   * the `required` it sends on a grid is the manager's choice. Absent from an older editor, which
+   * sends `required: true` on every grid whatever it means - each grid then keeps its stored flag
+   * (`productGridRequiredOnSave`). Read at save, never stored. [LEGACY] the absent case, see
+   * docs/wiki/legacy-compatibility.md.
+   */
+  @IsBoolean()
+  @IsOptional()
+  gridRequiredSwitch?: boolean;
+
   @IsString()
   @IsNotEmpty()
   title: string;
@@ -335,6 +346,15 @@ export class CreateFormDto {
   @IsBoolean()
   @IsOptional()
   allowMultipleSubmissions?: boolean;
+
+  /**
+   * Whether a respondent with an account may change their own answer while the form is open
+   * (migration 166, owner 2026-11-13). Absent keeps the stored value on an edit; refused on an
+   * anonymous form (`FORM_ANONYMOUS_ANSWER_EDIT`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowAnswerEdit?: boolean;
 
   /** Whether cash (physical) payment is accepted alongside the online payment. */
   @IsBoolean()
@@ -519,4 +539,14 @@ export class SubmitFormDto {
   @IsIn(['online', 'cash'])
   @IsOptional()
   paymentMethod?: string;
+}
+
+/**
+ * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 166): the answers
+ * as the fill page holds them, validated like a submit's (`IsValidAnswers`). Nothing about payment
+ * travels here - an edit never charges, refunds or re-prices (`answer-edit.ts`).
+ */
+export class EditAnswerDto {
+  @IsValidAnswers()
+  answers: Record<string, FormAnswerValue>;
 }

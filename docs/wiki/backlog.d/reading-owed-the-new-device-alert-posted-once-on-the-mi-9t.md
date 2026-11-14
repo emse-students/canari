@@ -1,5 +1,7 @@
 ## P2 - reading owed: the new-device alert posted once on the Mi 9T (2026-11-01)
 
+target: 1.10.0
+
 The device-notice ledger's markers were refused by the filesystem (name too long) from
 1.4.1-alpha.2 to 1.6.0, so the background engines never posted "a new device was added to your
 account"; 1.6.1 names them by the key's SHA-256
@@ -11,3 +13,5 @@ line in the log. **And, right after the update and before the app's first open**
 commit naming an OLD device of the account: no "new device" notification may appear, and the log
 must show the service's `new-device key(s) held - the app has not pre-claimed this account` line
 until the first open writes the pre-claim marker. Closes with that reading.
+
+**Owed, moved here from the revoked-alert defect entry (fixed by #3550, merged):** the alert of a REVOKED device is dropped even when the notifications view opens before registration. On the Mi 9T after the next pre-release: revoke a bench device from another seat, with the account's alert still pending, then force-restart the app and open `/notifications` directly. The row must be gone, and the console must show the `[DEVICE_NOTICE]` decision line for the deferred check (counts, no ids), with no `[MLS] revocation check` warning. The 2026-11-14 defect reading (alert kept after a forced restart, a SPA navigation and a reload) is the baseline ([mls-protocol](../protocols/mls-protocol.md)).

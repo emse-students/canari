@@ -25,6 +25,11 @@
  *   percent-encoded, in another case or as an array drops the whole query (a map rewrites ONE
  *   occurrence). The route map and the token map are chained, so both apply to one line.
  * - the referer field goes through its own map: one naming any of those keeps its origin only.
+ * - THE ERROR LOG MUST NOT RECORD A WEBSOCKET REQUEST LINE: the access log's redaction does not
+ *   reach it, and it prints the raw request line - query included - for an error on the request
+ *   (an upstream reset of an upgraded connection is one). So every location that upgrades a
+ *   connection declares its own `error_log` at `crit` or above, which records none of those - and
+ *   so does the calendar feed, polled with a bearer subscription token in its query.
  *
  * Every rule has a case that must be redacted and a near-miss that must stay readable.
  *
@@ -371,6 +376,51 @@ if (serverAt === -1 || accessAt < serverAt || accessAt > firstLocation) {
   fail('the access_log is not declared in the server block before its locations');
 }
 
+// THE WEBSOCKET LOCATIONS' ERROR LOG. A location upgrades a connection when it forwards the
+// `Upgrade` header; its block runs to the next location (none of them nests one).
+const LOUD_ENOUGH_LEVEL = /^error_log\s+\S+\s+(crit|alert|emerg)\s*;$/;
+const upgrading = [];
+for (let i = 0; i < lines.length; i++) {
+  const path = lines[i].match(/^location\s+(?:[=~^*]+\s+)?(\S+)\s*\{$/)?.[1];
+  if (!path) continue;
+  let end = lines.findIndex((l, j) => j > i && /^location\s/.test(l));
+  if (end === -1) end = lines.length;
+  const block = lines.slice(i + 1, end);
+  if (!block.some((l) => /^proxy_set_header\s+Upgrade\s+\$http_upgrade\s*;$/.test(l))) continue;
+  upgrading.push(path);
+  const errorLogs = block.filter((l) => /^error_log\s/.test(l));
+  if (errorLogs.length !== 1 || !LOUD_ENOUGH_LEVEL.test(errorLogs[0])) {
+    fail(
+      `location ${path} upgrades a connection but does not set its own error_log at crit or above ` +
+        `(found: ${errorLogs.join(' | ') || 'none'}) - the error log would record its request line`
+    );
+  }
+}
+// Not vacuous: the two sockets that carry a credential in their query are both found.
+for (const path of ['/api/ws', '/api/call']) {
+  if (!upgrading.includes(path)) {
+    fail(`no upgrading location ${path} was found - the check above saw nothing`);
+  }
+}
+
+// THE CALENDAR FEED'S ERROR LOG (2026-11-14). It upgrades nothing, but a calendar app polls it with a
+// bearer subscription token in the query, so its request line must stay out of the error log too.
+const ICS_FEED = 'location = /api/associations/calendar/feed.ics {';
+const icsAt = lines.indexOf(ICS_FEED);
+if (icsAt === -1) {
+  fail(`no \`${ICS_FEED}\` was found - the check below would see nothing`);
+} else {
+  let end = lines.findIndex((l, j) => j > icsAt && /^location\s/.test(l));
+  if (end === -1) end = lines.length;
+  const icsErrorLogs = lines.slice(icsAt + 1, end).filter((l) => /^error_log\s/.test(l));
+  if (icsErrorLogs.length !== 1 || !LOUD_ENOUGH_LEVEL.test(icsErrorLogs[0])) {
+    fail(
+      `the calendar feed location does not set its own error_log at crit or above ` +
+        `(found: ${icsErrorLogs.join(' | ') || 'none'}) - the error log would record its token`
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error(`access-log-redaction: ${failures.length} problem(s)\n`);
   for (const f of failures) console.error(`  FAIL  ${f}`);
@@ -379,5 +429,5 @@ if (failures.length > 0) {
 console.log(
   'access-log-redaction: the access log cannot record a token, a GIF search, a guest receipt, ' +
     'presence ids, a link a reader opened, an OIDC code, an avatar token nor an invite, in the request line or ' +
-    'the referer'
+    'the referer; and the error log records no WebSocket request line'
 );

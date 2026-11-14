@@ -21,7 +21,7 @@ import {
   INSTITUTION_REACH_CODES,
   INSTITUTION_REACH_PUBLICS,
   foldServedReach,
-} from './institution-reach';
+} from '../spaces/institution-reach';
 
 /** Association ids by type, as `associationTypeOf` reads them. */
 const TYPES: Record<string, string> = {

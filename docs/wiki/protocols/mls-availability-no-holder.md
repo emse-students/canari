@@ -286,7 +286,9 @@ rows: pinned and first-sight entries are ordinary added devices, the key-changed
 `reportSingleHolderGroups` (`app.controller.ts:851`, hourly since 2026-09-12) counts, per live group
 with at least two members (`MIN_MEMBERS_FOR_HOLDER_REPORT`, `retention.constants.ts:250`), the
 DISTINCT USERS with an `active` device row. It WARNs at one holder and ERRORs at zero, and repairs
-nothing. Key groups count the users on their device rows. Last public readings
+nothing. Since 2026-11-13 each conversation is accused ONCE per holder count, and the ones already
+accused are counted by one daily LOG line
+([chat-delivery](../services/chat-delivery.md#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)). Key groups count the users on their device rows. Last public readings
 ([mls-graine-state-machine](mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked)):
 
 | | 2026-09-12 | 2026-09-22 |

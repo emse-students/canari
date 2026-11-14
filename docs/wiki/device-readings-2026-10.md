@@ -302,7 +302,7 @@ account, through the app's WebView (inspectable: a `webview_devtools_remote` soc
 | B1. no abort at launch with accessibility on | **`PASS`**: launched three times under WDA, no Canari crash report | n/a (iOS fix) |
 | B2. bookings space editor | **`PASS`**: opens with the fields filled, saves ("Reglages enregistres.") | **`PASS`**: Reservations > Modifier opens "Modifier l'espace" with name, description, poster and resource filled; the description was edited by real typing, "Enregistrer les reglages" answered "Reglages enregistres.", and the new description was on the space page after a re-open |
 | C. 1:1 audio call (CALL-L1) | see the call tables below | see the call tables below |
-| D. localized native push, #2047, App Group erasure | **`NOT-READ`**: dev cannot send a push (Firebase service account absent on dev) | **`NOT-READ`**: same reason |
+| D. localized native push, #2047, App Group erasure | **`NOT-READ`**: dev could not send a push that day (Firebase service account absent; set since 2026-10-21, so this row is readable on dev, 2026-11-14) | **`NOT-READ`**: same reason |
 | E. booking flow | **`PASS`** book and cancel | **`PASS`**: the 17:00 slot booked ("C'est reserve."), listed under "Mes reservations a venir" as "Titulaire", cancelled behind a confirm; the past list went 1 -> 2 and the upcoming list emptied |
 | F. CanaReels | **`PASS`** | **`PASS`**: the viewer opens a reel from the feed and its three clips play (`currentTime` advancing, 718x1278); the composer's "Ouvrir la camera" opens the camera with the close, lens flip and shutter controls; `/camera` opens the same camera |
 | App logs | **`NOT-READ`**: the TestFlight build is not inspectable | **`PASS` with findings**: logcat and the page console read for the whole session, see the findings below |
@@ -1030,9 +1030,7 @@ last, not invented.** Pass conditions are the cited rows' own words, shortened.
 | --- | --- | --- |
 | `/admin/platform` on `dev.canari-emse.fr`, "Audio et video": set `callsMode` to `audio_video` | migration 014 lands `off` on an EXISTING database, and `off` answers `initiate`, `ring`, `room-token` and `ice-servers` with 403 `CALLS_DISABLED`, so no call works. Dev seeds `audio_video` only on a fresh seed. Read `GET /api/version` for `calls.mode` first: if it already says `audio_video`, no click | [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), [calls](frontend/modules/calls.md#the-kill-switch---platform_configcalls_mode) |
 
-Also know before the first call: **dev sends no push until `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` exists** (owner line in
-[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)); chat-delivery logs `[ring] Firebase Admin
-is not initialised` at every ring until then, which is expected, not the finding.
+Also know before the first call: **dev sends push since 2026-10-21** (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is set; measured 2026-11-14, `[PUSH_SEND] ... FCM sent batch pushed=1` on dev). Written before then, this page called `[ring] Firebase Admin is not initialised` expected at every ring; on dev that line is now a finding.
 
 ### Block M - Mi 9T only (one driver; alone, or with a desktop `callpeer.mjs` peer)
 
@@ -1067,7 +1065,7 @@ call, more than 60 s), rows 1-5 and 7, then rows 8, 9 and 10 (Wi-Fi off 6 s, 14 
 Row 6 (a killed callee rings nothing) is EXPECTED, not a `FAIL`.
 
 **M3. The feed's left-edge gesture exclusion (#2184)**, gesture navigation. A row of the backlog, Kotlin and unit tests
-only. The nine cells are those of [backlog](backlog.md#owed-a-verification-and-nothing-else) ("the feed's LEFT edge is
+only. The nine cells are those of [backlog](plan.md#readings-owed) ("the feed's LEFT edge is
 excluded"): (1) logcat `gesture exclusion: spans={LEFT=...} -> [ExclusionBand(left=0, ...)]` and the same rect in
 `dumpsys window`; (2) on `/posts`, swipes from x = 20, 50 and 60 physical px at y = 1300 AND at the band's top and bottom
 rows open the camera, 0 Back; (3) just above and below the band the left-edge Back still works; (4) the right edge is
@@ -1087,10 +1085,9 @@ steps 1-7 on real fingers (the alpha.5 reading used CDP touches, see [DT-IOS](#1
 tick on a like with vibrations on in the settings, none with them off. Read `[doubleTapLike] double tap`,
 `[PostCard.doubleTap] ...: like` and `[reel-viewer] double tap ...: like` over CDP.
 
-**M5. The FCM banner on dev - BLOCKED until the secret exists.** Only once `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is set on
-the `development` environment and a pre-release has deployed with it: a DM from the other account to the shut Mi 9T shows
-a banner, and T1 (push to banner latency, [backlog](backlog.md#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11))
-is measured. Without the secret, record `NOT-OBSERVED`, never `FAIL`.
+**M5. The FCM banner on dev - readable since 2026-10-21, the secret exists (superseded 2026-11-14).** On a pre-release deployed with it: a DM from the other account to the shut Mi 9T shows
+a banner, and T1 (push to banner latency, [backlog](backlog.d/p2-a-notification-tap-takes-2-7-s-to-a-usable-conversation-when-killed-5-s.md))
+is measured.
 
 ### Block I - iPhone 12 only (one driver; WDA for taps, the in-app log for lines)
 
@@ -1102,8 +1099,8 @@ before every submit. **A double tap is a W3C sequence (one pointer, two 40 ms ho
 | --- | --- | --- | --- |
 | I1 | **CALL-L1 row 12, WP-C-BG-I**, in this order: (a) the iOS job's `UIBackgroundModes of the built app:` line lists `audio`; (b) in a connected call, lock the iPhone 60 s, then background it 60 s; (c) OUT of a call (the mode is app-wide) play a reel with sound, then a voice message, locking then backgrounding during each; (d) in a call, an audio ROUTE change (AirPods in and out, a wired headset) and a 2 s interruption (an alarm or Siri); (e) a call ACCEPTED from the lock screen. Record every `mute`/`unmute` pair with its duration | (b) the Mi 9T's inbound audio packets keep rising (`getStats()` over CDP every 5 s) and the iPhone keeps playing; no `the system took the microphone` line. (c) RECORD whether playback continues (a behaviour to accept or refuse). (d) a route change must NOT log `the system took the microphone`; if it does, how often and for how long. (e) it connects, and a muted start shows the notice until given back. If (b) still mutes, read the syslog (`WebKit`, `mediaserverd`) before any native audio code | [CALL-L1 row 12](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both), [calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20) |
 | I2 | **Double tap, iPhone half**: a REAL W3C double tap with the in-app log, [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones) steps 1-6 (reel viewer, reel card in the feed, photo, text, poll option, VoiceOver) | one heart and one `like` line per double tap; the viewer does NOT open on a card double tap; a poll option votes and the post is NOT liked. Read #2175's log for the FIRST attempts after a sign-in on a stale feed, which missed on alpha.5 and were never explained: a miss with no `[doubleTapLike]` line means the tap never reached the card | [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones), [DT-IOS](#1-double-tap-to-like) |
-| I3 | **The push banner** on the shut phone, from a DM by the other account: BLOCKED like M5 until the dev Firebase secret exists, else `NOT-OBSERVED`. The alpha.5 smoke left it unread | a banner on the locked phone | [alpha.5 item 4](#4-the-smoke), [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks) |
-| I4 | **CALL-OS-BANNER**: one FOREGROUND ring on the iPhone | no "Appel entrant" OS banner over the in-app ring; if one shows, the two native candidates are in the backlog item | [backlog](backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19) |
+| I3 | **The push banner** on the shut phone, from a DM by the other account: readable on dev like M5 (the dev Firebase secret exists since 2026-10-21). The alpha.5 smoke left it unread | a banner on the locked phone | [alpha.5 item 4](#4-the-smoke), [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks) |
+| I4 | **CALL-OS-BANNER**: one FOREGROUND ring on the iPhone | no "Appel entrant" OS banner over the in-app ring; if one shows, the two native candidates are in the backlog item | [backlog](backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md) |
 
 The iPhone's video reading is V2 and V3 below.
 
@@ -1122,8 +1119,8 @@ The second is a local build, which costs the Mi 9T's enrolment if installed over
 
 | # | Reading | Pass | Source |
 | --- | --- | --- | --- |
-| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [the verification table](backlog.md#owed-a-verification-and-nothing-else) |
-| N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.md#p3---call-path-line-the-selected-path--relayed-line-over-counts-relayed-calls-2026-10-20-not-built) |
+| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [the readings owed](plan.md#readings-owed) |
+| N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md) |
 | N3 | The Tier B audio cells K1, K9, K12 (Mi 9T / iPhone / desktop) and K6 (both phones) of [the matrix](frontend/modules/calls-revival-plan.md#7-the-test-matrix) | as the cells | calls B10 |
 
 Cellular and campus Wi-Fi stay owed: no SIM on the bench.
@@ -1148,19 +1145,17 @@ This complements the stable-gate section above, whose smoke left "the push banne
 accounts: the Mi 9T as `delta`, the iPhone 12 as `gamma`. The peer was the rig's W2 desktop Chrome on dev, and the
 two phones sent to each other.
 
-**Dev cannot send a push, so the code this stable changes cannot be read on dev.**
+**Dev could not send a push when this was written, so the code this stable changes was not read on dev (superseded 2026-11-14: dev sends push since 2026-10-21).**
 
-- `serve-dev.yml` passes `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`, and that secret exists in neither the repository nor
-  the `development` environment. Adding it is the owner item in [backlog](backlog.md) ("set the
-  `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret").
+- `serve-dev.yml` passes `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`, and that secret did not exist then (set 2026-10-21, so the owner item is done).
 - The stable's native change, `push_text.rs` and `proto_fields.rs` (#2112, WP-RC-7), is called only by the FCM
   service and the iOS NSE.
-- So no banner for an app that is backgrounded or killed can appear on dev, on either phone. What dev CAN show is
+- So, then, no banner for an app that is backgrounded or killed could appear on dev. What dev showed was
   the in-app path: the WebSocket, and the app raising a local notification itself.
 
 | Item | Mi 9T | iPhone 12 |
 | --- | --- | --- |
-| App backgrounded, screen off or locked, a DM arrives | **`NOT-OBSERVABLE` on dev.** On HOME the app logs `[WS] Paused - disconnect sent, socket released until the next foreground`, and no notification follows. | **`NOT-OBSERVABLE` on dev.** After the app went to state 2, nothing about a push appears in the syslog: no `apsd` delivery, no NSE line. |
+| App backgrounded, screen off or locked, a DM arrives | **`NOT-OBSERVED` that day (dev could not push; it sends since 2026-10-21).** On HOME the app logs `[WS] Paused - disconnect sent, socket released until the next foreground`, and no notification follows. | **`NOT-OBSERVED` that day (dev could not push; it sends since 2026-10-21).** After the app went to state 2, nothing about a push appears in the syslog: no `apsd` delivery, no NSE line. |
 | Foreground again, the message is there | **`PASS`.** `[PENDING] Fetched 1 pending messages`, then decrypted and added to the conversation. | **`PASS`.** The message is in the DM after launch. |
 | A DM while the app is open elsewhere (the feed) | **`PASS`.** `[NOTIF] Inbound ... while the app is open on /posts showing the list - asking`, then `Raised ... by the native builder`. The notification sits on `canari_messages_v2`, titled with the sender and carrying the text, with the Répondre and Marquer comme lu actions. | **`PASS`.** The iOS banner shows the sender and the text in the foreground (`willPresentNotification delivery succeeded`). |
 | Tapping that notification opens the conversation | **`PASS`.** `[notifNav] routing to /chat for pending conversation <the DM>`, and the DM opens. | **`PASS`.** `UNNotificationDefaultActionIdentifier`, and the DM with `delta` opens. |
@@ -1180,8 +1175,8 @@ two phones sent to each other.
   - It is filed in Found on the way below.
 - **iPhone:** only WebKit sandbox lines, media-timebase lines and UIKit keyboard lines.
 
-**PASS for what dev can carry; the FCM banner itself is owed.** That means the background banners on both phones, the reaction notification and the
-reel text. They need production, or dev given its Firebase secret.
+**PASS for what the session could carry; the FCM banner itself is owed.** That means the background banners on both phones, the reaction notification and the
+reel text. They are readable on dev (it has its Firebase secret since 2026-10-21; 2026-11-14).
 
 ### What the unread code risks
 
@@ -1280,7 +1275,7 @@ tab-swipe gestures (no touch input was driven).
 ## 2026-10-28 - sharing on the Mi 9T (1.5.1 rig builds)
 
 Moved here from the sharing backlog entry when it was closed into
-[the verification table](backlog.md#owed-a-verification-and-nothing-else) (backlog triage of
+[the readings owed](plan.md#readings-owed) (backlog triage of
 2026-11-11); what is still owed is in [sharing](frontend/sharing.md#owed).
 
 **Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,

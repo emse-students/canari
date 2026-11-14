@@ -235,6 +235,7 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
   server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+  **Re-decided 2026-11-14: the link is its holder's and serves what they see** ([D40 re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)).
 - **D31 - A personal post inherits its AUTHOR's spaces.** **Amended by the owner on 2026-11-02**:
   someone with no space (a staff post only) MAY publish a personal post, and it is visible to their
   ACCEPTED FOLLOWERS only (and to its author; a platform admin opening it by id) - the WP-F5
@@ -244,7 +245,26 @@ built.
   (user, 2026-10-05): through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
-  or allowed.
+  or allowed. **BUILT 2026-11-14 - as built:** core-service's internal public profile serves
+  `cursusViews` (`cursusViewsOf`: every well-formed entry, PLUS the legacy `promo`/`formation` pair
+  when no entry carries it - D32 only ever adds, so a person the WP3 backfill has not reached keeps
+  exactly what they had, logged `[PROFILE_CURSUS_BEHIND]`, [legacy-compatibility](legacy-compatibility.md)). Measured on
+  production 2026-11-14 over 563 accounts: no `cursus` that is not a list, nobody with the legacy pair
+  alone, no first entry disagreeing with the columns, nobody with two cursus yet - so the pair is a
+  guard today and `[PROFILE_CURSUS_BEHIND]` the witness of any drift; dropping the columns is WP6,
+  a later chantier, not D32's pull request. Social-service's `PricingFacts` carries the list (`NO_CURSUS`, one empty view, for a person with
+  none). A condition - a form question's `showIf`, `submitCondition`, a booking space's audience -
+  holds through ANY cursus, promo and formation from the same entry; a price is computed WHOLE per
+  cursus (base cell, product-grid lines) and the cheapest total wins, ties to the first cursus, and
+  everything shown or stored about that price comes from the winning cursus. The mechanism, and how
+  the fill page totals every cursus's slice live, are in
+  [forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong) (`pricing/audience.ts`
+  `cheapestCursus`, `forms/form-quote.ts`). The people directory's promo and formation filters and
+  the formations listing (the criterion editor's picker) read every entry too, OR the legacy pair,
+  a person counted once; a `cursus` that is not a list contributes nothing instead of failing the
+  query. An admin who adds a second cursus through the audited profile edit
+  (`ProfileEditService.applyEdit`) can therefore move that person's price. No migration;
+  posts, spaces, read grants and the agenda are untouched by it.
 - **D33 - A post chooses its own visibility (user, 2026-10-04), amending D19's "fixed by the author".**
   An entity's audience rules are its CEILING - what it may address: the School everything, each of
   the two MEs its campus, an association its own. A post with no rule inherits them; an author may
@@ -489,7 +509,11 @@ filters.
   (unique where set), `campus`, `cursus` jsonb NOT NULL default `[]`, `posts` text[] NOT NULL default
   `{}`. Idempotent; run twice on a throwaway Postgres.
 - `users/miconnect-profile.ts` parses the claims (`parseProfileClaims`): an absent or malformed claim is
-  the EMPTY value, an unknown campus/post or a malformed cursus entry is dropped with a warning. `findOrCreateFromOidc`
+  the EMPTY value, an unknown campus/post or a malformed cursus entry is dropped with a warning. **A
+  well-formed cursus entry whose formation no space names is KEPT and logged `[UNKNOWN_FORMATION]`
+  (owner, 2026-11-14)**: it opens no space, and it is what keeps the person a student - a campus and
+  an EMPTY cursus is staff. A sign-in that removes the campus or empties the cursus logs
+  `[OIDC_PROFILE_SHRANK]` at WARN. `findOrCreateFromOidc`
   takes that profile, REPLACES the columns, derives `promo`/`formation` from `cursus[0]` (a person
   with no cursus now has them cleared - before, a claim that vanished was kept) and writes only when
   something changed. The legacy `promo`/`formation` claims are no longer read: WP1 derives them from the
@@ -714,7 +738,9 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   with its author - and, since WP-F5, a NON-anonymous one to the author's accepted followers
   ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)). Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
 - **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
-  one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
+  one space, or a member of at least one association (later: a named reader, an accepted follower,
+  and - 2026-11-14 - staff of a campus an institution's rules reach, for the staff-by-campus door).
+  **Readers**: `GET /api/posts` (all four
   feeds), `/search`, `/:postId`, `/:postId/calendar-link` and `/calendar-link/:eventId` apply
   the per-post predicate; a post the reader may not see is a **404** (before the moderation 403,
   which would confirm the id). Voting, reacting, commenting and liking a comment are refused the
@@ -816,15 +842,15 @@ box no longer defines anything.
 | Republication (D38) | associations, lists (2026-10-31) and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent, asked by any of the three kinds (D38b, amended 2026-11-02); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused, **selection SIGNED since 2026-10-06** ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)); "mine" is the signed-in agenda only |
-| Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
+| Agenda subscription / `.ics` (D40) | **its HOLDER: the link names a row bound to their account and serves exactly their signed-in agenda for the selection, re-read at every poll; revocable; ends with the account** (owner, 2026-11-14). A legacy `sig` link serves a (campus, formation) pair as before and any other shape an EMPTY calendar, until its removal | built ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders); history: [as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)) |
+| Association directory (D37) | associations reaching one's spaces, or one belongs to, or reached by one's nominative read grant (owner, 2026-11-14) | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
-| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31) | built |
-| Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
-| Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31); **the people directory is a dashboard row and a page for every signed-in member since 2026-11-13** (it was linked to staff only, the server always answered any member; the row shows the same fields as a public profile, no per-field privacy setting exists in core-service to honour; the review-cohort rule still applies; blocked accounts are hidden in both directions, like the New chat search, `applyBlockVisibility`) | built |
+| Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate, read grants included since 2026-11-14); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Booking spaces | an association's space: as its association (read grants included since 2026-11-14); a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 
 ### Filters and rights
 
@@ -866,7 +892,7 @@ the grid. The creator is the caller, who need not become a member.
 
 | `scope` | Lists | Read by |
 | --- | --- | --- |
-| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
+| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role), plus those a nominative read grant of the caller reaches (owner, 2026-11-14) - `associationVisibleToViewerSql` (read grants counted), what the signed-in agenda counts; a global admin is an ordinary reader | `/associations`, `/lists`, `/institutions` (`listAssociationDirectory`) |
 | `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
@@ -909,9 +935,9 @@ booking space its owner's campus - no new column, no migration:
 
 | Surface | Rule | Where |
 | --- | --- | --- |
-| Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of their spaces) | `products.service.ts` |
+| Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs reaches it - owner, 2026-11-14) | `products.service.ts` |
 | A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
-| Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible; `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it | `partnerships.service.ts` |
+| Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible (read grants included, 2026-11-14); `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it, by the same predicate | `partnerships.service.ts` |
 | Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
 
 **Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
@@ -919,7 +945,8 @@ products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashS
 organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
 LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
 cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
-real space and the predicate is membership alone for it. A refusal by id is a 404, asked AFTER the
+real space and the predicate is membership alone for it (a read grant's door keeps its own
+cohort check, `readGrantReachesAssociationSql`). A refusal by id is a 404, asked AFTER the
 cohort's typed 403, so the cohort keeps its own answer.
 
 **Two decisions the owner took on review (2026-10-31).** A personal booking space follows its owner's
@@ -1489,47 +1516,124 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
 
 **Tightened 2026-10-07 (user: *"les gens d'un campus ou d'une formation ne devraient pas pouvoir faire ca"*):** a student is signed ONE space, a campus AND a formation of theirs - never a campus alone, a formation alone or "all campuses"; the selector offers no "any" once the reader has a campus. Staff keep their own campus whole. An event across campuses reaches both agendas through a co-organiser partnership (D39), not through a wider subscription. Links already saved keep working: verification never reads the reader.
 
-**As built:**
+**History, one sentence (superseded 2026-11-14):** from 2026-10-06 to 2026-11-14 the link carried `sig`,
+an HMAC of the canonical selection `v1|campus=..|formation=..|association=..` that named no one, made
+by `POST calendar/feed-signature` and checked by `assertAgendaAccess`; rotating `AGENDA_SIGNING_KEY`
+was the only revocation, and anyone holding a link read what its selection reached
+([D40 re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders) replaced it).
 
-- `POST /api/associations/calendar/feed-signature` (signed-in only; body `{campus?, formation?,
-  associationId?}`) answers `{ sig }`: base64url HMAC-SHA256 of the canonical selection
-  `v1|campus=..|formation=..|association=..` under **`AGENDA_SIGNING_KEY`** (`agenda-signature.ts`).
-  It signs a campus the reader's spaces contain, a formation their spaces contain, or a pair that is
-  one of their spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); anything else is a 403
-  `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`. An association
-  needs only to exist. **A reader with a campus but a cursus with no entry (EMSE staff, 11 prod accounts on 2026-10-07; user decision the same day) has no space, yet is signed `campus=<own campus>` with no formation - and nothing else** (another campus, any formation: 403). A reader with a cursus keeps own-spaces exactly; a reader with no campus is signed nothing. The canonical string is unchanged (`v1|campus=saint-etienne|formation=-|association=-`), so the URL stays stateless. The feed of a campus-only selection is what it always was: every event whose organiser's (or accepted co-organiser's) rules reach ANY space of that campus, i.e. every formation of it plus the campus-wide and EMSE-wide audiences (`eventReachesSpaceMatchingSql`, a null formation = any). `campusWideReaderCampus` (`reader-spaces.ts`) is the one predicate, asked only when the reader has no space.
-- `feed.ics` and the ANONYMOUS JSON `feed` take `&sig=`. A `campus` / `formation` /
-  `associationId` selection without it is a **403 `AGENDA_SIGNATURE_REQUIRED`**; with a signature made
-  for another selection (another campus, a widened or narrowed one, an association) or a tampered one,
-  a **403 `AGENDA_SIGNATURE_INVALID`** (constant-time compare, logged `[AGENDA_SIG]`); no selection at
-  all stays the 400 `AGENDA_SELECTION_REQUIRED`. `from`/`to` are NOT signed, so the window stays free.
-  `assertAgendaAccess` (`directory-query.ts`) replaced `assertAgendaSelected`.
+**As built, today (2026-11-14):**
+
+- **The bound on the SELECTOR is unchanged** (`assertAgendaSelectionAllowed`, `AssociationsService`):
+  a pair that is one of the reader's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); a
+  reader with a campus and an empty cursus (EMSE staff, 11 prod accounts on 2026-10-07; user decision
+  the same day) their own campus alone (`campusWideReaderCampus`); an association needs only to exist.
+  Anything else is a 403 `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`.
+  It bounds what may be ASKED; what a link SERVES is the holder's agenda
+  ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)).
+- **The link** is `feed.ics?token=` alone ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)). A selection read
+  anonymously with `&sig=` is the legacy link: an unsigned one is a **403 `AGENDA_SIGNATURE_REQUIRED`**,
+  a wrong one a **403 `AGENDA_SIGNATURE_INVALID`** (logged `[AGENDA_SIG]`), and a valid one serves a pair
+  and nothing for any other shape ([legacy](legacy-compatibility.md)); no selection at all stays the 400
+  `AGENDA_SELECTION_REQUIRED`. `from`/`to` stay free.
 - **Open:** a **signed-in** JSON read (already narrowed to the reader's spaces by
   `restrictToViewerSpaces`). **Since 2026-11-02** the one-event link is signed too and the internal
   secret is no bypass: the SEO agenda page reads no feed ([D40 closed](#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).
-- **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
-  signed selection answer **503**; nothing is ever served unchecked.
+- **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the subscription route,
+  every token and every signed selection answer **503**; nothing is ever served unchecked.
   **Refused at deploy since 2026-10-06**: `render-env.sh` fails the deploy naming the secret when the
   value is blank or under 32 characters (`min_length`, asserted in `deploy-env.test.sh`), because the
   iPhone reading on dev found the runtime 503 was the first place a short key showed. **The modal tells
-  the two apart**: `createFeedSigner` reports `error` only for a 4xx refusal (campus text) and
+  the two apart**: `createSubscriptionLink` reports `error` only for a 4xx refusal (campus text) and
   `unavailable` for a 5xx or a transport failure (its own "try later" text), classified by
   `SocialApiError` type and status, never by message.
-- **Rotation is the revocation:** a new key invalidates every saved subscription URL at once. The
-  signature names no one, so no single URL can be revoked. Procedure: replace the GitHub secret
-  (`AGENDA_SIGNING_KEY`, dev `DEV_AGENDA_SIGNING_KEY`) and deploy; readers re-subscribe from
-  `/calendar` ([MIGRATION](../../infrastructure/MIGRATION.md)).
+- **Revocation:** a holder revokes THEIR links alone (the modal's button,
+  [re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)); rotating the key still ends every link of every kind at once, kept
+  for a leaked key ([MIGRATION](../../infrastructure/MIGRATION.md)).
 - **Frontend:** `AgendaSelectionFields` offers "any" plus the reader's OWN campus and cursus formations
   (`campusSelectOptions(reader)`, `formationSelectOptions(reader)`) in the subscribe modal and the PDF
-  export; `createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks for the signature while the
-  modal is open and the URL carries it; the modal states that links saved before 2026-10-06 stopped
-  working. A staff reader (campus, empty cursus: `isCampusWideReader`) sees their campus and "all formations"; the "complete your profile" text stays for a reader with neither a campus nor a cursus.
+  export (which reads the signed-in JSON feed, no link). A staff reader (campus, empty cursus:
+  `isCampusWideReader`) sees their campus and "all formations"; the "complete your profile" text stays
+  for a reader with neither a campus nor a cursus.
 - **Known cost:** an anonymous visitor on an association's PUBLIC page cannot obtain a subscription
-  link - signing needs a session. A calendar subscription needs an account.
+  link - it needs a session. A calendar subscription needs an account.
 - **Proof:** controller and signature specs (other campus, tampered, unsigned, `eventId` unsigned,
   another selection's signature, rotated key, unset key, internal caller), and a run against the local
   estate's real PostgreSQL.
 - **Staff reading, as verified (2026-10-07, local estate rebuilt at `62a02ba0d`, real PostgreSQL and a real session):** a sandbox reader with campus `saint-etienne` and `cursus = []` was signed `campus=saint-etienne` with no formation (201); `campus=gardanne` and `campus=saint-etienne&formation=ICM` were each a 403 `AGENDA_SELECTION_FORBIDDEN`. The signed `feed.ics` answered 200 `text/calendar` and the unsigned one 403 `AGENDA_SIGNATURE_REQUIRED`. The feed held the events of several formations of the campus (organisers whose audiences were ICM and ISMIN of that campus). The subscribe modal offered Campus "Saint-Etienne" and "Toutes les formations", carried `campus=saint-etienne&sig=` in its link and did not show the complete-your-profile text. The sandbox user's cursus was restored afterwards. Not read: a gardanne-only event staying out of the feed (no such organiser existed locally).
+
+### D40 re-decided 2026-11-14 - the link is its holder's
+
+**Decided by the owner (2026-11-14, "Respecter les publics"):** the agenda subscription link must serve
+ONLY what its holder sees in the app, be bound to the holder's account, be revocable, and stop when the
+account is erased. This overrides D40's "no per-user URL" and D40 amended's "the signature names no
+one". Links already distributed keep resolving, but never serve more than their holder could see.
+
+**As built:**
+
+- **A row per holder and selection** - `agenda_subscriptions` (migration 173, not held: a new table
+  and two indexes): `id`, `"userId"` (varchar(255)), `campus`, `formation`, `"associationId"` (ON DELETE
+  CASCADE, indexed), `"selectionKey"` (NOT NULL: `agendaSelectionKey`, `campus|formation|associationId`
+  with `-` for a side left out - the ONE spelling, shared by the entity and the service), `"createdAt"`,
+  UNIQUE on (`userId`, `selectionKey`). Entity `AgendaSubscription` declares every constraint, so a
+  schema `synchronize` builds has them too (proved by a spec that builds the table from the entity).
+- **`POST /api/associations/calendar/subscription`** (signed in; body `{campus?, formation?,
+  associationId?}`) answers `{ token }`. ONE statement, `INSERT ... ON CONFLICT ("userId",
+  "selectionKey") DO UPDATE SET "userId" = EXCLUDED."userId" RETURNING id`, so the same selection gives
+  the same link; the signing key is checked BEFORE it (an unset key writes nothing), and a foreign-key
+  violation (the association deleted meanwhile, SQLSTATE 23503) is the 404 `findById` gives. The modal
+  asks only on the reader's tap ("Obtenir mon lien d'abonnement"), never when it opens: no live bearer
+  row for a modal merely looked at. Same bound as before
+  ([as built](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)),
+  same 400 for an empty body.
+- **The token is `<id>.<HMAC>`**, the HMAC of `v2|subscription=<id>` under `AGENDA_SIGNING_KEY`
+  (`agendaSubscriptionToken`, `verifiedAgendaSubscriptionId`, `agenda-signature.ts`): its own canonical
+  prefix, so neither a selection's `sig` nor an event's can be read as one, nor the reverse.
+- **`feed.ics?token=`** - and only it: a `token` on the JSON `feed` is a 400 `AGENDA_TOKEN_NOT_ALONE`,
+  so a holder's agenda is never handed out as JSON (account ids, per-event links) - checks the HMAC
+  (constant time), loads the row, and
+  serve `listAggregatedCalendarFeed(from, to, row.associationId, { viewer: { userId: row.userId },
+  selection })` - EXACTLY the holder's signed-in agenda (their spaces, memberships, read grants, the
+  event's public and reach, the promo cutoff), re-read at every poll, so a profile change, a lost
+  membership or a grant follows by itself. `Cache-Control: private, max-age=120`. Unknown, revoked or
+  wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED]` once per process per UTC
+  day - per row for a verified token (`id=<8 hex of SHA-256 of the row id> reason=unknown`), once in
+  all for tokens that do not verify (`reason=signature`), so a forger grows neither (`DailySightings`). A token beside
+  `sig`, a selection or an `eventId` is a 400 `AGENDA_TOKEN_NOT_ALONE`. The URL the modal builds carries
+  the token ALONE, no window: the server's rolling one keeps a saved link current.
+- **Revocation:** `DELETE /api/associations/calendar/subscriptions` (signed in) deletes every row of
+  the caller and answers `{ revoked }`; the next ask mints a new id, so a new link. The subscribe modal
+  has the button ("Révoquer mes liens d'abonnement"), CONFIRMED first (`showConfirm`: one tap ends every
+  calendar on every device); the next link is asked like the first.
+- **Erasure:** `agenda_subscriptions."userId"` is classified `delete` in `account-erasure.ts`; an
+  erased account's links answer 403. A link ends ONLY by revocation, the association's deletion or the
+  account's erasure: an account deactivated at the identity provider keeps its links until it is
+  erased, since social-service holds no suspension state. Not a source of the erasure's association lock: when such a row is
+  all that ties the erasure to an association, the erasure writes nothing else under it, so no cycle.
+- **Links already distributed (`sig`)** - a dated shim, [legacy-compatibility](legacy-compatibility.md):
+  still verified. A `sig` names no holder, so it serves only what every reader who could hold it sees:
+  a PAIR (campus AND formation, with or without an association) unchanged - every legitimate holder was
+  in that space; ANY OTHER SHAPE (an association alone, a campus alone - the staff link -, a formation
+  alone from before 2026-10-07) a valid EMPTY calendar, 200 and no event, so the app keeps the link and
+  shows nothing (owner's review, 2026-11-14); an event for students or staff never
+  (`restrictAnonymousToPublicReach`). `POST calendar/feed-signature` still answers older store builds,
+  for a PAIR only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN`. Each distinct link
+  logs ONE `[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` per process
+  per UTC day (`DailySightings`) - count distinct links, not lines.
+- **Frontend:** `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`, was `createFeedSigner`)
+  is `unasked` until `ask()` (the modal's "get my link"), asks only for the selection shown at that tap,
+  and exposes `revoke()`; the modal's sentence says a link shows what its holder sees and can be
+  revoked (`calendar_subscribe_holder_notice`).
+- **Proof:** `agenda-subscription.integration.spec.ts` (real PostgreSQL, the service and the controller
+  for real): a holder outside an association's audience gets nothing, then its events once a member; a
+  holder who loses their space stops receiving it on the same token; a students-only event follows the
+  holder's public; a legacy association-, campus- or formation-alone `sig` answers an empty calendar,
+  a pair is unchanged; the erasure's statement deletes the row and the token answers 403; a revocation
+  ends the old token and mints a new one; deleting the association deletes its rows; and a table built
+  from the ENTITY alone keeps one row per selection. Unit specs: token sign/verify/tamper/cross-kind, the
+  one-statement write, the key checked before it, the foreign-key 404, `feed-signature` refusing a
+  non-pair, the controller's 403, 400 (a token on the JSON feed too), `private` header, revocation and
+  the once-a-day legacy line, the modal's ask and confirmed revoke.
 
 ### D38b amended - every kind may ask, and an institution's request shows its audience (owner, 2026-11-02)
 
@@ -1869,9 +1973,9 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 
 - **Model** (migration `078_read_grants.sql`): `read_grants(user_id, campus, formation NULL = whole campus, granted_by, created_at)`, unique per cell (`COALESCE(formation, '')`, so NULL repeats are refused), no end date; `read_grant_journal` is append-only (`grant`/`revoke`, `actor`, `at`). A revocation deletes the grant row and writes the journal line in one transaction; setting a state already held writes nothing, so the journal records changes only. API: `GET`/`PUT /api/associations/read-grants` (`read-grants/read-grants.*`), GLOBAL ADMIN ONLY on both - the list is internal, a grantee cannot even read their own row. Granting to an unknown account is a 404.
 - **Visibility plugs into the one predicate**: `readGrantReachesAssociationSql` in `spaces/reader-spaces.ts` - a grant cell contains the OPEN spaces it matches, and an association is reached when one of ITS RULES reaches such a space (any type; an institution addressing Gardanne is reached by a Gardanne cell whatever campus the grantee has). It is spliced through `ReadOpts.readGrants`, which only the `*ToViewerSql` read paths turn on (feed, search, one post, comments, reactions, votes, signed-in agenda, calendar link) and the feed gate (`IN_FEED_AUDIENCE_SQL`, so a named reader with no space and no membership opens the feed). It goes into the ASSOCIATION branch of `postVisibleToUserSql` (and the republisher's), never the personal-post branch: personal posts stay invisible by construction.
-- **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; the directory (`associationVisibleToViewerSql`) is unchanged; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
+- **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; **the association directory, the shop and the partnerships ARE widened since 2026-11-14** ([below](#a-grant-opens-everything-of-its-cell-owner-2026-11-14)), and so are an association's booking spaces; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
 - **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
-- **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, directory unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
+- **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read and react: YES; comment and like a comment: YES only with their switch "voit les commentaires" on (2026-11-04, next bullet); vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction), `'COMMENT'` (list, write, edit and like a comment, report a comment - the grant counts, then the comments predicate of the next bullet) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent). **Narrowed on 2026-11-04 for comments** - next bullet.
 - **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer is no global admin, holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (both arms `adminSeesAll`, as the by-id gate does, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
   1. **list, write, edit and like a comment, and report one** - `assertVisible(.., 'COMMENT')` (the edit's answer serves the comment, who liked it included; deleting one's own comment stays open), and `ModerationService` asks `readPostOpenVerdict(.., 'COMMENT')` for a comment report - a third `PostAccessIntent` (`post-openable.ts`: the grant opens the audience term, then a withheld reader is `not-found`, the 404 of an invisible resource);
@@ -1893,6 +1997,36 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Cost, measured** (throwaway PostgreSQL 16, 50,000 posts over 300 associations, 20,000 users, 40,000 requested grants = 8,000 grantees with a few cells each - a real grantee holds at most 12 cells, so "20k grants on 200 users" cannot exist; `EXPLAIN (ANALYZE, BUFFERS)` of `postVisibleToViewerSql` as a filter, `ORDER BY createdAt DESC LIMIT 20`, 3rd run, JIT off): a reader with NO grant 600 ms / 198k buffers before this change, 670 ms / 268k buffers with it (+10%, the per-row grant lookup finding no row); a grantee 1,060 ms / 464k buffers. With JIT on the same queries are 930 / 1,180 / 1,500 ms. The baseline itself is a nested loop over every post (the predicate is evaluated per row), which is the pre-existing shape of the feed predicate, not this change. **No index added**: `CREATE INDEX ON association_audiences ("associationId")` was tried and the planner kept the sequential scan of a 300-row table in all six plans; `read_grants` is already served by `idx_read_grants_user` (bitmap index scan).
 - **Owed**: one look at the grid signed in. The feed cache is dropped on every real change.
 
+#### A grant opens everything of its cell (owner, 2026-11-14)
+
+The audience audit of 2026-11-14 found a named reader - typically staff, who have a campus, an empty
+cursus and so no space - read the posts and the agenda of the ticked cells while the association
+directory, the shop and the partnerships stayed empty for them. Decided by the owner: **a nominative
+read grant opens everything of its cell, with no per-person switch** - *"elle pourrait meme payer le
+tarif cotisant si elle cotisait"*. The directory, the shop and the partnerships are NOT opened to staff by campus: the grant is
+the door (an institution's "Personnel" posts and events reach staff by campus on their own, a
+separate decision of the same day).
+
+- `associationVisibleToViewerSql(association, viewer)` ALWAYS counts read grants, like every other
+  `*ToViewerSql` read path. It is what the directory (`AssociationsService.list`), the shop
+  (`ProductsService.listAllActive`), the partnerships (`activeCardsVisibleTo`, and `claimCard`
+  through `associationVisibleTo`) and an association's booking spaces (`BookingsService`: the
+  listing and every use by id) ask: the same grant
+  door as a post's (`readGrantReachesAssociationSql`), review-cohort gate included. A card a named
+  reader is listed is one they may claim.
+- **Booking spaces too** (owner, asked separately the same day: *"Ouvrir aussi"*): a named reader
+  lists, opens and books in an ASSOCIATION space of a granted cell. A PERSONAL space still follows
+  its owner's campus alone, which a grant does not change.
+- **Unchanged:** who is notified or suggested an association asks the plain
+  `associationVisibleToUserSql`, which counts no grant; a
+  grant still never notifies, never opens a personal post, a poll vote or a republication; a
+  product was already payable by its link, and the price a named reader pays follows their own
+  cotisation like anyone's.
+- **Proof:** `read-grants.integration.spec.ts` (the directory per grantee, the plain predicate
+  unwidened) and `shop-partnership-visibility.integration.spec.ts` (a named staff reader is listed
+  and claims the granted cell's cards and products, their own campus stays closed, staff with no
+  grant get nothing).
+
 #### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
 
 Set up through the API as the dev global admin (a dedicated test account): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: a dedicated test grantee (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
@@ -1908,7 +2042,7 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 | 7 | a revoke restores the baseline | PASS | after the revoke: post 404, reaction 404, comment 404, the posts gone from the feed, `Publication introuvable` on screen |
 | 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
 
-Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+Two P3 client defects were found on the way, both in the [backlog](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md).
 
 ### Follow requests, member reposts and visibility between spaces - the decisions of 2026-10-25, all shipped
 
@@ -2533,6 +2667,8 @@ Seven decisions on the audience of associations, lists and institutions (the las
 
 WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Cases named: the director of the ME, the ME communication and the School's student liaison reading the posts of associations but not the personal posts of students; a director of formations reading the associations of Saint-Etienne and Gardanne. Decisions: (1) a grid of checkboxes per person shaped like `/admin/spaces` (campus x formation, and whole campus); (2) it covers the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too - with comments, reactions, events and agenda; (3) NEVER the personal posts of students; (4) readers may react and comment; (5) a global admin grants, the grant ADDS and never removes; (6) staff without a cursus see nothing more by default, the named ones do (closes the staff-feed question); (7) no end date, the list of named readers is internal (global admins only), and a journal keeps who granted what to whom and when. The user's "ISTP" is FSSS. Named readers only READ and react, and get NO notifications for their perimeter (answers of 2026-10-07). As built: WP-C above.
 
+**AMENDED BY THE OWNER ON 2026-11-14 - decision (2), what a grant covers.** Beside the posts and the agenda, a grant opens the association directory, the shop and the partnerships of the ticked cells, with no per-person switch. As built: [a grant opens everything of its cell](#a-grant-opens-everything-of-its-cell-owner-2026-11-14).
+
 **AMENDED BY THE OWNER ON 2026-11-04 - decisions (2) and (4), for comments.** Students' comments are their own expression, like their personal posts, which a grant never opens. So: (a) a named reader who sees an association, list or institution post ONLY through the grant does not see its comments; (b) it is a PER-READER switch "voit les commentaires" in the "Accès en lecture" sheet, OFF by default for new AND existing named readers, each change journalled like a grant; (c) with it OFF the reader may still REACT, but not comment nor like a comment - the comment button and count are not shown, and the API answers 404 as for an invisible resource; ON keeps the behaviour above (read and comment); (d) with it OFF, reactions and poll votes are TOTALS, never who; (e) only when the grant is the reader's ONLY door - visible with grants and not without them - so a reader who also reaches the post natively keeps everything; (f) no new notification may leak. And (owner, same day): "un truc clair et propre, le plus user-friendly possible" - the switch reads plainly in the existing sheet (a label and one line saying what the reader will and will not see), and on the reader's side no dead control, nothing hinting at a hidden discussion. As built: the "Comments and people of a grant-only post" bullet of WP-C above. **And (owner, same day) the chat of an association's live is the same rule**: a named reader who sees a live only through their grant sees the video but not its chat - no lines, no sending - unless the same switch is on; no second switch. As built: "The chat of a grant-only live", WP-C above.
 
 ### The students-only switch, as built (owner, 2026-11-04)
@@ -2667,6 +2803,9 @@ revisit them:**
   one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
   admin without a cursus cannot act on a post they could not read.
 
+**Usage, counted on production 2026-11-14, read-only: not used.** 0 of 327 posts carry
+`studentsOnly` (0 of the 63 posts of the last 7 days), ten days after `v1.6.5` shipped it.
+
 ### An institution's reach per post, as built (owner, 2026-11-10)
 
 **The owner's decisions (2026-11-10)**, amending D19 for institutions only:
@@ -2684,7 +2823,7 @@ revisit them:**
    predicate. An event announced by the post keeps its own visibility.
 6. "Clair, propre, user-friendly": one compact block.
 
-Shipped in `1.6.10` (#3314); the readings owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else).
+Shipped in `1.6.10` (#3314); the readings owed are an entry of [the readings owed](plan.md#readings-owed).
 
 The rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
 targets and the public in them (everyone, the students, the staff), with no default, and may change
@@ -2724,9 +2863,25 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   campus and an empty cursus), a student whose campus and formation make no opened space, an account
   with no campus, and a review account - the SQL and every sentence here mean that set, nothing
   narrower; the picker's "Personnel" hint names who it reaches in those terms.
+- **Staff by campus, a door of its own (owner, 2026-11-14, "Oui, par campus")**:
+  `institutionReachStaffCampusDoorSql` opens a "Tous" or "Personnel" post to every STAFF ACCOUNT OF
+  A CAMPUS (`isCampusStaffSql`: a campus, no cursus entry, not a review account - the SQL twin of
+  `campusWideReaderCampus`, held to it by `reader-spaces.integration.spec.ts`) whose campus is the
+  campus of a space the post ticked AND that the institution's rules still reach. So the School
+  addresses its staff without naming each one. It sits beside the rules door in
+  `postVisibleToUserSql`, so every consumer below
+  gets it - the bell and the announcement included: such staff are TOLD of the post. Under the
+  public gate like every door: "Étudiants" closes it. Not opened: a post with no reach (legacy, or
+  not an institution's), staff of another campus, a ticked space outside the audience; a student
+  gains nothing (a student of an unticked space of the same campus still does not read it); nor an
+  account whose cursus names a formation with no opened space (it passes the "Personnel" public but
+  is not staff of a campus). `postReachesSpaceSql` is unchanged (a space's readers are students).
+  **The feed gate** (`IN_FEED_AUDIENCE_SQL`) admits such staff when an INSTITUTION's rules reach a
+  space of their campus, or a staff account told of a post would be refused the feed that holds it
+  (the follow precedent, F3 of WP-F5).
 - **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
   `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
-  `postVisibleToUserSql` passes `postReachHoldsSpaceSql` for the post's own association only. So a
+  `postVisibleToUserSql` passes `institutionReachHoldsSpaceSql` for the post's own association only. So a
   reader is reached through a space that BOTH one of the institution's rules reaches AND the post
   ticked - never wider than the audience, and shrinking with it. A membership is not narrowed (D21),
   and **a republisher still reaches its own readers** (G4, republication stays the inter-campus
@@ -2743,7 +2898,8 @@ to the post. The public link preview (`PostPreviewService.findShareable`) refuse
 is `students` or `staff`, as it refuses "Entre étudiants"; spaces alone narrow an audience as any
 association's does, and leave the preview as it was.
 
-**The write** (`posts/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision):
+**The write** (`spaces/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision, shared
+with [calendar events](#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)):
 `reach: { spaces, public }` on `POST /api/posts` and `PATCH /api/posts/:id`. On a create, an
 institution's post without one is a 400 `institution_reach_required`; on any other post a reach is
 `institution_reach_not_offered` (a live replay too: it keeps its live's audience, D8); a malformed one
@@ -2789,12 +2945,16 @@ would be refused word for word - the banner offers Delete alone.
 
 #### Decisions taken in the build, reversible
 
-1. **"Personnel" reaches the staff who already have a door** - the institution's members, named
-   readers whose grant cell meets a ticked space, a republisher's or a reposter's staff readers. A
-   staff account has no space, so the institution's rules never reached one, and the read-grant
-   decision (6) - "staff without a cursus see nothing more by default, the named ones do" - stands.
-   Whether "Personnel" should ALSO open the post to every staff account of a ticked space's campus
-   is parked for the owner ([open-questions](open-questions.md#question---should-an-institutions-personnel-public-reach-every-staff-account-of-its-campuses-2026-11-10)).
+1. **"Personnel" and "Tous" reach the staff of a ticked space's campus (owner, 2026-11-14, "Oui,
+   par campus")** - the staff-by-campus door above - beside the staff who already had a door (the
+   institution's members, named readers whose grant cell meets a ticked space, a republisher's or a
+   reposter's staff readers). Built on 2026-11-10 as "only the staff who already have a door" and
+   parked for the owner, who answered on 2026-11-14
+   ([open-questions](open-questions.md#decided-2026-11-14-by-the-owner-oui-par-campus---an-institutions-personnel-public-reaches-every-staff-account-of-its-campuses)).
+   Reversible: one disjunct and one gate term. NOT decided, so not built: the same door on an
+   institution's calendar EVENTS (the agenda), and the association-level readers (the shop, the
+   partnerships, the directory, an institution's live, a post with no reach) - parked in the same
+   entry.
 2. **A republication and a member repost keep reaching their own readers** (G4); only the public
    follows the post there.
 3. **An institution's members read every post of it**, whatever its reach (D21), as the switch lets
@@ -2809,8 +2969,9 @@ would be refused word for word - the banner offers Delete alone.
    `"reachPublic"`/`"reachSpaces"` on that entity's posts in the same transaction (or the write
    accept a reach on a post that already has one), and the edit form draw the picker from the
    served `type` alone (review of #3314, unreachable today, nothing built).
-6. **Events are not touched**: the event a post announces keeps its own visibility. The events half
-   of C1 (`association_calendar_event_audiences`, reform section 3) is not built.
+6. **Events carry their own reach since 2026-11-13** (below): the event a post announces is read
+   through the EVENT's predicate, never the post's. The `association_calendar_event_audiences` table
+   of reform section 3 was not built: events took the posts' two columns instead.
 
 #### Proof
 
@@ -2825,6 +2986,112 @@ a real audience, and migration 162's CHECKs and re-run. `posts.service.instituti
 the contract, the create (stored, required, outside, not offered), the edit (narrow and widen with the
 cache dropped, absent leaves it, refused on an association and a replay), the options' refusals, the
 served field; `post-preview.service.spec.ts`, the link preview refused for students or staff and
-kept for everyone. **Break-proof, run 2026-11-10**: with `postReachHoldsSpaceSql` always true, 9 of the 28
+kept for everyone. **Break-proof, run 2026-11-10**: with `institutionReachHoldsSpaceSql` (then
+`postReachHoldsSpaceSql`) always true, 9 of the 28
 integration tests fail; with `institutionReachAdmitsUserSql` always true, 11.
+
+### An institution's reach per calendar event, as built (owner, 2026-11-13)
+
+The owner's decisions, final: an INSTITUTION chooses, for EACH calendar event it files, the
+formation x campus spaces (with "tout un campus" and "toute une formation") and the public (Tous /
+Étudiants / Personnel, the posts' meaning); nothing is pre-selected and "Déposer" stays disabled
+until both are chosen; the reach is editable after validation or publication, both ways, sends no
+notification and does NOT send the event back to validation; and it is ONE model with posts - the
+same picker, the same refusals, the same chip, the post code factored rather than copied.
+
+**Schema - migration 165** (`165_institution_event_reach.sql`): `association_calendar_events` gains
+the posts' two nullable columns, `"reachPublic"` and `"reachSpaces"`, with the same three CHECKs
+(added `NOT VALID`, then validated). NULL is every event that is not an institution's and every
+institution event filed before the migration: its whole audience, as before. No backfill. **Not
+held**: `migration_hold_reason` returns empty (additive only), as for 162.
+
+**One shared code path** - nothing of the posts' half was copied:
+
+- `spaces/institution-reach.ts` (moved from `posts/`): `resolveInstitutionReachWrite` takes a
+  `subject` (`'post' | 'event'`) that changes only its dev-facing messages; the typed codes are the
+  posts' four. `institutionReachOptionsOffered` is the options statement both routes answer with.
+- `spaces/reader-spaces.ts`: `institutionReachHoldsSpaceSql` (the ticked-pair containment, renamed
+  from `postReachHoldsSpaceSql`), `institutionReachAdmitsUserSql` (the public gate) and
+  `institutionReachNotForStudentsSql` (what closes the read-grant and admin doors to a `students`
+  item) are read by BOTH `postVisibleToUserSql` and `eventVisibleToUserSql`.
+- The client: `InstitutionReachPicker.svelte` takes `subject` (the missing-choice line says
+  "déposer") and `loadOptions` (the event form passes `getEventReachOptions`);
+  `InstitutionReachChip.svelte` on the event's detail.
+
+**The predicate** - `eventVisibleToUserSql(event, user)`, the ONE event predicate: the public gates
+every door (`institutionReachAdmitsUserSql`), the spaces narrow the organiser's own door (rules and
+read grants, through `ReadOpts.spaceFilter`), and a `students` event closes the read-grant door.
+`eventReachesSpaceMatchingSql` (the agenda's space filter and the anonymous per-selection feed) asks
+the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` does. **Staff by
+campus is NOT applied to events**: the owner's decision of 2026-11-14 is for posts only, so an
+event's "Personnel" still reaches only the staff who already have a door (not decided, parked in
+[open-questions](open-questions.md#decided-2026-11-14-by-the-owner-oui-par-campus---an-institutions-personnel-public-reaches-every-staff-account-of-its-campuses)).
+
+**Co-organised events - decided by the lead, reversible:**
+
+1. **The public gates every door**, an accepted co-organiser's included.
+2. **The organiser's members AND an accepted co-organiser's members are exempt from the public**:
+   they co-own the event, edit it from the partner side, and list it on their own page - hiding it
+   from them would hide their own event.
+3. **The spaces narrow only the institution's own door** (rules and read grants). **An accepted
+   co-organiser keeps its own audience**, as a republisher keeps its readers for a post (G4): an
+   institution that co-organises with an association reaches that association's readers through it.
+4. **Only the organiser sets the reach** (E2): a partner's PATCH naming one is refused with
+   `partnerOrganiserOnlyRefusal('reach')`, and the form draws the picker on the organiser side only.
+
+**Every surface asks it**: the agenda lists and their filters, the event by id, the search, the
+`.ics` and JSON feeds (personal, judged by the reader's predicate; and the anonymous ones, see the
+policy below), the opening reminders (`eventOpeningSeenBySql`, asked when the followers are written AND
+again at the opening, so a narrowing in between drops a reader), the feed's event card and a post's
+linked event (`eventCardShownToViewerSql`: an event with a reach is shown only to a reader its own
+predicate admits; one without is unchanged).
+
+**Anonymous feeds - the same rules as posts (lead's decision, review of #3460, reversible).** A post
+whose public is `students` or `staff` never reaches an anonymous reader (the link preview refuses
+it), so neither does an event: every anonymous read - an association-only link AND a signed
+campus/formation selection feed, `.ics` or JSON - withholds an event whose public is `students` or
+`staff`, whatever space it ticks (`restrictAnonymousToPublicReach`). Those links are signed over the
+SELECTION, not a reader, and are shareable, so they cannot carry a public. A selection still narrows
+by `eventReachesSpaceMatchingSql` (the ticked spaces). **The signed ONE-event link is left whole, as
+intended**: it is minted for one event by a reader who saw it, and shares that event as a forwarded
+invitation would.
+
+**Version skew.** The event form offers the reach only on an estate that advertises `eventReach` in
+`/api/version` (`eventReachOffered`); an old app on a new server meets `400
+institution_reach_required` on an institution's create (accepted, the posts' precedent). Both are in
+[legacy-compatibility](legacy-compatibility.md).
+
+**The write**: `reach` on the event create and update routes, through `resolveInstitutionReachWrite`:
+mandatory on a create by an institution, refused on any other owner, and on an edit absent leaves
+the stored one alone. The status is never touched. **The options**:
+`GET /api/associations/:id/events/reach-options` - a global admin, anyone who may propose the
+institution's events (`PROPOSE_EVENT`), or anyone who validates them; 403 otherwise; 400
+`institution_reach_not_offered` for a non-institution.
+
+**Served**: every event carries `reach: { spaces, public } | null` (`servedInstitutionReach`).
+
+**The form** (`frontend/src/lib/calendar/eventForm.ts`): `canSetReach` is true when "Au nom de" is an
+institution (the global agenda) or on the institution's own page for its own events; `offersReach`
+adds the organiser side; `reachBlocksSave` keeps the save disabled while a required reach is
+incomplete. A new event's reach is required; an existing one's only when it already carries one (a
+legacy event saves without until a choice is complete). An edit sends the reach only once the picker
+was touched (the posts' rule from the review of #3314). The four codes read as event sentences
+(`calendarErrors.ts`).
+
+#### Proof - events
+
+`associations/institution-event-reach.integration.spec.ts` (real PostgreSQL; an institution on a
+whole campus, an association co-organising from another campus, readers of a ticked space, of an
+unticked space inside the audience, staff, members of both, an outsider): migration 165's CHECKs and
+re-run; a reader of a ticked space sees the event; a reader of an unticked space inside the audience
+does not; the public gate (students, staff, all); an edit narrows at once and widens back; a space
+outside the audience opens nothing; the co-organiser door; the anonymous selection; the event card;
+the write's refusals and the options; a signed selection feed withholding a `students` event (and a
+`staff` one) through the very space it ticked, the clause captured from the service's own method.
+`opening-reminders.integration.spec.ts` (11): a narrowed event's
+opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: with
+`institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
+always true, 11 of 11; with the selection exemption put back in the anonymous clause, the
+selection-feed test fails. The readings owed on a phone are in
+[the backlog](backlog.d/institution-event-reach.md).
 

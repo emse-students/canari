@@ -6,6 +6,12 @@ import {
   MAX_CO_ORGANISERS,
   MAX_ORGANISING_ASSOCIATIONS,
 } from '$lib/calendar/coOrganiserCap';
+import {
+  INSTITUTION_REACH_INVALID,
+  INSTITUTION_REACH_NOT_OFFERED,
+  INSTITUTION_REACH_OUTSIDE_AUDIENCE,
+  INSTITUTION_REACH_REQUIRED,
+} from '$lib/posts/institutionReach';
 
 /**
  * The sentence a calendar write's refusal reads as, chosen from the server's CODE.
@@ -32,6 +38,11 @@ const BY_CODE: Record<string, () => string> = {
   CALENDAR_NEUTRAL_NO_PARTNERS: m.calendar_error_neutral_no_partners,
   CALENDAR_NEUTRAL_NO_FORM: m.calendar_error_neutral_no_form,
   CALENDAR_NEUTRAL_LINKED_POST: m.calendar_error_neutral_linked_post,
+  // An institution's reach (owner, 2026-11-13): the posts' four codes, an event's sentences.
+  [INSTITUTION_REACH_REQUIRED]: m.event_reach_required,
+  [INSTITUTION_REACH_NOT_OFFERED]: m.event_reach_not_offered,
+  [INSTITUTION_REACH_INVALID]: m.event_reach_invalid,
+  [INSTITUTION_REACH_OUTSIDE_AUDIENCE]: m.event_reach_outside_audience,
   [CO_ORGANISER_CAP_CODE]: () =>
     m.calendar_error_coorganiser_cap({
       total: MAX_ORGANISING_ASSOCIATIONS,

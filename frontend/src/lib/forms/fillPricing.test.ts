@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { OTHERS_BUCKET_ID } from '$lib/pricing/priceMatrix';
 import type { FormItem, PricingView } from './api';
-import { bucketIdOf, fillPriceState, optionModifierOf } from './fillPricing';
+import { bucketIdOf, cursusSlicesOf, fillPriceState, optionModifierOf } from './fillPricing';
 
 /**
  * The price both fill pages show (member and guest). Moved out of the member page so the guest page
@@ -49,7 +51,7 @@ const grid: PricingView = {
 const state = (selections: Record<string, unknown>, pricing: PricingView | null = grid) =>
   fillPriceState({
     basePrice: 900,
-    pricing,
+    slices: [{ pricing, productGridPrices: {} }],
     items: [menu, extras],
     visibleItems: [menu, extras],
     selections: selections as never,
@@ -104,5 +106,80 @@ describe('bucketIdOf', () => {
   it('falls in "others" when no group holds the answer', () => {
     expect(bucketIdOf(grid.answerDimensions[0], 'opt_fish')).toBe(OTHERS_BUCKET_ID);
     expect(bucketIdOf(grid.answerDimensions[0], ['opt_meat'])).toBe('meat');
+  });
+});
+
+/** One case of `libs/contracts/cursus-pricing.cases.json`, the part the page reads. */
+interface PricingCase {
+  name: string;
+  form: { basePrice: number; items: unknown[] };
+  answers: Record<string, unknown>;
+  slices: { productGridPrices: unknown }[];
+  expected: { cents: number | null; cursusIndex: number; closedOptionIds: string[] };
+}
+
+const CASES = JSON.parse(
+  readFileSync(
+    join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'cursus-pricing.cases.json'),
+    'utf8'
+  )
+) as { cases: PricingCase[] };
+
+/**
+ * D32's ONE rule, pinned on both sides by one table: `apps/social-service/src/forms/form-quote.spec.ts`
+ * asserts the server serves exactly these slices and charges exactly `expected`; here the page,
+ * given those slices, shows the same total, through the same slice, and closes the same options.
+ */
+describe('fillPriceState - the shared table of cursus pricing cases (D32)', () => {
+  it.each(CASES.cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
+    const items = c.form.items as unknown as FormItem[];
+    const s = fillPriceState({
+      basePrice: c.form.basePrice,
+      slices: c.slices as never,
+      items,
+      visibleItems: items,
+      selections: c.answers as never,
+    });
+    expect(s.cursusIndex).toBe(c.expected.cursusIndex);
+    if (c.expected.cents === null) {
+      expect(s.priceUnavailable).toBe(true);
+    } else {
+      expect(s.priceUnavailable).toBe(false);
+      expect(s.total).toBe(c.expected.cents);
+    }
+    expect([...s.unavailableOptionIds].sort()).toEqual([...c.expected.closedOptionIds].sort());
+    // What the page names and the grids show come from the winning slice, never another.
+    const winner = c.slices[c.expected.cursusIndex];
+    expect(s.productGridPrices).toEqual(winner.productGridPrices);
+  });
+
+  it('labels the price with the WINNING slice only', () => {
+    const [first] = CASES.cases;
+    const s = fillPriceState({
+      basePrice: 0,
+      slices: first.slices as never,
+      items: first.form.items as unknown as FormItem[],
+      visibleItems: first.form.items as unknown as FormItem[],
+      selections: { q_formule: 'opt_repas' } as never,
+    });
+    // ICM is cheaper on "Repas" (500 against 1500): its label shows; on "Sans" the other slice wins.
+    expect(s.appliedLabel).toBe(' (ICM)');
+  });
+});
+
+describe('cursusSlicesOf', () => {
+  it('reads every slice a current server sends', () => {
+    const slices = [
+      { pricing: null, productGridPrices: {} },
+      { pricing: grid, productGridPrices: {} },
+    ];
+    expect(cursusSlicesOf({ cursusSlices: slices, pricing: null })).toBe(slices);
+  });
+
+  it('[LEGACY] reads a server older than D32 as its one slice, and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(cursusSlicesOf({ pricing: grid })).toEqual([{ pricing: grid, productGridPrices: {} }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('older than D32'));
+    warn.mockRestore();
   });
 });

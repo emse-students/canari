@@ -1,5 +1,7 @@
 ## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)
 
+target: 1.8.0
+
 Asked by the owner on 2026-11-07, every question answered the same day:
 
 - **Retention**: a finished live is kept and watchable for **3 days**, then deleted.

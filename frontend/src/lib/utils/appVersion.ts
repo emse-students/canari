@@ -1,5 +1,6 @@
 import { coreUrl } from '$lib/utils/apiUrl';
 import { MOBILE_APP_PACKAGE } from '$lib/mobile/appSiteAssociation';
+import { parseRetention, type RetentionDays } from '$lib/legal/retention';
 import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
@@ -98,11 +99,43 @@ export type LiveReplaysMode = 'off' | 'on';
  */
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
 
+/**
+ * The server's switch for group calls (`platform_config.group_calls_mode`, published by
+ * `/api/version` as `calls.groupMode`): `off` - a group conversation shows no call control and the
+ * server refuses a group `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` - group calls go peer to
+ * peer, up to 4 participants in audio and 3 in video. `callsMode = off` still closes everything.
+ */
+export type GroupCallsMode = 'off' | 'mesh';
+
+/**
+ * Every value of {@link GroupCallsMode}. FIVE COPIES of these two strings exist (the SQL CHECK,
+ * core's entity, chat-delivery's reader, this, the admin page through this) and
+ * `groupCallsModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
+
+/**
+ * Which relay carries a group call (`platform_config.call_relay`, published by `/api/version` as
+ * `calls.relay`, WP-GC4): `none` - the mesh, refused past its cap; `call-service` - our SFU carries
+ * the group call from the start (the server signs `mode: sfu` into its room tokens). An absent or
+ * unknown value reads `none`.
+ */
+export type CallRelay = 'none' | 'call-service';
+
+/**
+ * Every value of {@link CallRelay}. Five copies of these strings exist (the SQL CHECK, core's
+ * entity, chat-delivery's reader, this, the admin page through this) and `callRelaysAgree.test.ts`
+ * fails the day one of them drifts.
+ */
+export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
+  groupCallsMode: GroupCallsMode;
+  callRelay: CallRelay;
   livesMode: LivesMode;
   liveReplaysMode: LiveReplaysMode;
   checkpointSkipMode: CheckpointSkipMode;
@@ -114,8 +147,16 @@ export type ServerVersionInfo = {
   publishQueue: boolean;
   /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
   formDrafts: boolean;
+  /** Whether this estate stores each priced grid's own switch - see {@link AppVersionCheckResult}. */
+  gridRequiredSwitch: boolean;
   /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
   rankedFeeds: boolean;
+  /** Whether this estate lets a respondent change their answer - see {@link AppVersionCheckResult}. */
+  formAnswerEdit: boolean;
+  /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
+  eventReach: boolean;
+  /** The retention durations in force (`retention`), `null` from a server older than the field. */
+  retention: RetentionDays | null;
 };
 
 export type AppVersionCheckResult = {
@@ -128,6 +169,10 @@ export type AppVersionCheckResult = {
   maintenance: PlatformMaintenanceInfo;
   /** What the server lets calls do; `off` until a server has said otherwise. */
   callsMode: CallsMode;
+  /** Whether a group conversation may call (`calls.groupMode`); `off` until a server has said otherwise. */
+  groupCallsMode: GroupCallsMode;
+  /** Which relay carries a group call (`calls.relay`); `none` until a server has said otherwise. */
+  callRelay: CallRelay;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
   /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
@@ -165,12 +210,44 @@ export type AppVersionCheckResult = {
    */
   formDrafts: boolean;
   /**
+   * A CAPABILITY of the estate, not a switch: social-service stores each priced grid's own
+   * "Obligatoire" switch and demands a unit only of a REQUIRED grid, with no rule over the whole
+   * order (owner, 2026-11-13). The editor draws the switch, and the fill pages drop the order rule,
+   * only when this is true: an older server refuses a grid sent optional
+   * (`PRODUCT_GRID_NOT_REQUIRED`) and demands one unit across the order (`PRODUCT_GRID_EMPTY`) - and
+   * a store build reaches phones before production deploys. `false` for every server older than the
+   * field.
+   */
+  gridRequiredSwitch: boolean;
+  /**
    * Whether this estate's social-service serves the RANKED lists (`rankedFeeds`): Pour toi
    * (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, with their `asOf` pages. An older
    * one refuses `feed=foryou` `400` and drops `ranked` - and a store build reaches phones before
    * production deploys. `false` for every server older than the field.
    */
   rankedFeeds: boolean;
+  /**
+   * Whether this estate's social-service lets a respondent change their own answer
+   * (`formAnswerEdit`, migration 166). An older one answers the answer routes `404` and strips the
+   * form's switch from a save - and a store build reaches phones before production deploys, so the
+   * switch and "Modifier ma reponse" are offered only when this is true. `false` for every server
+   * older than the field.
+   */
+  formAnswerEdit: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service stores an institution calendar event's
+   * reach and serves its options route. The event form draws the reach picker, and requires a
+   * choice, only when this is true: an older server answers the options route `404` and cannot store
+   * a reach, so requiring one there would block every institution's event - and a store build
+   * reaches phones before production deploys. `false` for every server older than the field.
+   */
+  eventReach: boolean;
+  /**
+   * The retention durations the server applies to new content (`retention`, core migration 025),
+   * which the privacy policy and the live texts render; `null` until a server has said so, and for
+   * every server older than the field ({@link import('$lib/legal/retention').retentionInForce}).
+   */
+  retention: RetentionDays | null;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -193,6 +270,26 @@ function normalizeMaintenance(raw: unknown): PlatformMaintenanceInfo {
 function normalizeCallsMode(raw: unknown): CallsMode {
   const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
   return CALLS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
+ * The group calls mode a `/api/version` body carries (`calls.groupMode`). ABSENT OR UNKNOWN READS AS
+ * `off`, for the reason {@link normalizeCallsMode} gives: a switch that cannot be read fails closed,
+ * and a server that predates it refuses group calls anyway.
+ */
+function normalizeGroupCallsMode(raw: unknown): GroupCallsMode {
+  const mode =
+    raw && typeof raw === 'object' ? (raw as { groupMode?: unknown }).groupMode : undefined;
+  return GROUP_CALLS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
+ * The call relay a `/api/version` body carries (`calls.relay`). ABSENT OR UNKNOWN READS AS `none`:
+ * a server that predates it has no relay for group calls.
+ */
+function normalizeCallRelay(raw: unknown): CallRelay {
+  const relay = raw && typeof raw === 'object' ? (raw as { relay?: unknown }).relay : undefined;
+  return CALL_RELAYS.find((known) => known === relay) ?? 'none';
 }
 
 /**
@@ -239,7 +336,11 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost?: unknown;
     publishQueue?: unknown;
     formDrafts?: unknown;
+    gridRequiredSwitch?: unknown;
     rankedFeeds?: unknown;
+    formAnswerEdit?: unknown;
+    eventReach?: unknown;
+    retention?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -249,6 +350,8 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
+    groupCallsMode: normalizeGroupCallsMode(obj.calls),
+    callRelay: normalizeCallRelay(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
     liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
@@ -256,7 +359,11 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
+    gridRequiredSwitch: obj.gridRequiredSwitch === true,
     rankedFeeds: obj.rankedFeeds === true,
+    formAnswerEdit: obj.formAnswerEdit === true,
+    eventReach: obj.eventReach === true,
+    retention: parseRetention(obj.retention),
   };
 }
 
@@ -270,7 +377,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
-  calls: { mode: CallsMode };
+  calls: { mode: CallsMode; groupMode: GroupCallsMode; relay: CallRelay };
   lives: { mode: LivesMode };
   liveReplays: { mode: LiveReplaysMode };
   checkpointSkip: { mode: CheckpointSkipMode };
@@ -278,13 +385,17 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   presencePost: boolean;
   publishQueue: boolean;
   formDrafts: boolean;
+  gridRequiredSwitch: boolean;
   rankedFeeds: boolean;
+  formAnswerEdit: boolean;
+  eventReach: boolean;
+  retention?: RetentionDays;
 } {
   return {
     version: info.version,
     minClientVersion: info.minClientVersion,
     maintenance: info.maintenance,
-    calls: { mode: info.callsMode },
+    calls: { mode: info.callsMode, groupMode: info.groupCallsMode, relay: info.callRelay },
     lives: { mode: info.livesMode },
     liveReplays: { mode: info.liveReplaysMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
@@ -292,7 +403,11 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
+    gridRequiredSwitch: info.gridRequiredSwitch,
     rankedFeeds: info.rankedFeeds,
+    formAnswerEdit: info.formAnswerEdit,
+    eventReach: info.eventReach,
+    ...(info.retention ? { retention: info.retention } : {}),
   };
 }
 /**
@@ -472,6 +587,8 @@ export function buildAppVersionCheckResult(
     belowMinVersion,
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
+    groupCallsMode: serverInfo?.groupCallsMode ?? 'off',
+    callRelay: serverInfo?.callRelay ?? 'none',
     livesMode: serverInfo?.livesMode ?? 'off',
     liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
@@ -479,7 +596,11 @@ export function buildAppVersionCheckResult(
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
+    gridRequiredSwitch: serverInfo?.gridRequiredSwitch ?? false,
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
+    formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
+    eventReach: serverInfo?.eventReach ?? false,
+    retention: serverInfo?.retention ?? null,
   };
 }
 

@@ -1169,6 +1169,23 @@ pub(crate) fn epoques_departs(
     Ok(manager.removal_epochs(&group_id, &user_id))
 }
 
+/// What this device can prove, alone, about `user_id` having been a member of `group_id` - see
+/// `MlsManager::membership_evidence`. Serialised `{ firstSeenEpoch, watchedFromEpoch }`, as the WASM
+/// binding writes it.
+#[tauri::command]
+pub(crate) fn preuves_appartenance(
+    group_id: String,
+    user_id: String,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::MembershipEvidence, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = crate::state::live_manager(&lock)?;
+    Ok(manager.membership_evidence(&group_id, &user_id))
+}
+
 /// Every device event recorded since the last call, and forgets them - see
 /// `mls_core::device_trust::DeviceEvent`. Serialised with the field names the WASM binding uses.
 #[tauri::command]

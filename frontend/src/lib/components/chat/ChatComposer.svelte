@@ -982,7 +982,8 @@
     </div>
   {/if}
 
-  <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
+  <!-- 4px from the edge on a phone: the controls' own 40px boxes are the margin, as on Messenger. -->
+  <div class="pointer-events-auto flex flex-col gap-2 px-1 sm:px-4 md:px-6">
     <!-- A picked video being re-encoded on the device, before it joins the strip below. -->
     {#if videoPreparation && videoPreparation.fraction !== null}
       <VideoPreparationProgress
@@ -1008,7 +1009,7 @@
         that must never become unreachable. The cap is expressed in `rem` rather than in rows so a
         tall tile and a short one give the same maximum.
       -->
-      <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
+      <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full px-2 sm:px-0">
         <div
           class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
         >
@@ -1371,7 +1372,7 @@
         {/if}
 
         <!-- Dynamic send button. -->
-        <div class="shrink-0 pr-1">
+        <div class="shrink-0">
           <button
             onmousedown={(e) => e.preventDefault()}
             onclick={submit}

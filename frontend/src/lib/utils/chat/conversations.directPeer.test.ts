@@ -1,4 +1,9 @@
-import { resolveDirectPeerId, canonicalDirectName } from './conversations';
+import {
+  resolveDirectPeerId,
+  canonicalDirectName,
+  findDirectConversationByPeer,
+} from './conversations';
+import type { Conversation } from '$lib/types';
 
 const ME = 'd82cd226d82cd226d82cd226d82cd226d82cd226d82cd226d82cd226d82cd226';
 const PEER = '40bb4eab40bb4eab40bb4eab40bb4eab40bb4eab40bb4eab40bb4eab40bb4eab';
@@ -51,5 +56,40 @@ describe('resolveDirectPeerId', () => {
     const mls = mockMls(new Error('network down'));
     const peer = await resolveDirectPeerId(mls, GROUP, '', ME);
     expect(peer).toBeNull();
+  });
+});
+
+describe('findDirectConversationByPeer', () => {
+  function dm(id: string, lifecycle: Conversation['lifecycle']): Conversation {
+    return {
+      id,
+      name: id,
+      contactName: PEER,
+      directPeerId: PEER,
+      conversationType: 'direct',
+      messages: [],
+      lifecycle,
+      mlsStateHex: null,
+    } as Conversation;
+  }
+
+  it('finds the live DM with the peer, whatever the case of the id asked', () => {
+    const map = new Map([['g-live', dm('g-live', 'active')]]);
+    expect(findDirectConversationByPeer(map, PEER.toUpperCase())?.[0]).toBe('g-live');
+  });
+
+  // A TOMBSTONE IS NOT A CANDIDATE (owner, 2026-11-10): a DM the peer deleted is never adopted by
+  // the next one - the rule the startup merge already applied (`canRepresentThePeer`).
+  it('never answers a retired DM, even when it is the only one', () => {
+    const map = new Map([['g-old', dm('g-old', 'removed')]]);
+    expect(findDirectConversationByPeer(map, PEER)).toBeUndefined();
+  });
+
+  it('skips a retired DM listed before the live one', () => {
+    const map = new Map([
+      ['g-old', dm('g-old', 'removed')],
+      ['g-live', dm('g-live', 'pending')],
+    ]);
+    expect(findDirectConversationByPeer(map, PEER)?.[0]).toBe('g-live');
   });
 });

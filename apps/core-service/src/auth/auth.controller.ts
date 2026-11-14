@@ -657,7 +657,7 @@ export class AuthController {
         userinfo.name || null,
         userinfo.firstName || null,
         userinfo.lastName || null,
-        parseProfileClaims(userinfo)
+        parseProfileClaims(userinfo, userinfo.sub.slice(0, 8))
       )
       .catch(async (err: unknown) => {
         if (!(err instanceof UserRowGoneError)) throw err;

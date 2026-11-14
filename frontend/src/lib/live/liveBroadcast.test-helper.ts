@@ -7,6 +7,7 @@ import { vi } from 'vitest';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import type { LiveSegmentUploaderOptions } from './api';
 import type { LiveBroadcastDeps } from './liveBroadcast.svelte';
+import type { LiveStudio } from './liveStudio.svelte';
 import type { LiveLimits, LiveRulesStatus, LiveView } from './types';
 
 export class FakeTrack extends EventTarget {
@@ -192,9 +193,8 @@ export function fakeDeps() {
     now: () => clock.t,
     sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
-    screenShareAvailable: vi.fn(() => false),
-    openScreen: vi.fn(async (_context: AudioContext | null) => fakeStream().stream),
-    createAudioContext: vi.fn((): AudioContext | null => null),
+    // A phone by default: the camera recorded directly. A desktop test sets a studio.
+    createStudio: vi.fn((_camera: CameraSession): LiveStudio | null => null),
   } satisfies LiveBroadcastDeps;
   return {
     deps,

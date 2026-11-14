@@ -66,7 +66,7 @@ vi.mock('$lib/utils/callMediaSession', () => ({
 }));
 
 import CallOverlay from './CallOverlay.svelte';
-import type { CallService, CallState } from '$lib/services/CallService';
+import type { CallService, CallState, GroupCallTile } from '$lib/services/CallService';
 import { callView } from '$lib/stores/callView.svelte';
 import { historyOverlayStackDepth, initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
@@ -80,6 +80,10 @@ function fakeService(state: CallState) {
     callState: writable<CallState>(state),
     remoteStream: writable<MediaStream | null>(null),
     remoteStreams: writable(new Map<string, MediaStream>()),
+    isGroupCall: writable(false),
+    groupTiles: writable<GroupCallTile[]>([]),
+    remoteAudioMix: writable<MediaStream | null>(null),
+    hasVideo: false,
     localStreamStore: writable<MediaStream | null>(null),
     isMuted: writable(false),
     isVideoOff: writable(true),
@@ -718,5 +722,63 @@ describe('a video call (lot 2)', () => {
     } finally {
       callsMode.set('audio_video');
     }
+  });
+});
+
+describe('a group call (WP-GC2)', () => {
+  /** A group call in progress with bob and carol on their tiles. */
+  function groupService(video: boolean) {
+    const service = fakeService('incall');
+    service.isGroupCall.set(true);
+    service.hasVideo = video;
+    service.groupTiles.set([
+      { userId: 'bob', stream: null, micSuspended: false, connected: true },
+      { userId: 'carol', stream: null, micSuspended: true, connected: true },
+    ]);
+    return service;
+  }
+
+  it('draws one tile per participant, with the microphone held on its own tile', async () => {
+    await render(groupService(false), []);
+    const tiles = document.querySelectorAll<HTMLElement>('[data-testid="call-group-tile"]');
+    expect([...tiles].map((t) => t.dataset.userId)).toEqual(['bob', 'carol']);
+    expect(tiles[0].querySelector(`[title="${m.call_group_tile_mic_held()}"]`)).toBeNull();
+    expect(tiles[1].querySelector(`[title="${m.call_group_tile_mic_held()}"]`)).not.toBeNull();
+    expect(screen()?.textContent).toContain(m.call_group_label());
+  });
+
+  it('says it waits for the others while no participant is in the room', async () => {
+    const service = groupService(false);
+    service.groupTiles.set([]);
+    await render(service, []);
+    expect(document.querySelector('[data-testid="call-group-waiting"]')).not.toBeNull();
+  });
+
+  it('plays every participant through the one sink, from the mixed stream', async () => {
+    const service = groupService(false);
+    const mix = new MediaStream();
+    service.remoteAudioMix.set(mix);
+    await render(service, []);
+    const sink = document.querySelector<HTMLAudioElement>('audio');
+    expect(sink?.srcObject).toBe(mix);
+  });
+
+  it('has no camera control in an AUDIO group call, and has one in a video group call', async () => {
+    await render(groupService(false), []);
+    expect(document.querySelector('[data-testid="call-camera"]')).toBeNull();
+    while (mounted.length) unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    await render(groupService(true), []);
+    expect(document.querySelector('[data-testid="call-camera"]')).not.toBeNull();
+  });
+
+  it('rings as a group call: the caller is named and the kind says group', async () => {
+    const service = fakeService('incoming');
+    service.isGroupCall.set(true);
+    await render(service);
+    expect(document.querySelector('[data-testid="call-ring-kind"]')?.textContent).toContain(
+      m.call_group_audio_label()
+    );
+    expect(document.querySelector('[data-testid="call-group-grid"]')).toBeNull();
   });
 });

@@ -1751,7 +1751,7 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new Error(`successor membership not updated in workspace ${workspaceId}`);
     }
     this.logger.warn(
-      `[WORKSPACE] promoted a successor admin workspace=${workspaceId} user=${successor.userId.slice(0, 8)} role="${adminRole.name}" members=${members.length} reason=account_deletion`
+      `[WORKSPACE] promoted a successor admin workspace=${workspaceId} user=${successor.userId.slice(0, 8)} role=${adminRole.id} members=${members.length} reason=account_deletion`
     );
     return 'promoted';
   }
@@ -2219,7 +2219,7 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.assertMayCreateCommunity(input.createdBy);
     const slug = await this.ensureUniqueWorkspaceSlug(askedSlug);
     this.logger.log(
-      `[WORKSPACE] create name=${JSON.stringify(name)} slug="${slug}" by=${input.createdBy.slice(0, 8)}`
+      `[WORKSPACE] create nameChars=${Array.from(name).length} by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
       name,
@@ -2242,7 +2242,7 @@ export class ChannelService implements OnApplicationBootstrap {
     } catch (e) {
       await this.workspaceRepo.delete({ id: savedWs.id });
       this.logger.error(
-        `[WORKSPACE] create ROLLED BACK workspace=${savedWs.id} slug="${slug}" - no distribution group: ${e instanceof Error ? e.message : String(e)}`
+        `[WORKSPACE] create ROLLED BACK workspace=${savedWs.id} - no distribution group: ${e instanceof Error ? e.message : String(e)}`
       );
       throw e;
     }
@@ -4111,7 +4111,7 @@ export class ChannelService implements OnApplicationBootstrap {
     if (!role) {
       if (wanted !== 'Membre') return null;
       this.logger.debug(
-        `[INVITE] "Membre" read as the base role=${base?.name ?? 'none'} workspace=${workspaceId}`
+        `[INVITE] "Membre" read as the base role=${base?.id ?? 'none'} workspace=${workspaceId}`
       );
       return base;
     }
@@ -4120,12 +4120,12 @@ export class ChannelService implements OnApplicationBootstrap {
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
     if (actorMayGrantRole(actorPermissions, role.permissions)) {
       this.logger.debug(
-        `[INVITE] grant of role=${role.name} allowed workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+        `[INVITE] grant of role=${role.id} allowed workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
       );
       return role;
     }
     this.logger.warn(
-      `[INVITE] refused - role=${role.name} not grantable by actor workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+      `[INVITE] refused - role=${role.id} not grantable by actor workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
     );
     throw new ForbiddenException({
       code: INVITE_ROLE_NOT_GRANTABLE,
@@ -4721,7 +4721,7 @@ export class ChannelService implements OnApplicationBootstrap {
       !actorMayGrantRole(actorPermissions, role.permissions) ||
       !actorMayGrantRole(actorPermissions, targetPermissions)
     ) {
-      this.refuseRoleChangeBeyondActor(`assign role=${role.name}`, workspaceId, actorUserId);
+      this.refuseRoleChangeBeyondActor(`assign role=${role.id}`, workspaceId, actorUserId);
     }
 
     // A demotion is an exit from the admin set, so it faces the same postcondition as a departure.
@@ -4783,7 +4783,7 @@ export class ChannelService implements OnApplicationBootstrap {
         !actorMayGrantRole(actorNowPermissions, roleNow.permissions) ||
         !actorMayGrantRole(actorNowPermissions, targetNowPermissions)
       ) {
-        this.refuseRoleChangeBeyondActor(`assign role=${roleNow.name}`, workspaceId, actorUserId);
+        this.refuseRoleChangeBeyondActor(`assign role=${roleNow.id}`, workspaceId, actorUserId);
       }
       const demotes =
         targetNowPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) &&
@@ -4813,7 +4813,7 @@ export class ChannelService implements OnApplicationBootstrap {
     });
 
     this.logger.log(
-      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${written.name}" by=${actorUserId.slice(0, 8)}`
+      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role=${written.id} by=${actorUserId.slice(0, 8)}`
     );
 
     // TOLD TO THE PERSON IT IS ABOUT, and only to them.

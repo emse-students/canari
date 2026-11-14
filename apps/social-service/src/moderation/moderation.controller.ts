@@ -17,6 +17,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
 import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import { mayRemoveAsModerator, type CommentViewer } from '../posts/comment-identity';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Moderation endpoints: content reporting (all authenticated users)
@@ -27,6 +28,7 @@ import { mayRemoveAsModerator, type CommentViewer } from '../posts/comment-ident
  * governs (`spaces/bde-moderation.ts`) - the queue and the muted list are narrowed, and an act on a
  * target outside that scope is a 403 `MODERATION_OUT_OF_SCOPE`.
  */
+@RouteParams({ reportId: 'uuid', userId: 'opaque', commentId: 'opaque' })
 @Controller('moderation')
 export class ModerationController {
   constructor(

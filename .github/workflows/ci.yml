@@ -403,7 +403,7 @@ jobs:
           if has '^apps/call-service/' || \
              has '^tools/headless-chrome/' || \
              has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
-             has '^frontend/src/lib/utils/(callAudio|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
+             has '^frontend/src/lib/utils/(callAudio|callKeys|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
              has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
             echo "call_e2e=true" >> "$GITHUB_OUTPUT"
           else
@@ -611,7 +611,7 @@ jobs:
         # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
         # proving either on another major proves it on a server production does not run. Bump it WITH
         # the compose files, never alone.
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe
@@ -642,7 +642,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -788,6 +788,16 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- user-write-gone.integration
 
+      # EVERY CURSUS ENTRY IS READ (D32): the directory's promo and formation filters and the
+      # formations listing are `jsonb_array_elements` over `users.cursus`, which no mock can judge.
+      # Its own `users` table, in a throwaway schema (docs/wiki/profiles-and-access.md, D32).
+      - name: Cursus reads against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- cursus-reads.integration
+
       # A PLATFORM CONFIG WRITE UPDATES THE COLUMNS IT NAMES: two administrators editing different
       # settings keep both. Its own table, in a throwaway schema (docs/wiki/services/core-service.md).
       - name: Platform config writes against PostgreSQL
@@ -796,6 +806,17 @@ jobs:
         env:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- platform-config-write.integration
+
+      # THE SEEN-HELP STORE (core migration 019): the migration as it ships, the controller and the
+      # service over a real repository, and the account erasure's statement for `help_seen`. Its own
+      # table, in a throwaway schema, so the boot's database is all it needs (it ran in no step
+      # until 2026-11-14, so it was skipped on every pull request).
+      - name: Seen-help store against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- help-seen.integration
 
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
@@ -822,7 +843,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -853,7 +874,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -932,7 +953,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -950,7 +971,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -1012,7 +1033,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 
@@ -1126,12 +1147,12 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 
       - name: Setup Rust (oxvelte >= 1.93)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
 
@@ -1235,7 +1256,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 
@@ -1346,7 +1367,7 @@ jobs:
 
       # THE WRAPPER JAR IS BINARY CODE a bump of the wrapper replaces (#2564), and this job runs it.
       - name: Validate the Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Setup JDK
         uses: actions/setup-java@v6
@@ -1365,11 +1386,13 @@ jobs:
       # would restore a large directory this job never reads. The Swatinem cache this action
       # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v2
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           target: aarch64-linux-android
           cache-workspaces: frontend/src-tauri
           rustflags: ''
+          # And its v2 `CARGO_BUILD_WARNINGS=deny`, exported the same way (see `build-mls-wasm`).
+          build-warnings: ''
 
       - name: Cache Gradle
         uses: actions/cache@v6
@@ -1410,12 +1433,12 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Select Xcode 26
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: '^26.0'
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
 
@@ -1430,12 +1453,12 @@ jobs:
             ${{ runner.os }}-bun-
 
       - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: frontend/src-tauri
           key: ios-app
@@ -1497,7 +1520,7 @@ jobs:
   # process exiting); `timeout-minutes` is the only bound, for a run in which nothing happens at all.
   # =================================================================================================
   test-call-service-e2e:
-    name: Call Service E2E (two browsers through the SFU and coturn)
+    name: Call Service E2E (the SFU pair, the p2p mesh and the SFU group, through coturn)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-call-e2e == 'true' }}
     runs-on: ubuntu-24.04
@@ -1508,11 +1531,11 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: apps/call-service
 
@@ -1558,6 +1581,26 @@ jobs:
           bun apps/call-service/e2e/run.mjs \
             --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
 
+      # The group call's mesh (WP-GC2), on the same coturn: three browsers, one peer connection per
+      # pair, one key per sender (WP-GC1); every directed leg proven, a fourth user refused past the
+      # signed cap, and a wrong key shown to fail its leg. `!cancelled()`: it runs even when the pair
+      # failed, so one red step never hides the other scenario's verdict.
+      - name: Three browsers in a p2p mesh, one key per sender
+        if: ${{ !cancelled() }}
+        run: |
+          bun apps/call-service/e2e/run.mjs --scenario mesh \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      # The relay's group call (WP-GC4), on the same coturn: five browsers through the SFU, past the
+      # mesh cap; every one of the 20 directed legs proven under its sender's key (read from the
+      # forwarded track's stream id), a sixth user refused by the SFU's seat cap, a wrong key shown
+      # to fail its leg, and the ledger's five sessions connected and ended.
+      - name: Five browsers through the SFU, one key per sender
+        if: ${{ !cancelled() }}
+        run: |
+          bun apps/call-service/e2e/run.mjs --scenario sfu-group \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
       # `always()`, not `failure()`: a run CANCELLED by the job's timeout is the one whose relay's
       # side of the story is most needed. Nothing to print when coturn never started.
       - name: coturn's log
@@ -1585,7 +1628,7 @@ jobs:
       # 2026-09-04 and the recipe moved to `bun` the same day, which failed with `Error 127` -
       # command not found - a message that names nothing about what was missing.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -1633,7 +1676,7 @@ jobs:
       # 2026-09-04 and that its own Setup Bun step was added to fix. A job's dependencies are what
       # its recipe RUNS, never what a comment beside it remembers.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -1888,11 +1931,11 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       # Two independent target directories - today's crate and the old checkout's - so neither
       # invalidates the other between runs.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             frontend/mls-cross-version

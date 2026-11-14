@@ -623,6 +623,17 @@ it always did.
   MEASURED 2026-10-18 over 144 GIFs (trending and searches): `sm` max 2.9 MB; `md` median 1.1 MB,
   p90 4.4 MB, max 11.7 MB. **Ceiling 12 MiB** (`GIF_MEDIA_MAX_BYTES`), checked on the declared
   length (413 before a byte is read) and on the bytes (the stream is cut, logged `too-large`).
+  **The picker never offers a rendition over it, and never retries a 413 (2026-11-13).** A 413 was
+  re-sent by the grid tile a moment later (an `<img>` cannot read the status) and the search could
+  hand out a rendition above the ceiling. Now the search carries the `bytes` KLIPY declared per
+  rendition (`klipy.ts`, `rendition()`), `mapKlipyItems` passes over any whose declared size exceeds
+  `GIF_MEDIA_MAX_BYTES` (imported from where it is defined; md -> sm -> xs, never the other way, and a
+  result with nothing that fits is left out and counted `oversized`), the client's `pickGridRendition`
+  and `commentGifRendition` apply the same test (`fitsRelay`), and `GifTileImage` fails a rendition
+  declared over the ceiling at once instead of asking twice. **Only a declared size is acted on**: a
+  rendition whose size KLIPY did not state is offered as before, and whether KLIPY states one for
+  every rendition is not measured here (no production access when this was written) - the debug line
+  `[GIF_SEARCH] N of M results had a rendition over the relay ceiling` counts how often it matters.
 - **One host, no query.** `static.klipy.com`, https, no credentials, no explicit port, and NO query
   (400 `query-not-allowed`: KLIPY's paths are content-addressed, and `?x=N` would make every request
   a new cache key) (`parseKlipyCdnUrl`), then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
@@ -692,7 +703,7 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+  ([the readings owed](../../plan.md#readings-owed)).
 - **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
   when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
   2026-10-16).
@@ -1090,6 +1101,8 @@ it an origin outside the anchor, and every click on the panel's own contents - i
 category tab, an emoji - then reads as "outside" and closes it a frame before the pick can register.
 
 ### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, FIXED 2026-10-09, reading owed)
+
+> Since 2026-11-13 the Android shell announces the keyboard to the page before resizing the WebView, and the keyboard's own animation is the synced one: [keyboard-and-send-motion](../keyboard-and-send-motion.md).
 
 Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
 via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
@@ -1604,7 +1617,7 @@ request held by a live document is waited for; a pending request whose tab close
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
 fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
-**Owed: the two-tab readings on dev**, a row of the [verification table](../../backlog.md#owed-a-verification-and-nothing-else).
+**Owed: the two-tab readings on dev**, an entry of [the readings owed](../../plan.md#readings-owed).
 
 ### The flusher resolves its token, and does not run while offline
 
@@ -1861,7 +1874,8 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
 - **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
   answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
   `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
-  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses (a live row only:
+  a retired DM is never a destination). A
   conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
   (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
   the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
@@ -1918,7 +1932,7 @@ on a weak one. Refusals keep their clock. The reasoning, the bounds and the numb
 
 ### A deploy's "not now" is not a send failure (R05, 2026-11-09)
 
-**The defect** ([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
+**The defect** ([backlog](../../plan.md#readings-owed)).
 A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
 its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
 read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
@@ -3648,9 +3662,35 @@ The writers, which are the mechanism that holds the invariant:
 | --- | --- |
 | boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
 | `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
-| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed, pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a LIVE DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed; a RETIRED one (`removed`) is never matched, see [a deleted DM is not carried into the next](#a-deleted-dm-is-not-carried-into-the-next-one) - pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
 | `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
 | every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+
+### A deleted DM is not carried into the next one
+
+Decided by the owner on 2026-11-10. When a peer deletes a DM, this device keeps it as a RETIRED
+conversation (`lifecycle: 'removed'`, with its "a supprime cette conversation" line). A later DM
+with the same peer is a NEW group, and its Welcome used to ADOPT the retired row:
+`findDirectConversationByPeer` did not skip tombstones, so `upsertConversation` moved the retired
+conversation's stored rows onto the new group. Those rows carry author proofs naming the OLD group,
+so every device that later received them in a history bundle marked them "non verifie"
+([history-reconciliation](../../protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)). The startup merge
+(`mergeDirectConversationDuplicates`) and discovery already refused a tombstone - the paths disagreed.
+
+**One predicate now answers "the conversation with that peer" everywhere: `canRepresentThePeer`,
+applied inside `findDirectConversationByPeer`.** The callers, each decided:
+
+| Caller | Skips a tombstone | Why |
+| --- | --- | --- |
+| `upsertConversation` (`setupMessageHandler.ts`, the Welcome) | yes, for ANOTHER group's row | the retired DM keeps its own entry and rows, the new group starts empty (`[WELCOME] ... starts empty` names the retired ids); the joined group's OWN DM row is still revived whatever its lifecycle - a re-Welcome into the same group is a re-add |
+| the media send following a re-keyed DM (`useMessaging.svelte.ts`) | yes | it follows the row the Welcome moved, so it asks the same question; a file is never sent into a retired DM |
+| discovery's local de-dup (`serverGroupConversation.ts`) | yes (already did, inline) | a record pending removal must not refuse its own replacement (user report, 2026-08-23) |
+| `startNewConversation` (`groupCreation.ts`) | yes (inline before, same outcome) | a non-active row fell through to the server check anyway; a retired row listed before a live one no longer hides it |
+| the community invitation DM (`useChannelWorkspaces.svelte.ts`) | yes | an invitation written into a deleted DM reaches nobody |
+| `mergeDirectConversationDuplicates` (startup) | yes (already did) | a tombstone competing on `updatedAt` destroyed the fresh group for both parties |
+
+Pinned by `setupMessageHandler.test.ts` (*"the stored rows of the previous DM with that peer"*) and
+`conversations.directPeer.test.ts` (*"findDirectConversationByPeer"*).
 
 The consumers that look a conversation up by a group id, and the verdict on each:
 
@@ -4316,7 +4356,9 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 - **Sticky date**: current date label stays visible during scroll - see
   [The day label and its floating pill](#the-day-label-and-its-floating-pill-2026-10-01).
 - **Search**: in-chat search with prev/next navigation and highlight.
-- **Lightbox**: full-screen image/video with pinch-zoom and download.
+- **Lightbox**: full-screen image/video with pinch-zoom and download, and previous/next over the
+  conversation's media - see
+  [The media viewer of a conversation walks its images and videos](#the-media-viewer-of-a-conversation-walks-its-images-and-videos-2026-11-13).
 - **Radial menu** (mobile): long-press message -> circular action menu
   (`MessageMobileActions.svelte`). The actions are ICONS ONLY on ONE row (owner, 2026-11-08), built
   from one `actions` list (name = aria-label + title): 7 at most (own text message), each `flex-1`
@@ -4699,6 +4741,120 @@ follows the bottom.
 `svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
 portrait photo near its end.**
+
+### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
+
+The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a
+six-row DM drew its rows at the TOP of the pane, and closing the keyboard showed the older-history
+spinner and jumped the thread twice. **Both came from the same fact: a pane its thread does not fill
+cannot be scrolled.**
+
+- **Where it sits.** The owner decided the Messenger/Messages layout: the rows sit against the
+  composer. `app.css` gives the scroller's first child `margin-top: auto`, which takes the free space
+  above a short thread and is zero once the thread overflows. `justify-content: flex-end` was refused:
+  it overflows UPWARD, past `scrollTop` 0, so the top of a long thread could not be reached.
+- **When it loads its past.** The older-history load is triggered by `measureScroll` near the top
+  (`OLDER_TRIGGER_PX`). A pane that cannot scroll reached it only on the first stray scroll event,
+  and the keyboard closing was one. That is the spinner, and the prepend under the motion is the jump.
+  Once the entry has widened (both entry paths), the fill is armed. **It is driven by state, not by
+  one pass** (review of #3545). An effect asks `loadOlderGroups` for one more page whenever something
+  it reads moves, while the pane is still short and a source can still bring something. The things
+  it reads:
+  - a load ending, whether the reader's or its own;
+  - a store page read (`storePagesRead`);
+  - the pane gaining a height (its own `ResizeObserver`, `paneHeight`);
+  - the window stepping;
+  - the peer's answer returning `scrollbackState` to `idle`.
+
+  **It ends because nothing moves any more, never on a count or a clock.** A pane with no height
+  (display:none, a collapsed panel) is never paged, because everything measures "short" there.
+  Two facts stop it for the rest of the entry, because no later change of state would undo them:
+  - the store throws (logged at WARN with the error's class);
+  - the store answers "more" without moving its cursor. Every stored row is shown, so a page that
+    moved the cursor moved the rows.
+
+  Without that stop, either one re-asked at once, forever. A peer's answer that lands after a
+  conversation switch is dropped rather than written into the next conversation.
+- **The entry fill is SILENT** (lead decision, review of #3545). Two things show only for a load the
+  READER asked for by scrolling (`olderAskedBy`), never for one the fill asked:
+  - the older-history spinner;
+  - the scrollback banners ("loading", "no device can supply older messages").
+
+  A reader who later reaches the top takes over whatever load is running, and its state shows from
+  then on. A scroll event on a pane that cannot scroll is a box changing under the keyboard, so it no
+  longer counts as the reader reaching the top.
+- `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it:
+  - an exhausted store is asked once with no scroll;
+  - a growing store is asked until the pane overflows;
+  - a store answering "more" without moving its cursor, or throwing, is asked once;
+  - a pane that gains its height later is filled then;
+  - a peer's answer after a switch is not written into the next conversation;
+  - a pane with no height is never paged;
+  - the fill's peer ask shows no banner;
+  - an overflowing pane is never asked.
+
+  Each fails on the code before it.
+- **A reader at the bottom follows the keyboard during a store read.** While older messages are
+  being prepended, the observer keeps the row at the top of the viewport (`keep-row`). The exception
+  is a change of the pane's BOX height under a reader at the bottom: it moved the bottom, so that
+  reader follows it (`threadGrowthResponse`, `boxChanged`). That holds even when the prepend lands
+  in the same change, since a prepend above a reader at the bottom leaves them at the bottom.
+- **The store's page keeps the reader's place by the row anchor alone.** `loadOlderGroups` used to
+  capture `scrollTop` and `scrollHeight`, await the store, then write `prevTop + delta`. A keyboard
+  rising during that await, with the thread taken to its end for it, was undone by the write: the
+  reader landed a keyboard height up, on older messages - one candidate cause of the photo DM that
+  "lands on older messages when the keyboard opens" (Pixel 6a, 2026-11-14), and a load this fill now
+  starts at entry would have made it likelier. The growth observer's row anchor already kept the
+  reader's place for the window step, which never had a restore; the store's page is left to it too
+  (`threadGrowthObserver.test.ts`, "an older page prepended"; `ChatArea.entryWindow.svelte.test.ts`,
+  "leaves scrollTop as the pane holds it", which fails on the old restore).
+- **Owed: one reading on the Mi 9T, a short DM and the photo DM, keyboard open and closed.**
+
+### A picture keeps its height when the keyboard opens (2026-11-13)
+
+Reported by the owner on Android `1.6.11` (a DM ending on a tall screenshot): with the keyboard up
+the picture showed LESS of itself, cut top and bottom, and the end of the thread looked out of reach.
+**Not a scroll defect: the frame itself shrank.** A chat photo is a `MediaFrame` `fill` box,
+`max-height: var(--media-max-height)`, its `<img>` `object-cover object-center`, and the ceiling was
+`60svh` - chosen as "the stable unit" (`app.css`). It is stable in a phone browser, where the
+keyboard shrinks only the visual viewport. **In the app it is not: Android pads the WebView by the IME
+inset (`MainActivity.applyKeyboardInsets`) and iOS shrinks its frame (`CanariApplyKeyboardLayout`),
+so the LAYOUT viewport shrinks and every viewport unit with it - `svh`, `lvh`, `dvh` and `vh` alike.**
+`lvh` is therefore no answer.
+
+Measured on the Mi 9T (`1.6.11-alpha.5` release build on dev, over the WebView's DevTools socket,
+a probe element sized in each unit):
+
+| keyboard | `innerHeight` | `60svh` = `60lvh` = `60dvh` = `60vh` | a 1080x2340 screenshot in a 290 px frame |
+| --- | --- | --- | --- |
+| closed | 945 | 567.3 px | 567 px tall, 90% of the picture shown |
+| LatinIME (357 px) | 588 | 352.7 px | 353 px tall, 56% shown, cropped top and bottom |
+| ADB keyboard (90 px) | 855 | 513.5 px | - |
+
+The 214 px is the same number the [2026-10-30 anchor fix](#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30)
+measured as the photo's loss - that fix kept the reader at the bottom, but the picture still shrank.
+
+**The fix:** no CSS unit names "the screen without the keyboard", and `keyboardViewport.svelte.ts` is
+the one place that knows it (`baselineHeight`). `keyboardFreeViewportHeight` returns the baseline
+while a keyboard is open AND the layout viewport gave it room, null otherwise; the store writes it as
+`--keyboard-free-viewport-height` and removes it when null, and `app.css` reads
+`--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6)`. Absent, it is exactly
+the old `60svh`, so a phone browser, a desktop resize and a rotation are unchanged. The resize event
+that writes it runs in the same rendering step as the layout it corrects, so no frame draws the short
+ceiling. Every `fill` medium reads that ceiling - a chat photo or video, a reel tile, a feed or comment
+attachment (`mediaAspectStyle`); the event modal and `LetterboxedImage`'s documented ceiling now
+read it too instead of a second `60svh`. A GIF (`--media-inline-max-height: 16rem`) never depended on
+the viewport.
+
+Proved on the phone by applying the new rule over CDP with the keyboard up: the screenshot frame
+353 px without the held height, 567 px with it, 567 px both ways once closed. The unit test
+(`keyboardViewport.test.ts`) replays the bench's LatinIME rise (945/945, 945/588, the 588/230.3 double
+report, 588/587.9, back to 945) and holds the ceiling at 567 on every frame. **Limit:** below the
+keyboard-open threshold (160 px on Android) no keyboard is "open", so a 90 px keyboard still takes
+54 px off the ceiling.
+**Read on the Mi 9T 2026-11-14 (`1.6.12`, dev, LatinIME):** `--keyboard-free-viewport-height` is set to 945 px with the keyboard up and unset when it is down, and a picture (256 CSS px high, not the tall screenshot) keeps its height both ways over two cycles with the end of the thread right above the composer. **A tall screenshot fixture (the 567 px case) was not sent, so the clamp itself is still owed.**
+
+**The 90 px keyboard, per frame (Mi 9T, a one-row keyboard that takes 90 CSS px, 150 frames of a rise, 2026-11-14):** `innerHeight` goes 945 -> 855 in one frame, `visualViewport.height` reads 766 for that single frame (9 ms, the known double report) then 855.8, and the composer's ancestor padding goes 24 -> 12 px in the SAME frame as the resize, so no frame shows the composer 12 px low: the 24 ms of the old report was not reproduced and nothing was changed.
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
@@ -5322,7 +5478,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
-`sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo IN PLACE (no remount) to the server id on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
+`sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo to the server id IN PLACE - the row keeps `renderKey` (its client id), which `ChatMessageGroups` keys by, so it is updated, not remounted, and its entrance does not replay at delivery (2026-11-13, [keyboard-and-send-motion](../keyboard-and-send-motion.md); before that the `{#each}` key was `id` and the row WAS remounted) - on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
 
 **What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete, "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and - since WP-OFF-3 - Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server dedupes on the client id since WP-OFF-3 (migration 088)**: a repeat of the same `messageId` by the same author in the same salon is answered with the stored row, which is what makes Retry safe on an unknown outcome ([offline-and-weak-network](../offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)). A transport failure that leaves the device OFFLINE is `pending` and sent again on the reconnect - once an answer has proven the server answers a repeat with its row (`salonRepeatProof.ts`); before that it is `unconfirmed` like any unknown outcome, and goes on its own when the proof arrives. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
 
@@ -5660,7 +5816,7 @@ it changes the reconciliation's wire and deserves its own review.
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
 (reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
-[verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+[readings owed](../../plan.md#readings-owed)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
@@ -5669,7 +5825,7 @@ is held to the current answer. For a newcomer every chunk is withheld, so a stor
 one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
 per-chunk read is the correctness property); it no longer delays the member's gesture.
 
-**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+**Why it does not breach step A** ([the decision](../../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)).
 Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
 device and filtered on its owner's server windows, so for a newcomer it carries no message from
 before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:
@@ -5733,15 +5889,60 @@ optional `scope`; with it, `visibleNickname` overrides the profile name, without
 - the shared-media panel;
 - the call overlay's title (the call's group).
 
-Nothing else passes it. An admin access list and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
+Nothing else passes it, except a NOTIFICATION about that conversation (below). An admin access list
+and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
 write bumps: a register first created inside a `$derived` would be a source of that derived, which
 Svelte does not track, and the screen kept the old name until that was found.
 
-**Push: a nickname never reaches a notification** (decided 2026-11-08). `notificationSenderName`,
-`resolveNotificationSenderName`, the native name mirror, the Rust scanner and the server's display-name
-copies call the resolver without a scope and name the profile. A lock screen is outside the
-conversation, a nickname somebody else set may be an insult, and the servers never see an MLS group's
-nicknames anyway - one rule for both kinds.
+**A notification names a member by their nickname in that conversation, composed by the device**
+(owner, 2026-11-14, reversing the 2026-11-08 rule that kept nicknames out of every notification):
+*"comme sur Messenger, tous les pseudos"* - the nickname set in THAT conversation, whoever set it,
+lock screen included; and *"Tout pourrait etre donne par l'appareil et rien par le serveur, ce serait
+plus homogene"* - no server puts a nickname in a push, for any kind (DM, group, community). The
+owner's reasoning: the server will soon know nothing (content-free push), and the device composes
+the notification and holds the nicknames. Blocks apply exactly as on the screen: a nickname of the
+viewer set by somebody in a block with them is not shown, and while that block status is unknown the
+profile name is.
+
+One rule, `libs/contracts/notification-nickname.cases.json`, asserted by every reader:
+
+| Path | Where | What names the member |
+| --- | --- | --- |
+| The WebView's own notifications (web, desktop, the iOS app alive, and Android's socket trigger) | `notifyInbound` -> `resolveNotificationSenderName(senderId, conversationKey, convo)` / `notificationSenderName` (`displayName.ts`) | the one resolver with the scope of `notificationNicknameScope` (the group itself, or a salon's `community:<id>`, from the salon placements `noteSalonCommunities` keeps) |
+| The native copy | `nicknameMirror.ts` -> Rust `store_conversation_nicknames` -> `conversation_nicknames.json` (data directory, and the iOS App Group) | `{userId, scopes: {scope: {member: nickname}}, channels: {salon: scope}}`, only nicknames the account may SEE (`mirroredNickname`: the block rule is applied before the write, and a block answer re-mirrors) |
+| Android FCM (killed app) | `CanariFirebaseMessagingService.nicknameLookup` -> pure `push/ConversationNicknames.kt` | an MLS frame's banner (`shownName`), a salon's speaker (`ChannelBannerAuthor.of(nickname = ...)`, a PROVEN author only), the socket trigger's salon speaker, a chat reaction's actor, the call ring's caller (`knownCallerName`) |
+| iOS extension | `NotificationService.conversationNicknameLookup` / `conversationNickname` | the MLS banner (`shownName`), the salon speaker (`channelBannerAuthor(nickname:)`) and its "X vous a mentionne" line, a chat reaction's actor |
+| iOS app alive | `canari_push.mm` `CanariConversationNicknameLookup` / `CanariConversationNickname` | the MLS banner, the salon speaker (`CanariSalonSpeaker`) and its mention line, a chat reaction's actor, the CallKit caller (`CanariCallerDisplayName(callerId, groupId)`) |
+
+What stays the profile name, and why:
+
+- **The mention tokens in a body** (`@[<id>]`): the thread's own chips (`MessageMentionChip`) name the
+  profile, and a notification says what the screen says.
+- **The Rust push scanner** (`proto_fields.rs`, `push_text.rs`) composes sentences whose subject is the
+  banner's sender line, and names nobody itself.
+- **The server's display-name copies** (`senderName`, a reaction's `title`, `actorName`) stay the
+  profile and are only a fallback the device overrides; they go with content-free push. A server never
+  reads a nickname column for a push (owner, 2026-11-14).
+- **A salon whose community this device has not placed** (the sidebar has not listed it yet) or whose
+  nickname list it has never read: a community's register is the server's and lives in memory, so it
+  reaches the copy only once read (`loadCommunityNicknames`, the first salon of it opened in a session,
+  or a live `workspace.updated`). Once mirrored it stays in the copy across launches, until the
+  sign-out.
+
+**The copy follows the account.** It names its owner: every reader uses it only when the owner is the
+account of `push_context.json`, a write for another account REPLACES it, every session writes it once
+even with nothing to say (so it names the signed-in account from then on, and an absent file is a
+fault, not a state), every register stored for the signed-in account is restated WHOLE once per
+session (`mirrorStoredNicknames`, `ChatBackgroundService`; `restatedScopes` empties each scope before
+its entries apply), a community's list read from the server restates that community whole
+(`restateMirroredScope`: after a relaunch the register starts empty, so a member the list stopped
+naming would otherwise keep the old nickname in the copy), the salon placements are one account's
+(an account switch places every salon again), the sign-out waits for a write in flight before it
+removes the copy,
+the sign-out removes it (`forgetConversationNicknames` -> `forget_conversation_nicknames`, the owner
+checked), the account deletion removes it with the other push files
+(`remove_account_push_and_name_files`), and the factory wipe removes the App Group copy
+(`wipe_group_names`). Capped at 5000 nicknames and 2000 salons.
 
 **A block.** A blocked person cannot rename the blocker. In a community the server refuses
 (`403 USER_BLOCKED`, `isBlockedBetween`, either direction). In a group no server reads the frame and
@@ -5790,3 +5991,34 @@ theirs, or blocks.
 ### Channel access is a choice, not a switch (2026-11-10)
 
 Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
+
+## The media viewer of a conversation walks its images and videos (2026-11-13)
+
+Opening an image or a video from a bubble no longer ends at that item (owner, 2026-11-13): the same
+viewer moves to the previous or next image or video of THAT conversation, like a gallery.
+
+- **One viewer, two doors.** [`ConversationMediaViewer`](../../../../frontend/src/lib/components/chat/ConversationMediaViewer.svelte)
+  takes a list and the key of the item to open on; the "Medias" panel and `MessageMediaRenderer`
+  both use it, so they cannot drift. The arrows (pointer devices), the horizontal swipe (touch) and
+  Left/Right are `MediaLightbox`'s own, shared with posts (`showPrev`/`showNext`), as are the
+  rotation and fullscreen of a video ([screen-orientation](../screen-orientation.md)).
+- **The sequence is what the client already holds.** `MainChatPage` provides one loader
+  (`provideChatMediaSequence`, a context, so no prop crosses five components) over the same local
+  read as the panel (`loadSharedContent`: storage for DMs and groups, the in-memory messages of a
+  channel). No history fetch is ever triggered to extend it. `buildViewerSequence` orders it OLDEST
+  FIRST (left = older), and drops a CanaReel sent in the chat (a tile with its own viewer), a media
+  whose expiry hint has passed, one this device met a `410` for (`mediaPurgedAt`) and a deleted
+  message (the aggregate already skips it). One message carries one media; the key is
+  `messageId:mediaId` so a second attachment would be its own item.
+- **It opens at once, then gains neighbours.** The bubble's decrypted URL is passed as `known`
+  (never released by the viewer, it is the bubble's); the list arrives a moment later and the viewer
+  stays on the same item BY KEY - no remount, no second history entry. A neighbour is decrypted when
+  reached, through `MediaService.downloadAndDecrypt` like the panel's.
+- **No wrap-around** (`viewerBounds`): the newest wrapping to the oldest would jump across the whole
+  conversation on one stray swipe, and an end that stops tells the reader there is nothing further.
+- **A video stops when you move**: the next item replaces the player (`{#key}`), which unmounts it.
+- The panel's list stays newest first (its grid order), so there its "previous" is the newer one.
+
+Tests: `viewerSequence.test.ts` (order, skips, bounds), `ConversationMediaViewer.svelte.test.ts`
+(keyboard, ends, video stop, known URL). **Owed: a reading on a phone** - swipe between a photo and
+a video in a conversation with both, rotate a video, then move on.

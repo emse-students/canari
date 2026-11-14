@@ -204,7 +204,18 @@ describe('buildPublishedCarte', () => {
     const out = build({ content: { a1: content({ members }) } });
     expect(out.directory?.zones[0]).toEqual({
       label: 'Culture, Arts',
-      assos: [{ assoId: 'a1', line: 'Zoe Bernard (Presidente) - Alice Martin' }],
+      assos: [
+        {
+          assoId: 'a1',
+          line: 'Zoe Bernard (Presidente) - Alice Martin',
+          // The roster behind the line, in the same order: the server checks it and derives the
+          // line from it, and an erasure finds a member in it by id.
+          members: [
+            { userId: 'u1', name: 'Zoe Bernard', role: 'Presidente' },
+            { userId: 'u2', name: 'Alice Martin', role: '' },
+          ],
+        },
+      ],
     });
     expect(out.directory?.heading).toBe('Annuaire des membres');
   });
