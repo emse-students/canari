@@ -409,7 +409,7 @@ jobs:
           # canari-only:begin
           # THE ARMING IS GITHUB'S OWN MUTATION, AND NEVER `gh pr merge --auto` (2026-11-14). `gh`
           # reads the merge state ITSELF and, when the pull request looks mergeable to it, sends
-          # `mergePullRequest` instead of arming (measured on #3519, run 43605328429: the refusal
+          # `mergePullRequest` instead of arming (measured on #3519, run 43605328429 attempt 1: the refusal
           # of an `--auto` call was signed `(mergePullRequest)`). The App bypasses the ruleset, so
           # that merge was judged by `gh`'s reading and by nothing else. `enablePullRequestAutoMerge`
           # arms or refuses and can do nothing more; the only merge this step makes is the explicit

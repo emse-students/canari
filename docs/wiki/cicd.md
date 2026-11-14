@@ -96,7 +96,7 @@ refusal met there with the base standing still fails once, naming `UNKNOWN`.
 **THE ARMING IS GITHUB'S MUTATION, NEVER `gh pr merge --auto`: THE STEP CAN ARM, OR MERGE BEHIND ITS
 OWN READS, AND NOTHING ELSE DECIDES (2026-11-14, Canari first).** `gh pr merge --auto` reads the merge
 state itself and, when the pull request looks mergeable to it, sends `mergePullRequest` instead of
-arming - the refusal measured on #3519 was signed `(mergePullRequest)` although the step had only
+arming - the refusal measured on #3519 (run 43605328429, attempt 1) was signed `(mergePullRequest)` although the step had only
 asked to arm. With an App that bypasses the ruleset, that merge was judged by `gh`'s reading alone,
 beside the strict reads described above. The step now sends
 [`enablePullRequestAutoMerge`](https://docs.github.com/en/graphql/reference/pulls) through

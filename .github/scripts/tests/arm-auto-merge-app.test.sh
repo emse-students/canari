@@ -516,7 +516,20 @@ fi
 # anywhere in the file: that command merges by itself when the pull request looks mergeable to it.
 # shellcheck disable=SC2016 # the dollar signs are the workflow's own shell text, matched literally
 {
-  auto_lines="$(grep -nE 'gh pr merge .*[^-]--auto( |$)' "$wf" | grep -vE '^[0-9]+: *#' || true)"
+  # Wherever the flag sits (first, last, before a `;`), and on a continued line too: the code is
+  # read with its `\` continuations joined. `--disable-auto` is another flag and must not match.
+  auto_re='gh pr merge( .*)? --auto([^-[:alnum:]]|$)'
+  auto_lines="$(grep -vE '^ *#' "$wf" | sed -e ':a' -e '/\\$/N; s/\\\n */ /; ta' | grep -nE "$auto_re" || true)"
+  spellings_ok=1
+  for line in 'gh pr merge --auto --squash "$PR"' 'gh pr merge "$PR" --squash --auto;' 'x=$(gh pr merge "$PR" --auto)' 'if gh pr merge "$PR" --auto --squash; then'; do
+    grep -qE "$auto_re" <<<"$line" || spellings_ok=0
+  done
+  grep -qE "$auto_re" <<<'gh pr merge "$PR" --disable-auto --repo "$REPO"' && spellings_ok=0
+  if [ "$spellings_ok" = 1 ]; then
+    pass "B32 the search for a leftover --auto finds it first, last, before a separator, and never takes --disable-auto for it"
+  else
+    fail "B32 the search for a leftover gh pr merge --auto misses a spelling, or matches --disable-auto"
+  fi
   merge_step="$(awk '/^      - name: /{ step = $0 } step ~ /Ask GitHub to merge it/' "$wf")"
   if [ -z "$auto_lines" ]; then
     pass "B32 no gh pr merge --auto is left: nothing in the file lets gh choose between arming and merging"
@@ -733,7 +746,9 @@ if [ "$st" = 0 ] && [ "$(armings)" = 1 ] && [ "$(merges_now)" = 1 ]; then
 else
   fail "B36 the refused arming of a mergeable pull request was not followed by exactly one explicit merge" "$out"
 fi
-if grep -rqF 'GH_CHOSE_TO_MERGE' "$work/gh.all"; then
+if [ ! -s "$work/gh.all" ]; then
+  fail "B36 the record of every case's calls is empty - nothing was read"
+elif grep -qF 'GH_CHOSE_TO_MERGE' "$work/gh.all"; then
   fail "B36 a gh pr merge --auto was sent in one of the cases - gh would have chosen to merge by itself"
 else
   pass "B36 across every case of the merge step, no gh pr merge --auto was ever sent"
