@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { AuthSessionsService, DEVICE_ID_PATTERN } from './auth-sessions.service';
+import { RouteParams } from '../common/route-params';
 
 /** A core-service session id: `auth_sessions.id`, a UUID minted by `randomUUID()`. */
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -17,6 +18,7 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
  * Session endings asked by another service, over the Docker network only (`/api/internal` has no
  * nginx location) and gated on `INTERNAL_SECRET`.
  */
+@RouteParams({ userId: 'opaque', deviceId: 'opaque' })
 @Controller('internal/sessions')
 export class InternalSessionsController {
   private readonly logger = new Logger(InternalSessionsController.name);

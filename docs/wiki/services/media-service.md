@@ -130,6 +130,22 @@ present - and it is declared BEFORE the catch-all `:id` for the same reason `int
 the one exception is a REEL file, on its sender's release or a salon moderator's purge
 ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)).
 
+## Path parameters are declared (2026-11-14)
+
+The guard and the two specs are social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14)). **Every path
+parameter of this service is declared `opaque`, and that is the decision, not an omission.** A media
+id, an upload id and an upload-session id are uuids the server mints, but none of them is a
+database key: each is looked up in the index or in the session store, where an id nobody minted is
+simply absent and is answered `404` (or `410` once purged), the answer the clients and the caches in
+front of the public routes already know. Declaring them `uuid` would turn part of those `404` into
+`400` for no query it protects. A live id has a stricter rule of its own, applied by
+`live-segments.service.ts` (lower-case canonical only, because the route is cached by its exact
+spelling), which the guard's case-insensitive shape would not replace.
+
+So what the mechanism gives here is the other half: `route-params.coverage.spec.ts` fails on a new
+route whose parameter nobody declared, and whoever adds a parameter that IS a database key writes
+`uuid` and gets the `400`.
+
 ## The upload ceiling is ONE number, and the box publishes it (2026-09-24)
 
 `GET /api/media/limits` answers `{ "maxBytes": <number> }` and takes no token. It exists because the

@@ -41,6 +41,7 @@ import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { isInReviewCohort } from '../review-cohort';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { avatarAccessOf, type AvatarAccess } from './avatar-access';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -96,6 +97,7 @@ type AvatarLogOutcome =
   | 'rejected'
   | 'refused';
 
+@RouteParams({ id: 'opaque', otherUserId: 'opaque', blockedId: 'opaque', requestId: 'uuid' })
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);

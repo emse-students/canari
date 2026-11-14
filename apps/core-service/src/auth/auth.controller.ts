@@ -57,6 +57,7 @@ import type { HandoffPublicJwk } from './handoff/handoff-token';
 import { HandoffMintDto } from './handoff/handoff-mint.dto';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
+import { RouteParams } from '../common/route-params';
 
 interface OidcCallbackDto {
   code: string;
@@ -265,6 +266,7 @@ function maintenanceRefusal(platformConfig: { maintenanceMessage?: string | null
   };
 }
 
+@RouteParams({ sessionId: 'uuid' })
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -1236,10 +1238,10 @@ export class AuthController {
   }
 
   /** Revokes one of the caller's sessions. Revoking the current one is a logout. */
-  @Delete('sessions/:id')
+  @Delete('sessions/:sessionId')
   @HttpCode(200)
   async revokeSession(
-    @Param('id') id: string,
+    @Param('sessionId') id: string,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<{ ok: boolean }> {

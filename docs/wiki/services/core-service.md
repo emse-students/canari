@@ -101,6 +101,28 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 
 ## Routes
 
+### Path parameters are declared (2026-11-14)
+
+The mechanism is social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14), with the reasons): each
+controller says what its path parameters are with `@RouteParams`, a global guard answers `400`
+naming the parameter when a `uuid` is not one, before any other guard, and
+`src/route-params.coverage.spec.ts` fails on a parameter no declaration names.
+
+**What is a uuid here, and what is not.** A user id is NOT a uuid (`users.id` is the login), so
+`id`, `userId`, `otherUserId`, `blockedId` and an external `sub` are `opaque`, like a device id and a
+help id (checked against the help contract by its handler). Four names are uuids: a session
+(`auth_sessions.id`), an announcement, a profile-correction request, and an association or a Lydia
+cashier named in a payments path. **A name means one thing in the whole service**, which the
+coverage spec holds: the session route's parameter is `sessionId`, not `id`, because `id` is a user
+everywhere else.
+
+**What changed for a caller.** A session id, an announcement id or a correction-request id that is
+not a uuid is answered `400` before the handler runs (`announcement.route-params.http.spec.ts` shows
+it over HTTP, the session guard not yet asked). The payments routes already refused a malformed
+association or cashier id with a `400` written by hand in each handler; the declaration replaces
+those copies, and the message now names the parameter. The one check left in a handler is on an id
+that arrives in a BODY, which the guard does not read; it uses the guard's own `isUuidShaped`.
+
 ### Auth
 
 | Method | Path | Auth | Description |
@@ -111,7 +133,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
 | DELETE | `/api/auth/sessions` | Bearer (+ cookie) | Revoke every session except the current one |
-| DELETE | `/api/auth/sessions/:id` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
+| DELETE | `/api/auth/sessions/:sessionId` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
 | POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per account | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
 | POST | `/api/auth/restore/registration` | same | Verify and store THE restore key of the calling session |
 | POST | `/api/auth/restore/assertion/options` | none | A stateless HMAC challenge for a restore |
