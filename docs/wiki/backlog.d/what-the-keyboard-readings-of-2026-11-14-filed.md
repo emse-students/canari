@@ -43,8 +43,8 @@ In every DM, one frame after Back and before the keyboard moves, the composer mo
 px (12 CSS px at 2.625) down: the footer's resting `0.75rem` changing as the keyboard state flips,
 ahead of the layout. Small, and seen in all five.
 
-### 4. Context, not a defect - short DMs sit at the top
+### 4. Short DMs sit at the top - DECIDED: they move to the bottom (owner, 2026-11-14)
 
 DMs 2 and 3 draw their few rows from the top, with an empty band above the composer, so the keyboard
-rise moves nothing but the composer. Messenger bottom-aligns a short thread. Whether Canari should
-is a layout question for the owner, not part of the motion work.
+rise moves nothing but the composer. Messenger bottom-aligns a short thread. **The owner chose the bottom**: a
+thread shorter than its pane rests against the composer.

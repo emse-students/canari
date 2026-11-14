@@ -3,8 +3,17 @@
 The owner, 2026-11-14: Messenger stays the reference for the LAYOUT (every size and margin measured
 in [design-reference](../frontend/design-reference.md) holds), but Google Messages does the MOTION
 better - *"la fluidite avec laquelle les messages montent avec le clavier, au lieu d'un bloc, tout
-est smooth"*. This entry is about the motion only. **Not to be built until the owner asks** (the
-directive of 2026-11-11: no new feature unless asked).
+est smooth"*. This entry is about the motion only.
+
+**Decided by the owner, 2026-11-14 (asked to build it the same day):**
+- **Both directions, both platforms**: the thread and the composer ride the keyboard on the rise
+  AND the fall, on Android AND iOS - one mechanism, the ride of `keyboardRide.ts`, extended.
+- **On iOS the pieces ride the keyboard's own curve, with no lead**: Apple Messages starts its
+  thread ahead of the keys; Canari does not copy that.
+- **A short thread sits at the BOTTOM**, against the composer, as in Messenger and Messages
+  ([the readings](what-the-keyboard-readings-of-2026-11-14-filed.md), item 4).
+- **The bench**: development and checks on the web, then the Mi 9T on a dev build; the owner's
+  Pixel 6a only for the final reading of the pre-release, nothing else installed on it.
 
 ### What Google Messages does, measured (Pixel 6a, Android 17, 60 Hz, 2026-11-14)
 
