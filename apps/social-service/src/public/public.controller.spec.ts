@@ -107,12 +107,14 @@ describe('PublicController - the association directory of one space (owner, 2026
     { id: 'in', slug: 'in', name: 'In', type: 'association' },
     { id: 'out', slug: 'out', name: 'Out', type: 'association' },
     { id: 'lst', slug: 'lst', name: 'Liste', type: 'list' },
+    { id: 'lst-out', slug: 'lst-out', name: 'Liste ailleurs', type: 'list' },
+    { id: 'inst-out', slug: 'inst-out', name: 'Etablissement ailleurs', type: 'institution' },
     { id: 'old', slug: 'old', name: 'Old', type: 'association', archived: true },
   ];
   function makeController() {
     const list = jest.fn(() => Promise.resolve(rows));
-    // The space's associations, archived ones included (`old`).
-    const offeredInSpace = jest.fn(() => Promise.resolve(new Set(['in', 'old'])));
+    // The space's entities of every type, archived ones included (`old`).
+    const offeredInSpace = jest.fn(() => Promise.resolve(new Set(['in', 'lst', 'old'])));
     const findBySlug = jest.fn((slug: string) =>
       Promise.resolve(rows.find((r) => r.slug === slug))
     );
@@ -126,7 +128,7 @@ describe('PublicController - the association directory of one space (owner, 2026
     return { controller, list, offeredInSpace };
   }
 
-  it('keeps only the associations the named space offers; lists are not filtered by it', async () => {
+  it('keeps only what the named space offers, a list or an institution like an association (owner, 2026-11-14)', async () => {
     const { controller, offeredInSpace } = makeController();
     const served = await controller.listAssociations(undefined, 'ICM:saint-etienne');
     expect(served.map((a) => a.slug)).toEqual(['in', 'lst', 'old']);
@@ -136,7 +138,7 @@ describe('PublicController - the association directory of one space (owner, 2026
   it("answers the COMPLETE list without a space - Canari's own sitemap reads it", async () => {
     const { controller, offeredInSpace } = makeController();
     const served = await controller.listAssociations('association', undefined);
-    expect(served.map((a) => a.slug)).toEqual(['in', 'out', 'lst', 'old']);
+    expect(served.map((a) => a.slug)).toEqual(['in', 'out', 'lst', 'lst-out', 'inst-out', 'old']);
     expect(offeredInSpace).not.toHaveBeenCalled();
   });
 
@@ -156,10 +158,16 @@ describe('PublicController - the association directory of one space (owner, 2026
     await expect(controller.getBySlug('in', 'ICM:saint-etienne')).resolves.toMatchObject({
       slug: 'in',
     });
-    // A list is not an association of a space: the space does not filter it.
+    // A list of the space is served; a list or an institution of another space is a 404 too.
     await expect(controller.getBySlug('lst', 'ICM:saint-etienne')).resolves.toMatchObject({
       slug: 'lst',
     });
+    await expect(controller.getBySlug('lst-out', 'ICM:saint-etienne')).rejects.toThrow(
+      NotFoundException
+    );
+    await expect(controller.getBySlug('inst-out', 'ICM:saint-etienne')).rejects.toThrow(
+      NotFoundException
+    );
     // Archived, of the space: still its page (the portail's archived section links it).
     await expect(controller.getBySlug('old', 'ICM:saint-etienne')).resolves.toMatchObject({
       slug: 'old',

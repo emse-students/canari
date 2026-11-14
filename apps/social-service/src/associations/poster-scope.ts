@@ -59,7 +59,11 @@ export const ALL_CARTE_SPACES_SQL = `SELECT cs.id, cs.formation, cs.campus FROM 
  * THE ASSOCIATIONS OF SPACE `$1` A MAP OFFERS - the one definition every per-space public read shares
  * ({@link offeredAssociationsSql}), here for a space named by its id. Answers `id`.
  */
-export const CARTE_SPACE_ASSOCIATIONS_SQL = offeredAssociationsSql('cas.id = $1', 'active');
+export const CARTE_SPACE_ASSOCIATIONS_SQL = offeredAssociationsSql(
+  'cas.id = $1',
+  'active',
+  'associations'
+);
 
 /** A space named in a public URL (see `spaces/public-space.ts`). */
 export type CarteSpaceKey = PublicSpaceKey;

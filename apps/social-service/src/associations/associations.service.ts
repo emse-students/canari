@@ -1256,9 +1256,9 @@ export class AssociationsService {
 
   /** Loads one association by its URL slug and appends a memberCount. */
   /**
-   * The ids of the associations of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): type `association`,
-   * audience reaching the space, archived ones included - the carte's set plus the archived
-   * associations of the same space. Read by the public directory a showcase filters by its space.
+   * The ids of the entities of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): EVERY type (owner,
+   * 2026-11-14), audience reaching the space, archived ones included - for associations, the
+   * carte's set plus the archived ones. Read by the public directory a showcase filters by its space.
    */
   async offeredInSpace(space: PublicSpaceKey): Promise<Set<string>> {
     const rows: { id: string }[] = await this.assoRepo.query(OFFERED_BY_SPACE_KEY_SQL, [
@@ -1266,7 +1266,7 @@ export class AssociationsService {
       space.campus,
     ]);
     this.logger.debug(
-      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} association(s)`
+      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} entities`
     );
     return new Set(rows.map((r) => r.id));
   }

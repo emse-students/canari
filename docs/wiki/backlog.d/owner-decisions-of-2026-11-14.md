@@ -116,3 +116,23 @@ répéter"*). Each line names where its detail lives.
   and the internal `slug` (derived from the name, never shown in a link) goes with step 7.
 - **The people directory stays on the server** (names, promo, campus, formation from MiConnect): it
   is how a person is found, and every audience rule reads it.
+
+### Audiences - the audit's questions (asked by the auditing session, same day)
+
+- **The signed agenda link follows the app** (*"Respecter les publics"*, *"Aligner le lien sur
+  l'app"*): a subscription link serves only what its holder sees in the app, is bound to the account,
+  stops when the account is erased or the holder revokes it; links already handed out keep working,
+  filtered the same way. Replaces "membership does not matter" (2026-10-06). To build.
+- **The portail's directory is filtered for every type** (*"Filtrer comme les assos"*): a list or an
+  institution whose audience does not reach the portail's space is left out, like an association
+  ([anonymous-surface](../anonymous-surface.md)).
+- **A nominative read grant opens everything of its cell**: beside the posts and the agenda, the
+  association directory, the shop and the partnerships of the ticked cell - *"elle pourrait même
+  payer le tarif cotisant si elle cotisait"*. No per-person switch. To build.
+- **An unknown formation at sign-in is dropped with a warning** (*"L'ignorer et alerter"*), never
+  filed under `Autre`.
+- **The published carte stays a snapshot** (*"Laisser la photo"*): nothing is withdrawn from it
+  between two publications.
+- **The anonymous link preview of a post stays as it is** (*"Garder l'aperçu"*).
+- **Staff in the app** (agenda, shop, partnerships, directory of their campus): NOT opened by campus;
+  the read grant above is the door.
