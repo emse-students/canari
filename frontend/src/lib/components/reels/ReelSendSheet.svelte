@@ -75,7 +75,8 @@
   /**
    * Whether a conversation refuses this take, by the chat rule (vertical AND within `chatCapMs`) - the
    * function the camera's chat pick uses, so the sheet never offers a chat the pick would refuse. A
-   * length or a frame that is not known refuses nothing: the outbox still refuses a long one.
+   * length that is not known refuses nothing (the outbox still refuses a long one); a frame that is
+   * not known is refused, since the chat rule demands a vertical one.
    */
   const chatRefusal = $derived(
     reelPickRefusal(

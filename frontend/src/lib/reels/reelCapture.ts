@@ -76,7 +76,7 @@ export interface ReelClip {
    * The take's frame when it is KNOWN: the framed canvas of a filmed take (`FramedStream.size`, turn
    * included), the frame the engine displayed for a gallery pick. "Envoyer a..." reads it to refuse a
    * chat send of a frame that is not vertical (a conversation keeps vertical AND within its cap,
-   * `reelPickRefusal`); absent means unknown, and the chats stay open.
+   * `reelPickRefusal`); absent means unknown, which a chat refuses (not proven vertical).
    */
   width?: number;
   height?: number;

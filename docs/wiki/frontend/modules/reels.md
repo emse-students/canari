@@ -425,7 +425,9 @@ Two points the review of #3528 (2026-11-14) made exact:
   `reelPickRefusal(..., 'chat')`, the function the camera's chat pick uses, on the take's frame
   (`ReelClip.width`/`height`: the framed canvas of a filmed take, the displayed frame of a gallery
   pick). So a 45 s landscape pick, a CanaReel for the feed, is offered no conversation, and the
-  sheet says why (`reel_sendto_not_vertical_for_chats`). A frame that is not known refuses nothing.
+  sheet says why (`reel_sendto_not_vertical_for_chats`). A frame that could not be read is
+  refused the same way (re-review, 2026-11-14): the chat rule demands vertical, and an unread frame
+  is not proven vertical. The feed still lets it through, its publish deciding on the prepared file.
 - **One decision on a length, grace included.** `reelDeclaredDurationMs` is read by the camera's
   publish (`publishReel`) and by the composer's queue (`reelDeclarationFor`). A take up to half a
   second past its cap (`VIDEO_DURATION_GRACE_SECONDS`, the recorder's overshoot) is a reel that

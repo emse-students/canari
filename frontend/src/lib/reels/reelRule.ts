@@ -121,6 +121,10 @@ export type ReelPickRefusal =
  * `capMs` is the destination's cap (`captureCapMs`): the chat cap for a take sent in a conversation,
  * which keeps the 2026-11-09 rule (vertical AND within the cap), and the feed's `maxDurationMs`
  * otherwise. `rule` null is an estate older than the vertical rule: the cap alone.
+ *
+ * A CONVERSATION REFUSES A FRAME IT CANNOT READ (review of #3528, 2026-11-14): the chat rule demands
+ * vertical, and a frame not read is not proven vertical - no later step re-reads it for a chat, so
+ * letting it through would send whatever it is. The feed lets it through, its publish deciding.
  */
 export function reelPickRefusal(
   picked: { durationMs: number | null; width: number | null; height: number | null },
@@ -134,7 +138,9 @@ export function reelPickRefusal(
     rule !== null && frameKnown && isReelFrame(width ?? undefined, height ?? undefined, rule);
   if (!rule || rule.maxVerticalDurationMs === undefined || destination === 'chat') {
     if (durationMs !== null && durationMs > capMs) return { reason: 'too-long', capMs };
-    if (rule && frameKnown && !vertical) return { reason: 'not-vertical' };
+    if (rule && !vertical && (frameKnown || destination === 'chat')) {
+      return { reason: 'not-vertical' };
+    }
     return null;
   }
   if (durationMs === null) return null;

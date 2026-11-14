@@ -119,7 +119,7 @@ async function open(
     mount(ReelSendSheet, {
       target: document.body,
       props: {
-        clip: { blob: video(), source: 'camera' },
+        clip: { blob: video(), source: 'camera', width: 1080, height: 1920 },
         host,
         cap: 2,
         chatCapMs: 60_000,
@@ -262,6 +262,14 @@ describe('ReelSendSheet', () => {
     feed().click();
     await settle();
     expect(feed().getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('a gallery pick whose frame could not be read is refused for chats, with the same notice', async () => {
+    await open({ clip: { blob: video(), source: 'gallery', durationMs: 20_000 } });
+    expect(row('g-old').disabled).toBe(true);
+    expect(document.querySelector('[data-reel-send-not-vertical]')?.textContent).toBe(
+      m.reel_sendto_not_vertical_for_chats()
+    );
   });
 
   it('a vertical take within the chat cap keeps the chats open', async () => {

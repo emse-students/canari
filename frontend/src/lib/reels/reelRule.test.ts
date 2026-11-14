@@ -166,6 +166,11 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
     expect(reelPickRefusal(pick(1920, 1080, 30_000), orRule, 60_000, 'chat')).toEqual({
       reason: 'not-vertical',
     });
+    // A frame the engine could not read is not proven vertical: a conversation refuses it.
+    expect(reelPickRefusal(pick(null, null, 30_000), orRule, 60_000, 'chat')).toEqual({
+      reason: 'not-vertical',
+    });
+    expect(reelPickRefusal(pick(1080, 1920, 30_000), orRule, 60_000, 'chat')).toBeNull();
     expect(reelPickRefusal(pick(1920, 1080, 120_000), null, 90_000, 'feed')).toEqual({
       reason: 'too-long',
       capMs: 90_000,
