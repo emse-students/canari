@@ -14,6 +14,140 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-11-14
+
+### Fixed - a deleted private conversation is no longer carried into a new one with the same person
+
+The Welcome of a new DM adopted the retired one the peer had deleted and moved its messages over, where they read "non verifie"; the retired conversation now keeps its own entry and the new one starts empty, one rule shared with the startup merge ([chat](docs/wiki/frontend/modules/chat.md#a-deleted-dm-is-not-carried-into-the-next-one)).
+
+### Fixed - a quick reply resent after a lost answer reaches nobody twice
+
+The server stores one message per sender device and `messageId` (migration 048): a native resend
+after a late answer is answered with the first copy's time, with no second row, history entry or
+push ([chat-delivery](docs/wiki/services/chat-delivery.md#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)).
+
+### Fixed - MinoWiki sign-in survives a stable deploy
+
+MiConnect's blueprint now carries MinoWiki's Wiki.js 3 callbacks and its `minoGroups` claim. The
+`1.6.11` deploy re-applied the Wiki.js 2 callbacks over the live provider, so `mino.emse.fr` refused
+sign-ins (400) and the wiki lost its groups until both were restored by hand
+([mino-access](docs/wiki/infrastructure/mino-access.md)).
+
+### Changed - every backlog entry names the version it is planned for, and the plan is generated
+
+Each `docs/wiki/backlog.d/` entry carries `target: <version>`; `docs/wiki/plan.md` is generated from
+those lines and checked by `backlog-plan.test.mjs`. The entries and readings of `backlog.md` moved
+to `backlog.d/`, four of them closed with evidence ([roadmap log](docs/wiki/roadmap.md#log-of-replannings-and-milestones)).
+
+### Added - the viewer of a conversation's image or video moves to the previous and next one
+
+Left and right (arrows on a wide screen, a swipe on a phone, the keyboard) walk the conversation's images and videos already on the device, oldest to newest, without closing the viewer ([chat](docs/wiki/frontend/modules/chat.md#the-media-viewer-of-a-conversation-walks-its-images-and-videos-2026-11-13)).
+
+### Fixed - a picture in a message no longer shrinks and crops when the keyboard opens
+
+In the app the keyboard shrinks the WebView, so the `60svh` media ceiling fell from 567 to 353 px on the Mi 9T and a tall screenshot lost its top and bottom; the ceiling now holds the keyboard-free height while a keyboard is up ([chat](docs/wiki/frontend/modules/chat.md#a-picture-keeps-its-height-when-the-keyboard-opens-2026-11-13)).
+
+### Fixed - an iOS release build died on a lint level the Rust setup action exported
+
+Pinning `setup-rust-toolchain` (#3440) moved it to v2, which exports `CARGO_BUILD_WARNINGS=deny` to every later step of the job. `1.6.12-alpha.1`'s iOS build then refused the vendored `wry` patch's upstream warnings. Both exported inputs are now held empty, and `action-pins.test.mjs` asserts it ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - the connection ring hugs the header's avatar
+
+The ring sits on the avatar itself instead of floating around its tap area, and is thinner
+([slow-link chantier](docs/wiki/backlog.d/slow-link-local-first-chantier.md)).
+
+### Fixed - A new-device alert no longer outlives its device
+
+Opening the notifications list drops the alert of a device the server says is revoked; a failed read drops nothing ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a payer back from Lydia on a phone sees where the payment stands
+
+The form page says the payment is in progress, offers Lydia's page again and reads the answer once each time the app comes back on screen; Android returns on an https App Link, and a browser landing says the payment went to Lydia instead of "introuvable" ([forms](docs/wiki/frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
+
+### Added - a form may let a respondent change their own answer
+
+A per-form switch, off by default: a signed-in respondent reopens their answer while the form is open; the questions that set the price stay locked, and nothing is re-priced or refunded ([forms](docs/wiki/frontend/modules/forms.md#a-respondent-changes-their-own-answer-owner-2026-11-13)).
+
+### Added - an institution chooses the spaces and the public of each calendar event
+
+The posts' reach picker, refusals and chip now apply to an institution's events, editable both ways after validation, through one event predicate (migration 165). See [profiles-and-access](docs/wiki/profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13).
+
+### Fixed - a Canari form link in a post or a chat previews as the form
+
+A form shared by its guest address (`/f/<id>`) showed the generic "Lien" card; it now shows its title, banner or association logo, the association and whether it is open. Lists previewed like associations, profiles carry their avatar, and a transport failure is no longer remembered as an answer ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Fixed - a signed-out iOS cold start no longer asks for a refresh that cannot succeed
+
+Where no cookie can carry the session (iOS), an empty carried credential is the answer, so no recovery
+refresh is sent ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)).
+
+### Changed - production log noise: typing frames, heartbeat closes, nginx spooling, Garage, Postgres, and two mislabelled lines
+
+The gateway logs a typing frame at DEBUG (the member list is gone from `[ROUTE]`) and a missed-pong close at INFO; nginx keeps 128k bodies of `/api/mls/` and `/api/channels` in memory; Garage logs warnings only and Postgres no checkpoints (both recreated at the next deploy); "No message queued" with no recipients is a LOG and the `addressed_unsupported` refusal names offline or did-not-declare per device. `/apple-touch-icon-precomposed.png` is served, and the GIF picker offers a rendition the relay carries and never retries a 413 ([logging](docs/wiki/infrastructure/logging.md), [chat-gateway](docs/wiki/services/chat-gateway.md), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Added - a historical Lydia account collects until the enrolled Business is validated
+
+An association enrolling through Canari while an older Lydia account collects keeps collecting there
+until Lydia validates the new Business, then switches by itself; a forged validation costs one switch
+back and one re-issued payment ([payments](docs/wiki/frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13)).
+
+### Added - a daily upload bound per member
+
+One member may upload 2 GB per rolling 24 hours across every class and route; past it the upload is
+refused with a typed answer the app explains in the thread
+([entry](docs/wiki/backlog.d/p2-a-daily-upload-bound-per-member.md)).
+
+### Fixed - chat-delivery's hourly MLS health reports accuse each item once instead of every hour
+
+A commit-log hole, a conversation with too few holders, a stranded device or a stale base is printed at ERROR or WARN on the run that first finds it in its state, again only when that state changes, and counted otherwise by one daily LOG line per report; the ledger is migration 049 ([chat-delivery](docs/wiki/services/chat-delivery.md#each-item-is-accused-once-report_accusations-migration-049-2026-11-13)).
+
+### Changed - one forms-management list, on `/forms` and in an association's Formulaires tab
+
+Both screens draw the same list: "Modifier" and "Reponses" with their words, everything else (view, link, QR code, export, delete) in one "..." menu, cash validation, price and the same draft and unpublished-changes states on every row; the tab scopes it to its association, `/forms` names each row's association. See [forms](docs/wiki/frontend/modules/forms.md#one-list-for-forms-and-for-an-associations-tab-owner-2026-11-13).
+
+### Security - Canari's PostgreSQL moves to upstream's newest 18-alpine build (18.7)
+
+The `postgres:18-alpine` digest moves in the three compose files and CI, a minor release on the same cluster and volume; the identity provider's pin moves by hand in its own window ([databases](docs/wiki/infrastructure/databases.md), [backlog](docs/wiki/backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)). A pinned image the host does not hold yet is now pulled before any container is replaced, through the registry retry ([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+
+### Changed - each priced grid has its own "Obligatoire" switch, off by default; no rule spans the order
+
+A grid switched on demands one unit of its own, held on its card; the rule over the whole order is
+gone, so a form whose grids are all optional is sent with no article. Migration 164 turns every stored
+grid off; an app keeps the old behaviour until its server's `/api/version` says `gridRequiredSwitch`
+([forms](docs/wiki/frontend/modules/forms.md), [legacy](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - the push registration no longer retries a refused token
+
+Each attempt reads the session's current token; a 401 is renewed once, a second 401 or any other 4xx
+ends the ladder, and only a 5xx or a transport failure is retried
+([chat-delivery](docs/wiki/services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all)).
+
+### Changed - the session's server-event callbacks are declared once
+
+`ChatSessionCallbacks` picks twelve callbacks from `MessageHandlerDeps` instead of repeating them (about 60 duplicated lines, two typed `any`), with a compile-time test pinning the equality ([architecture](docs/wiki/frontend/architecture.md)).
+
+### Fixed - a shared form's link preview carries the form's title, description and image
+
+The server-side preview read the member route, which answered 401 to the renderer, so every shared form link showed the generic card. It now reads the public route, which serves public forms only ([seo](docs/wiki/frontend/seo.md)).
+
+### Fixed - a buyer back from Lydia on a phone sees where the payment stands
+
+The association shop follows a paid purchase like paid forms: after Lydia's page opens in the browser, the purchase button says the payment is in progress and reads it once each time the app comes back, and Android returns on the https `/shop` link. The public form has no server read to use and is not covered ([forms](docs/wiki/frontend/modules/forms.md#the-native-payers-return-read-on-resume-and-an-https-return-on-android-2026-11-13)).
+
+### Changed - the member directory is open to every signed-in member, and redrawn
+
+It was linked to staff only though the server always answered any member. It is now a dashboard row for everyone, with one search field, the filters behind a sheet and shown as removable chips, skeleton rows, "Voir plus", and the reader's own class before any search ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Changed - third-party GitHub Actions are named by a commit
+
+Every action published outside GitHub's own organisations is pinned to a commit with its version
+beside it, and a guard fails on one that is not ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
+
+### Changed - the error log of a WebSocket location records no request line
+
+The access log's redaction does not reach nginx's error log, so `/api/ws` and `/api/call` set their
+own error log to `crit` ([logging](docs/wiki/infrastructure/logging.md#the-error-log-of-a-websocket-location-2026-11-13)).
+
 ## [1.6.11] - 2026-11-13
 
 ### Security - production's adminer runs upstream's image with Alpine's `libpq` upgraded to 18.7
