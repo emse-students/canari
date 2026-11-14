@@ -1951,7 +1951,10 @@ holds one receive key per other participant.
   transform is told whose frames it carries (`CallTransformOptions.peer`); the key is looked up per
   frame, and a frame of a participant the worker holds no key for is dropped and counted
   (`droppedNoKey` with its side and participant), never forwarded. A receive key equal to the send
-  key is refused, in a set or an add, as two equal 1:1 keys already were.
+  key is refused, in a set or an add, as two equal 1:1 keys already were. The worker's `report`
+  counts each participant's receiver frames apart (`byPeer`: opened, failed, `droppedNoKey`; `''` is
+  the 1:1 slot), so one leg that never opens is not hidden behind the others' totals - the CI mesh
+  call judges every directed leg on it ([the mesh scenario](../../services/call-service.md#the-mesh-scenario-wp-gc2-2026-11-13)).
 - **The 1:1 call is NOT the N=2 case, on purpose.** It keeps the v2 label and the role contexts, and
   its worker command `setKeys` is unchanged (one receive key in the worker's 1:1 slot, used by a
   receiver transform that names no participant). So a 1:1 call between a client of before 1.7.0 and

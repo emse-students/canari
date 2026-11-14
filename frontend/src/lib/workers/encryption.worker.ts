@@ -70,6 +70,25 @@ const encrypted = { audio: 0, video: 0 };
 const decrypted = { audio: 0, video: 0 };
 let videoKeyframesIn = 0;
 let droppedNoKey = 0;
+/** What one participant's RECEIVER transforms did with its frames (`byPeer` in the report). */
+interface PeerCounts {
+  decrypted: number;
+  failed: number;
+  droppedNoKey: number;
+}
+/**
+ * The receiver outcomes PER PARTICIPANT, keyed by the transform's `peer` (`''` is the 1:1 slot).
+ * WHY (WP-GC2 end-to-end run, 2026-11-13): a group call's totals hide a leg that never opened
+ * behind the legs that did - three senders decrypting 250 frames each and a fourth decrypting
+ * none add up to a healthy-looking 750. Each directed leg is judged on its own counts.
+ */
+const byPeer: Record<string, PeerCounts> = {};
+
+/** The counts of `peer`, created on its first frame. */
+function countsOf(peer: string): PeerCounts {
+  byPeer[peer] ??= { decrypted: 0, failed: 0, droppedNoKey: 0 };
+  return byPeer[peer];
+}
 /** Plaintext audio payloads that are NOT Opus packets, per side (see `checkOpus`). */
 const opusInvalid = { sender: 0, receiver: 0 };
 /** Receiver payloads that decrypted TWICE with the call key: the sender encrypted them twice. */
@@ -361,6 +380,7 @@ workerScope.onrtctransform = (event: Event) => {
       const receiveKey = receiveKeys.get(peer);
       if (!sendKey || (side === 'receiver' && !receiveKey)) {
         droppedNoKey++;
+        if (side === 'receiver') countsOf(peer).droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
           self.postMessage({ type: 'droppedNoKey', count: droppedNoKey, side: sideKey, peer });
         }
@@ -411,6 +431,7 @@ workerScope.onrtctransform = (event: Event) => {
           // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
           const outcome = await decryptFrame(frame, controller, mediaKind, vp8, receiveKey!);
+          if (outcome === 'failed') countsOf(peer).failed++;
           if (outcome === 'failed' && !opened && ++failedUnopened === DECRYPT_MISMATCH_FAILURES) {
             self.postMessage({
               type: 'undecryptable',
@@ -423,6 +444,7 @@ workerScope.onrtctransform = (event: Event) => {
           if (outcome !== 'opened') return;
           opened = true;
           decrypted[mediaKind]++;
+          countsOf(peer).decrypted++;
           postInPath(mediaKind);
           if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'decryptOk', count: decrypted[mediaKind], mediaKind });
@@ -469,6 +491,7 @@ function workerReport(tag: string) {
     tooShort,
     tooShortEmpty,
     droppedNoKey,
+    byPeer: Object.fromEntries(Object.entries(byPeer).map(([p, c]) => [p, { ...c }])),
     opusInvalid: { ...opusInvalid },
     doubleEncrypted,
     transformErrors,

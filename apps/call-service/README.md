@@ -48,13 +48,17 @@ no database or Redis dependency of its own.
 
 ## The end-to-end call
 
-`e2e/run.mjs` places a real encrypted call through the built binary: two headless Chromes running
-the app's E2E worker, relay-only through a TURN server when one is given. CI runs it with a
-throwaway coturn on every change to this crate (owner decision D3, 2026-11-01); the proofs it
-requires are in [the wiki](../../docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
+`e2e/run.mjs` places real encrypted calls through the built binary, with headless Chromes running
+the app's E2E worker, relay-only through a TURN server when one is given. `--scenario pair` (the
+default) is two browsers through the SFU; `--scenario mesh` is three browsers in a p2p mesh with
+one key per sender (WP-GC2), every directed leg proven, a fourth user refused past the cap and a
+wrong key shown to fail its leg. CI runs both with a throwaway coturn on every change to this crate
+(owner decision D3, 2026-11-01); the proofs they require are in
+[the wiki](../../docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
 
 ```bash
-cargo build && bun e2e/run.mjs        # no TURN: host candidates, a dev box
+cargo build && bun e2e/run.mjs                    # no TURN: host candidates, a dev box
+cargo build && bun e2e/run.mjs --scenario mesh    # the 3-party mesh
 ```
 
 ## Environment Variables
