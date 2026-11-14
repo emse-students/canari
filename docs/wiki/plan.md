@@ -71,7 +71,6 @@ earliest version, as a checklist.
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [miconnect-auth signed in on the Mi 9T](backlog.d/p3-miconnect-one-string-left-after-the-french-pass.md)
 - [ ] [a shut phone one commit behind catches up in any community](backlog.d/reading-owed-a-shut-phone-one-commit-behind-catches-up-in-any-community.md)
-- [ ] [an iPhone's salon banner for a session started while it was shut](backlog.d/reading-owed-an-iphone-s-salon-banner-for-a-session-started-while-it-was-shut.md)
 - [ ] [one A0 export of the Carte de la Vie Asso, timed](backlog.d/reading-owed-one-a0-export-of-the-carte-de-la-vie-asso-timed.md)
 - [ ] [Graine v2: the unsigned-row count, the rig re-run and one native refusal](backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md)
 - [ ] [the biometric cadence (every 12 h by default, or every time)](backlog.d/reading-owed-the-biometric-cadence-every-12-h-by-default-or-every-time.md)
