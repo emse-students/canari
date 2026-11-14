@@ -1,20 +1,24 @@
 <script lang="ts">
   import {
     computeLydiaFeeCents,
-    LYDIA_FEE_FIXED_CENTS,
+    computeLydiaNetPayoutCents,
     eurosInputToCents,
+    fetchLydiaFeeSchedule,
+    type LydiaFeeSchedule,
   } from '$lib/payments/lydiaFees';
   import { fetchActivePaymentProvider, type PaymentProviderId } from '$lib/associations/api';
   import { formatAmount } from '$lib/forms/fillAnswers';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * Renders the payout estimate under the Lydia fee schedule - see
-   * `docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not`.
+   * Renders the payout estimate under the platform's Lydia fee schedule - see
+   * `docs/wiki/lydia-contract-flux.md#the-payout-estimate`.
    *
-   * Nothing is drawn until the active provider is KNOWN to be Lydia: an unknown provider (still
-   * loading, or the call failed) gets no estimate rather than a guessed one, and `disabled` has no
-   * payout at all. The schedule is asked of `GET /api/payments/provider`, not assumed.
+   * Nothing is drawn until the active provider is KNOWN to be Lydia (`GET /api/payments/provider`):
+   * an unknown provider (still loading, or the call failed) gets no estimate rather than a guessed
+   * one, and `disabled` has no payout at all. The fees are the ones a global admin entered
+   * (`GET /api/payments/lydia-fee-schedule`), VAT included; while none is entered the hint says the
+   * estimate is not configured - never a default figure.
    */
   interface Props {
     /** Gross price in euros from a number input. */
@@ -50,19 +54,23 @@
       });
   });
 
-  const computeFeeCents = computeLydiaFeeCents;
-  const feeFixedCents = LYDIA_FEE_FIXED_CENTS;
-  const feePercent = 1;
+  // `undefined` while loading or failed (no hint), `null` when NOT CONFIGURED (the hint says so).
+  let schedule = $state<LydiaFeeSchedule | null | undefined>(undefined);
+  $effect(() => {
+    fetchLydiaFeeSchedule()
+      .then((s) => (schedule = s))
+      .catch((err) => {
+        console.warn('[Payments] Failed to load the fee schedule for the payout hint:', err);
+      });
+  });
 
   function computeNetPayoutCents(cents: number): number {
-    return Math.max(0, cents - computeFeeCents(cents));
+    return schedule ? computeLydiaNetPayoutCents(cents, schedule) : 0;
   }
-
-  const feeLabel = $derived(`${formatAmount(feeFixedCents, currency)} + ${feePercent} %`);
 
   function lineFor(cents: number, label: string): string {
     const net = computeNetPayoutCents(cents);
-    const fee = computeFeeCents(cents);
+    const fee = schedule ? computeLydiaFeeCents(cents, schedule) : 0;
     return m.payout_line_for({
       label,
       payment: formatAmount(cents, currency),
@@ -72,49 +80,51 @@
   }
 </script>
 
-{#if provider === 'lydia' && (grossCents || memberCents || minCents || maxCents)}
+{#if provider === 'lydia' && schedule !== undefined && (grossCents || memberCents || minCents || maxCents)}
   <div
     class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text space-y-1 rounded-xl border px-4 py-3 text-xs"
     role="note"
   >
     <p class="font-semibold">{m.payout_hint_title()}</p>
-    <p class="text-amber-warn-text">
-      {m.payout_hint_fees_note({ feeLabel })}
-    </p>
-    {#if grossCents}
-      <p>{lineFor(grossCents, m.payout_label_public())}</p>
-    {/if}
-    {#if memberCents}
-      <p>{lineFor(memberCents, m.payout_label_member())}</p>
-    {/if}
-    {#if minCents && maxCents}
-      <p>
-        {m.payout_free_amount_range({
-          min: formatAmount(computeNetPayoutCents(minCents), currency),
-          max: formatAmount(computeNetPayoutCents(maxCents), currency),
-          minPayment: formatAmount(minCents, currency),
-          maxPayment: formatAmount(maxCents, currency),
-        })}
-      </p>
-    {:else if minCents}
-      <p>
-        {m.payout_free_amount_min({
-          payment: formatAmount(minCents, currency),
-          net: formatAmount(computeNetPayoutCents(minCents), currency),
-        })}
-      </p>
-    {:else if maxCents}
-      <p>
-        {m.payout_free_amount_max({
-          payment: formatAmount(maxCents, currency),
-          net: formatAmount(computeNetPayoutCents(maxCents), currency),
-        })}
-      </p>
-    {/if}
-    {#if showOptionSupplementNote && (grossCents || memberCents)}
-      <p class="text-amber-warn-text">
-        {m.payout_option_note()}
-      </p>
+    {#if schedule === null}
+      <p>{m.payout_hint_not_configured()}</p>
+    {:else}
+      <p class="text-amber-warn-text">{m.payout_hint_fees_note()}</p>
+      {#if grossCents}
+        <p>{lineFor(grossCents, m.payout_label_public())}</p>
+      {/if}
+      {#if memberCents}
+        <p>{lineFor(memberCents, m.payout_label_member())}</p>
+      {/if}
+      {#if minCents && maxCents}
+        <p>
+          {m.payout_free_amount_range({
+            min: formatAmount(computeNetPayoutCents(minCents), currency),
+            max: formatAmount(computeNetPayoutCents(maxCents), currency),
+            minPayment: formatAmount(minCents, currency),
+            maxPayment: formatAmount(maxCents, currency),
+          })}
+        </p>
+      {:else if minCents}
+        <p>
+          {m.payout_free_amount_min({
+            payment: formatAmount(minCents, currency),
+            net: formatAmount(computeNetPayoutCents(minCents), currency),
+          })}
+        </p>
+      {:else if maxCents}
+        <p>
+          {m.payout_free_amount_max({
+            payment: formatAmount(maxCents, currency),
+            net: formatAmount(computeNetPayoutCents(maxCents), currency),
+          })}
+        </p>
+      {/if}
+      {#if showOptionSupplementNote && (grossCents || memberCents)}
+        <p class="text-amber-warn-text">
+          {m.payout_option_note()}
+        </p>
+      {/if}
     {/if}
   </div>
 {/if}

@@ -1,0 +1,148 @@
+# The platform's Lydia contract: its terms, its flux counter, the payout estimate
+
+**Decided by the owner on 2026-11-14.** The platform signed a partnership with Lydia that runs by
+contract year and commits it to a minimum yearly FLUX of payments; below it, Lydia regularizes the
+year's rates by volume band. The owner: *"Tout dans reglages admin, marges comprises. Ce sont des
+reglages plateforme."*
+
+**THE CONTRACT IS CONFIDENTIAL AND THIS REPOSITORY IS PUBLIC.** No contract value - the target, the
+rates, the bands, the VAT rate - appears in code, tests, this wiki, a changelog, a commit or a pull
+request. Every value is entered by a global admin at `/admin/platform` and lives in the database
+only. The tests use obviously made-up numbers. The anniversary date is the one value seeded (core
+migration 024), at the owner's request.
+
+## The terms, and where they live
+
+ONE place: the `platform_config` singleton row of core-service (migration 024), beside the other
+platform switches - but never part of `PlatformConfigPublic`, which `GET /api/version` publishes.
+
+| Column | Holds | Unset means |
+| --- | --- | --- |
+| `lydia_contract_anniversary` (`DATE`) | the date every contract year starts on | no counter |
+| `lydia_contract` (`JSONB`) | `fluxTargetCents` (TTC), `vatBps`, `fees` by payment kind, `bands` | each value "not configured" |
+
+`fees` and each band's `fees` are keyed by payment kind (`LYDIA_PAYMENT_KINDS`,
+`apps/core-service/src/platform/lydia-contract.ts`): `remote` (a request Canari issues: the boutique
+and paid forms), `qr` and `tap_to_pay` (collected face to face in Lydia's own app by the cashiers
+Canari adds). Each fee is `{ percentBps, fixedCents }`, **HT as the contract states it**; `vatBps`
+turns it into what is really deducted. A band is `{ fromCents, fees }`, ascending.
+
+**Every write is parsed whole and refused by field** (`parseLydiaContractTerms`; `PUT
+/api/users/admin/platform/lydia-contract`, a 400 `LYDIA_CONTRACT_INVALID` naming the field, nothing
+written): a typo in a confidential rate is caught at the write or nowhere. A stored value that no
+longer parses (a hand edit) is read as not configured and logged at ERROR. The write is logged at
+WARN with the actor and WHICH values are set, never a value.
+
+**No default for any value but the anniversary.** A value not entered is said to be not configured -
+by the counter (`missing`), by the payout estimate - and the server logs it at WARN each time an
+estimate or a counter is asked without it: a fallback is a signal, never a path.
+
+## The payout estimate
+
+`PayoutFeeHint.svelte` (the price screens of the boutique and of paid forms) asks `GET
+/api/payments/lydia-fee-schedule` (signed-in callers, core-service `LydiaFeeScheduleController`):
+the `remote` fee and the VAT, or `{ schedule: null }`. The fee really deducted from a payment is
+
+    fee = round((fixedCents + gross * percentBps / 10000) * (1 + vatBps / 10000))
+
+rounded once to the cent (`computeLydiaFeeCents`, `frontend/src/lib/payments/lydiaFees.ts`), and the
+estimate is `gross - fee`. While no schedule is entered the hint says the estimate is unavailable,
+never a figure. The hint's one notice says that the provider's fees are deducted from each payment,
+that the amounts are estimates, and that the rate may be raised at the end of the contract year if
+the target is not reached (owner: *"Rien de verbeux, juste un petit point d'information."*). The
+hint no longer prints the rate itself.
+
+Until 2026-11-14 the estimate was a constant in `lydiaFees.ts`, HT, so it under-estimated the fee
+by the VAT.
+
+## The flux counter
+
+On `/admin/platform` (`LydiaContractPanel.svelte`, `GET .../lydia-contract/counter`): the current
+contract year `[anniversary, next anniversary)`, its flux against the target with a progress bar, the
+days left, and the band the flux falls in with the next one up - the regularization risk at a
+glance.
+
+**The contract year** is the one the anniversary puts today in, in Paris (`contractYearOf`,
+`parisDate`): from the last anniversary on or before today to the next one. A 29 February
+anniversary falls on the 28th in a common year. Before the first anniversary there is no year.
+
+**The flux** is measured by social-service (`measureLydiaFlux`,
+`apps/social-service/src/associations/lydia-contract-flux.ts`, `GET internal/payments/lydia-flux`):
+the payments Lydia confirmed within the year, MINUS the refunds Lydia executed within the year, TTC,
+across every association, **on the Businesses Canari's enrolment created only**. The window's bounds
+are Paris midnights.
+
+- **A payment** is a `purchase_records` row, `paymentMethod = 'online'`, status `paid`,
+  `paid_not_granted` or `refunded` (refunded since: the money WAS collected, and the refund is
+  counted on its own date), dated by `paidAt` - the record is written when Lydia's confirmation is
+  settled.
+- **A refund** is a `lydia_refunds` row Lydia executed - `confirmed`, or `pending` with Lydia's own
+  `refunded-unrecorded` answer - dated by Lydia's answer, else the manager's declaration after
+  checking Lydia (the date the association's statement prints).
+- **Why a refund counts in the year it is executed, not the payment's year.** The contract counts the
+  volume of transactions in the contract year, and a refund is a transaction of the day it happens.
+  A payment of one year refunded in the next therefore counts in full in the first and reduces the
+  second. Deciding the other way would rewrite a closed year after its regularization.
+
+### Enrolled or historical: the discriminator
+
+Payments collected on an association's HISTORICAL account (one it held with Lydia before Canari's
+enrolment, collecting through a [bridge](frontend/modules/payments.md#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13))
+belong to that association's own earlier contract with Lydia, never to this partnership. Two durable
+facts decide it, neither a date nor an association's current columns (a bridge swaps them, an unlink
+clears them):
+
+1. **Which Business took the payment** is the row's own vendor token: `product_checkouts."vendorToken"`
+   of a boutique purchase's paid attempt, `submissions."lydiaVendorToken"` of a form answer - the
+   trace a refund follows ([refunds](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
+2. **Whether Canari's enrolment created that Business** is `lydia_enrolled_businesses` (social
+   migration 168), written by `AssociationsService.setLydiaAccountId` in the transaction that links
+   the Business - the ONE link path, called only by core-service's onboarding right after
+   `business/create` (the paste route is retired). The pending Business of a bridge is recorded the
+   same way. A row is never deleted: an unlinked or switched-away Business stays enrolled, so the
+   payments it took keep counting in their year.
+
+A payment counts when its Business is in the ledger AND no bridge holds it as a historical account
+(`historicalVendorToken`, migration 167) - the bridge's own fact wins, so a historical account never
+counts even if a ledger row names it by mistake; such a contradiction is logged at ERROR. A payment
+on any other Business is reported as `excluded` (shown on the counter). A Lydia payment no row ties to
+a Business (a form answer before migration 120, a boutique purchase before 101) is counted nowhere
+and logged at ERROR as `untraceable`.
+
+**The backfill (migration 168, HELD for the owner).** Businesses linked before the ledger existed are
+backfilled once: every association's active `lydiaAccountId` except a bridge's historical account,
+plus every bridge's enrolled Business. It is right only if every association still collecting
+through a historical account has its bridge row open when it runs. **Before approving its
+checksum**, the approver checks on production that no association's active Business is a historical
+account without a bridge - the associations with an active Business and no bridge row:
+
+```sql
+SELECT a.id, a.name, a."lydiaAccountId" FROM associations a
+ WHERE a."lydiaAccountId" IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM lydia_account_bridges b WHERE b."associationId" = a.id);
+```
+
+Each listed association must have enrolled through Canari. A Business enrolled and unlinked before
+the migration is not recovered: no table names it.
+
+### What the counter cannot see
+
+**Only payments Canari issues are counted.** The cashiers Canari adds to a Business collect face to
+face in Lydia's own app (`qr`, `tap_to_pay`), and those payments never reach Canari's rows; Lydia's
+flux includes them. The counter says so under its figures. The face-to-face fees are entered anyway,
+for the bands.
+
+**`paidAt` is a `timestamp` without time zone** (TypeORM's `CreateDateColumn`), written with the
+database session's clock and compared to the Paris-midnight bounds in that session's zone, as every
+other read of it does.
+
+## Where to look
+
+| What | Where |
+| --- | --- |
+| The terms, the year, the band | `apps/core-service/src/platform/lydia-contract.ts`, `lydia-contract.service.ts` |
+| The routes | `platform-admin.controller.ts` (`lydia-contract`, `lydia-contract/counter`), `lydia-fee-schedule.controller.ts` |
+| The flux and the ledger | `apps/social-service/src/associations/lydia-contract-flux.ts`, migration 168 |
+| The admin screen | `frontend/src/lib/components/admin/LydiaContractPanel.svelte`, `frontend/src/lib/admin/lydiaContract.ts` |
+| The estimate | `frontend/src/lib/payments/lydiaFees.ts`, `PayoutFeeHint.svelte` |
+| The proof against PostgreSQL | `lydia-contract-flux.integration.spec.ts` |

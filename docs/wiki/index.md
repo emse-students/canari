@@ -99,7 +99,7 @@
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
 - [CanaReels in a conversation](frontend/modules/reels-in-chat.md) — Design study (2026-10-09): an ephemeral E2E video message in DMs, groups and salons, its model, retention, weak network, work packages
-- [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
+- [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left; [Lydia contract and flux](lydia-contract-flux.md) — the platform's contract terms entered by an admin, the yearly flux counter, the payout estimate
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 

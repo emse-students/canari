@@ -15,6 +15,8 @@ const refresh = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => admin.value }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
+// The Lydia contract panel reads its own routes; its test is LydiaContractPanel.svelte.test.ts.
+vi.mock('$lib/components/admin/LydiaContractPanel.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://core.test' }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({ refreshAppVersionCheck: refresh }));
 

@@ -98,6 +98,7 @@ import {
   type HeldBusinessRole,
   type LydiaBridgeState,
 } from './lydia-account-bridge';
+import { recordEnrolledBusiness } from './lydia-contract-flux';
 import {
   approvedDelegateIds,
   collectsThrough,
@@ -5143,6 +5144,11 @@ ${rejectionReason}`
               WHERE id = $1`,
             [id]
           );
+          await recordEnrolledBusiness(
+            (sql, params) => manager.query(sql, params),
+            id,
+            vendorToken
+          );
           return 'pending';
         }
         if (row.active) return 'taken';
@@ -5156,6 +5162,7 @@ ${rejectionReason}`
             WHERE id = $1`,
           [id, vendorToken, dashboardUrl, sealed]
         );
+        await recordEnrolledBusiness((sql, params) => manager.query(sql, params), id, vendorToken);
         return 'active';
       }
     );

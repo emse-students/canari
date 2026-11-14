@@ -76,6 +76,8 @@ const DEFAULT_ROW: PlatformConfig = {
   liveReplaysMode: 'off',
   groupCallsMode: 'off',
   callRelay: 'none',
+  lydiaContractAnniversary: null,
+  lydiaContract: null,
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */

@@ -73,8 +73,9 @@ paiement" / "payment provider"; the neutral contract (`ConnectAccountStatusRespo
 interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the unmapped columns,
 the `stripe` deep-link host) are listed with
 their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
-`PayoutFeeHint.svelte` shows the Lydia fee (0,10 EUR + 1 %, `lydiaFees.ts`) only once
-`GET /api/payments/provider` has answered `lydia`.
+`PayoutFeeHint.svelte` shows the estimate only once `GET /api/payments/provider` has answered
+`lydia`, with the fees a global admin entered as the platform's Lydia contract terms, VAT included
+([lydia-contract-flux](../../lydia-contract-flux.md#the-payout-estimate)).
 
 ## Product purchase flow
 
@@ -1471,6 +1472,10 @@ every readiness write, cashier claim and purchase decision already takes - the a
   payee row (the parent's too, for a delegate): a switch committed between the preparation and the
   decision is the typed 409 `PAYMENT_ROUTING_CHANGED`, no row and no request - the payer retries and
   the retry goes to the new Business. Every request issued names the Business its row names.
+
+**The platform's Lydia flux never counts a historical account's payments** - they belong to the
+association's earlier contract - and counts the enrolled Business's from its link
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)).
 
 **After the switch** the historical account's tokens are KEPT, sealed, ONLY to refund the payments
 taken on it and to verify their callbacks: a refund resolves the key by the ROW's vendor token

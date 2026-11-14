@@ -91,3 +91,10 @@ export function internalLydiaReadinessUrl(): string {
 export function providerActivatedUrl(): string {
   return socialUrl('internal/payments/provider-activated');
 }
+
+/** The platform's Lydia flux over a contract year, measured by social-service (`[from, to)`). */
+export function lydiaFluxUrl(from: string, to: string): string {
+  return socialUrl(
+    `internal/payments/lydia-flux?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+  );
+}

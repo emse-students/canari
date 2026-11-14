@@ -20,14 +20,44 @@ import {
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { PublishAnnouncementDto } from './dto/publish-announcement.dto';
 import { AnnouncementService, type AnnouncementForAdmin } from './announcement.service';
+import { LydiaContractService, type LydiaContractCounter } from './lydia-contract.service';
+import type { LydiaContractSettings } from './lydia-contract';
 
 /** Global-admin endpoints to read and update platform maintenance / min-version settings. */
 @Controller('users/admin/platform')
 export class PlatformAdminController {
   constructor(
     private readonly platformService: PlatformService,
-    private readonly announcements: AnnouncementService
+    private readonly announcements: AnnouncementService,
+    private readonly lydiaContract: LydiaContractService
   ) {}
+
+  /** The platform's Lydia contract terms (docs/wiki/lydia-contract-flux.md). Confidential: admins only. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('lydia-contract')
+  getLydiaContract(): Promise<LydiaContractSettings> {
+    return this.lydiaContract.getSettings();
+  }
+
+  /**
+   * Replaces the Lydia contract terms with the whole set sent - parsed by hand
+   * (`parseLydiaContractTerms`), a 400 `LYDIA_CONTRACT_INVALID` naming the field writing nothing.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Put('lydia-contract')
+  putLydiaContract(
+    @Headers('x-user-id') xUserId: string,
+    @Body() body: unknown
+  ): Promise<LydiaContractSettings> {
+    return this.lydiaContract.putSettings(body, xUserId.trim().toLowerCase());
+  }
+
+  /** The counter of the current contract year: flux against the target, days left, the band. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('lydia-contract/counter')
+  getLydiaContractCounter(): Promise<LydiaContractCounter> {
+    return this.lydiaContract.counter();
+  }
 
   /** Returns current platform settings (maintenance flag, message, min client version). */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)

@@ -11,6 +11,8 @@ import { PlatformAdminController } from './platform-admin.controller';
 import { AnnouncementController } from './announcement.controller';
 import { HelpSeenService } from './help-seen.service';
 import { HelpSeenController } from './help-seen.controller';
+import { LydiaContractService } from './lydia-contract.service';
+import { LydiaFeeScheduleController } from './lydia-fee-schedule.controller';
 
 /**
  * Platform-wide settings (maintenance mode, minimum client version), the admin announcement, and the
@@ -26,8 +28,13 @@ import { HelpSeenController } from './help-seen.controller';
       User,
     ]),
   ],
-  controllers: [PlatformAdminController, AnnouncementController, HelpSeenController],
-  providers: [PlatformService, AnnouncementService, HelpSeenService],
+  controllers: [
+    PlatformAdminController,
+    AnnouncementController,
+    HelpSeenController,
+    LydiaFeeScheduleController,
+  ],
+  providers: [PlatformService, AnnouncementService, HelpSeenService, LydiaContractService],
   exports: [PlatformService],
 })
 export class PlatformModule {}

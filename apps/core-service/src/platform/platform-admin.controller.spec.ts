@@ -4,6 +4,7 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { PlatformAdminController } from './platform-admin.controller';
 import type { PlatformService } from './platform.service';
 import type { AnnouncementService } from './announcement.service';
+import type { LydiaContractService } from './lydia-contract.service';
 
 /**
  * The release action puts products on sale platform-wide, so the guard is asserted from the
@@ -28,7 +29,8 @@ describe('PlatformAdminController - release withheld products', () => {
     };
     const controller = new PlatformAdminController(
       platform as unknown as PlatformService,
-      {} as AnnouncementService
+      {} as AnnouncementService,
+      {} as LydiaContractService
     );
     await expect(controller.releaseWithheldProducts('  ADMIN-1  ')).resolves.toEqual({
       released: 2,
