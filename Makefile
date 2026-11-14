@@ -351,6 +351,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/vendored-upstream-report.test.sh
 	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
+	@bash .github/scripts/tests/sibling-arming-bypass.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
