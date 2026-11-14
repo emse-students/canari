@@ -230,7 +230,12 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
    first makes the next comment ALERT, a comment that lands first is marked read by the read that
    follows - so a comment can never be inserted silent just after the reader cleared the bell, the
    read-then-write race a per-post lock would leave. Two comments arriving together are serialised by
-   the lock: exactly one alerts.
+   the lock: exactly one alerts. **Only a row whose push the reader receives counts** (review of
+   #3579): a prior row whose category is switched off (`pushCategoryOffSql`, the switch chat-delivery
+   applies) was never pushed, so with "Commentaires" off the comments' rows do not make a reaction
+   quiet. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
+   do not take the lock: racing one, a comment is quiet against a row about to vanish, which only
+   means it replaces a notification that already rang.
 4. **The notification is updated in place by ONE identity per post on every platform**, carried as
    one data field, `collapseId = post_activity_<postId>` (50 bytes, under APNs' 64), plus
    `quiet = 'true'` for a silent update:
@@ -265,8 +270,12 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
      "Alice et 11 autres ont réagi à votre publication" ("12 reactions", "Alice and 11 others reacted
      to your post").
    The notification shows the LATEST event's kind; the bell keeps every row. A build that predates
-   this ignores `contentCount`, `collapseId` and `quiet`: it shows the latest comment or reaction as
-   before, one per push, each ringing - the keys and their floors do not move.
+   this ignores `contentCount`, `collapseId` and `quiet`, so a QUIET update carries its own floor,
+   `minAppVersion = POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION` (`1.7.0`, `push/notification-client-floor.ts`):
+   chat-delivery skips a device registered below it, as for any key floor (a caller may raise the
+   key's floor, never lower it - `PushService.notifyContent`). An older build therefore rings for the
+   ALERT only and shows the first event, never one ring per comment uncapped; the bell holds them all.
+   A device of unknown build is kept, as for every floor.
 6. **The category switches still apply**: a comment or reaction push with "Commentaires" or
    "Réactions" off is dropped by chat-delivery exactly as before (`push-category.ts`); the bell row is
    written either way (neither type is in `BELL_ROW_GATE`).
@@ -292,9 +301,23 @@ share one post's state, and the push carries `collapseId`, `quiet` and `contentC
 `engagement-push-cap.integration.spec.ts` - comments and reactions beyond the cap all pushed with no
 counter row, and the three causes logged apart; `push-payload.spec.ts` - the APNs request carries the
 collapse id and its thread, and no sound with `passive` when quiet; `nativeStrings.test.ts` - the new
-sentences in all six tables. **Owed** (a phone reading on both bench phones): three comments from
-another account on a post of the bench reader - one ring, one notification reading "... et 2 autres
-ont commenté"; then open the bell and comment again - it rings again.
+sentences in all six tables.
+
+**To read on the first pre-release that carries it** (no reading is filed for unshipped code; this
+one is filed in `backlog.d/` when that pre-release is cut). The server half is proven on PostgreSQL
+and Android compiled; the iOS NSE and `canari_push.mm` were NOT compiled (Windows), and that a remote
+push under `apns-collapse-id` and a local request with the same identifier replace each other is
+inferred, not read. On the Mi 9T and the iPhone 12, app killed and app open, against dev:
+
+- three accounts comment the bench account's post: ONE notification, one ring, titled
+  "X et 2 autres ont commenté";
+- open the bell (the post read), comment again: it rings again;
+- three reactions: one notification, "3 réactions", rung once;
+- the quiet updates neither sound nor show a banner; the iPhone build compiles;
+- with "Commentaires" off, a reaction after two comments still rings (a row whose push is off never
+  makes the post's notification quiet);
+- a phone on a build before `1.7.0` (`POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION`) rings for the first
+  comment only and receives no quiet update.
 
 ## The decisions, verbatim
 

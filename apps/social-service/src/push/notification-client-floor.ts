@@ -39,6 +39,16 @@ import type { PushContentKey } from './push-content';
  */
 export const HEADERLESS_CLIENT_VERSION = '1.6.9';
 
+/**
+ * The first build that honours `quiet` on a post's one live notification (owner, 2026-11-14;
+ * docs/wiki/engagement.md, "The owner's decision of 2026-11-14"). A QUIET update carries it as its
+ * floor: a build before it ignores `quiet` and `collapseId` and would ring every comment, uncapped,
+ * so it is sent the alerts only - its notification shows the first event, the bell holds them all.
+ * The version the change is planned for (`1.7.0`); a patch release in between carrying the code only
+ * loses the silent updates, never an alert.
+ */
+export const POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION = '1.7.0';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 

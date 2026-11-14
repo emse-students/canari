@@ -1,5 +1,6 @@
 import type { EntityManager } from 'typeorm';
 import { ONE_PER_POST_TYPES } from './engagement-push-cap';
+import { NOTIFICATION_TYPE_CATEGORY, pushCategoryOffSql } from '../push/notification-category';
 
 /**
  * ONE LIVE NOTIFICATION PER POST for the comments and reactions on the reader's own post (owner,
@@ -26,11 +27,24 @@ export function postActivityCollapseId(postId: string): string {
 export const POST_ACTIVITY_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('post_notifications_unread:' || $1, 0))`;
 
 /**
+ * The category each collapsed type's push files under, as a SQL expression over a row's `type`
+ * (`NOTIFICATION_TYPE_CATEGORY`, the table chat-delivery's filing is pinned to).
+ */
+const ROW_CATEGORY_SQL = `(CASE type ${ONE_PER_POST_TYPES.map(
+  (t) => `WHEN '${t}' THEN '${NOTIFICATION_TYPE_CATEGORY[t]}'`
+).join(' ')} END)`;
+
+/**
  * The decision and the row in ONE statement, run under {@link POST_ACTIVITY_LOCK_SQL}: the post's
  * prior UNREAD rows of the collapsed types (read in the statement's snapshot, so the row it inserts
  * is not among them), the insert, and the answer - `alert` when there was none, `others` the distinct
  * OTHER actors of the same type among them. An actor id equal to `$8` (anonymous, or an association
  * speaking - the id names nobody) counts per row.
+ *
+ * ONLY ROWS WHOSE PUSH THE READER RECEIVES COUNT as "the post has an unread notification": with
+ * "Commentaires" off, the comments' rows are written but never pushed, so they must not silence the
+ * reactions the reader asked for - a prior row whose category is off is not a notification the
+ * device shows (review of #3579).
  *
  * `$1` recipient, `$2` post, `$3` type, `$4` actor id, `$5` actor name, `$6` text, `$7` comment id,
  * `$8` the anonymous actor id, `$9` the collapsed types.
@@ -38,6 +52,7 @@ export const POST_ACTIVITY_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextexte
 export const POST_ACTIVITY_WRITE_SQL = `WITH prior AS (
   SELECT id, type, "actorId" FROM post_notifications
    WHERE "recipientId" = $1 AND "postId" = $2 AND NOT read AND type = ANY($9::varchar[])
+     AND NOT ${pushCategoryOffSql('$1::varchar', ROW_CATEGORY_SQL)}
 ), written AS (
   INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", "actorName", text, "commentId")
   VALUES ($1, $3, $2, $4, $5, $6, $7)

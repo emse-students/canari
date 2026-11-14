@@ -62,6 +62,8 @@ import {
   type TrendMedia,
 } from '../push/push-content';
 import {
+  MIN_APP_VERSION_DATA_KEY,
+  POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
   notificationTypesRenderableBy,
   type NotificationType,
   type PushOnlyNotificationType,
@@ -769,7 +771,10 @@ export class PostNotificationsService {
       postId: data.postId,
       ...data.pushData,
       collapseId: postActivityCollapseId(data.postId),
-      ...(verdict.alert ? {} : { quiet: 'true' }),
+      // A quiet update reaches only a build that honours `quiet`: an older one would ring it.
+      ...(verdict.alert
+        ? {}
+        : { quiet: 'true', [MIN_APP_VERSION_DATA_KEY]: POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION }),
     });
     return verdict;
   }

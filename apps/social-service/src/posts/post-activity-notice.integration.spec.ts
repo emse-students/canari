@@ -18,6 +18,10 @@ import {
   PostNotificationsService,
 } from './post-notifications.service';
 import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  MIN_APP_VERSION_DATA_KEY,
+  POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
+} from '../push/notification-client-floor';
 import { postActivityCollapseId } from './post-activity-notice';
 import { commentContent, reactionContent, type PushContent } from '../push/push-content';
 
@@ -132,11 +136,16 @@ maybe('one live notification per post (owner, 2026-11-14) against PostgreSQL', (
     expect(await comment(svc, 'alice')).toEqual({ alert: false, others: 2 });
 
     const collapseId = postActivityCollapseId('p1');
+    // A quiet update carries the floor of the builds that honour `quiet`: an older one would ring it.
+    const quiet = {
+      quiet: 'true',
+      [MIN_APP_VERSION_DATA_KEY]: POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
+    };
     expect(pushed.map((p) => p.data)).toEqual([
       { type: 'social', postId: 'p1', commentId: 'c-alice', collapseId },
-      { type: 'social', postId: 'p1', commentId: 'c-bob', collapseId, quiet: 'true' },
-      { type: 'social', postId: 'p1', commentId: 'c-carol', collapseId, quiet: 'true' },
-      { type: 'social', postId: 'p1', commentId: 'c-alice', collapseId, quiet: 'true' },
+      { type: 'social', postId: 'p1', commentId: 'c-bob', collapseId, ...quiet },
+      { type: 'social', postId: 'p1', commentId: 'c-carol', collapseId, ...quiet },
+      { type: 'social', postId: 'p1', commentId: 'c-alice', collapseId, ...quiet },
     ]);
     expect(pushed.map((p) => p.content.count)).toEqual([0, 1, 2, 2]);
     expect(collapseId).toBe('post_activity_p1');
@@ -176,6 +185,19 @@ maybe('one live notification per post (owner, 2026-11-14) against PostgreSQL', (
        VALUES ('author', 'reply', 'p1', 'x', 'r')`
     );
     expect(await comment(service(), 'alice')).toEqual({ alert: true, others: 0 });
+  });
+
+  it('a row whose push the reader switched off never silences the kind still on (review of #3579)', async () => {
+    // "Commentaires" off: the comments are written, never pushed - a reaction must still ring.
+    await q(
+      `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ('author', '["comments"]')`
+    );
+    const svc = service();
+    await comment(svc, 'alice');
+    await comment(svc, 'bob');
+    expect(await reaction(svc, 'carol')).toEqual({ alert: true, others: 0 });
+    expect(await reaction(svc, 'dan')).toEqual({ alert: false, others: 1 });
+    await q(`DELETE FROM notification_preference`);
   });
 
   it('a dozen comments arriving TOGETHER write a dozen rows and exactly ONE alert', async () => {
