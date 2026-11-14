@@ -174,31 +174,38 @@ export function verifiedAgendaSubscriptionId(token: string | undefined): string 
   return agendaKeySignatureMatches(canonicalAgendaSubscription(id), raw.slice(dot + 1)) ? id : null;
 }
 
-/** The WARN tag of a refused subscription token (unknown, revoked or wrongly signed). */
+/**
+ * The WARN tag of a refused subscription token. A token whose HMAC verified but names no row (revoked,
+ * erased, the association deleted) is logged ONCE per row per process per UTC day, `id=<8 hex of
+ * SHA-256 of the row id> reason=unknown`; a token that does not verify is logged once per process per
+ * UTC day in all, `reason=signature`, so forged tokens cannot grow the set nor the log
+ * ({@link DailySightings}).
+ */
 export const AGENDA_SUBSCRIPTION_REFUSED_TAG = '[AGENDA_SUBSCRIPTION_REFUSED]';
 
 /**
  * The WARN tag of a legacy `sig` link seen: ONE line per distinct link per process per UTC day
- * ({@link LegacyLinkSightings}), the count its removal waits on.
+ * ({@link DailySightings}), the count its removal waits on.
  */
 export const AGENDA_LEGACY_LINK_TAG = '[AGENDA_LEGACY_LINK]';
 
 /**
- * A legacy link's name in the logs: the first 8 hex characters of SHA-256 of its `sig`. A `sig` names
- * no one (it signs a selection), and its hash does not let the link be rebuilt.
+ * A link's name in the logs: the first 8 hex characters of SHA-256 of a `sig` or a subscription row id.
+ * It cannot be turned back into the link, and two lines about one link carry the same name.
  */
-export function legacyLinkFingerprint(sig: string): string {
-  return crypto.createHash('sha256').update(sig.trim()).digest('hex').slice(0, 8);
+export function logDigest(value: string): string {
+  return crypto.createHash('sha256').update(value.trim()).digest('hex').slice(0, 8);
 }
 
 /**
- * WHICH LEGACY LINKS THIS PROCESS HAS ALREADY REPORTED TODAY. A calendar app polls its link about a
- * hundred times a day; the removal of the shim waits on how many distinct LINKS are still polled, so
- * each is logged once per UTC day and per process. The set is forgotten when the day changes (it
- * holds one day's links at most). N replicas log a link up to N times a day: count distinct
- * `link=` values, never lines. It decides nothing but whether to write a log line.
+ * WHICH LINKS THIS PROCESS HAS ALREADY REPORTED TODAY. A calendar app polls its link about a hundred
+ * times a day, so a line per poll is noise: a legacy `sig` link (its removal waits on how many distinct
+ * links are still polled) and a refused subscription token are each logged once per UTC day and per
+ * process. Only keys a verified signature vouches for are offered, so the set is bounded by the links
+ * ever made; it is forgotten when the day changes. N replicas log a link up to N times a day: count
+ * distinct names, never lines. It decides nothing but whether to write a log line.
  */
-export class LegacyLinkSightings {
+export class DailySightings {
   private day = '';
   private readonly seen = new Set<string>();
 

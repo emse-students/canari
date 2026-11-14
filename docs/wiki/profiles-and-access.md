@@ -1596,7 +1596,9 @@ one". Links already distributed keep resolving, but never serve more than their 
   selection })` - EXACTLY the holder's signed-in agenda (their spaces, memberships, read grants, the
   event's public and reach, the promo cutoff), re-read at every poll, so a profile change, a lost
   membership or a grant follows by itself. `Cache-Control: private, max-age=120`. Unknown, revoked or
-  wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED] id=<8 chars>`. A token beside
+  wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED]` once per process per UTC
+  day - per row for a verified token (`id=<8 hex of SHA-256 of the row id> reason=unknown`), once in
+  all for tokens that do not verify (`reason=signature`), so a forger grows neither (`DailySightings`). A token beside
   `sig`, a selection or an `eventId` is a 400 `AGENDA_TOKEN_NOT_ALONE`. The URL the modal builds carries
   the token ALONE, no window: the server's rolling one keeps a saved link current.
 - **Revocation:** `DELETE /api/associations/calendar/subscriptions` (signed in) deletes every row of
@@ -1604,7 +1606,9 @@ one". Links already distributed keep resolving, but never serve more than their 
   has the button ("Révoquer mes liens d'abonnement"), CONFIRMED first (`showConfirm`: one tap ends every
   calendar on every device); the next link is asked like the first.
 - **Erasure:** `agenda_subscriptions."userId"` is classified `delete` in `account-erasure.ts`; an
-  erased account's links answer 403. Not a source of the erasure's association lock: when such a row is
+  erased account's links answer 403. A link ends ONLY by revocation, the association's deletion or the
+  account's erasure: an account deactivated at the identity provider keeps its links until it is
+  erased, since social-service holds no suspension state. Not a source of the erasure's association lock: when such a row is
   all that ties the erasure to an association, the erasure writes nothing else under it, so no cycle.
 - **Links already distributed (`sig`)** - a dated shim, [legacy-compatibility](legacy-compatibility.md):
   still verified. A `sig` names no holder, so it serves only what every reader who could hold it sees:
@@ -1615,7 +1619,7 @@ one". Links already distributed keep resolving, but never serve more than their 
   (`restrictAnonymousToPublicReach`). `POST calendar/feed-signature` still answers older store builds,
   for a PAIR only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN`. Each distinct link
   logs ONE `[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` per process
-  per UTC day (`LegacyLinkSightings`) - count distinct links, not lines.
+  per UTC day (`DailySightings`) - count distinct links, not lines.
 - **Frontend:** `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`, was `createFeedSigner`)
   is `unasked` until `ask()` (the modal's "get my link"), asks only for the selection shown at that tap,
   and exposes `revoke()`; the modal's sentence says a link shows what its holder sees and can be

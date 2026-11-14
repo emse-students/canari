@@ -12,7 +12,7 @@ import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import {
   agendaSubscriptionToken,
-  LegacyLinkSightings,
+  DailySightings,
   signAgendaSelection,
   signEventIcs,
   withEventIcsSig,
@@ -1221,7 +1221,7 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
       }
       const lines = warn.mock.calls.map((c) => String(c[0]));
       expect(lines.filter((l) => l.startsWith('[AGENDA_SUBSCRIPTION_REFUSED]'))).toHaveLength(5);
-      // The id is cut to 8 characters: a refused token is never logged whole.
+      // A refused token is never logged whole.
       expect(lines.some((l) => l.includes(token))).toBe(false);
     } finally {
       warn.mockRestore();
@@ -1286,6 +1286,35 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
     expect(theirs.status).not.toHaveBeenCalled();
   });
 
+  it('a revoked link polled three times logs ONE line; forged tokens, however many, ONE line too', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { controller } = makeController();
+      const token = agendaSubscriptionToken(SUB);
+      for (let poll = 0; poll < 3; poll += 1) {
+        const res = response();
+        expect(await ics(controller, res, { token })).toBe('');
+        expect(res.status).toHaveBeenCalledWith(403);
+      }
+      for (let n = 0; n < 3; n += 1) {
+        const forged = agendaSubscriptionToken(`00000000-0000-4000-8000-00000000c00${n}`);
+        await ics(controller, response(), {
+          token: `${forged.slice(0, -1)}${forged.endsWith('A') ? 'B' : 'A'}`,
+        });
+      }
+      const refused = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.startsWith('[AGENDA_SUBSCRIPTION_REFUSED]'));
+      expect(refused).toHaveLength(2);
+      expect(refused[0]).toMatch(/^\[AGENDA_SUBSCRIPTION_REFUSED\] id=[0-9a-f]{8} reason=unknown$/);
+      // The 8 hex are a digest: the row id itself is never written.
+      expect(refused[0]).not.toContain(SUB.slice(0, 8));
+      expect(refused[1]).toContain('reason=signature');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('POST calendar/subscription and DELETE calendar/subscriptions are behind the sign-in guard', () => {
     for (const route of ['subscribeCalendarFeed', 'revokeCalendarSubscriptions'] as const) {
       const guards = Reflect.getMetadata(
@@ -1339,8 +1368,8 @@ describe('AssociationsController - the subscription link is its holder (2026-11-
     }
   });
 
-  it('LegacyLinkSightings: once per link per day, again the next day', () => {
-    const seen = new LegacyLinkSightings();
+  it('DailySightings: once per link per day, again the next day', () => {
+    const seen = new DailySightings();
     expect(seen.firstToday('abcd1234|pair', '2026-11-14')).toBe(true);
     expect(seen.firstToday('abcd1234|pair', '2026-11-14')).toBe(false);
     expect(seen.firstToday('ffff0000|pair', '2026-11-14')).toBe(true);

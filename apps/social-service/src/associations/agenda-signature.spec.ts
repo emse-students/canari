@@ -5,7 +5,7 @@ import {
   canonicalAgendaSelection,
   eventIcsSignatureMatches,
   legacyAgendaLinkShape,
-  legacyLinkFingerprint,
+  logDigest,
   selectionWithinSpaces,
   signAgendaSelection,
   signEventIcs,
@@ -226,9 +226,9 @@ describe('the subscription token (2026-11-14)', () => {
 
   it('names a legacy link by 8 hex of its hash, never by the link itself', () => {
     const sig = signAgendaSelection({ campus: 'gardanne', formation: 'ICM', associationId: null });
-    const name = legacyLinkFingerprint(sig);
+    const name = logDigest(sig);
     expect(name).toMatch(/^[0-9a-f]{8}$/);
-    expect(legacyLinkFingerprint(` ${sig} `)).toBe(name);
+    expect(logDigest(` ${sig} `)).toBe(name);
     expect(sig).not.toContain(name);
   });
 

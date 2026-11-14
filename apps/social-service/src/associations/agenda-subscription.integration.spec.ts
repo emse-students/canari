@@ -255,6 +255,9 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     const a = await controller.subscribeCalendarFeed('si', { associationId: N });
     const b = await controller.subscribeCalendarFeed('si', { associationId: N });
     expect(b.token).toBe(a.token);
+    // An upper-case id names the same association: the same row, the same link.
+    const upper = await controller.subscribeCalendarFeed('si', { associationId: N.toUpperCase() });
+    expect(upper.token).toBe(a.token);
     const [{ n }] = await q(
       `SELECT count(*)::int AS n FROM agenda_subscriptions WHERE "userId" = 'si'`
     );

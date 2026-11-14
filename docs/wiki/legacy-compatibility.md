@@ -338,8 +338,8 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 **Site:** the `sig` branch of `GET /api/associations/calendar/feed.ics` and of the anonymous
 `calendar/feed` (`assertAgendaAccess`, `assertAgendaSignature`, `legacySelectionRead` and its
-`LegacyLinkSightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
-`AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `legacyLinkFingerprint`
+`DailySightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
+`AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `logDigest`
 (`agenda-signature.ts`).
 **What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
 `?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
@@ -364,7 +364,7 @@ Why 10 and not zero: a saved subscription is polled for as long as the calendar 
 who never open Canari again, so zero may never come; under 10, ten people re-subscribing once costs
 less than keeping a second, unrevocable link kind alive. Then, in one pull request: the `sig` branch of
 both feeds (a `sig` is then the 403 it was without a signature), `feed-signature`,
-`signAgendaFeedSelection`, `legacySelectionRead`, `LegacyLinkSightings`, `legacyLinkFingerprint`, their
+`signAgendaFeedSelection`, `legacySelectionRead`, `DailySightings`, `logDigest`, their
 specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
 
 ### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)

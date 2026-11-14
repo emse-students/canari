@@ -98,8 +98,8 @@ import {
   EVENT_ICS_REFUSED_TAG,
   eventIcsSignatureMatches,
   legacyAgendaLinkShape,
-  legacyLinkFingerprint,
-  LegacyLinkSightings,
+  DailySightings,
+  logDigest,
   verifiedAgendaSubscriptionId,
   withEventIcsSig,
 } from './agenda-signature';
@@ -133,7 +133,9 @@ export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 export class AssociationsController {
   private readonly logger = new Logger(AssociationsController.name);
   /** The legacy agenda links already logged today by this process (`legacySelectionRead`). */
-  private readonly legacySightings = new LegacyLinkSightings();
+  private readonly legacySightings = new DailySightings();
+  /** The refused subscription tokens already logged today by this process (`subscriptionHolder`). */
+  private readonly refusedSightings = new DailySightings();
 
   constructor(
     private readonly service: AssociationsService,
@@ -416,9 +418,16 @@ export class AssociationsController {
     const id = verifiedAgendaSubscriptionId(token);
     const holder = id ? await this.service.findAgendaSubscription(id) : null;
     if (!holder) {
-      this.logger.warn(
-        `${AGENDA_SUBSCRIPTION_REFUSED_TAG} id=${sanitizeLog(token.trim().slice(0, 8))} reason=${id ? 'unknown' : 'signature'}`
-      );
+      // A verified id is a link Canari made: once per row a day. An unverified token is anyone's
+      // string: ONE key for all of them, so a forger grows neither the set nor the log.
+      const key = id ? `${logDigest(id)}|unknown` : 'signature';
+      if (this.refusedSightings.firstToday(key, new Date().toISOString().slice(0, 10))) {
+        this.logger.warn(
+          id
+            ? `${AGENDA_SUBSCRIPTION_REFUSED_TAG} id=${logDigest(id)} reason=unknown`
+            : `${AGENDA_SUBSCRIPTION_REFUSED_TAG} reason=signature (the first today; later ones are not logged)`
+        );
+      }
     }
     return holder;
   }
@@ -442,11 +451,11 @@ export class AssociationsController {
    * before. Any other shape - a campus alone (signed for staff, who reach nothing through audience
    * rules), a formation alone, an association alone (signed for anyone) - has a holder who sees
    * nothing: it answers an EMPTY calendar, the link still resolving (owner's review, 2026-11-14).
-   * Each distinct link is logged ONCE per process per UTC day (`LegacyLinkSightings`).
+   * Each distinct link is logged ONCE per process per UTC day (`DailySightings`).
    */
   private legacySelectionRead(selection: SpaceSelection, sig: string | undefined): boolean {
     const shape = legacyAgendaLinkShape(selection);
-    const link = legacyLinkFingerprint(sig ?? '');
+    const link = logDigest(sig ?? '');
     if (
       this.legacySightings.firstToday(`${link}|${shape}`, new Date().toISOString().slice(0, 10))
     ) {
@@ -594,7 +603,9 @@ export class AssociationsController {
     associationId?: string;
   }): { selection: SpaceSelection; associationId: string | null } {
     const selection = parseSpaceSelection({ campus: body?.campus, formation: body?.formation });
-    const associationId = body?.associationId?.trim() || null;
+    // Lower-cased HERE, the one place a selection is built: an upper-case uuid names the same
+    // association, and must meet the same `selectionKey` (so the same row, the same link).
+    const associationId = body?.associationId?.trim().toLowerCase() || null;
     if (selection.campus === null && selection.formation === null && !associationId) {
       throw new BadRequestException({
         code: AGENDA_SELECTION_REQUIRED,

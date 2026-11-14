@@ -50,8 +50,8 @@
     /** The reader's "get my link" (2026-11-14): the server makes the link on this tap, not before. */
     onAsk?: () => void;
     /**
-     * Revokes every subscription link of the reader, then asks for a new one (2026-11-14). Absent:
-     * no revoke button (the URL is not a holder's link).
+     * Revokes every subscription link of the reader, once they confirm (2026-11-14); the next link
+     * is asked like the first. Absent: no revoke button (the URL is not a holder's link).
      */
     onRevoke?: () => Promise<void>;
     /** Where the revocation `onRevoke` started stands. */
