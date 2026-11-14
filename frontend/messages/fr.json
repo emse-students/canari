@@ -2984,7 +2984,7 @@
   "form_association_hint": "Le formulaire apparaîtra dans l'espace de l'association, et ses gestionnaires de formulaires pourront le modifier. Ce choix reste modifiable jusqu'à la publication.",
   "form_association_applies_at_publish": "Le changement d'association prendra effet à la publication du formulaire.",
   "form_association_fixed_refusal": "Ce formulaire est publié : il reste rattaché à son association, car ses réponses, ses paiements et ses rappels en dépendent. Pour le proposer sous une autre association, créez un nouveau formulaire.",
-  "form_association_not_yours_refusal": "Pour changer l'association de ce brouillon, il faut être membre de l'association qu'il quitte et de celle qu'il rejoint.",
+  "form_association_not_yours_refusal": "Seuls les membres qui ont la permission « Gérer les formulaires » d'une association peuvent créer un formulaire pour elle, ou y déplacer un brouillon et l'en retirer.",
   "form_association_none": "Aucune (formulaire personnel)",
   "form_association_locked_hint": "Un formulaire publié reste rattaché à son association : ses réponses, ses paiements et ses rappels en dépendent. Pour le proposer sous une autre association, créez un nouveau formulaire.",
   "form_payment_needs_association_title": "Un formulaire payant a besoin d'une association",

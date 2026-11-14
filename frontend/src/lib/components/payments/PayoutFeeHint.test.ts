@@ -83,6 +83,19 @@ it('says the estimate is not configured while no schedule is entered - never a d
   expect(target.textContent).not.toMatch(/\d,\d\d/);
 });
 
+it('renders no hint for a reader the schedule is refused to, and logs nothing more', async () => {
+  fetchActivePaymentProvider.mockResolvedValue('lydia');
+  fetchLydiaFeeSchedule.mockResolvedValue('not-a-price-editor');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const target = mountHint();
+  flushSync();
+  await flushProvider();
+  flushSync();
+
+  expect(target.querySelector('[role="note"]')).toBeNull();
+  expect(warn).not.toHaveBeenCalled();
+});
+
 it('renders no estimate when the schedule call fails', async () => {
   fetchActivePaymentProvider.mockResolvedValue('lydia');
   fetchLydiaFeeSchedule.mockRejectedValue(new Error('network'));

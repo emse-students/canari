@@ -9,17 +9,14 @@ import { AssociationPermissionFlag } from './entities/association-member.entity'
 function serviceWith(opts: {
   mine?: Array<{ type: string; permissions: number }>;
   superAdmin?: boolean;
-  ownsForm?: boolean;
 }) {
   const service = Object.create(AssociationsService.prototype) as AssociationsService;
-  const query = jest.fn(async () => [{ owns: opts.ownsForm === true }]);
   Object.assign(service, {
     logger: new Logger('test'),
     listByUser: jest.fn(async () => opts.mine ?? []),
     isAssociationSuperAdmin: jest.fn(async () => opts.superAdmin === true),
-    assoRepo: { manager: { query } },
   });
-  return { service, query };
+  return { service };
 }
 
 describe('AssociationsService.mayEditAPrice', () => {
@@ -47,13 +44,15 @@ describe('AssociationsService.mayEditAPrice', () => {
     await expect(service.mayEditAPrice('u', false)).resolves.toBe(false);
   });
 
-  it('answers a BDE super-admin and the owner of an association form', async () => {
+  it('answers a BDE super-admin', async () => {
     await expect(serviceWith({ superAdmin: true }).service.mayEditAPrice('u', false)).resolves.toBe(
       true
     );
-    await expect(serviceWith({ ownsForm: true }).service.mayEditAPrice('u', false)).resolves.toBe(
-      true
-    );
+  });
+
+  it('refuses a plain member, whatever forms they created: creating one is no right over prices', async () => {
+    const { service } = serviceWith({ mine: [{ type: 'association', permissions: 0 }] });
+    await expect(service.mayEditAPrice('u', false)).resolves.toBe(false);
   });
 
   it('refuses a student who edits no price', async () => {

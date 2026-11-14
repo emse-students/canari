@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
+import { forgetLydiaFeeSchedule } from '$lib/payments/lydiaFees';
 
 /**
  * The platform's Lydia contract terms and the counter of the contract year's flux, as the admin
@@ -115,6 +116,8 @@ export async function saveLydiaContract(
     throw new LydiaContractRefused(field);
   }
   if (!res.ok) throw new Error(`lydia contract write answered ${res.status}`);
+  // The payout estimates read the fee and the VAT from these terms.
+  forgetLydiaFeeSchedule();
   return (await res.json()) as LydiaContractSettings;
 }
 

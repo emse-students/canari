@@ -40,7 +40,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
@@ -134,10 +137,11 @@
    */
 
   /**
-   * The associations the user belongs to - not every association there is.
+   * The associations whose forms the user manages - not every association there is, nor every
+   * membership.
    *
-   * Creating a form for an association requires MEMBERSHIP of it, so listing all of them offered a
-   * choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
+   * Creating a form for an association requires MANAGE_FORMS in it (owner, 2026-11-14), so listing
+   * any other offered a choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
    * readiness either, because a FREE form may be linked to any association it belongs to; the
    * payment section says so when a chosen association cannot take money yet.
    */
@@ -185,7 +189,7 @@
     }
     try {
       associations = await withRequestedAssociation(
-        await listMyAssociations(),
+        formManagedAssociations(await listMyAssociations()),
         associationId,
         getAssociation
       );

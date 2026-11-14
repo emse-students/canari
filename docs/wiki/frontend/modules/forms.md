@@ -887,7 +887,10 @@ raw-tag UI that was their only caller.
 
 ### Granting a cotisation needs MANAGE_MEMBERS, pricing on one does not
 
-Creating a form needs nothing but an account. Linking it to an association needs membership. But
+Creating a form needs nothing but an account. Linking it to an association needs MANAGE_FORMS in it
+(owner, 2026-11-14: *"seuls les membres d'association qui avaient la permission 'gerer les
+formulaires' pouvaient gerer les formulaires"* - membership alone used to be enough, never decided,
+an early implementation's `isMember`; see [who manages an association's forms](#who-manages-an-associations-forms-owner-2026-11-14)). But
 `grantsCotisation` hands out association membership, and `UserTagService.grantCotisant` has always
 required `MANAGE_MEMBERS` - so a plain member with `MANAGE_FORMS` could save a form whose grant would
 be refused at payment time, or, worse, use the form as a side door around the flag that guards the
@@ -896,6 +899,20 @@ roster. `assertCotisationConfigValid` now takes the caller and refuses the setti
 
 Dividing a price grid on a cotisation tier is deliberately NOT gated: charging existing cotisants a
 different amount grants nothing and changes no one's membership.
+
+### Who manages an association's forms (owner, 2026-11-14)
+
+ONE predicate, `FormsService.managesForm`: a global admin; for an ASSOCIATION's form, MANAGE_FORMS in
+that association (`mayAct`: a BDE super-admin of it included), whoever created it; for a PERSONAL
+form, its owner. Its creator is no manager by authorship: one who never held MANAGE_FORMS (possible
+until this date, when membership was the creation rule) or no longer does loses the form, and
+"Mes formulaires" (`list`) no longer lists it. A create naming an association, and a draft moved
+from or to one, need MANAGE_FORMS there - else `403 FORM_ASSOCIATION_NOT_YOURS`, typed at the throw
+(`assertManagesAssociationForms`); the builders offer only those associations
+(`formManagedAssociations`). Measured read-only on production that day: 1 of 15 live association
+forms had an owner without MANAGE_FORMS in its association. The fee schedule of the payout
+estimate follows (`mayEditAPrice`, [lydia-contract-flux](../../lydia-contract-flux.md)): a form's
+creator is not a price editor by being its creator.
 
 ## An anonymous form keeps no author (2026-09-30)
 
@@ -1461,7 +1478,7 @@ draft) and no post or event naming it (`FORM_IS_DRAFT`): nothing is tied to its 
 |---|---|---|
 | nothing (`associationId` absent) | left as it is | left as it is |
 | the stored value (`''` and `null` both mean personal) | no change, no check | no change |
-| another association, or none | moved, when the actor is a MEMBER of the association it leaves AND of the one it joins (the creation rule, `isMember`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
+| another association, or none | moved, when the actor holds MANAGE_FORMS in the association it leaves AND in the one it joins (the creation rule, `mayAct`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
 
 The id must name an association, for a global admin too: one that is no UUID, or names none
 (`forms."associationId"` has no foreign key), is `400 FORM_ASSOCIATION_UNKNOWN` before any

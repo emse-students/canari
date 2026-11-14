@@ -419,8 +419,10 @@ export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
 
 /**
- * The 403 refusing to move a DRAFT between associations when the actor is not a member of BOTH the
- * association it leaves and the one it joins - the creation rule, applied to each side.
+ * The 403 refusing a form for an association whose forms the actor does not manage: a create naming
+ * it, or a DRAFT moved from or to it, needs MANAGE_FORMS there (`mayAct`: a BDE super-admin and a
+ * global admin included). Owner, 2026-11-14: only the members holding "gérer les formulaires"
+ * manage an association's forms - membership alone never did.
  */
 export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
 
@@ -933,10 +935,7 @@ export class FormsService {
 
   private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
     if (input.associationId && !isGlobalAdmin) {
-      const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
-      if (!member) {
-        throw new ForbiddenException('You are not a member of this association.');
-      }
+      await this.assertManagesAssociationForms(input.ownerId!, input.associationId, 'create');
     }
     // A DRAFT is asked for by a client that publishes separately; a client that predates drafts
     // sends nothing and its form is published at once, as it always was (`form-status.ts`).
@@ -1046,8 +1045,9 @@ export class FormsService {
   }
 
   /**
-   * Everything the user may manage, newest first: their own forms, and the forms of associations
-   * where they hold MANAGE_FORMS.
+   * Everything the user may manage, newest first: their own PERSONAL forms, and the forms of
+   * associations where they hold MANAGE_FORMS (`managesForm`: an association's form they created
+   * is listed only while they may manage it).
    *
    * That second group is the point. `assertFormManager` has always accepted MANAGE_FORMS, so those
    * forms were editable and exportable by API while appearing in no list on any screen - reachable
@@ -1083,7 +1083,31 @@ export class FormsService {
     // The two sets overlap - a form you own in an association you administer is in both - so they
     // are merged by id rather than concatenated.
     const byId = new Map<string, Form>();
+    // An owned association form whose association does not list them as a manager: asked by the
+    // same predicate as `managesForm` (a BDE super-admin's governed association included).
+    const ownedElsewhere = [
+      ...new Set(
+        owned
+          .map((f) => f.associationId)
+          .filter((id): id is string => !!id && !managedIds.includes(id))
+      ),
+    ];
+    const mayStill =
+      ownedElsewhere.length === 0
+        ? new Set<string>()
+        : await this.associationsService.mayActOnAny(
+            ownerId,
+            ownedElsewhere,
+            AssociationPermissionFlag.MANAGE_FORMS
+          );
     for (const form of [...owned, ...viaAssociation]) {
+      if (
+        form.associationId &&
+        !managedIds.includes(form.associationId) &&
+        !mayStill.has(form.associationId)
+      ) {
+        continue;
+      }
       byId.set(form.id, form);
     }
     const merged = [...byId.values()].sort(
@@ -1234,22 +1258,52 @@ export class FormsService {
     throw new ForbiddenException('You are not allowed to manage this form');
   }
 
-  /** Whether `viewer` manages `form`: its owner, a global admin, or MANAGE_FORMS on its association. */
+  /**
+   * Whether `viewer` manages `form`: a global admin; for an ASSOCIATION's form, MANAGE_FORMS on that
+   * association (`mayAct`), whoever created it - owner, 2026-11-14: only the members holding "gérer
+   * les formulaires" manage an association's forms, so its creator who does not hold it (or no
+   * longer does) is not one; for a PERSONAL form, its owner.
+   */
   private async managesForm(
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
   ): Promise<boolean> {
     if (!viewer?.userId) return false;
-    if (viewer.isGlobalAdmin || form.ownerId === viewer.userId) return true;
-    return (
-      !!form.associationId &&
-      (await this.associationsService.mayAct(
-        viewer.userId,
-        form.associationId,
-        AssociationPermissionFlag.MANAGE_FORMS,
-        { isGlobalAdmin: viewer.isGlobalAdmin }
-      ))
+    if (viewer.isGlobalAdmin) return true;
+    if (!form.associationId) return form.ownerId === viewer.userId;
+    return this.associationsService.mayAct(
+      viewer.userId,
+      form.associationId,
+      AssociationPermissionFlag.MANAGE_FORMS,
+      { isGlobalAdmin: viewer.isGlobalAdmin }
     );
+  }
+
+  /**
+   * Refuses (403 `FORM_ASSOCIATION_NOT_YOURS`) unless `userId` manages `associationId`'s forms
+   * (MANAGE_FORMS, `mayAct`) - what a create naming it and a draft moved from or to it need.
+   */
+  private async assertManagesAssociationForms(
+    userId: string,
+    associationId: string,
+    what: string
+  ): Promise<void> {
+    if (
+      await this.associationsService.mayAct(
+        userId,
+        associationId,
+        AssociationPermissionFlag.MANAGE_FORMS
+      )
+    ) {
+      return;
+    }
+    this.logger.log(
+      `[FORMS] ${what} refused: user=${userId.slice(0, 8)} does not manage the forms of ${assocLabel(associationId)}`
+    );
+    throw new ForbiddenException({
+      code: FORM_ASSOCIATION_NOT_YOURS,
+      message: "Only a member allowed to manage this association's forms may create or move one.",
+    });
   }
 
   /**
@@ -1304,16 +1358,7 @@ export class FormsService {
     }
     if (!isGlobalAdmin) {
       for (const side of [stored, next]) {
-        if (side && !(await this.associationsService.isMember(userId, side))) {
-          this.logger.log(
-            `[FORMS] draft ${formLabel} not moved (${move}): user=${userId.slice(0, 8)} is no member of ${assocLabel(side)}`
-          );
-          throw new ForbiddenException({
-            code: FORM_ASSOCIATION_NOT_YOURS,
-            message:
-              'Moving a draft between associations needs membership of the one it leaves and of the one it joins.',
-          });
-        }
+        if (side) await this.assertManagesAssociationForms(userId, side, `move of ${formLabel}`);
       }
     }
     this.logger.log(

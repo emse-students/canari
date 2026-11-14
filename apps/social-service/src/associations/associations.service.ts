@@ -3107,9 +3107,10 @@ export class AssociationsService {
    * - a BDE super-admin (`isAssociationSuperAdmin`): `mayAct` grants them MANAGE_PRODUCTS and
    *   MANAGE_FORMS on the associations they govern;
    * - a member holding MANAGE_PRODUCTS (the shop, the cotisation tiers) or MANAGE_FORMS (paid forms)
-   *   in an association or a list - not an institution, which collects nothing (TYPE_EXCLUDED_FLAGS);
-   * - the owner of a live form attached to an association or a list (`managesForm`: an owner edits
-   *   their form's price).
+   *   in an association or a list - not an institution, which collects nothing (TYPE_EXCLUDED_FLAGS).
+   * A form's creator is not one by being its creator: an association's form is edited by MANAGE_FORMS
+   * alone (`FormsService.managesForm`, owner 2026-11-14), and a personal form is offered no price
+   * (the editor asks for an association first, `FormPaymentSection`).
    */
   async mayEditAPrice(userId: string, isGlobalAdmin: boolean): Promise<boolean> {
     if (isGlobalAdmin) return true;
@@ -3120,15 +3121,7 @@ export class AssociationsService {
     if (mine.some((a) => a.type !== 'institution' && (a.permissions & priceFlags) !== 0)) {
       return true;
     }
-    if (await this.isAssociationSuperAdmin(userId)) return true;
-    const [owned]: Array<{ owns: boolean }> = await this.assoRepo.manager.query(
-      `SELECT EXISTS (
-         SELECT 1 FROM forms f JOIN associations a ON a.id = f."associationId"
-          WHERE f."ownerId" = $1 AND f."deletedAt" IS NULL AND a.type <> 'institution'
-       ) AS owns`,
-      [userId]
-    );
-    const may = owned?.owns === true;
+    const may = await this.isAssociationSuperAdmin(userId);
     this.logger.debug(`[PERM] may edit a price user=${userId.slice(0, 8)}: ${may}`);
     return may;
   }

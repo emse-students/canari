@@ -2952,7 +2952,7 @@
   "form_association_hint": "The form will appear in the association's space, and its form managers will be able to edit it. This choice can be changed until the form is published.",
   "form_association_applies_at_publish": "The change of association takes effect when the form is published.",
   "form_association_fixed_refusal": "This form is published: it stays with its association, because its answers, payments and reminders depend on it. To offer it under another association, create a new form.",
-  "form_association_not_yours_refusal": "To change this draft's association, you must be a member of both the association it leaves and the one it joins.",
+  "form_association_not_yours_refusal": "Only members allowed to manage an association's forms may create a form for it, or move a draft to or from it.",
   "form_association_none": "None (personal form)",
   "form_association_locked_hint": "A published form stays with its association: its answers, payments and reminders depend on it. To offer it under another association, create a new form.",
   "form_payment_needs_association_title": "A paid form needs an association",

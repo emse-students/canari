@@ -38,7 +38,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
@@ -315,14 +318,14 @@
   });
 
   /**
-   * The associations a draft may be moved to: the builder's memberships (the server asks membership
-   * of both sides), with the draft's own one even when it is not among them - a global admin's, or
+   * The associations a draft may be moved to: those whose forms the builder manages (the server asks
+   * MANAGE_FORMS of both sides, `formManagedAssociations`), with the draft's own one even when it is not among them - a global admin's, or
    * one the builder has left - so the picker always names where the draft is.
    */
   async function draftAssociationChoices(): Promise<Association[]> {
     let mine: Association[] = [];
     try {
-      mine = await listMyAssociations();
+      mine = formManagedAssociations(await listMyAssociations());
     } catch (e) {
       console.warn(
         `[forms-editor] memberships not loaded; the draft's own association alone is offered: ${e}`

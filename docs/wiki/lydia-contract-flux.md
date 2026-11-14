@@ -8,8 +8,8 @@ reglages plateforme."*
 **THE CONTRACT IS CONFIDENTIAL AND THIS REPOSITORY IS PUBLIC.** No contract value - the target, the
 rates, the bands, the VAT rate - appears in code, tests, this wiki, a changelog, a commit or a pull
 request. Every value is entered by a global admin at `/admin/platform` and lives in the database
-only. The tests use obviously made-up numbers. The anniversary date is the one value seeded (core
-migration 024), at the owner's request.
+only. The tests use obviously made-up numbers. No value is seeded, the anniversary included (owner,
+2026-11-14): core migration 024 adds the columns, NULL until an admin enters them.
 
 ## The terms, and where they live
 
@@ -37,7 +37,7 @@ WARN with the actor and WHICH values are set, never a value.
 and empties `lydia_enrolled_businesses` with the other live Lydia identifiers, so dev's counter
 and estimate say "not configured" until someone enters made-up values there.
 
-**No default for any value but the anniversary.** A value not entered is said to be not configured -
+**No default for any value, the anniversary included.** A value not entered is said to be not configured -
 by the counter (`missing`), by the payout estimate - and the server logs it at WARN each time an
 estimate or a counter is asked without it: a fallback is a signal, never a path.
 
@@ -53,7 +53,12 @@ a 403 `LYDIA_FEES_NOT_A_PRICE_EDITOR`, and a check that cannot be made a 502, ne
 predicate is social-service's ONE `AssociationsService.mayEditAPrice`, built from the rights that
 guard the editors and asked by core through `GET internal/payments/may-edit-a-price`: a global admin;
 a BDE super-admin; a member holding `MANAGE_PRODUCTS` or `MANAGE_FORMS` in an association or a list
-(not an institution, which collects nothing); the owner of a live form attached to one.
+(not an institution, which collects nothing). A form's creator is not one by being its creator: an
+association's form is managed by `MANAGE_FORMS` alone, and a personal form is offered no price and no
+estimate (owner, 2026-11-14, [forms](frontend/modules/forms.md#who-manages-an-associations-forms-owner-2026-11-14)).
+The client asks once per reader (`fetchLydiaFeeSchedule`, a `SharedCache` holding the schedule, "not
+configured" and the refusal alike; an admin's save drops it), so the WARN of an unconfigured
+schedule is one per session, not one per estimate mounted.
 
 The fee really deducted from a payment is
 

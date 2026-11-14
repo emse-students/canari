@@ -57,9 +57,12 @@
 
   // `undefined` while loading or failed (no hint), `null` when NOT CONFIGURED (the hint says so).
   let schedule = $state<LydiaFeeSchedule | null | undefined>(undefined);
+  // A reader refused the schedule gets no hint (`fetchLydiaFeeSchedule` logged it once).
   $effect(() => {
     fetchLydiaFeeSchedule()
-      .then((s) => (schedule = s))
+      .then((s) => {
+        if (s !== 'not-a-price-editor') schedule = s;
+      })
       .catch((err) => {
         console.warn('[Payments] Failed to load the fee schedule for the payout hint:', err);
       });
