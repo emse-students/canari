@@ -200,7 +200,8 @@ export class AssociationsController {
    * Returns associations. `?type=association|list` restricts; omit for both.
    *
    * THE DIRECTORY (D37) BY DEFAULT: only the associations whose rules reach one of the caller's
-   * spaces, plus those the caller is a member of - a global admin included, as in the feed.
+   * spaces, plus those the caller is a member of, plus those a nominative read grant of the caller
+   * reaches (owner, 2026-11-14) - a global admin included, as in the feed.
    * `?scope=all` is the whole catalogue, for screens that PICK an association (see
    * `directory-query.ts`); it is open to any signed-in caller because a hidden association is not
    * a secret - its page stays reachable by its link. `?campus=` / `?formation=` keep only the
@@ -423,6 +424,7 @@ export class AssociationsController {
     }
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
+      signedEvent: Boolean(wanted),
     });
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
@@ -619,14 +621,14 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Param('id', ParseUUIDPipe) id: string
   ) {
-    const allowed = await this.service.canManagePayoutAccount(userId, id, {
-      isGlobalAdmin: ga === 'true',
-    });
+    const isGlobalAdmin = ga === 'true';
+    const allowed = await this.service.canManagePayoutAccount(userId, id, { isGlobalAdmin });
     if (!allowed) {
       this.logger.debug(`[PERM] payout account read refused on ${sanitizeLog(id)}`);
       throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
     }
-    return this.service.getPayoutAccount(id);
+    // A global admin also reads a bridge's both states (lydia-account-bridge.ts).
+    return this.service.getPayoutAccount(id, { isGlobalAdmin });
   }
 
   /**
@@ -1099,6 +1101,22 @@ export class AssociationsController {
       );
     }
     return this.service.createCalendarEvent(id, dto, userId, { isGlobalAdmin, isBde });
+  }
+
+  /**
+   * The spaces an INSTITUTION's event may target (owner, 2026-11-13): every space of its own
+   * audience, which the event form offers to tick and the write checks a reach against - the posts'
+   * statement. `:id` is the event's OWNER (the target of a deposit). Only for a caller who may file
+   * or write its events (403), and only for an institution (400 `institution_reach_not_offered`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/events/reach-options')
+  listEventReachOptions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.listEventReachOptions(userId, id, ga === 'true');
   }
 
   /**

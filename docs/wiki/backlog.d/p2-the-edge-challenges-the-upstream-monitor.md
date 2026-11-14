@@ -1,5 +1,7 @@
 ## P2 - three public names are not watched from outside: the edge challenges GitHub's runners (a gap the lead decides)
 
+target: 1.10.0
+
 **Measured 2026-11-09.** Every reading the `upstream` job of `scheduled.yml` took of the gallery, dev and
 legacy names since its first scheduled run (2026-11-06 19:20 UTC, 13 readings out of 13) was a `403`
 written by Cloudflare itself: `server: cloudflare`, `cf-mitigated: challenge`, a "Just a moment..." page.

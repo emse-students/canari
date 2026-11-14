@@ -80,9 +80,10 @@ impl WsFrame {
 /// the shared hash rather than decided here - a sibling tab, here or on another process, keeps the
 /// device online.
 ///
-/// `conn_id` identifies the connection sending the frame. The caller should break out of the recv
-/// loop after this returns, which drops `ConnectionGuard`; its own retirement of the same session
-/// is then a no-op.
+/// `conn_id` identifies the connection sending the frame. The caller has already taken the socket
+/// out of local routing (`AppState::remove_session`) and keeps reading until the client's Close,
+/// which ends the socket and drops `ConnectionGuard`; the guard's retirement of the same session is
+/// then a no-op.
 pub async fn handle_disconnect(
     state: &std::sync::Arc<crate::state::AppState>,
     user_id: &str,
@@ -136,6 +137,17 @@ pub const RETIRED_FRAMES: &[&str] = &["welcome_request"];
 /// True when `msg_type` names a frame in [`RETIRED_FRAMES`].
 pub fn is_retired_frame(msg_type: &str) -> bool {
     RETIRED_FRAMES.contains(&msg_type)
+}
+
+/// Frames a client sends many times a minute that mean nothing a minute later: their per-frame
+/// receive and routing lines are written at DEBUG, because at INFO they were ~everything the
+/// gateway logged (three lines per keystroke burst). Every other frame keeps INFO, one line per
+/// message being the trace of a delivery.
+pub const EPHEMERAL_FRAMES: &[&str] = &["typing"];
+
+/// True when `msg_type` names a frame in [`EPHEMERAL_FRAMES`].
+pub fn is_ephemeral_frame(msg_type: &str) -> bool {
+    EPHEMERAL_FRAMES.contains(&msg_type)
 }
 
 /// Repeats of one sender's retired frame - a client still speaking the old protocol keeps doing it.
@@ -266,12 +278,15 @@ fn typing_audience<'m>(members: &'m [String], sender_user: &str) -> Option<Vec<&
 
 #[cfg(test)]
 mod tests {
-    use super::{is_retired_frame, typing_audience};
+    use super::{is_ephemeral_frame, is_retired_frame, typing_audience};
 
     #[test]
     fn a_welcome_request_frame_is_retired_and_typing_is_not() {
         assert!(is_retired_frame("welcome_request"));
         assert!(!is_retired_frame("typing"));
+        assert!(is_ephemeral_frame("typing"));
+        assert!(!is_ephemeral_frame("message"));
+        assert!(!is_ephemeral_frame("welcome_request"));
         assert!(!is_retired_frame("disconnect"));
     }
 

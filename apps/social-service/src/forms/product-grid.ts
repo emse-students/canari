@@ -13,6 +13,7 @@ import {
   parseProductGridAnswer,
   productGridItemRefusal,
   productGridLines,
+  productGridRequiredOnSave,
   productGridView,
   type ProductGrid,
   type ProductGridAnswer,
@@ -81,8 +82,6 @@ export function productGridsNameCotisation(items: readonly unknown[] | null | un
 const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string> = {
   PRODUCT_GRID_DEFINITION_MISSING:
     'A product grid question needs its grid (rows, columns, prices).',
-  PRODUCT_GRID_NOT_REQUIRED:
-    'A product grid question is stored required, so an app that cannot draw it holds the send.',
   PRODUCT_GRID_REQUIRES_PAYMENT: 'A form with a product grid must take payment: the grid charges.',
   PRODUCT_GRID_AXIS_INVALID: 'A product grid needs at least one row and one column, within bounds.',
   PRODUCT_GRID_ID_INVALID: 'A product grid row or column id is missing or malformed.',
@@ -105,7 +104,6 @@ const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string
   PRODUCT_GRID_UNKNOWN_CELL: 'An order names a cell the product grid does not have.',
   PRODUCT_GRID_QUANTITY_INVALID: 'An ordered quantity is not a whole number within the maximum.',
   PRODUCT_GRID_CELL_CLOSED: 'An order names a combination that does not exist.',
-  PRODUCT_GRID_EMPTY: 'The order is empty: order at least one article across the form.',
 };
 
 /**
@@ -139,13 +137,21 @@ export interface ProductGridFormContext {
   requiresPayment: boolean;
   /** Null for a personal form: a cotisation criterion has nothing to be a member of. */
   associationId: string | null;
+  /**
+   * Whether the save comes from an editor that draws each grid's "Obligatoire" switch (the
+   * payload's `gridRequiredSwitch`), and the questions stored before it - what
+   * `productGridRequiredOnSave` decides each grid's stored `required` from.
+   */
+  requiredSwitch: boolean;
+  storedItems: readonly { id?: unknown; type?: unknown; required?: unknown }[] | null;
 }
 
 /**
  * Judges every priced grid of a form about to be saved and returns the questions as they will be
  * STORED: each grid reduced to its known fields, labels trimmed, its tier criterion normalised by
- * the price grid's own parser. A refusal throws, coded (`PRODUCT_GRID_*`). Other questions pass
- * through, less any `productGrid` they carried.
+ * the price grid's own parser, its `required` the manager's switch (`productGridRequiredOnSave`).
+ * A refusal throws, coded (`PRODUCT_GRID_*`). Other questions pass through, less any `productGrid`
+ * they carried.
  */
 export function normaliseProductGridItems<T extends { type?: string }>(
   items: readonly T[],
@@ -201,7 +207,8 @@ export function normaliseProductGridItems<T extends { type?: string }>(
         ),
       },
     };
-    return { ...item, required: true, productGrid: stored };
+    const required = productGridRequiredOnSave(item, form.requiredSwitch, form.storedItems);
+    return { ...item, required, productGrid: stored };
   });
 }
 
@@ -244,8 +251,8 @@ export function respondentItems<T extends { type?: string }>(items: readonly T[]
 /**
  * Judges one VISIBLE grid's answer and prices it for this person: the answer as it is stored (the
  * ordered cells only, in grid order), its lines and its units. An untouched grid (no answer, `{}`)
- * is 0 units and no line; whether the ORDER is empty is the form's question
- * ({@link productGridOrderEmpty}). A refusal throws, coded.
+ * is 0 units and no line; whether a REQUIRED grid holds a unit is the submit's question, asked like
+ * every required question's (`productGridOrdered`). A refusal throws, coded.
  */
 export function priceProductGridAnswer(
   item: ProductGridItem,
@@ -264,16 +271,6 @@ export function priceProductGridAnswer(
     units,
     lines: units > 0 ? productGridLines(item, answer, viewerPricesFor(item, facts)) : [],
   };
-}
-
-/**
- * The refusal of an order that holds nothing: the form shows grids to this person and not one unit
- * is ordered across them. A form of several grids (one per article) is ordered from whichever the
- * buyer wants, so no single grid is demanded - but an answer to an order form that orders nothing is
- * no order. `itemId` is null: the refusal is the form's, no grid's card is at fault.
- */
-export function productGridOrderEmpty(): BadRequestException {
-  return productGridRefused({}, { code: 'PRODUCT_GRID_EMPTY' });
 }
 
 /** Everything that sets what a form's grids charge, for the price fingerprint. */

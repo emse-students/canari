@@ -95,7 +95,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`); the declaration is in `src/main/AndroidManifest.xml` since the flip PR (2026-10-22); Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings |
 | B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, in the committed plist since the flip PR (2026-10-22) | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
 | B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
-| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
+| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.d/p2-a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20.md)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
 | B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
 | B13 | **The production server preflight** (read-only, below) | **checklist written** (P1-P10, each with its command, 2026-10-21); **owed**: running it after #2180 deploys production, P7 and P8 (c) in the review window | every line of the preflight read |
 | B15 | **An unanswered call was written as a call with a duration** (CALL-WEB-4..7, `1.4.1-alpha.6`, 2026-10-26): cancelled, declined, unreachable and busy calls all read "lasted less than a minute". Two writers disagreed about the same call (`recordCallMissed` and `recordCallEnded`) | **built (draft PR, 2026-10-27)**: ONE writer, `recordCallEnded(ctx, groupId, callId, outcome?, starterId?)` in `utils/chat/callSystemMessages.ts`; `recordCallMissed` is deleted. The outcome is TYPED (`CallEndReason`: `cancelled` / `declined` / `not-answered` / `busy`, absent = answered), sent on the hangup as proto `CallMsg.end_reason`, stored in the row as `callEvent.outcome`, never read from text. See [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27) | read on the web rows (CALL-WEB-4..7), then the blocker closes |
@@ -683,8 +683,7 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
   degrades to a heads-up banner (the log line says so).
 - **App Review**: the 1.5.2 notes answer the 2.5.4 refusal of 2026-08-31 - Canari places audio calls,
   and a VoIP push rings a locked iPhone on CallKit; attach a video of it.
-- **Dev secrets**: the three `DEV_APNS_VOIP_*` repository secrets, absent, so a pre-release on dev
-  rings no VoIP device (the FCM generic alert does not stand in for it).
+- **Dev secrets**: the three `DEV_APNS_VOIP_*` repository secrets - DONE, set 2026-10-23 (this line said "absent" until 2026-11-14); a pre-release on dev rings a VoIP device.
 - **No new Apple entitlement and no VoIP certificate**: PushKit and CallKit need none, and the `.p8`
   auth key is team-wide. The production key has never sent a VoIP push: the first K7 proves it signs.
 
@@ -1930,9 +1929,221 @@ SFU mid-call, transforms in the path throughout (D1); both relays are kept - Clo
 serves now, the Rust `call-service` is kept working for the day the School opens UDP, one
 server-side setting picks (D2); `call-service` is proven by an encrypted end-to-end call in CI (D3,
 [built](../../services/call-service.md#the-end-to-end-call-in-ci)); direct peer to peer keeps no IP
-masking (D4). Per-sender keys and the TURN volume of a relayed mesh stay open, and the work
+masking (D4). Per-sender keys are built ([below](#one-key-per-sender-wp-gc1-2026-11-13)); the TURN
+volume of a relayed mesh stays open, and the work
 packages that follow are listed in order:
 [backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
+
+### One key per sender (WP-GC1, 2026-11-13)
+
+A mesh carries N senders, so the 1:1 call's per-DIRECTION keys (`<callId>|caller`,
+`<callId>|callee`) cannot name them. A group call exports ONE key per participant from the
+conversation's MLS group, under its own label `mls-webrtc-media-group-v1`, with the sender's user id
+as context: `<callId>|<userId lowercased>` (`utils/callKeys.ts`, `deriveGroupCallKeys`,
+`deriveSenderKey`). Every participant derives the same N keys; each device encrypts with its own and
+holds one receive key per other participant.
+
+- **The worker** (`workers/encryption.worker.ts`) holds one send key and a MAP of receive keys:
+  `setGroupKeys` replaces all of them at once (`keyReady`), `addReceiveKey` adds one participant
+  (`peerKeyReady`, awaited before that participant's peer connection is made, so the rule "key the
+  worker before the first track" holds per peer), `dropReceiveKey` removes one. Each RECEIVER
+  transform is told whose frames it carries (`CallTransformOptions.peer`); the key is looked up per
+  frame, and a frame of a participant the worker holds no key for is dropped and counted
+  (`droppedNoKey` with its side and participant), never forwarded. A receive key equal to the send
+  key is refused, in a set or an add, as two equal 1:1 keys already were. The worker's `report`
+  counts each participant's receiver frames apart (`byPeer`: opened, failed, `droppedNoKey`; `''` is
+  the 1:1 slot), so one leg that never opens is not hidden behind the others' totals - the CI mesh
+  call judges every directed leg on it ([the mesh scenario](../../services/call-service.md#the-mesh-scenario-wp-gc2-2026-11-13)).
+- **The 1:1 call is NOT the N=2 case, on purpose.** It keeps the v2 label and the role contexts, and
+  its worker command `setKeys` is unchanged (one receive key in the worker's 1:1 slot, used by a
+  receiver transform that names no participant). So a 1:1 call between a client of before 1.7.0 and
+  a client of after derives the same two keys, and no shim is needed - nothing enters
+  [legacy-compatibility](../../legacy-compatibility.md). A group call is offered only to clients that
+  carry the group label (the server's `group_calls_mode`, WP-GC2). The two labels never meet: a key of
+  one is never a key of the other (`callKeys.test.ts`).
+- **What it does not prove.** Every member can export every member's key - the exporter secret is
+  the group's - so a frame that opens under Bob's key was sealed by A MEMBER, not necessarily by Bob.
+  The 1:1 roles were the same; the screen's claim stays "end-to-end encrypted", meaning nobody
+  outside the conversation, never "this exact member" (the SFrame-over-MLS designs share this).
+- **The epoch.** Each participant derives at its own moment, so an epoch move between two joins
+  gives them different keys - the 1:1 call's known class, wider in a group because more members can
+  commit. The worker's `undecryptable` report now names the participant whose frames never opened.
+
+- **Key commands apply in the order posted.** The worker's handler awaits (digests, imports), so
+  it runs every command on one promise chain: a `setGroupKeys` followed at once by an
+  `addReceiveKey` can no longer finish after it and wipe it, and a `dropReceiveKey` can no longer run
+  inside an add's import and be undone (review of #3489). Every participant id is lowercased in the
+  worker as in the derivation, a drop without a participant is a `keyError`, and two participants
+  posted one receive key are refused like a receive key equal to the send key.
+- **One device per user in a group call (decided 2026-11-13, reversible).** Keys are per USER, so
+  two devices of one person would seal under one key and one nonce space and could not be told
+  apart. A user holds ONE seat: the second device's join REPLACES the first - call-service already
+  evicts a sibling device in p2p mode, and the group client treats the replaced device as left.
+  ([open-questions](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible),
+  [backlog](../../backlog.d/group-calls-one-device-per-user.md).)
+
+Pinned by `utils/callKeys.test.ts` (four participants agree on every sender key, the contexts and
+label on the wire, the lowercasing, a late participant, the 1:1 keys never coincide with a group
+key, every exporter buffer zeroed) and `workers/encryption.worker.test.ts` (each sender opened with
+its key and refused on another's transform, its OWN sealed frame refused on every receiver, a
+participant keyed late, a dropped key, the equal-key and duplicate-key refusals, all-or-nothing sets,
+the 1:1 slot, lowercased ids, and commands posted back to back applied in order).
+
+## Group calls - the mesh, server half (WP-GC2, 2026-11-13)
+
+**Built, behind a switch that is OFF in production.** The client's mesh (one peer connection per
+other participant, the tile grid, the start control in a group) is the
+[client half](#group-calls---the-mesh-client-half-wp-gc2-2026-11-13) below.
+
+- **The switch: `platform_config.group_calls_mode`** (`off` | `mesh`, core-service migration 022,
+  edited at `/admin/platform`, published by `GET /api/version` as `calls.groupMode`). `off` is the
+  default and production's value; the dev seed writes `mesh`. chat-delivery reads it at
+  `initiate`, never cached (`utils/group-calls-mode.ts`): a conversation of more than two admitted
+  members is a group call, refused `403 GROUP_CALLS_DISABLED` while the switch is off.
+  `calls_mode = off` still closes every call first. `groupCallsModesAgree.test.ts` holds the copies
+  together.
+- **The seat cap is signed into the room token.** `initiate` takes `video`; a group call's binding
+  holds `maxSeats` (4 audio, 3 video, D-A) and every token of that room carries `max_seats`, which
+  call-service enforces ([the mesh](../../services/call-service.md#the-mesh-wp-gc2-2026-11-13)).
+  The kind is fixed at `initiate` and bound with the cap: a ring announcing another kind is refused
+  (403, before any window opens), so an audio room's 4 seats can never carry video, and `initiate`
+  itself applies `calls_mode = audio` to a video ask. An audio group call offers no camera later
+  (interim, reversible). A group `room-token` checks the review cohort against every participant.
+  A `ring-end` naming no room of its conversation stops only its sender's devices, at WARN.
+  A 1:1 call carries no claim and is unchanged.
+- **Past the cap - INTERIM, reversible, 2026-11-13:** the 5th participant of an audio call or the
+  4th of a video one is refused by call-service (`Refused { room-full }`), worded
+  `call_room_full` ("Cet appel de groupe est complet."). Superseded by D1 once the SFU leg lands
+  (WP-GC3/GC4): everyone then moves to the relay instead.
+- **Old clients are never offered a group call.** A build declares `groupCallVersion` (1 = the
+  mesh) on every push registration (`push_token."groupCallVersion"`, chat-delivery migration 050)
+  and on a group call's `initiate` and `room-token`. A group call rings only devices at `>= 1`
+  (`[ring] ... skipped=N device(s) whose build predates group calls`), and a token request without
+  it is refused `403 GROUP_CALL_CLIENT_TOO_OLD` - an old build would join as a 1:1 call, with the
+  1:1 keys, and break every other leg. The in-app ring (the MLS invite) is kept from old builds by
+  its own kind, `group_call` (the client half below).
+- **WP-C11, a block in a group call - decided 2026-11-13, reversible: ONE BLOCK DROPS THAT MEMBER,
+  NEVER THE CALL.** Every member, the caller excepted, who stands in a block with another admitted
+  member is not rung and gets no token (`USER_BLOCKED`, the neutral sentence): a mesh pairs everyone
+  with everyone and each leg exposes both addresses (D4), so two people who blocked each other are
+  never put in one call, and the caller, who chose to call, is the one kept. One query per ring or
+  token over the whole member set (`blocksAmong`), never one per pair. The review cohort's boundary
+  still refuses the whole call. A 1:1 call keeps `refuseIfBlocked`.
+- **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
+  does not end the call; the call ends for a participant when the last other participant has left.
+  On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
+  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
+  join (interim).
+- **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
+  `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
+  version specs.
+
+### The relay leg (WP-GC4, 2026-11-13)
+
+**Built on the server, behind a setting that is `none` in production.** Owner decision D2: one
+server-side setting picks the relay of a group call. `platform_config.call_relay` (`none` |
+`call-service`, core migration 023, `/admin/platform`, published by `GET /api/version` as
+`calls.relay`) is read by chat-delivery at a group call's `initiate`, never cached
+(`utils/call-relay.ts`). With `none` the mesh and its past-the-cap refusal stand. With
+`call-service`, **INTERIM and reversible (2026-11-13): a group call goes through the relay FROM THE
+START** - its binding and every room token say `mode: "sfu"` and carry the relay's cap (8,
+`RELAY_SEATS`), and `initiate` and `room-token` answer `mode: "sfu"` - until WP-GC5's mid-call switch
+from the mesh exists (D1). call-service refuses a `Join` in another mode than the token signs.
+**A build without the SFU leg is never put on the relay (review of #3497, 2026-11-14):** the leg is a
+capability, `groupCallVersion` 2 (`GROUP_CALL_SFU_VERSION`; 1 is the mesh alone). With
+`call-service`, a CALLER that declared less than 2 gets a MESH call - no `mode`, the mesh's cap - and
+chat-delivery logs `stays on the mesh although call_relay=call-service - the caller's build has no
+SFU leg`; a relayed call's room token is refused (`GROUP_CALL_CLIENT_TOO_OLD`) to a build below 2, and
+its ring reaches only devices at 2 or more (the mesh's ring keeps `>= 1`). So turning the relay on
+never breaks the builds that only speak the mesh. The dev seed writes `none` until the app's SFU leg
+ships. `cloudflare` joins the list with its leg (WP-GC3).
+
+The relay never sees a clear frame: each client keeps its per-sender keys and transforms (WP-GC1),
+and learns the sender of every forwarded track from its stream id, which the SFU sets to the sender's
+user id ([call-service](../../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
+Proven by a 5-party encrypted call through the SFU in CI
+([the scenario](../../services/call-service.md#the-relayed-group-scenario-wp-gc4-2026-11-13)). The
+app's own SFU leg (the client, against this protocol) is the client pull request's, as is reading
+`mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
+`callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
+
+## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
+
+**Built, behind the same server switch** (`group_calls_mode`, `off` in production). The start
+controls of a GROUP conversation show only when `serverGroupCallsMode() === 'mesh'` and calls are
+open (`groupCallsAvailable`, `groupCallVideoAvailable` in `utils/callsAvailability.ts`); a 1:1
+conversation is unchanged. Nothing here is proven on hardware yet: the readings it owes are in
+[readings owed](../../plan.md#readings-owed).
+
+- **One service, one leg per other participant.** Everything that belonged to "the" peer connection
+  - perfect negotiation, ICE restarts, the E2E evidence and path check, the `[CALL_REPORT]` ticks,
+  the camera transceiver and its quality ladder - lives on a `CallLeg` (`services/callLeg.ts`),
+  keyed by peer. A 1:1 call is ONE leg keyed `''` (`ONE_TO_ONE_LEG`), whose log lines and wire are
+  byte for byte the ones before group calls (`leg.tag` is empty, no frame carries `to`); a group
+  call is one leg per other participant, keyed by the participant's lowercased user id (the relay's
+  seat id is `<userId>:<uuid>`, `peerUserOf`). There is no second call service and no second copy
+  of the negotiation.
+- **The kind is the room token's** (`utils/callRoomToken.ts`, `roomTokenSeats`): a token carrying
+  `max_seats` is a group call. The caller reads it from `initiate`, a callee from `room-token`; an
+  answer whose token disagrees with the kind its invite rang as is refused, typed
+  (`CallE2eSetupError`), never carried on the wrong keys.
+- **Routing.** `PeerReady { peer }` opens (or, with a new seat, rebuilds) that participant's leg;
+  every frame this device sends on a leg is addressed `to: leg.peerId`, and a relayed frame is
+  routed by the `from` the relay stamped. A frame from a seat this device holds no leg for is
+  dropped at WARN (the relay pairs before it relays). `PeerAway { peer }` pauses only that leg
+  (`reconnecting` reads every leg), `PeerLeft { peer }` closes only that leg (`closeLeg`), and a
+  `PeerLeft` naming nobody is this device's seat taken by a sibling: the call ends here. A leg
+  whose media never connects closes alone (`failLeg`); in a 1:1 call that is the call failing, as
+  before.
+- **Keys, per sender (WP-GC1).** A group call's setup reads the MLS TREE
+  (`getGroupMemberIdentities`), finds this user as the leaf carrying this device, and derives the
+  send key and one receive key per other member (`deriveGroupCallKeys`), handed to the worker in
+  ONE `setGroupKeys` before any transform. Every leg's transforms are assigned in the task that
+  created them, as in a 1:1 call; a receiver's options carry `peer` (whose key opens its frames), a
+  sender's none, and each leg has its own `epoch`, so the worker's counts and the bypass check
+  (`e2eBypassedSides`) are judged PER LEG. A participant who joined the conversation after the
+  derivation is keyed before its leg exists (`ensureReceiveKey`: `addReceiveKey`, then the worker's
+  `peerKeyReady`); a cleanup settles that wait. The screen's shield (`e2eProven`) shows only while
+  EVERY negotiating leg is proven: one participant in clear would make it a lie for the call.
+- **An old build never rings for a group call.** Every MLS signal of a group call (invite, answered,
+  hangup) travels as a new `AppMessage` kind, `group_call = 15` (`asGroupCallSignal`), not as
+  `call`: a build before group calls decodes an unknown kind as no kind and drops it, while it
+  would ring a `call` carrying any extra field. `codec.call.test.ts` proves it by decoding a group
+  invite with `canari.proto` minus that field. The server half keeps the push ring and the token
+  from old builds; this build declares `groupCallVersion: 1` on `initiate`, `room-token` and every
+  push registration (the native apps never build that body: they refresh tokens only, which leaves
+  the column alone).
+- **WP-C11 on the client.** A member's decline or busy answer ends nothing: the caller keeps ringing
+  the others, and a device in another call sends no busy to a group invite. A ringing member's ring
+  stops on the CALLER's unanswered end only (`groupHangupEnds`); the record writer ignores a
+  declined or outcome-less group hangup (`groupHangupEndsRecord`, `proto/codec.ts`). The caller
+  sends no ring-end while connected legs remain, so a member still rung may join them. When the
+  last other participant leaves, the call ends (`closeLeg` -> `endCall(true)`: its hangup carries
+  no unanswered outcome, so it stops nobody's call, and its ring-end stops the system rings of
+  members still rung for an empty room). A member whose ring window closes while others talk
+  writes its own missed record (`ringOutIncoming`). **A ringing member's decline is a `group_call`
+  frame** (review of #3501, 2026-11-14): the member has no room token yet, so `sendCallSignal` takes
+  the kind from the invite (`incomingKind`) until the token says it - sent as `call`, the decline
+  reached the caller as a 1:1 hangup and ended the whole call. The decline tests send their decline
+  through a real ringing device and route the sent frame as the message pipeline does. Owed before
+  `groupMode` flips: [an empty-room answer and a ring after an outcome-less end](../../backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md).
+- **A replaced device's stream is unpublished at once**: a second `PeerReady` naming a new seat of a
+  participant rebuilds the leg and takes the old stream off `remoteStreams` there, not when the new
+  device's first track arrives.
+- **Sound and picture.** Every leg's audio is mixed into ONE stream (`remoteAudioMix`) played by
+  the call's one sink; the microphone switch (`CallMicSwitch`) holds one sender per leg, so the
+  RNNoise choice reaches every participant. `CallOverlay` draws one `CallGroupTile` per leg -
+  photo, name, picture when that participant's camera sends, the microphone-held badge - and an
+  AUDIO group call has no camera control (its seats were counted for voices).
+- **Pinned by** `CallService.p2p.test.ts` (`a group call, client side (WP-GC2)`: kind and keys,
+  addressed frames and per-peer receivers, PeerLeft and the last leave, PeerAway, one decline, no
+  ring-end while others remain, a late member's key, the 1:1 wire unchanged, the rang-out record,
+  the token mismatch), `codec.call.test.ts` (the old-build proof), `callRoomToken.test.ts`,
+  `callsAvailability.test.ts`, `CallOverlay.svelte.test.ts` (`a group call (WP-GC2)`) and
+  `PushNotificationService.test.ts`.
+- **Left, named:** a callee who answers after everyone else has left joins an empty room and has
+  no proof of the end until its own hang-up (the relay says nothing of a seat that never came) - the
+  ring window bounds it; the SFU path (WP-GC3/GC4, #3497); and the bench readings ([readings owed](../../plan.md#readings-owed)).
 
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 
@@ -2762,7 +2973,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
+[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
 
 ### One call screen on every platform (2026-10-23)
 
@@ -3055,7 +3266,7 @@ the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
 work packages WP-C-BG-A and WP-C-BG-I below, built in `v1.3.1`, their readings owed in
-[the verification table](../../backlog.md#owed-a-verification-and-nothing-else)):
+[the readings owed](../../plan.md#readings-owed)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|

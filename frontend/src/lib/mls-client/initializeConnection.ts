@@ -232,8 +232,9 @@ export async function openGatewayConnection(
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the
       // only one. A close code was added here on 2026-08-15 to spend `1001 - going away` instead of
       // letting a dying document report `1006`, and it was measured inert the same day: the gateway
-      // handles `disconnect` with `handle_disconnect(...); break`, so it has already left its read
-      // loop before any close frame can be read - 0 `Client closed connection` lines in 25 minutes
+      // then handled `disconnect` with `handle_disconnect(...); break`, so it had already left its read
+      // loop before any close frame could be read (since 2026-11-14 it reads on to answer the Close,
+      // see docs/wiki/services/chat-gateway.md) - 0 `Client closed connection` lines in 25 minutes
       // of production traffic - while the browser fills the page's own `CloseEvent` with `1006`
       // regardless, because a closing handshake cannot complete inside an unload. Do not re-add it:
       // this frame already tells the gateway everything a close code would, and earlier.

@@ -1,5 +1,7 @@
 ## P3 - drop `association_categories` and `associations.categoryId`, left in the schema by migration 147
 
+target: 1.10.0
+
 Migration 147 (2026-11-08) replaced the global category by each map's own zones and switches
 ([carte](../carte-vie-asso.md#1-zones-per-map---the-global-category-is-gone)); the code stopped
 reading and writing the table and the column, but the schema keeps them so a server rolled back to

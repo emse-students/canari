@@ -4,7 +4,7 @@
 reply is sent - and that whole path must be extremely fluid, app killed OR backgrounded, on Android
 and iOS.** This page is the MEASUREMENT behind that goal and the ranked plan it argues for. Phase 1
 was study only: nothing here changed production code. What is owed is in
-[backlog](../backlog.md#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11);
+[backlog](../backlog.d/p2-a-notification-tap-takes-2-7-s-to-a-usable-conversation-when-killed-5-s.md);
 the cold start in general is [cold-start](cold-start.md), whose instruments this page reuses.
 
 **NOTHING ON THIS PAGE IS A PRODUCTION NUMBER.** The phone ran `1.2.3-alpha.5` against
@@ -446,8 +446,8 @@ and the workstation's are tied by an `adb shell date` round trip (skew error ~+-
 backgrounded for 6 s (a 1.5 s park, used before, let the feed's progressive mount resume under the
 landing and polluted the reading). Killed = `force-stop`, then the PIN typed by the instrument.
 
-**DEV HAS NO PUSH, so T1 (notification shown) is not measured**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
-is absent ([dev-environment](../infrastructure/dev-environment.md)), so the tap is synthesised.
+**Dev had no push that day, so T1 (notification shown) was not measured** (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
+was absent; dev sends push since 2026-10-21, so T1 is measurable on dev, 2026-11-14, [dev-environment](../infrastructure/dev-environment.md)); the tap was synthesised.
 Two facts from the same session matter for a real tap: a FORCE-STOPPED app receives no FCM at all
 (Android's stopped state) while a recents swipe does; and the delivery service holds a push 10 s
 when the recipient's presence is alive (`scheduleDeferredPush`).

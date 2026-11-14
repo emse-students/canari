@@ -844,6 +844,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       undefined,
       {
         selection: { campus: 'gardanne', formation: 'ICM' },
+        // Not a one-event link: an anonymous read withholds a public-only event (2026-11-13).
+        signedEvent: false,
       }
     );
     await expect(ics(controller, { campus: 'paris' })).rejects.toThrow('Unknown campus: paris');
@@ -953,6 +955,20 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       const body = await ics(makeController(), { eventId: 'ev2', sig: signEventIcs('ev2') });
       expect(body).toContain('UID:ev2@canari');
       expect(body).not.toContain('UID:ev1@canari');
+    });
+
+    it('reads the feed as a signed one-event link: no public is withheld from it (2026-11-13)', async () => {
+      const controller = makeController();
+      await ics(controller, { eventId: 'ev2', sig: signEventIcs('ev2') });
+      const service = (
+        controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+      ).service;
+      expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        undefined,
+        expect.objectContaining({ signedEvent: true })
+      );
     });
 
     it('refuses an unsigned or wrongly signed link with a BODYLESS 403, and reads no feed', async () => {

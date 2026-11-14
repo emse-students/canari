@@ -19,6 +19,7 @@ import { m } from '$lib/paraglide/messages';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { MediaUploadError, overDailyLimitSentence } from '$lib/utils/mediaErrors';
 
 const FALLBACK = m.post_create_publish_error();
 
@@ -113,5 +114,20 @@ describe('publishFailureMessage - the reach of an institution post (owner, 2026-
   ])('words the typed %s refusal in the reader language', (code, sentence) => {
     const refusal = new ApiRefusalError(400, code, 'server prose');
     expect(publishFailureMessage(refusal, FALLBACK)).toBe(sentence());
+  });
+});
+
+describe("publishFailureMessage - the member's daily upload bound", () => {
+  it('words the typed refusal with the sentence the chat thread shows', () => {
+    const refusal = new MediaUploadError(422, 'server prose', 'gateway', false, false, true);
+    expect(publishFailureMessage(refusal, FALLBACK)).toBe(m.upload_over_daily_limit());
+    expect(overDailyLimitSentence(refusal)).toBe(m.upload_over_daily_limit());
+  });
+
+  it('keeps the fallback for an upload refused for another reason', () => {
+    expect(publishFailureMessage(new MediaUploadError(422, 'server prose'), FALLBACK)).toBe(
+      FALLBACK
+    );
+    expect(overDailyLimitSentence(new MediaUploadError(413, 'x'))).toBeNull();
   });
 });

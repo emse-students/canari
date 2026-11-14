@@ -40,6 +40,8 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
   USER_SEARCH_TOO_LONG: m.refusal_user_search_too_long,
   CALLS_DISABLED: m.call_calls_disabled,
   CALLS_VIDEO_DISABLED: m.call_video_disabled,
+  GROUP_CALLS_DISABLED: m.call_group_calls_disabled,
+  GROUP_CALL_CLIENT_TOO_OLD: m.call_group_client_too_old,
 };
 
 /**

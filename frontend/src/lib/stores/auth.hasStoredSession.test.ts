@@ -19,11 +19,22 @@ vi.mock('$lib/stores/user', () => ({
   clearUserLocally: () => currentUserId.mockReturnValue(null),
 }));
 
+// Whether this runtime's session can live only in the credential it carries (iOS), and that copy.
+const onlyCarried = vi.fn(() => false);
+const carried = vi.fn<() => Promise<string | null>>(async () => null);
+vi.mock('$lib/stores/nativeRefreshToken', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/nativeRefreshToken')>()),
+  onlyCarriedCredentialCanExist: () => onlyCarried(),
+  readNativeRefreshToken: () => carried(),
+}));
+
 const { clearAuth, hasStoredSession } = await import('$lib/stores/auth');
 
 const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
 
 beforeEach(() => {
+  onlyCarried.mockReturnValue(false);
+  carried.mockResolvedValue(null);
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -35,6 +46,30 @@ describe('hasStoredSession - the recovery refresh of a wiped identity', () => {
     expect(await hasStoredSession()).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/auth/refresh');
+  });
+
+  it('is NOT sent where only a carried credential can exist and none is held (iOS)', async () => {
+    // WKWebView keeps no cookie, so the stored credential is the only one there is: with none, the
+    // server could only refuse - a request whose answer is known.
+    onlyCarried.mockReturnValue(true);
+    carried.mockResolvedValue(null);
+    expect(await hasStoredSession()).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('IS sent there when a carried credential is held', async () => {
+    onlyCarried.mockReturnValue(true);
+    carried.mockResolvedValue('rt-1');
+    fetchMock.mockResolvedValue(new Response('', { status: 401 }));
+    expect(await hasStoredSession()).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('IS sent where a cookie may carry the session (macOS, Linux, Android), even with no copy', async () => {
+    onlyCarried.mockReturnValue(false);
+    fetchMock.mockResolvedValue(new Response('', { status: 401 }));
+    expect(await hasStoredSession()).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('is NOT sent once this process has signed out', async () => {

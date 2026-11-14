@@ -287,7 +287,7 @@ numbers next to a changed cell, and a component's enumeration is cached by its o
 swaps because it depends on nothing else. Tier 2 indexed by cell and swapping with nearby cells gained nothing.
 
 **Versioning, and who may be ranked (owner, 2026-11-13: *"le classe devrait etre reserve aux clients avec la
-derniere version du generateur"*).** The challenge carries `"generatorVersion"` (migration 164, `DEFAULT 1`, so
+derniere version du generateur"*).** The challenge carries `"generatorVersion"` (migration 170, `DEFAULT 1`, so
 every challenge issued before it replays as generator 1). `POST /minesweeper/challenges` takes
 `maxGeneratorVersion`, and **ranked is open only to a client that can make the server's latest generator**: a
 time is comparable with another only on a board of the same difficulty, and letting an older build into the
@@ -302,8 +302,10 @@ forward. The engine throws on a version it does not know, and the client refuses
 replay hands back `generation`, and the service logs a warning when generator 2 fell back to an unproven layout. A casual (unranked) game uses the latest generator: nothing is submitted, so nothing
 needs replaying ([legacy-compatibility](../../legacy-compatibility.md#a-tolerated-degradation-ranked-minesweeper-for-a-build-older-than-generator-2-owner-2026-11-13)).
 
+**The ranking is reset (owner, 2026-11-14)**: the stored times were set on generator-1 boards, so they are dropped when the release carrying generator 2 reaches production - the owner's gesture ([the table](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
 **What is open.** Generation is still synchronous on the main thread (the screen paints the pressed cell first);
 a worker would keep the interface alive for the ~0.3 s a phone spends, and is not built. The one board in 600 that
 stops short is unexplained beyond "the budget ended". The boards were rated on ONE phone, and the first
 Challenge-sized game of a player who has only met generator 1 is the real reading
-([backlog](../../backlog.d/p3-minesweeper-generator-2-readings-and-the-worker.md)).
+([the reading](../../backlog.d/reading-owed-minesweeper-generator-2-on-a-real-phone.md), [the worker](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).

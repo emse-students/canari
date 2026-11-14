@@ -16,6 +16,8 @@ import { settleUntilStable } from '../../../../test/flush';
 const state = vi.hoisted(() => ({
   reads: [] as AssociationPayoutAccount[],
   start: vi.fn(),
+  /** Whether the reader is a global admin (the bridge panel is theirs alone). */
+  admin: false,
 }));
 
 vi.mock('$lib/associations/api', async (importOriginal) => ({
@@ -25,7 +27,10 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
   listMembers: vi.fn(() => Promise.resolve([])),
 }));
 
-vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false, getSavedUserId: () => 'u1' }));
+vi.mock('$lib/stores/user', () => ({
+  isGlobalAdmin: () => state.admin,
+  getSavedUserId: () => 'u1',
+}));
 
 import LydiaBusinessOnboardingForm from './LydiaBusinessOnboardingForm.svelte';
 
@@ -49,6 +54,7 @@ const asso = {
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
+  state.admin = false;
   mounted.splice(0).forEach((f) => f());
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -155,5 +161,30 @@ describe('LydiaBusinessOnboardingForm - the steps come from the server read', ()
       readiness: { cause: 'request-blocked', at: '2026-10-30T10:00:00Z' },
     });
     expect(target.textContent).toContain(m.asso_lydia_paused_blocked());
+  });
+
+  const bridge = {
+    state: 'historical' as const,
+    historicalReady: true,
+    enrolledLinked: true,
+    switchedAt: null,
+    switchCount: 0,
+    switchBackCount: 1,
+    reissueCount: 2,
+  };
+
+  it('a global admin reads the historical-account bridge: which account collects, and the counts', async () => {
+    state.admin = true;
+    const target = await mountWith({ ...linked, bridge });
+    expect(target.textContent).toContain(m.asso_lydia_bridge_title());
+    expect(target.textContent).toContain(m.asso_lydia_bridge_state_historical());
+    expect(target.textContent).toContain(
+      m.asso_lydia_bridge_counts({ switches: 0, back: 1, reissued: 2 })
+    );
+  });
+
+  it('a manager never sees the bridge panel, even were the field served', async () => {
+    const target = await mountWith({ ...linked, bridge });
+    expect(target.textContent).not.toContain(m.asso_lydia_bridge_title());
   });
 });

@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="10/11/2026"
+  updated="14/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -81,10 +81,13 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
-          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
-          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
-          déconnexion, et il n'apparaît jamais dans une notification.
+          l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
+          l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
+          jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
+          réponse perdue. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
+          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
+          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
+          jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -104,22 +107,25 @@
         <dt>Publications, commentaires, réactions, sondages, CanaReels</dt>
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
-          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
-          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
-          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
-          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
-          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
-          personne et il est conservé sans limite de durée, même après la suppression de votre
-          compte. Une association, une liste ou une institution peut vous demander de relayer une de
-          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
-          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
-          première fois et, pour une institution, son public possible) vous est adressée, et rien
-          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
-          d'une institution, votre publication est vue de son public, y compris de ses membres qui
-          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
-          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
-          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          plateforme selon l'audience choisie. Une institution (l'École, une Maison des Élèves,
+          l'association des alumni) choisit pour chacune de ses publications les espaces qu'elle
+          vise et son public (étudiants, personnel ou tous) ; les publics « Personnel » et « Tous »
+          atteignent tout le personnel du campus d'un espace coché. Les fichiers joints sont
+          chiffrés avant l'envoi. Une publication en cours d'envoi attend sur votre appareil, avec
+          ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une
+          simple déconnexion la conserve, la suppression de votre compte l'efface. Quand une
+          publication est supprimée, le serveur garde son identifiant et la date de suppression,
+          sans auteur ni contenu, pour qu'un envoi encore en route ne la fasse pas réapparaître ;
+          cet identifiant ne désigne plus personne et il est conservé sans limite de durée, même
+          après la suppression de votre compte. Une association, une liste ou une institution peut
+          vous demander de relayer une de vos publications personnelles : la demande (l'association,
+          la liste ou l'institution, le membre qui l'a faite, la publication, le nombre de personnes
+          qui la verraient pour la première fois et, pour une institution, son public possible) vous
+          est adressée, et rien n'est montré à son public tant que vous n'avez pas accepté. Si vous
+          acceptez la demande d'une institution, votre publication est vue de son public, y compris
+          de ses membres qui font partie du personnel ; si ce public a changé depuis que vous l'avez
+          lu, votre acceptation est refusée et le nouveau public vous est montré. Une fois le relais
+          accepté, ceux qui voient votre publication suivent le public et les membres ACTUELS de
           l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
           nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
           la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
@@ -329,7 +335,9 @@
       <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
-          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
+          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires (et, si le
+          formulaire vous laisse modifier votre réponse, la date de votre dernière modification,
+          visible de ceux qui le gèrent, sans historique des versions précédentes) et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
           attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
@@ -570,7 +578,8 @@
           <tr>
             <td>Compte, profil, annuaire</td>
             <td
-              >Vous reconnaître, vous permettre de trouver et d'être trouvé par les autres membres</td
+              >Vous reconnaître, vous permettre de trouver et d'être trouvé par tout membre
+              connecté, grâce à l'annuaire des membres</td
             >
             <td>Exécution du service (6.1.b)</td>
           </tr>
@@ -818,6 +827,10 @@
           <tr>
             <td>Historique chiffré d'une conversation sur le serveur</td>
             <td>90 jours au plus</td>
+          </tr>
+          <tr>
+            <td>Trace d'un message privé envoyé (expéditeur, appareil, identifiant aléatoire)</td>
+            <td>90 jours au plus ; avant, avec la conversation ou le compte de l'expéditeur</td>
           </tr>
           <tr>
             <td>Messages de salon (chiffrés)</td>

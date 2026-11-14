@@ -1,4 +1,6 @@
-## P1 - blind salon banners on production: the background seed-frame open works on the bench, and the branch that fails in the field is not named yet (2026-11-04)
+## Reading owed - the `[PUSH_BLIND] refused=` reasons on production and on a real-size key group
+
+target: 1.7.0
 
 Production, one day of chat-delivery logs (2026-11-04): 16 `[PUSH_BLIND]` lines from 3 accounts,
 all `missing=seed`, Android `held=true`, iOS `held=false`.
@@ -40,3 +42,14 @@ cycles add a commit each. (3) The iPhone as the receiver: the same two runs with
 The frames a newcomer received sealed before its own join (the other half of the 2026-11-04 report,
 `past-epoch-application` right after an external join) are withheld by chat-delivery since
 2026-11-04 ([chat-delivery](../services/chat-delivery.md#who-a-frame-is-queued-for-and-who-owns-the-gateways-routing-set)).
+
+**Step (1) read on production 2026-11-14** (15.5 hours after the `v1.6.11` deploy, a day was not
+readable - [logging](../infrastructure/logging.md#reading-an-archive)): 6 `[PUSH_BLIND]` lines, 3
+accounts, ONE salon, all within 15 minutes; every one `missing=seed refused=none` (5 iOS
+`held=false`, 1 Android `held=true`). `refused=none` means no open ran: the seed was not there to
+open, so the failing branch is the seed's absence, not a refusal by the open. Steps (2) and (3) stay
+owed.
+
+**Step (1) again, 2026-11-14, 09:11-10:40 UTC after the `1.6.12` deploy:** 2 `[PUSH_BLIND]` lines,
+both iOS, `missing=seed held=false refused=none`, same shape as the 6 above. Still no `refused=`
+value other than `none` on production: the failing branch remains the seed's absence.

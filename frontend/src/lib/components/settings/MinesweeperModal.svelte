@@ -96,8 +96,6 @@
 
   /** Pointer movement (px) past which a pending tap/long-press is treated as a pan gesture instead. */
   const PAN_THRESHOLD_PX = 10;
-  /** How far (px) a board larger than the screen may be dragged past its edge. */
-  const PAN_MARGIN_PX = 48;
   /** Two taps on the same cell within this window zoom instead of acting twice. */
   const DOUBLE_TAP_MS = 280;
   /** Base duration of the animated zoom a double-tap or a reset triggers; scaled by the animation setting. */
@@ -105,6 +103,13 @@
   const viewTransitionMs = $derived(animationMs(VIEW_TRANSITION_BASE_MS, settings.animations));
   /** Room kept free around the board for the floating controls (top bar, mode button). */
   const FIT_INSETS: Insets = { top: 64, right: 8, bottom: 88, left: 8 };
+  /**
+   * How far (px) a board larger than the screen may be dragged past its edge: the largest space the
+   * floating controls reserve, plus a little. It was a fixed 48, smaller than the 88 the bottom
+   * controls take, so the board could not be dragged clear of them (owner, 2026-11-14).
+   */
+  const PAN_MARGIN_PX =
+    Math.max(FIT_INSETS.top, FIT_INSETS.right, FIT_INSETS.bottom, FIT_INSETS.left) + 8;
 
   /**
    * The engine's board. The engine mutates it in place, so it is `$state.raw` (never proxied, never

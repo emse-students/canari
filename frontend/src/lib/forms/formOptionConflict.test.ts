@@ -10,6 +10,7 @@ const EMPTY = {
   grantsCotisation: false,
   submitCondition: null,
   items: [],
+  allowAnswerEdit: false,
 };
 
 describe('editorOptionState', () => {

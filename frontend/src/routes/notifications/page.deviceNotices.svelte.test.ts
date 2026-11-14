@@ -20,12 +20,16 @@ import { flushMacrotask } from '../../test/flush';
 
 const hoisted = vi.hoisted(() => ({
   revoke: vi.fn(),
+  dropRevoked: vi.fn(async () => {}),
   confirm: vi.fn(),
   toast: vi.fn(),
   postNotifs: { notifications: [] as unknown[], loading: false },
 }));
 
-vi.mock('$lib/utils/chat/deviceNoticeWiring', () => ({ revokeNoticedDevice: hoisted.revoke }));
+vi.mock('$lib/utils/chat/deviceNoticeWiring', () => ({
+  revokeNoticedDevice: hoisted.revoke,
+  dropAlertsOfRevokedDevices: hoisted.dropRevoked,
+}));
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: hoisted.confirm }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: hoisted.toast }));
 vi.mock('$lib/proposals/api', async (importOriginal) => ({
@@ -126,6 +130,13 @@ describe('/notifications, the new-device alert', () => {
     const again = await render();
     expect(again.querySelector('[data-device-notice]')).not.toBeNull();
     expect(again.querySelector('[data-device-notice] .bg-accent')).toBeNull();
+  });
+
+  it('opening the list asks the server which alerted devices were revoked since', async () => {
+    seed();
+    hoisted.dropRevoked.mockClear();
+    await render();
+    expect(hoisted.dropRevoked).toHaveBeenCalledTimes(1);
   });
 
   it('draws nothing when no device was added', async () => {

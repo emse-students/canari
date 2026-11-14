@@ -237,7 +237,7 @@ read at ~9-10 pt on the printed sheet must be ~4.5 poster px AFTER every scale a
 The phasing below still says "A2" in places, and so do the comments in `layout.ts` and
 `PosterCanvas.svelte`: that was the target before the searchable-raster move and is not what the
 export does. What the A0 audit still owes (one timed export, then the owner's look) is a row of
-[the verification table](backlog.md#owed-a-verification-and-nothing-else).
+[the readings owed](plan.md#readings-owed).
 
 ### The 2026-09-27 audit - how it was measured, and the eighteen decisions it produced
 

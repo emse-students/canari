@@ -52,6 +52,7 @@ const PAGE = {
   },
   received: 1,
   dropped: 0,
+  oversized: 0,
 };
 
 describe('GifSearchController', () => {

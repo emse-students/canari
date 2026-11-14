@@ -1,5 +1,7 @@
 ## P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`
 
+target: 1.10.0
+
 `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but never
 one whose tier is no longer a rise when the sweep settles it. **Found 2026-11-01 when trying it:** the
 spec builds `ProductsService` with `Object.create(prototype)` and only the repos the existing cases

@@ -80,3 +80,33 @@ describe('UpdatePlatformConfigDto.liveReplaysMode', () => {
     expect(errors.map((e) => e.property)).toEqual(['liveReplaysMode']);
   });
 });
+
+/** The group calls switch takes exactly the two values migration 022's CHECK allows. */
+describe('UpdatePlatformConfigDto.groupCallsMode', () => {
+  const errorsFor = (groupCallsMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { groupCallsMode }));
+
+  it.each(['off', 'mesh'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['MESH', 'on', 'sfu', '', true, 3])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['groupCallsMode']);
+  });
+});
+
+/** The call relay takes exactly the two values migration 023's CHECK allows. */
+describe('UpdatePlatformConfigDto.callRelay', () => {
+  const errorsFor = (callRelay: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { callRelay }));
+
+  it.each(['none', 'call-service'])('accepts %s', async (relay) => {
+    expect(await errorsFor(relay)).toHaveLength(0);
+  });
+
+  it.each(['cloudflare', 'CALL-SERVICE', 'sfu', '', true, 1])('refuses %s', async (relay) => {
+    const errors = await errorsFor(relay);
+    expect(errors.map((e) => e.property)).toEqual(['callRelay']);
+  });
+});

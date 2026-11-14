@@ -1,5 +1,7 @@
 ## P2 - the gallery (avatars) went down for five hours on 2026-11-05, nothing alerted, and every page asked it again
 
+target: 1.10.0
+
 From about 11:35 to 16:30 UTC, `gallery.mitv.fr` answered Cloudflare `530` / `1033`: its tunnel had no
 connector. The gallery runs on its own host, outside this estate. The effect, read only from production logs:
 

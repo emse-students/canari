@@ -14,8 +14,10 @@ import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
+import type { Form } from '$lib/forms/api';
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
@@ -395,6 +397,11 @@ export interface AssociationCalendarEvent {
   imageUrl: string | null;
   /** The ACCEPTED co-organisers (D39); one asked and not yet answering is not here. */
   coOwners: CalendarEventCoOwner[];
+  /**
+   * The spaces and the public an institution chose for this event (owner, 2026-11-13), served to
+   * every reader like a post's; `null` (or absent, from an older server) when it carries none.
+   */
+  reach?: InstitutionReach | null;
 }
 
 /** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
@@ -430,6 +437,8 @@ export interface CreateAssociationCalendarEventPayload {
   coOwnerIds?: string[];
   /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
   presentation?: AssociationCalendarEventPresentation;
+  /** MANDATORY when the owner is an institution, refused otherwise (owner, 2026-11-13). */
+  reach?: InstitutionReach;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -441,6 +450,8 @@ export interface UpdateAssociationCalendarEventPayload {
   kind?: AssociationCalendarEventKind;
   /** Omitted unless the surface may decide it (`canSetPresentation`). */
   presentation?: AssociationCalendarEventPresentation;
+  /** An institution's reach, replaced both ways; omitted leaves it as stored (organiser side). */
+  reach?: InstitutionReach;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -697,7 +708,8 @@ export async function listAssociations(
 
 /**
  * THE READER'S DIRECTORY (D37): the associations whose audience reaches one of the reader's spaces,
- * plus the ones they belong to. Only the two directory pages (`/associations`, `/lists`) read it -
+ * plus the ones they belong to, plus the ones a nominative read grant of theirs reaches. Only the
+ * three directory pages (`/associations`, `/lists`, `/institutions`) read it -
  * a hidden association is not listed there, and its page stays reachable by its link.
  */
 export async function listAssociationDirectory(
@@ -869,6 +881,19 @@ export async function createAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events`,
     { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/**
+ * The spaces an institution's EVENT may target (owner, 2026-11-13): its audience's, the statement
+ * the write checks a reach against. `associationId` is the event's owner; 403 for a caller who files
+ * none of its events, 400 `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getEventReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/reach-options`
   );
 }
 
@@ -2734,21 +2759,13 @@ export async function deleteWebhookDelivery(
 // ── Forms (MANAGE_FORMS) ────────────────────────────────────────────────────
 
 /** Lean form summary returned by GET /associations/:id/forms. */
-export interface AssociationForm {
-  id: string;
-  title: string;
-  description: string | null;
-  basePrice: number;
-  currency: string;
-  allowCashPayment: boolean;
-  /** `draft` until published; absent from a server before drafts (then published). */
-  status?: 'draft' | 'published';
-  createdAt: string;
-}
-
-/** Returns all forms linked to an association (requires MANAGE_FORMS flag). */
-export async function listAssociationForms(associationId: string): Promise<AssociationForm[]> {
-  return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
+/**
+ * Returns all forms linked to an association (requires MANAGE_FORMS flag, or a global or
+ * super admin): the WHOLE form, with its association name and unpublished-changes flag, as the
+ * managers' `GET /forms` list carries it - one read, no per-form follow-up.
+ */
+export async function listAssociationForms(associationId: string): Promise<Form[]> {
+  return request<Form[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
 }
 
 /**
@@ -2812,6 +2829,25 @@ export interface AssociationPayoutAccount {
    * server older than lot 3: read as none.
    */
   cashiers?: LydiaCashier[];
+  /**
+   * A GLOBAL ADMIN's read only, on an association whose historical Lydia account collects until the
+   * enrolled Business is validated (the bridge, owner 2026-11-13). The managers never receive it:
+   * the historical account is invisible to them. Absent on a server older than the bridge.
+   */
+  bridge?: LydiaAccountBridge;
+}
+
+/** Which Business of a bridge collects, and what it did - the global admin's panel. */
+export interface LydiaAccountBridge {
+  /** `historical`: the historical account collects; `switched`: the enrolled Business does. */
+  state: 'historical' | 'switched';
+  historicalReady: boolean;
+  /** Whether the enrolment linked its Business yet. */
+  enrolledLinked: boolean;
+  switchedAt: string | null;
+  switchCount: number;
+  switchBackCount: number;
+  reissueCount: number;
 }
 
 /** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
@@ -2884,9 +2920,12 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
     { method: 'POST' }
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    const body = (await res.json().catch(() => ({}))) as { message?: string; code?: unknown };
+    // Typed, so the screen can say WHY (LYDIA_BUSINESS_HOLDS_PAYMENTS) and never reads the prose.
+    throw new SocialApiError(
+      body?.message || `Lydia disconnect failed (${res.status})`,
+      typeof body?.code === 'string' ? body.code : null,
+      res.status
     );
   }
 }

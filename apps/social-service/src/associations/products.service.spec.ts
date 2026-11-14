@@ -269,6 +269,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
       revertLydiaReadinessAfterRefusal: jest.fn(() => Promise.resolve()),
+      noteLydiaRequestIssued: jest.fn(() => Promise.resolve()),
     };
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {
@@ -4732,6 +4733,53 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
       }
     );
+
+    it('a bridge switch back re-issues the SAME purchase ONCE on the account that collects now', async () => {
+      const t = setup();
+      const error5 = () =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: {
+              status: 400,
+              data: { code: 'LYDIA_BUSINESS_NOT_VALIDATED', providerCode: '5' },
+            },
+          })
+        );
+      // The revert answers true: error 5 on a bridge's just-switched Business, switched back.
+      (t.associationsService.revertLydiaReadinessAfterRefusal as jest.Mock).mockResolvedValue(true);
+      (t.httpService.post as jest.Mock).mockImplementationOnce(error5);
+      const opened = await t.checkout();
+      // The first attempt released (nothing was issued), the second issued and open.
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'open']);
+      expect(opened.checkoutId).toBe(t.checkouts.rows[1].id);
+      expect(t.associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledTimes(1);
+    });
+
+    it('a re-issued purchase that meets a second switch back is refused, never issued a third time', async () => {
+      const t = setup();
+      const error5 = () =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: {
+              status: 400,
+              data: { code: 'LYDIA_BUSINESS_NOT_VALIDATED', providerCode: '5' },
+            },
+          })
+        );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      (t.associationsService.revertLydiaReadinessAfterRefusal as jest.Mock).mockResolvedValue(true);
+      (t.httpService.post as jest.Mock)
+        .mockImplementationOnce(error5)
+        .mockImplementationOnce(error5);
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_NOT_ACTIVATED',
+      });
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'cancelled']);
+      expect(t.associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledTimes(2);
+      expect(error.mock.calls.flat().join('|')).toContain('never issued a third time');
+      error.mockRestore();
+    });
 
     it('any other refusal, or a LOST request, reverts nothing', async () => {
       const t = setup();

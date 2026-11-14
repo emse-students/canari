@@ -1,7 +1,9 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { OTHERS_BUCKET_ID } from '../pricing/audience';
+import { plainToInstance } from 'class-transformer';
 import { FORM_GRID_MULTIPLE_CHOICE_SPLIT } from './answer-bounds';
+import { CreateFormDto } from './dto/form.dto';
 
 /**
  * A PUBLIC FORM IS ANSWERED BY SOMEBODY WITH NO ACCOUNT, AND EVERY RULE HERE FOLLOWS FROM THAT.
@@ -56,6 +58,7 @@ describe('FormsService - public forms', () => {
       count: jest.fn(() => Promise.resolve(0)),
       manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
+    const namesByIds = jest.fn((_ids: string[]) => Promise.resolve(new Map<string, string>()));
     const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
     const service = new FormsService(
       formRepo,
@@ -64,10 +67,13 @@ describe('FormsService - public forms', () => {
       { get: jest.fn() } as any,
       {
         isMember: jest.fn(() => Promise.resolve(true)),
+        // The editor manages the association's forms (MANAGE_FORMS, owner 2026-11-14).
+        mayAct: jest.fn(() => Promise.resolve(true)),
         collectsNow: jest.fn(() => Promise.resolve(opts.collectsNow ?? true)),
         // An edit that starts charging asks what kind the association is: one that sells.
         collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
         assertPaymentsReady: jest.fn(() => Promise.resolve()),
+        namesByIds,
         canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       } as any,
       // UserTagService: the association sells no cotisation, so a grid on promo needs no tier.
@@ -80,7 +86,7 @@ describe('FormsService - public forms', () => {
       { enabled: () => false } as any,
       {} as any
     );
-    return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
+    return { service, manager, saved, formRepo, submissionRepo, pricingFacts, namesByIds };
   }
 
   describe('get', () => {
@@ -94,6 +100,13 @@ describe('FormsService - public forms', () => {
       const form = await service.get('f1');
       expect(form.id).toBe('f1');
       expect(form.submissionCount).toBe(0);
+      expect(form.associationName).toBeNull();
+    });
+
+    it('carries the association name on the single read, as the list does', async () => {
+      const { service, namesByIds } = makeService({ form: baseForm({ associationId: 'a1' }) });
+      namesByIds.mockResolvedValue(new Map([['a1', 'BDE']]));
+      expect((await service.get('f1')).associationName).toBe('BDE');
     });
   });
 
@@ -132,6 +145,19 @@ describe('FormsService - public forms', () => {
 
     // An allowlist: a guest is served exactly these keys. Control: answer `{ ...form, formFull }`
     // and this fails on `ownerId`, `associationId` and every other stored column.
+    // The link preview of a shared form (frontend serverSeo.ts) reads THIS answer, with no identity:
+    // title, description and image are what its card needs, so they must stay in the allowlist.
+    it('carries what a shared link card needs: title, description and image', async () => {
+      const { service } = makeService({
+        form: baseForm({ imageUrl: '/api/media/forms/f1/cover.jpg' }),
+      });
+      expect(await service.getPublic('f1')).toMatchObject({
+        title: 'Inscription au gala',
+        description: 'Ouvert a tous',
+        imageUrl: '/api/media/forms/f1/cover.jpg',
+      });
+    });
+
     it('serves exactly the allowlisted fields, the price included', async () => {
       const { service } = makeService({
         form: baseForm({ basePrice: 1200, allowCashPayment: true, grantsCotisation: false }),
@@ -994,6 +1020,54 @@ describe('FormsService - public forms', () => {
           'FORM_ANONYMOUS_COTISATION_GRANT'
         );
       });
+    });
+  });
+
+  // VERSION SKEW (forms.md, "A respondent changes their own answer"): an editor of 1.6.6 to 1.6.11
+  // knows nothing of the switch, and its save must not turn it off behind the manager's back.
+  describe('the answer-edit switch across an older editor', () => {
+    /** What an older editor's save carries, as the ValidationPipe hands it on: no `allowAnswerEdit`. */
+    const olderEditorSave = () =>
+      plainToInstance(CreateFormDto, {
+        title: 'Inscription au gala',
+        description: 'Ouvert a tous',
+        basePrice: 0,
+        priceMatrix: null,
+        submitCondition: null,
+        currency: 'eur',
+        items: [{ id: 'q1', label: 'Nom prenom', required: true, type: 'short_text' }],
+        allowMultipleSubmissions: false,
+        isPublic: false,
+        guestFields: [],
+        requiresPayment: false,
+      });
+
+    function stored() {
+      const { service, formRepo } = makeService({
+        form: baseForm({ isPublic: false, allowMultipleSubmissions: false, allowAnswerEdit: true }),
+      });
+      return { service, formRepo };
+    }
+
+    it('keeps the stored switch when the save does not carry it', async () => {
+      const { service, formRepo } = stored();
+      await service.update('f1', olderEditorSave(), 'u-owner', false);
+      expect(formRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ allowAnswerEdit: true })
+      );
+    });
+
+    it('turns it off only when a save says so', async () => {
+      const { service, formRepo } = stored();
+      await service.update(
+        'f1',
+        plainToInstance(CreateFormDto, { ...olderEditorSave(), allowAnswerEdit: false }),
+        'u-owner',
+        false
+      );
+      expect(formRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ allowAnswerEdit: false })
+      );
     });
   });
 });

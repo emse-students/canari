@@ -103,11 +103,26 @@ export class PostsController {
     return this.notifications.markPostRead(xUserId, postId);
   }
 
-  /** Returns all scheduled posts authored by the calling user. */
+  /**
+   * The future-scheduled posts the caller may EDIT (their own, and an association's they speak
+   * for), as whole feed cards, soonest first - the editors' strip at the top of `/posts`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('scheduled-to-edit')
+  getScheduledPostsIMayEdit(@Headers('x-user-id') xUserId: string) {
+    return this.service.getScheduledPostsIMayEdit(xUserId);
+  }
+
+  /**
+   * LEGACY (docs/wiki/legacy-compatibility.md): the route builds before `1.6.11` call. It answers
+   * the same list as `scheduled-to-edit` - a superset of the `{ id, markdown, scheduledAt,
+   * createdAt }` they read, with the association posts the caller may now edit too.
+   */
   @UseGuards(NginxAuthGuard)
   @Get('my-scheduled')
-  getMyScheduledPosts(@Headers('x-user-id') xUserId: string) {
-    return this.service.getMyScheduledPosts(xUserId);
+  getMyScheduledPostsLegacy(@Headers('x-user-id') xUserId: string) {
+    this.logger.log('[LEGACY] GET /api/posts/my-scheduled served');
+    return this.service.getScheduledPostsIMayEdit(xUserId);
   }
 
   /**
@@ -277,7 +292,10 @@ export class PostsController {
   ) {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(
+      postId,
+      xUserId
+    );
     // The detail modal opened from a post offers "add to my calendar" like the agenda's: same `icsSig`.
     return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }

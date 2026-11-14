@@ -21,7 +21,7 @@ import {
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
@@ -56,12 +56,11 @@ import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students
 import {
   INSTITUTION_REACH_CODES,
   foldServedReach,
-  institutionReachOffered,
-  institutionReachOptions,
+  institutionReachOptionsOffered,
   resolveInstitutionReachWrite,
   servedInstitutionReach,
   type InstitutionReachSpace,
-} from './institution-reach';
+} from '../spaces/institution-reach';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
@@ -149,6 +148,7 @@ import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
+import { SCHEDULED_EDIT_CANDIDATES_SQL, SCHEDULED_EDIT_LIMIT } from './scheduled-edit';
 import { assertFormNotDraft } from '../forms/form-status';
 import {
   commentsWithheldPostIds,
@@ -1039,7 +1039,8 @@ export class PostsService {
     }
     if (raw.linkedCalendarEventId) {
       raw.linkedCalendarEvent = await this.associationsService.findValidatedCalendarEventSummary(
-        raw.linkedCalendarEventId as string
+        raw.linkedCalendarEventId as string,
+        viewer.viewerId
       );
     }
     return raw;
@@ -1508,14 +1509,16 @@ export class PostsService {
    * row is what keeps a page of "same event, many posts" from repeating the same lookup.
    */
   private async batchLoadLinkedCalendarEvents(
-    rows: { linkedCalendarEventId?: string | null }[]
+    rows: { linkedCalendarEventId?: string | null }[],
+    viewerId: string | undefined
   ): Promise<Map<string, Record<string, unknown>>> {
     const eventIds = [
       ...new Set(rows.map((r) => r.linkedCalendarEventId).filter((id): id is string => !!id)),
     ];
     if (eventIds.length === 0) return new Map();
     const summaries = await Promise.all(
-      eventIds.map((id) => this.associationsService.findValidatedCalendarEventSummary(id))
+      // The event keeps its OWN visibility (an institution's reach, owner 2026-11-13).
+      eventIds.map((id) => this.associationsService.findValidatedCalendarEventSummary(id, viewerId))
     );
     const map = new Map<string, Record<string, unknown>>();
     eventIds.forEach((id, i) => {
@@ -1610,7 +1613,7 @@ export class PostsService {
 
     await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
-    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts, viewerCtx.viewerId);
 
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewer?.viewerUserId,
@@ -1867,7 +1870,7 @@ export class PostsService {
 
     await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin);
-    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts, viewerCtx.viewerId);
 
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewerUserId,
@@ -2440,19 +2443,48 @@ export class PostsService {
     return { ok: true };
   }
 
-  /** Returns the author's own future-scheduled posts (max 20), ordered by scheduled date. */
-  async getMyScheduledPosts(userId: string) {
-    const rows: any[] = await this.postRepo.manager.query(
-      `SELECT id, markdown, "scheduledAt", "createdAt"
-       FROM posts
-       WHERE "authorId" = $1
-         AND "scheduledAt" IS NOT NULL
-         AND "scheduledAt" > NOW()
-       ORDER BY "scheduledAt" ASC
-       LIMIT 20`,
-      [userId]
+  /**
+   * The future-scheduled posts THIS CALLER MAY EDIT, soonest first, each as the whole card the feed
+   * draws (`serveToReader`) - what the top of `/posts` shows an editor until the post is due
+   * (owner, 2026-11-13). Nobody else is ever handed one: the feed's audience predicate is untouched
+   * and a scheduled post is still invisible to every reader.
+   *
+   * WHO MAY EDIT is `isPublisherOf` - the very predicate `assertMayEdit` (so `updatePost`) applies:
+   * the author of a personal post, or whoever holds `POST_AS_ASSO` in the association a post speaks
+   * for (authorship grants an officer nothing there). The SQL only narrows to candidates (own
+   * personal posts, every association post); `isPublisherOf` decides, once per association.
+   */
+  async getScheduledPostsIMayEdit(userId: string): Promise<Record<string, any>[]> {
+    if (!userId) return [];
+    const candidates: { id: string; authorId: string | null; associationId: string | null }[] =
+      await this.postRepo.manager.query(SCHEDULED_EDIT_CANDIDATES_SQL, [userId]);
+    const verdictByAssociation = new Map<string, boolean>();
+    const editable: string[] = [];
+    for (const c of candidates) {
+      if (editable.length >= SCHEDULED_EDIT_LIMIT) break;
+      let ok: boolean;
+      if (c.associationId) {
+        if (!verdictByAssociation.has(c.associationId)) {
+          verdictByAssociation.set(c.associationId, await this.isPublisherOf(c as Post, userId));
+        }
+        ok = verdictByAssociation.get(c.associationId) === true;
+      } else {
+        ok = await this.isPublisherOf(c as Post, userId);
+      }
+      if (ok) editable.push(c.id);
+    }
+    this.logger.debug(
+      `[SCHEDULED] ${userId.slice(0, 8)}: ${candidates.length} candidate(s), ${editable.length} editable`
     );
-    return rows;
+    if (editable.length === 0) return [];
+    const posts = await this.postRepo.find({ where: { id: In(editable) } });
+    const order = new Map(editable.map((id, i) => [id, i]));
+    posts.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    const out: Record<string, any>[] = [];
+    for (const post of posts) {
+      out.push(await this.serveToReader(post, { viewerId: userId }));
+    }
+    return out;
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
@@ -2473,6 +2505,12 @@ export class PostsService {
    * its association, so the post of a neutral event would name the owner the presentation hides.
    * The link write and the presentation switch exclude each other (`saveWithEventLink`), so no
    * post links a neutral event; this join is the read's own statement of the same rule.
+   *
+   * ONLY A PUBLISHED POST (audience audit, 2026-11-14): a post scheduled for later is not served,
+   * its author included - the rule of every LIST (the feeds, the search), which an event's card
+   * is. Only the by-id gate exempts the author (`readPostOpenVerdict`, term 4), and the author
+   * reads a scheduled post there and in "my scheduled posts". Without the term, every reader of
+   * the association read a scheduled post here before its hour.
    */
   async findPostLinkedToCalendarEvent(
     eventId: string,
@@ -2494,6 +2532,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
          AND NOT COALESCE(posts."hiddenByModeration", false)
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
@@ -2884,20 +2923,14 @@ export class PostsService {
       );
       throw new ForbiddenException('You may not publish as this association');
     }
-    if (!institutionReachOffered(await this.associationTypeOf(associationId))) {
-      this.logger.warn(
-        `[INSTITUTION_REACH] options asked of ${associationId.slice(0, 8)}, which is not an institution`
-      );
-      throw new BadRequestException({
-        code: INSTITUTION_REACH_CODES.notOffered,
-        message: 'Only an institution chooses the reach of a post.',
-      });
-    }
-    const spaces = await institutionReachOptions(this.postRepo.manager, associationId);
-    this.logger.debug(
-      `[INSTITUTION_REACH] options of ${associationId.slice(0, 8)}: ${spaces.length} space(s)`
+    // The not-offered refusal and the statement are the shared module's, which the event form's
+    // options route asks too (owner, 2026-11-13: one model with posts).
+    return institutionReachOptionsOffered(
+      this.postRepo.manager,
+      associationId,
+      await this.associationTypeOf(associationId),
+      'post'
     );
-    return { spaces };
   }
 
   /**

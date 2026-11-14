@@ -15,6 +15,10 @@ import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
+import {
+  memoryAccusationLedger,
+  type MemoryAccusationLedger,
+} from './testing/memoryAccusationLedger';
 
 /**
  * `reportStrandedDeviceMemberships` is the platform's only witness that a device holds a group
@@ -33,6 +37,8 @@ import { MessagingService } from './services/messaging.service';
  */
 describe('AppController - reportStrandedDeviceMemberships', () => {
   let controller: AppController;
+  /** The report's ledger; fresh per test, shared by every run within one. */
+  let ledger: MemoryAccusationLedger;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
   let log: jest.SpyInstance;
@@ -95,6 +101,7 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
     ).reportStrandedDeviceMemberships();
 
   beforeEach(async () => {
+    ledger = memoryAccusationLedger();
     jest.clearAllMocks();
     welcomeBuilder.getRawMany.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
@@ -103,7 +110,7 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: { ...emptyRepo(), manager: ledger } },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
@@ -319,5 +326,84 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
 
     expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
+  });
+
+  describe('each stranded device is accused ONCE per set of seats (report_accusations)', () => {
+    const at = new Date('2026-11-01T00:00:00Z');
+
+    it('does not re-accuse a device whose seats are unchanged, and still prints the partition', async () => {
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-s', 'g1', at)]);
+      welcomeBuilder.getRawMany.mockResolvedValue([]);
+      await run();
+      await run();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      // The partition is a measurement, not an accusation: it is printed every run.
+      expect(log.mock.calls.filter((c) => String(c[0]).includes('1 never added'))).toHaveLength(2);
+    });
+
+    it('accuses a device again when its seats change, with every seat it holds', async () => {
+      welcomeBuilder.getRawMany.mockResolvedValue([]);
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-s', 'g1', at)]);
+      await run();
+
+      deviceGroupRepo.find.mockResolvedValue([
+        pending('tauri-s', 'g1', at),
+        pending('tauri-s', 'g2', at),
+      ]);
+      await run();
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      const line = String(warn.mock.calls[1][0]);
+      expect(line).toContain('tauri-s@g1');
+      expect(line).toContain('tauri-s@g2');
+    });
+
+    it('accuses a seat that turns from never-added to kicked, at ERROR', async () => {
+      welcomeBuilder.getRawMany.mockResolvedValue([]);
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-s', 'g1', at)]);
+      await run();
+
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-s', 'g1', at, at)]);
+      await run();
+
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(String(error.mock.calls[0][0])).toContain('tauri-s@g1');
+    });
+
+    it('names only the new device, and says how many are known', async () => {
+      welcomeBuilder.getRawMany.mockResolvedValue([]);
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-old', 'g1', at)]);
+      await run();
+
+      deviceGroupRepo.find.mockResolvedValue([
+        pending('tauri-old', 'g1', at),
+        pending('tauri-new', 'g2', at),
+      ]);
+      await run();
+
+      const line = String(warn.mock.calls[1][0]);
+      expect(line).toContain('1 device(s) hold a roster seat');
+      expect(line).toContain('tauri-new@g2');
+      expect(line).not.toContain('tauri-old');
+      expect(line).toContain('1 device(s) accused earlier, unchanged');
+    });
+
+    it('logs a device that left the report once at LOG, even when nothing is pending any more', async () => {
+      welcomeBuilder.getRawMany.mockResolvedValue([]);
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-s', 'g1', at)]);
+      await run();
+
+      deviceGroupRepo.find.mockResolvedValue([]);
+      await run();
+      await run();
+
+      const left = log.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('no longer reported'));
+      expect(left).toHaveLength(1);
+      expect(left[0]).toContain('tauri-s(g1:never, accused ');
+      expect(ledger.rows.get('stranded_device')?.size).toBe(0);
+    });
   });
 });

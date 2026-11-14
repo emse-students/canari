@@ -1,4 +1,6 @@
-## P3 - a 90 px keyboard leaves the composer 12 px low for 24 ms on 3 of 5 rises (Mi 9T, 2026-10-13, re-read 2026-11-11)
+## Reading owed - a per-frame record of a 90 px keyboard rise on the Mi 9T
+
+target: 1.7.0
 
 The other half of the 90 px reading of 2026-10-13 (the one-frame drop to 702 was the double report,
 now recognised at any keyboard height, [chat](../frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed)).

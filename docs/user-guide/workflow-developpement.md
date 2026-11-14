@@ -128,6 +128,26 @@ documentation, `CI passed` est vert en quelques secondes.
 casse ne peut pas verrouiller le depot. La prendre veut dire que la production est en train de
 bruler ; ca se note dans `CHANGELOG.md` quand ca arrive.
 
+### 3.0 Une entree du backlog arrive avec sa version (2026-11-13)
+
+Le backlog est un fichier par entree dans [`docs/wiki/backlog.d/`](../wiki/backlog.d/README.md), et
+**chaque entree dit pour quelle version elle est prevue**, sur une ligne sous son titre :
+`target: 1.7.0`. Le plan par version, [`docs/wiki/plan.md`](../wiki/plan.md), est **genere** a partir
+de ces lignes par `bun tools/backlog-plan/plan.mjs`. D'ou trois habitudes :
+
+- **Ajouter une entree, c'est la planifier dans la meme pull request** : le fichier avec sa ligne
+  `target:`, puis le script, et `plan.md` part dans le meme commit. La CI refuse une entree sans
+  version, une version inconnue, ou un `plan.md` qui ne correspond plus aux lignes.
+- **Replanifier, c'est changer une ligne** : aucun fichier ne bouge.
+- **Quand une version sort, on relit tout le plan** : la version livree sort de la liste `TIERS` du
+  script, et chaque entree qui la nommait encore est replanifiee. Les lectures (une entree a qui il
+  ne manque qu'une mesure, titre `Reading owed - ...`) vont toujours dans la version la plus proche.
+
+Les versions ne sont pas datees (*"les dates ne sont qu'une estimation, en vrai on fait le plus vite
+possible"*) et ce sont toujours de vrais numeros : pas de `later`, pas de `1.7.x`. Une entree que
+personne ne fera est supprimee, avec la preuve dans le commit qui la ferme. Le pourquoi de l'ordre et
+le journal des replanifications sont sur [`docs/wiki/roadmap.md`](../wiki/roadmap.md).
+
 ### 3.1 Apres la fusion : la branche disparait sur GitHub, PAS chez toi
 
 **Un arbre local encombre ne dit RIEN sur la fusion**, et c'est la confusion a evacuer en premier

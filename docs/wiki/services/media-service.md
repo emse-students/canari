@@ -288,6 +288,12 @@ and a protected document's 410 read as a wrong password.
 exist in the backups, and so does the row holding what is needed to decrypt it. Whether to restore is the
 user's call ([backup](../infrastructure/backup.md)).
 
+**Read on production, 2026-11-14, read-only.** All 8 vault documents (`association_documents`) have
+a metadata entry of class `association`, none tombstoned; `association` is its own class in the
+index (8 entries beside 516 `ephemeral`, 323 `archive`, 180 public assets) and its own line on
+`/admin/storage` (`associationCount`); the 61 `retention_expired` tombstones name no document,
+and the access log held no `410` at all over the 12 hours it kept.
+
 ### The archive class: the feed is not a conversation (2026-09-23)
 
 **A post is a permanent row whose body was on an idle clock, and half of them had already rotted.**
@@ -879,6 +885,7 @@ boot (`ensureDirSync`).
 | `MEDIA_CHAT_REEL_RETENTION_MS`          | no       | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds                                                                                                                     |
 | `MEDIA_PENDING_REEL_TTL_MS`             | no       | How long an unclaimed `reel-pending` upload lives (default 24 h). Milliseconds; under 1 h (3600000) the service REFUSES TO START, and the effective value is logged at boot                                  |
 | `MEDIA_CHAT_REEL_DAILY_BYTES`           | no       | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB)                                                                                                                                       |
+| `MEDIA_MEMBER_DAILY_UPLOAD_BYTES`       | no       | Per-member bound per rolling 24 h on every class and every MEMBER upload route together (plain, legacy chunked, resumable sessions; default 2 GB). Outside it on purpose: public assets (no owner), and the server-to-server routes `internal/form-file` and `internal/live`, which have their own caps; a refusal is a 422 with `code: member-upload-over-budget` (a 422 because an app older than the code retries an attachment's 429 each minute and fails a 422 for good) and one `[MEMBER_UPLOAD_BUDGET]` WARN line Chosen from 60 days of production's index read on 2026-11-13 (853 uploads by 123 members; per member per day p50 1, p95 8, max 22 uploads, 100 MB a file at most). The refusal is a 422 carrying `code: member-upload-over-budget`, not a 429, because an app released before the code retries a 429 without end and fails a 422 for good. Read on production on 2026-11-14, three hours after the `1.6.12` deploy that carries it: no `[MEMBER_UPLOAD_BUDGET]` line, and the largest total one member had uploaded with a recorded size was 0.7 MB. A refusal writes that WARN line with the member's uploads and bytes of the day; one for an ordinary day of use means the value is too low. |
 | `MEDIA_RETENTION_SWEEP_MS`              | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
 | `MEDIA_UPLOAD_SESSION_DIR`              | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10))                               |
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |

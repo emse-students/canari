@@ -71,6 +71,10 @@ One invariant, enforced at four points:
 
 `tag-issuer-scope.integration.spec.ts` proves each point against a real PostgreSQL.
 
+**Counted 2026-11-14, read-only** (`tools/read-only-sql/tier-tags-without-a-consistent-issuer.sql`):
+0 `no_issuer`, 0 `issuer_gone`, 0 `name_not_of_issuer` on dev (no cotisation tag) and on
+production (602 cotisation tags). No legacy tier tag lacks a consistent issuer.
+
 ### The canonical cotisation tag (single source of truth)
 
 `deriveCotisationTag(slug, mode)` in `apps/social-service/src/associations/cotisation-tag.util.ts`
@@ -183,7 +187,7 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
   then sees its row. Everything that may call another service (payment routing) runs BEFORE the
   lock. `tier-key-derivation.integration.spec.ts` holds it against a real PostgreSQL, and fails
   with the lock removed. A unique index would be a migration, proposed in
-  [backlog](backlog.md#p3---post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026-10-26).
+  [backlog](backlog.d/p3-post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026.md).
 - **The key fits the tag.** A tag is `varchar(100)`, and the dated form
   `cotisant:<slug>-<key>-YYYY-YYYY` is the longest, so `variantKeyCap(slug)` is 100 minus that
   form's fixed part minus room for a `-999` suffix, at most 60. A slug that leaves no room is
@@ -1144,6 +1148,11 @@ sibling-tier revoke inside `grantCotisant` would otherwise take away the tier th
 is therefore load-bearing on first contact with real data. The next sign-in should move
 `/admin/legacy-cotisations` off zero in the claimed tab; until it does, an empty screen and a broken
 claim look identical.
+
+**Read on production, 2026-11-14, read-only: the claims happen.** 359 of the 1429 staged rows are
+claimed (`claimedAt` set), the first on 2026-09-11 (the deploy's own day), the latest on
+2026-11-13, at a falling weekly pace (75, 80, 56, 40, 39, 24, then 8-20 a week since mid-October).
+The claimed tab reads the same column, so it has been off zero since the first sign-in.
 
 ## Cotisation-dependent pricing on forms
 

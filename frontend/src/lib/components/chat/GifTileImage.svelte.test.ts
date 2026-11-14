@@ -13,13 +13,13 @@ vi.mock('$lib/utils/chat/gifImageGate', async (importOriginal) => {
 let target: HTMLElement;
 const apps: Record<string, unknown>[] = [];
 
-function tile(src: string) {
+function tile(src: string, bytes?: number) {
   const onLoad = vi.fn();
   apps.push(
-    mount(GifTileImage, { target, props: { src, width: 100, height: 100, onLoad } }) as Record<
-      string,
-      unknown
-    >
+    mount(GifTileImage, {
+      target,
+      props: { src, width: 100, height: 100, onLoad, bytes },
+    }) as Record<string, unknown>
   );
   return onLoad;
 }
@@ -65,6 +65,22 @@ describe('GifTileImage', () => {
     flushSync();
     expect(imgs()).toHaveLength(1);
     imgs()[0].dispatchEvent(new Event('error'));
+    flushSync();
+    expect(imgs()).toHaveLength(0);
+    expect(target.querySelector('svg')).not.toBeNull();
+  });
+
+  // The relay answers a GIF over its ceiling 413 for good, and an <img> cannot read the status: a
+  // rendition whose declared size is over the ceiling must fail at once, never be asked for twice.
+  it('never retries a rendition declared over the relay ceiling', async () => {
+    tile('https://x/huge.gif', 13 * 1024 * 1024);
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    imgs()[0].dispatchEvent(new Event('error'));
+    flushSync();
+    expect(imgs()).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(5000);
     flushSync();
     expect(imgs()).toHaveLength(0);
     expect(target.querySelector('svg')).not.toBeNull();

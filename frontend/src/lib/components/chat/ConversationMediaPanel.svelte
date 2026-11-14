@@ -1,21 +1,15 @@
 <script lang="ts">
   import { intlLocale } from '$lib/utils/intlLocale';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
-  import VideoPlayer from '../shared/VideoPlayer.svelte';
   import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
-  import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
-  import {
-    logMediaFailure,
-    mediaFailureCause,
-    type MediaFailureCause,
-  } from '$lib/utils/mediaErrors';
+  import { logMediaFailure, mediaFailureCause } from '$lib/utils/mediaErrors';
   import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
-  import MediaLoadFailure from '../shared/MediaLoadFailure.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { openExternal } from '$lib/utils/openExternal';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import MediaLightbox from '../shared/MediaLightbox.svelte';
+  import ConversationMediaViewer from './ConversationMediaViewer.svelte';
+  import { viewerItemKey } from '$lib/utils/chat/viewerSequence';
   import SharedMediaThumb from './SharedMediaThumb.svelte';
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -44,14 +38,6 @@
 
   /** Index into content.media of the open lightbox, or null when closed. */
   let lightboxIndex = $state<number | null>(null);
-  let lightboxUrl = $state<string | null>(null);
-  /**
-   * Why the open item has no image. Without it the lightbox spins forever on a media the
-   * server will never return - a purged blob has no retry that can succeed.
-   */
-  let lightboxFailure = $state<MediaFailureCause | null>(null);
-  /** Bumped by the viewer's "Reessayer"; the decrypt effect reads it and runs again. */
-  let lightboxAttempt = $state(0);
 
   const dateFmt = $derived(
     new Intl.DateTimeFormat(intlLocale(), {
@@ -96,42 +82,6 @@
       .finally(() => {
         if (conversationId === id) loading = false;
       });
-  });
-
-  // Decrypt the selected media for the lightbox.
-  $effect(() => {
-    const idx = lightboxIndex;
-    void lightboxAttempt;
-    if (idx === null) {
-      lightboxUrl = null;
-      lightboxFailure = null;
-      return;
-    }
-    const item = content.media[idx];
-    if (!item || !authToken) return;
-    const ref = item.media;
-    let destroyed = false;
-    let acquired = false;
-    lightboxUrl = null;
-    lightboxFailure = null;
-    new MediaService()
-      .downloadAndDecrypt(ref)
-      .then((url) => {
-        if (destroyed) releaseDecryptedMediaBlobUrl(ref);
-        else {
-          lightboxUrl = url;
-          acquired = true;
-        }
-      })
-      .catch((err) => {
-        if (destroyed) return;
-        lightboxFailure = mediaFailureCause(err);
-        logMediaFailure('ConversationMediaPanel', lightboxFailure, ref.mediaId, err);
-      });
-    return () => {
-      destroyed = true;
-      if (acquired) releaseDecryptedMediaBlobUrl(ref);
-    };
   });
 
   async function downloadFile(ref: (typeof content.files)[number]['media']) {
@@ -283,55 +233,10 @@
 </div>
 
 {#if lightboxIndex !== null && content.media[lightboxIndex]}
-  {@const current = content.media[lightboxIndex]}
-  <MediaLightbox
-    open={true}
+  <ConversationMediaViewer
+    items={content.media}
+    startKey={viewerItemKey(content.media[lightboxIndex])}
     onClose={() => (lightboxIndex = null)}
-    title={current.media.fileName ?? current.caption ?? ''}
-    info={{
-      senderId: current.senderId,
-      sentAt: current.timestamp,
-      fileName: current.media.fileName,
-      sizeBytes: current.media.size,
-      width: current.media.width,
-      height: current.media.height,
-    }}
-    showPrev={lightboxIndex > 0}
-    showNext={lightboxIndex < content.media.length - 1}
-    onPrev={() => (lightboxIndex = (lightboxIndex ?? 1) - 1)}
-    onNext={() => (lightboxIndex = (lightboxIndex ?? 0) + 1)}
-    dotCount={0}
-  >
-    {#if lightboxUrl}
-      {#if current.media.type === 'video'}
-        <VideoPlayer
-          src={lightboxUrl}
-          variant="conversation"
-          soundScope="local"
-          loudness={current.media.loudness}
-          class="h-full w-full"
-        />
-      {:else}
-        <img
-          src={lightboxUrl}
-          alt={current.media.fileName ?? m.conversation_media_fallback_alt()}
-          class="max-h-full max-w-full object-contain select-none"
-        />
-      {/if}
-    {:else if lightboxFailure}
-      <div class="p-6">
-        <MediaLoadFailure
-          cause={lightboxFailure}
-          expiredLabel={m.msg_media_expired_label()}
-          otherLabel={m.msg_image_load_error()}
-          onRetry={() => (lightboxAttempt += 1)}
-          tone="dark"
-        />
-      </div>
-    {:else}
-      <div
-        class="h-10 w-10 animate-spin rounded-full border-4 border-white/70 border-t-transparent"
-      ></div>
-    {/if}
-  </MediaLightbox>
+    {authToken}
+  />
 {/if}

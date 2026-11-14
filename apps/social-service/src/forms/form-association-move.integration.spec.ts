@@ -3,8 +3,8 @@
  *
  * The first autosave of the create page creates the draft under the association picked then, and
  * that link used to be fixed from that moment: the edit route refused any other value. The rule now
- * (`FormsService.associationAfterEdit`): a DRAFT moves when its actor is a member of the association
- * it leaves and of the one it joins; a PUBLISHED form stays (`FORM_ASSOCIATION_FIXED`). The unit
+ * (`FormsService.associationAfterEdit`): a DRAFT moves when its actor manages the forms
+ * (MANAGE_FORMS, owner 2026-11-14) of the association it leaves and of the one it joins; a PUBLISHED form stays (`FORM_ASSOCIATION_FIXED`). The unit
  * spec (`forms.service.draft.spec.ts`) proves the rule on a fake; this proves the row - what the
  * update and the publication of a revision really WRITE, and what a refusal leaves untouched.
  *
@@ -30,6 +30,7 @@ import {
   FormsService,
 } from './forms.service';
 import { FORM_DRAFT, FORM_PUBLISHED, type FormStatus } from './form-status';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { readFormDraft } from './form-draft-revision';
 import type { CreateFormDto } from './dto/form.dto';
 
@@ -46,7 +47,7 @@ maybe('the association of a form, against PostgreSQL', () => {
   let admin: Client;
   let ds: DataSource;
   let service: FormsService;
-  /** `${userId}:${associationId}` for every membership the stub answers yes to. */
+  /** `${userId}:${associationId}` for every MANAGE_FORMS the stub answers yes to. */
   const members = new Set<string>();
 
   beforeAll(async () => {
@@ -92,9 +93,10 @@ maybe('the association of a form, against PostgreSQL', () => {
       {
         isMember: async (userId: string, associationId: string) =>
           members.has(`${userId}:${associationId}`),
-        // The co-manager manages A's forms (MANAGE_FORMS) without being a member of B.
-        mayAct: async (userId: string, associationId: string) =>
-          userId === CO_MANAGER && associationId === ASSO_A,
+        // MANAGE_FORMS where `members` says so; no other flag (MANAGE_MEMBERS) anywhere.
+        mayAct: async (userId: string, associationId: string, flag: number) =>
+          flag === AssociationPermissionFlag.MANAGE_FORMS &&
+          members.has(`${userId}:${associationId}`),
         canTakePaymentsNow: async () => true,
         collectionSubjectOf: async () => null,
         // A and B exist; nothing else does (`forms."associationId"` has no foreign key here either).
@@ -126,7 +128,8 @@ maybe('the association of a form, against PostgreSQL', () => {
 
   beforeEach(() => {
     members.clear();
-    members.add(`${OWNER}:${ASSO_A}`).add(`${OWNER}:${ASSO_B}`);
+    // The co-manager manages A's forms only.
+    members.add(`${OWNER}:${ASSO_A}`).add(`${OWNER}:${ASSO_B}`).add(`${CO_MANAGER}:${ASSO_A}`);
   });
 
   /** A free form of OWNER under `associationId`, in `status`. */
@@ -173,7 +176,7 @@ maybe('the association of a form, against PostgreSQL', () => {
     expect((await stored(id)).associationId).toBe(ASSO_A);
   });
 
-  it('refuses a draft to an association its actor is no member of, and writes nothing', async () => {
+  it('refuses a draft to an association whose forms its actor does not manage, and writes nothing', async () => {
     const id = await form(FORM_DRAFT);
     members.delete(`${OWNER}:${ASSO_B}`);
     await expect(service.update(id, edit(ASSO_B), OWNER, false)).rejects.toMatchObject({
@@ -182,9 +185,8 @@ maybe('the association of a form, against PostgreSQL', () => {
     expect((await stored(id)).associationId).toBe(ASSO_A);
   });
 
-  it('refuses a co-manager taking a draft out of an association they are no member of', async () => {
+  it('refuses a co-manager of A moving a draft to B, whose forms they do not manage', async () => {
     const id = await form(FORM_DRAFT);
-    members.add(`${CO_MANAGER}:${ASSO_B}`);
     await expect(service.update(id, edit(ASSO_B), CO_MANAGER, false)).rejects.toMatchObject({
       response: { code: FORM_ASSOCIATION_NOT_YOURS },
     });

@@ -539,11 +539,19 @@ export function withFreshProductGridIds<G extends EditorProductGrid | ProductGri
   return copy;
 }
 
+/** [LEGACY] The code an estate older than each grid's switch refuses an optional grid with. */
+const LEGACY_NOT_REQUIRED_CODE = 'PRODUCT_GRID_NOT_REQUIRED';
+
 /**
  * The sentence for a grid definition's refusal code - the editor's own check and the server's
  * coded 400 read the same words. Null for a code that is not a grid definition's.
  */
 export function productGridDefinitionMessage(code: string | null): string | null {
+  // [LEGACY] An estate older than each grid's switch refuses a grid sent optional. This build sends
+  // none there (`gridRequiredSwitchOn`), but the words stay until both estates carry the switch
+  // (docs/wiki/legacy-compatibility.md, "a form editor or fill page newer than its server's priced
+  // grids"). No longer a contract code, so compared as a string.
+  if (code === LEGACY_NOT_REQUIRED_CODE) return m.form_pgrid_refusal_not_required();
   switch (code as ProductGridDefinitionCode) {
     case 'PRODUCT_GRID_DEFINITION_MISSING':
     case 'PRODUCT_GRID_AXIS_INVALID':
@@ -552,8 +560,6 @@ export function productGridDefinitionMessage(code: string | null): string | null
     case 'PRODUCT_GRID_CLOSED_CELL_INVALID':
     case 'PRODUCT_GRID_PRICE_MODE_INVALID':
       return m.form_pgrid_refusal_definition();
-    case 'PRODUCT_GRID_NOT_REQUIRED':
-      return m.form_pgrid_refusal_not_required();
     case 'PRODUCT_GRID_REQUIRES_PAYMENT':
       return m.form_pgrid_refusal_requires_payment();
     case 'PRODUCT_GRID_LABEL_INVALID':
@@ -587,9 +593,8 @@ export interface ProductGridFormContext {
 }
 
 /**
- * Why one editor question would be refused at save, as its code, or null. Judged as it is SENT:
- * a grid always goes out `required: true` (`toFormItemsPayload`), so the card's own flag is never
- * what the editor flags.
+ * Why one editor question would be refused at save, as its code, or null. Judged as it is SENT
+ * (`productGridPayload`); its "Obligatoire" switch is no fault either way.
  */
 export function productGridItemProblem(
   item: { type?: string; productGrid?: EditorProductGrid },
@@ -597,7 +602,7 @@ export function productGridItemProblem(
 ): ProductGridDefinitionCode | null {
   if (item.type !== PRODUCT_GRID_TYPE) return null;
   const payload = item.productGrid ? productGridPayload(item.productGrid) : undefined;
-  return productGridItemRefusal({ required: true, productGrid: payload }, form)?.code ?? null;
+  return productGridItemRefusal({ productGrid: payload }, form)?.code ?? null;
 }
 
 /** A grid question the save refuses, and the sentence the page shows and the card repeats. */

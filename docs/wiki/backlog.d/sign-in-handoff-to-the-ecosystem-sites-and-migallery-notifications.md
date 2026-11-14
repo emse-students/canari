@@ -1,5 +1,7 @@
 ## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)
 
+target: 1.8.0
+
 **The owner's decisions of 2026-11-07, recorded as decided.**
 
 - **A. No separate MiGallery app.** MiGallery tells Canari when a member has new photos, Canari sends

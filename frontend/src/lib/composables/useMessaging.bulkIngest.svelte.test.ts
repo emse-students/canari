@@ -25,8 +25,9 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
     ...real,
     resolveNotificationSenderName: async (
       senderId: string,
-      convo: Parameters<typeof real.notificationSenderName>[1]
-    ) => real.notificationSenderName(senderId, convo),
+      conversationKey: string,
+      convo: Parameters<typeof real.notificationSenderName>[2]
+    ) => real.notificationSenderName(senderId, conversationKey, convo),
     // A visible notice's text names its actor: every id draws as itself here.
     resolveDisplayNames: async () => (id: string) => id,
   };

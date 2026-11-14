@@ -165,6 +165,8 @@ jobs:
           DEV_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DEV_CLOUDFLARE_ACCOUNT_ID }}
           DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${{ secrets.DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN }}
           DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${{ secrets.DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB }}
+          DEV_CLOUDFLARE_SFU_APP_ID: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_ID }}
+          DEV_CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_SECRET }}
           DEV_LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.DEV_LIVE_REPLAY_TOTAL_MAX_GB }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           # Private `id=file.png,...` list for the dev-only avatar override (bench account ids). Optional.
@@ -275,7 +277,7 @@ jobs:
         working-directory: ${{ env.DEV_DEPLOY_PATH }}
         run: echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ steps.bun.outputs.version }}
 

@@ -766,7 +766,8 @@ function buildCalendarHtml(
           );
           const logoSrcs = owners.map((o) => resolveLogo(o.url));
           for (const [oi, o] of owners.entries()) {
-            // "Campus" has no logo by design: its initials are the drawing, not a missing file.
+            // "Campus" has no logo by design and the sheet draws no mark for it either (no initials, no
+            // watermark): its colour band is the whole drawing, not a missing file.
             if (logoSrcs[oi] === null && !o.neutral) {
               console.warn(
                 `[CalendarExport] No logo for "${o.name}" on "${ev.title}" - its half stays empty (logoUrl: ${o.url ?? 'none set'})`

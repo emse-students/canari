@@ -7,6 +7,7 @@ import {
   type AppVersionCheckResult,
   type CallsMode,
   type CheckpointSkipMode,
+  type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
 } from '$lib/utils/appVersion';
@@ -92,6 +93,16 @@ export function serverCallsMode(): CallsMode {
 }
 
 /**
+ * The server's group calls switch as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverCallsMode}. A group conversation shows a call control only when
+ * this reads `mesh` AND {@link serverCallsMode} is not `off`: the server refuses a group `initiate`
+ * otherwise (403 `GROUP_CALLS_DISABLED`), so the client hides what would be refused.
+ */
+export function serverGroupCallsMode(): GroupCallsMode {
+  return lastCheck?.groupCallsMode ?? 'off';
+}
+
+/**
  * The server's kill switch for lives as the last `/api/version` answer gave it, `off` before any
  * answer. Reactive like {@link serverCallsMode}, so the live card and the composer's Live chip hide
  * on the refresh that closes lives. Read through `utils/livesAvailability.ts`, which joins it to
@@ -164,6 +175,18 @@ export function serverFormDrafts(): boolean | null {
 }
 
 /**
+ * Whether this estate stores each priced grid's own "Obligatoire" switch (`gridRequiredSwitch`), as
+ * the last `/api/version` answer said - or `null` when no server has ever answered. Read through
+ * `gridRequiredSwitchOn` (`forms/gridRequiredGate.ts`): only `true` draws the switch and drops the
+ * order rule (docs/wiki/legacy-compatibility.md, "a form editor or fill page newer than its server's
+ * priced grids"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverGridRequiredSwitch(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.gridRequiredSwitch;
+  return loadCachedServerInfo()?.gridRequiredSwitch ?? null;
+}
+
+/**
  * Whether this estate serves the ranked lists (`rankedFeeds`: Pour toi and the ranked CanaReels
  * viewer), as the last `/api/version` answer said - or `null` when no server has ever answered. Read
  * by `listPosts` (`posts/api.ts`, `rankedFeedsKnown`, which waits for the answer while it is `null`): only `true` asks them (docs/wiki/legacy-compatibility.md,
@@ -173,6 +196,30 @@ export function serverFormDrafts(): boolean | null {
 export function serverRankedFeeds(): boolean | null {
   if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.rankedFeeds;
   return loadCachedServerInfo()?.rankedFeeds ?? null;
+}
+
+/**
+ * Whether this estate lets a respondent change their own answer (`formAnswerEdit`), as the last
+ * `/api/version` answer said - or `null` when no server has ever answered. The form editors show the
+ * switch, and the fill page asks for the caller's changeable answers, only when it is `true`: an
+ * older server answers those routes `404` and strips the switch (docs/wiki/legacy-compatibility.md,
+ * "an answer editor newer than its server"). The cached answer counts, for the reason
+ * {@link serverPresencePost} gives.
+ */
+export function serverFormAnswerEdit(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.formAnswerEdit;
+  return loadCachedServerInfo()?.formAnswerEdit ?? null;
+}
+
+/**
+ * Whether this estate stores an institution event's reach (`eventReach`), as the last
+ * `/api/version` answer said - or `null` when no server has ever answered. The event form offers
+ * the reach only when it is `true` (docs/wiki/legacy-compatibility.md, "an event form newer than
+ * its server"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverEventReach(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.eventReach;
+  return loadCachedServerInfo()?.eventReach ?? null;
 }
 
 /** True when the client is below the server-enforced minimum version. */

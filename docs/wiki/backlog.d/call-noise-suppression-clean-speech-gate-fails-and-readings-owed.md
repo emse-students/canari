@@ -1,4 +1,6 @@
-## P2 - Call noise suppression (RNNoise, D-B): ships OFF by default (owner, 2026-11-01) - a real call on the bench phones decides when it goes ON
+## Reading owed - call noise suppression on a real call on both phones, which decides its default
+
+target: 1.7.0
 
 Built as decided ([calls](../frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails)),
 but the gated rig row `app-ns` fails on the synthetic clean reference (LSD 11.0 dB against 7, HF

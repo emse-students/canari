@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PaymentHandedNotice from '$lib/components/payments/PaymentHandedNotice.svelte';
   import { fade, slide } from 'svelte/transition';
   import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
   import { TriangleAlert } from '@lucide/svelte';
@@ -21,6 +22,12 @@
     showStoreBadges?: boolean;
     /** Where "Ouvrir dans l'application" goes (phone web visit with a claimed host); null hides it. */
     openInAppHref?: string | null;
+    /**
+     * The app's link to a form payment this login stands in front of (a payer the Android return
+     * left in the phone's browser): the page says where the payment went and offers the app. Null
+     * hides it.
+     */
+    paymentReturnHref?: string | null;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
@@ -36,6 +43,7 @@
     loginDisabled = false,
     showStoreBadges = false,
     openInAppHref = null,
+    paymentReturnHref = null,
     onLogin,
     onPasswordLogin,
   }: Props = $props();
@@ -80,6 +88,10 @@
           <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{maintenanceNotice}</span>
         </div>
+      {/if}
+
+      {#if paymentReturnHref}
+        <PaymentHandedNotice href={paymentReturnHref} />
       {/if}
 
       <button

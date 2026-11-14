@@ -75,6 +75,7 @@ maybe("a guest's name and e-mail, against PostgreSQL (migration 138)", () => {
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,
+        noteLydiaRequestIssued: async () => undefined,
       } as any,
       { grantCotisant: jest.fn() } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),

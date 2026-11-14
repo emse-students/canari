@@ -9,6 +9,7 @@ import {
   nicknameEntries,
   nicknameEntry,
   nicknameSupersedes,
+  restateMirroredScope,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import { NICKNAME_TOO_LONG, normalizeNickname } from '$lib/utils/users/nicknameRules';
 import { mayNameMember } from './nicknamePermission';
@@ -195,6 +196,9 @@ export async function loadCommunityNicknames(workspaceId: string): Promise<boole
       `[NICKNAME] ${dropped} nickname(s) of community ${workspaceId.slice(0, 8)} no longer on the server - dropped`
     );
   }
+  // The notifications' copy outlives this in-memory register across launches: it is restated whole,
+  // so what the list no longer names leaves it too (`restateMirroredScope`).
+  restateMirroredScope(scope);
   return true;
 }
 

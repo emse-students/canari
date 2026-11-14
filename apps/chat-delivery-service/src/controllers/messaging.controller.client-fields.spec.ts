@@ -61,8 +61,10 @@ describe('MessagingController - POST mls/send accepts a client send only', () =>
     await controller.sendMessage(clientBody(), 'alice');
     await controller.sendMessage(clientBody({ recipientDevices: ['bob:web-b'] }), 'alice');
     await controller.sendMessage(clientBody({ senderId: 'Alice' }), 'alice');
+    // The id a resend repeats (migration 048): a client may name it.
+    await controller.sendMessage(clientBody({ messageId: 'msg-1' }), 'alice');
 
-    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenCalledTimes(4);
   });
 
   it.each([

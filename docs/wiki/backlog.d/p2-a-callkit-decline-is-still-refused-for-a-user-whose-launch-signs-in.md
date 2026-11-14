@@ -1,5 +1,7 @@
 ## P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)
 
+target: 1.10.0
+
 #2782 stops the heartbeat holding the foreground guard at the PIN gate. A launch that signs in
 WITHOUT the PIN still loads a manager in the background, and that page holds the guard, correctly:
 biometrics with no prompt due (`ChatBackgroundService.svelte`, `biometricLogin(..., { unattended:

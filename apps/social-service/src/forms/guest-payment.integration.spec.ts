@@ -128,6 +128,7 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       getPaymentAccountId: async () => 'vendor',
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
+      noteLydiaRequestIssued: async () => undefined,
     };
     service = new FormsService(
       ds.getRepository(Form),

@@ -81,6 +81,8 @@ describe('parseServerVersionInfo', () => {
       minClientVersion: '1.0.0',
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -88,7 +90,10 @@ describe('parseServerVersionInfo', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
+      formAnswerEdit: false,
+      eventReach: false,
     });
   });
 
@@ -122,10 +127,39 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
+    // Each priced grid's own switch: the same rule, `true` only, kept through the cache.
+    const grid = parseServerVersionInfo({ version: '1.2.3', gridRequiredSwitch: true });
+    expect(grid?.gridRequiredSwitch).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(grid!))?.gridRequiredSwitch).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.gridRequiredSwitch).toBe(false);
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', gridRequiredSwitch: 'yes' })?.gridRequiredSwitch
+    ).toBe(false);
     const ranked = parseServerVersionInfo({ version: '1.6.9', rankedFeeds: true });
     expect(ranked?.rankedFeeds).toBe(true);
     expect(parseServerVersionInfo(serverVersionInfoToWire(ranked!))?.rankedFeeds).toBe(true);
     expect(parseServerVersionInfo({ version: '1.6.8' })?.rankedFeeds).toBe(false);
+  });
+
+  it('reads the answer-edit capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.6.12', formAnswerEdit: true });
+    expect(info?.formAnswerEdit).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formAnswerEdit).toBe(true);
+    // 1.6.6 to 1.6.11 never sent it: the switch and "Modifier ma reponse" stay hidden there.
+    expect(parseServerVersionInfo({ version: '1.6.11' })?.formAnswerEdit).toBe(false);
+    expect(
+      parseServerVersionInfo({ version: '1.6.12', formAnswerEdit: 'yes' })?.formAnswerEdit
+    ).toBe(false);
+  });
+
+  it('reads the event reach capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.6.12', eventReach: true });
+    expect(info?.eventReach).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.eventReach).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.6.11' })?.eventReach).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.6.12', eventReach: 'yes' })?.eventReach).toBe(
+      false
+    );
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -225,6 +259,8 @@ describe('buildAppVersionCheckResult', () => {
       minClientVersion: '0.0.0',
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
+      groupCallsMode: 'mesh',
+      callRelay: 'none',
       livesMode: 'on',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -232,7 +268,10 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
+      formAnswerEdit: false,
+      eventReach: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -248,6 +287,8 @@ describe('buildAppVersionCheckResult', () => {
       minClientVersion: '99.99.99',
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -255,7 +296,10 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
+      formAnswerEdit: false,
+      eventReach: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -319,6 +363,8 @@ describe('fetchServerAppVersionReliable', () => {
       minClientVersion: '1.0.0',
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
@@ -326,7 +372,10 @@ describe('fetchServerAppVersionReliable', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      gridRequiredSwitch: false,
       rankedFeeds: false,
+      formAnswerEdit: false,
+      eventReach: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
@@ -502,5 +551,56 @@ describe('the live replays switch of /api/version', () => {
     const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
     expect(parseServerVersionInfo(cached)).toEqual(info);
     expect(info?.liveReplaysMode).toBe('on');
+  });
+});
+
+describe('the group calls switch of /api/version (calls.groupMode)', () => {
+  it.each(['off', 'mesh'] as const)('reads %s', (mode) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', calls: { mode: 'audio_video', groupMode: mode } })
+        ?.groupCallsMode
+    ).toBe(mode);
+  });
+  it.each([undefined, 'mesh', { mode: 'audio' }, { groupMode: 'MESH' }, { groupMode: true }])(
+    'reads %j as CLOSED - a switch that cannot be read fails closed',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', calls: raw })?.groupCallsMode).toBe('off');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      calls: { mode: 'audio', groupMode: 'mesh' },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.groupCallsMode).toBe('mesh');
+    expect(info?.callsMode).toBe('audio');
+  });
+});
+
+describe('the call relay of /api/version (calls.relay)', () => {
+  it.each(['none', 'call-service'] as const)('reads %s', (relay) => {
+    expect(
+      parseServerVersionInfo({
+        version: '1.2.3',
+        calls: { mode: 'audio', groupMode: 'mesh', relay },
+      })?.callRelay
+    ).toBe(relay);
+  });
+  it.each([undefined, 'call-service', { mode: 'audio' }, { relay: 'cloudflare' }, { relay: 1 }])(
+    'reads %j as none - a server without the setting has no relay',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', calls: raw })?.callRelay).toBe('none');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      calls: { mode: 'audio', groupMode: 'mesh', relay: 'call-service' },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.callRelay).toBe('call-service');
   });
 });

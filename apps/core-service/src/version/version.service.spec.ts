@@ -21,6 +21,8 @@ describe('VersionService', () => {
       livesMode: 'on',
       checkpointSkipMode: 'on',
       liveReplaysMode: 'on',
+      groupCallsMode: 'mesh',
+      callRelay: 'none',
     }),
   } as unknown as PlatformService;
 
@@ -33,7 +35,7 @@ describe('VersionService', () => {
   it('publishes the calls kill switch, so a client hides what the server would refuse', async () => {
     const out = await service.getVersion();
 
-    expect(out.calls).toEqual({ mode: 'audio' });
+    expect(out.calls).toEqual({ mode: 'audio', groupMode: 'mesh', relay: 'none' });
   });
 
   it('publishes the lives kill switch, so a client hides the live surfaces the server would refuse', async () => {
@@ -77,6 +79,19 @@ describe('VersionService', () => {
 
     expect(out.formDrafts).toBe(true);
     expect(out.rankedFeeds).toBe(true);
+    expect(out.eventReach).toBe(true);
+  });
+
+  it('says its estate lets a respondent change their answer, so a client offers it only then', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formAnswerEdit).toBe(true);
+  });
+
+  it("says its estate stores each priced grid's own switch, so a form client draws it only then", async () => {
+    const out = await service.getVersion();
+
+    expect(out.gridRequiredSwitch).toBe(true);
   });
 
   it('reports no build when the environment was not given one', async () => {
