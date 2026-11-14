@@ -95,6 +95,8 @@ export ROLLING_DRAIN_SECONDS=3
 VERSIONS="v1 v2 v3 v4 v5a v5b v5 broken v6"
 TMP="$(mktemp -d)"
 cleanup() {
+  # A client still running is stopped, not abandoned: a failed run never writes its stop file.
+  if [ -n "${CLIENT_PID:-}" ]; then kill "$CLIENT_PID" 2>/dev/null || true; fi
   # TAG and EDGE_DIR given: the file requires them, and the cleanup that runs FIRST has neither -
   # without them `down` failed silently and a previous run's estate survived into this one.
   TAG="${TAG:-cleanup}" EDGE_DIR="${EDGE_DIR:-/cleanup}" dc down -v --remove-orphans >/dev/null 2>&1 || true
