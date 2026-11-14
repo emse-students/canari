@@ -400,6 +400,9 @@ jobs:
   # this repository, where the answer is known to be yes: a token that cannot see that one is not
   # believed about the others.
   #
+  # IT ALSO READS THAT THE RULESET STILL JUDGES: one that no longer requires `CI passed` on the
+  # default branch leaves the same merge unjudged, whoever bypasses.
+  #
   # A RED RUN IS THE REPORT, like `alerts`: a refused API, a missing field or a repository with no
   # ruleset fails under its own title and never passes for "no bypass".
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -423,9 +426,10 @@ jobs:
           client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          # This repository is the control; the three others are what is judged.
+          # This repository is the control; the three others are what is judged. Its name is
+          # written out: a `schedule` event documents no payload to read it from.
           repositories: |
-            ${{ github.event.repository.name }}
+            canari
             Sky
             MiGallery
             refonte-portail-etu

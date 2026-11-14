@@ -1228,9 +1228,12 @@ request would never land - and porting all of it is about 350 lines per reposito
 they do not have. **What holds the fact**: a ruleset is a setting changed in a browser, with no
 commit for `shape.mjs` to compare, so `scheduled.yml`'s `arming-bypass` job re-reads it daily with
 the App's own token (`.github/scripts/sibling-arming-bypass.sh`) and goes red if the App can bypass
-a sibling whose step still calls `gh pr merge --auto`. A refused API, a missing field or a
-repository with no ruleset is red too, and the same token must see Canari's own bypass (the
-control) before a "never" is believed. The day it goes red, the answer is to port Canari's whole
+a sibling whose step still calls `gh pr merge --auto` (a sibling that bypasses is green only on
+positive evidence that it sends the mutation). It also fails if no active ruleset of a sibling
+requires `CI passed` on its default branch any more, since that leaves the same merge unjudged.
+A refused API, a missing field or a repository with no ruleset is red too, and the same token must
+see Canari's own bypass (the control) before a "never" is believed. Classic branch protection is
+not read: none of the four uses it. The day it goes red, the answer is to port Canari's whole
 step to that sibling or to take the App out of its bypass actors - not to quiet the job.
 
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
