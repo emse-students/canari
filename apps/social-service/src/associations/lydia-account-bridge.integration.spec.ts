@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
-import { type Observable, of, throwError } from 'rxjs';
+import { Observable, of, throwError } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { ProductCheckout } from './entities/product-checkout.entity';
 import { AssociationProduct } from './entities/association-product.entity';
@@ -78,14 +78,28 @@ maybe(
     /**
      * The fake core-service: every `create-checkout-session` is recorded with the Business it names;
      * a token in `refusing` answers error 5 (nothing issued at Lydia), any other ISSUES a request.
+     * With `holdRefusals` set, the error-5 answers are HELD until that many have arrived, then all
+     * answered at once: every purchase held there was decided (its row committed) on the refused
+     * Business before any of them switches back - an interleaving forced, not hoped for.
      */
     const core = {
       calls: [] as string[],
       issued: [] as string[],
       refusing: new Set<string>(),
+      holdRefusals: null as null | { expected: number; answer: Array<() => void> },
     };
     const post = (_url: string, body: { connectAccountId: string }): Observable<unknown> => {
       core.calls.push(body.connectAccountId);
+      const held = core.holdRefusals;
+      if (core.refusing.has(body.connectAccountId) && held) {
+        return new Observable((subscriber) => {
+          held.answer.push(() => subscriber.error(error5()));
+          if (held.answer.length === held.expected) {
+            core.holdRefusals = null;
+            for (const answer of held.answer) answer();
+          }
+        });
+      }
       if (core.refusing.has(body.connectAccountId)) return throwError(error5);
       core.issued.push(body.connectAccountId);
       const n = core.issued.length;
@@ -214,6 +228,7 @@ maybe(
       core.calls = [];
       core.issued = [];
       core.refusing.clear();
+      core.holdRefusals = null;
       tell.mockClear();
       tellDelegation.mockClear();
     });
@@ -564,27 +579,96 @@ maybe(
       }
     });
 
-    it('three purchases meeting error 5 at once: ONE switch back, each purchase issued ONCE on the historical account', async () => {
+    // Three purchases fired together meet a switch back in one of THREE interleavings each: decided
+    // before it (error 5, re-issued), prepared after it (straight to the historical account), or
+    // prepared before and decided after (the typed ROUTING_CHANGED, unissued). Each is FORCED below;
+    // a `Promise.all` asserting one of them was a flake (docs/wiki/frontend/modules/payments.md).
+    it('three purchases DECIDED on the switched Business, answered error 5 together: ONE switch back, each re-issued ONCE on the historical account', async () => {
       if ((await bridge()).state !== 'switched') {
         await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
       }
       const before = await bridge();
       core.refusing.add(ENROLLED);
+      core.holdRefusals = { expected: 3, answer: [] };
       core.calls = [];
       const items = await Promise.all(
         [BDE, LIST, BDE].map((id, i) => product(id, `error5-race-${i}`))
       );
       await Promise.all(items.map((item) => buy(item.associationId, item.id)));
-      // Each purchase met error 5 at most once and was issued exactly once, on the historical account.
+      // Each met error 5 exactly once and was issued exactly once, on the historical account.
+      expect(core.calls).toEqual([
+        ENROLLED,
+        ENROLLED,
+        ENROLLED,
+        HISTORICAL,
+        HISTORICAL,
+        HISTORICAL,
+      ]);
       expect(core.issued).toEqual([HISTORICAL, HISTORICAL, HISTORICAL]);
-      expect(core.calls.filter((t) => t === ENROLLED).length).toBeLessThanOrEqual(3);
       const after = await bridge();
       expect(after.state).toBe('historical');
       expect(after.switchBackCount).toBe(before.switchBackCount + 1);
-      expect(after.reissueCount - before.reissueCount).toBe(
-        core.calls.filter((t) => t === ENROLLED).length
-      );
-      core.refusing.clear();
+      expect(after.reissueCount).toBe(before.reissueCount + 3);
+      const rows: Array<{ productId: string; status: string; vendorToken: string }> =
+        await ds.query(
+          `SELECT "productId", status, "vendorToken" FROM product_checkouts
+            WHERE "productId" = ANY($1) ORDER BY "productId", "createdAt"`,
+          [items.map((i) => i.id)]
+        );
+      // Per purchase: the attempt error 5 released, then the ONE open on the historical account.
+      for (const item of items) {
+        expect(
+          rows.filter((r) => r.productId === item.id).map((r) => [r.status, r.vendorToken])
+        ).toEqual([
+          ['cancelled', ENROLLED],
+          ['open', HISTORICAL],
+        ]);
+      }
+    });
+
+    it('a purchase PREPARED on the switched Business, decided after another`s error 5 switched back: the typed ROUTING_CHANGED, NO request, its retry on the historical account', async () => {
+      for (const [associationId, name] of [
+        [BDE, 'error5-straddle-own'],
+        [LIST, 'error5-straddle-delegated'],
+      ] as const) {
+        if ((await bridge()).state !== 'switched') {
+          await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+        }
+        const before = await bridge();
+        const item = await product(associationId, name);
+        const other = await product(BDE, `${name}-other`);
+        core.calls = [];
+        const prepare = (products as any).preparePurchase.bind(products);
+        const spy = jest
+          .spyOn(products as any, 'preparePurchase')
+          .mockImplementationOnce(async (...args: unknown[]) => {
+            const prepared = await prepare(...args);
+            // Another purchase meets error 5 between this one's preparation and its decision.
+            core.refusing.add(ENROLLED);
+            await buy(BDE, other.id);
+            core.refusing.clear();
+            return prepared;
+          });
+        const refusal = await buy(associationId, item.id).catch((e: unknown) => e);
+        spy.mockRestore();
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: 'PAYMENT_ROUTING_CHANGED',
+        });
+        // Only the other purchase reached core: its error 5, then its re-issue.
+        expect(core.calls).toEqual([ENROLLED, HISTORICAL]);
+        expect(
+          await ds.query(`SELECT id FROM product_checkouts WHERE "productId" = $1`, [item.id])
+        ).toEqual([]);
+        expect(await bridge()).toMatchObject({
+          state: 'historical',
+          switchBackCount: before.switchBackCount + 1,
+          reissueCount: before.reissueCount + 1,
+        });
+        // The payer's retry goes to the account that collects now.
+        await buy(associationId, item.id);
+        expect(core.calls).toEqual([ENROLLED, HISTORICAL, HISTORICAL]);
+      }
     });
 
     it('a VALIDATED naming a Business nobody holds is no-holder, the bridge untouched', async () => {

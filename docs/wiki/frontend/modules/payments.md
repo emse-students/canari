@@ -1460,9 +1460,22 @@ every readiness write, cashier claim and purchase decision already takes - the a
   exists, so the first attempt holds nothing payable (it is released, `cancelled`), and a re-issued
   purchase that meets a second switch back is refused, never issued a third time. A purchase whose
   error 5 is answered after a CONCURRENT refusal already switched back finds the Business pending
-  again and is re-issued the same way. The integration spec
-  (`lydia-account-bridge.integration.spec.ts`) proves exactly one request at Lydia per purchase,
-  three concurrent purchases included.
+  again and is re-issued the same way. A purchase PREPARED on the switched Business whose decision
+  runs after a concurrent error 5 switched back never reaches Lydia: a switch back is a switch, so
+  it is the typed 409 `PAYMENT_ROUTING_CHANGED` below, no row and no request, and the payer's retry
+  goes to the historical account. The integration spec (`lydia-account-bridge.integration.spec.ts`)
+  proves each of the two, with the interleaving forced rather than hoped for: three purchases
+  DECIDED on the switched Business and answered error 5 together (the fake core holds the three
+  refusals until all three arrived) make ONE switch back and three re-issues, one request at Lydia
+  each; and a purchase prepared before another's error 5 and decided after it is refused unissued.
+- **Why the spec forces the interleaving (flake of 2026-11-14).** The first version of the
+  three-purchase test fired three purchases with `Promise.all` and asserted all three issued on the
+  historical account. That holds only when no purchase's preparation precedes, and its decision
+  follows, another purchase's switch back; in one CI run of 1574 tests one did, and the routing
+  check under the lock refused it `PAYMENT_ROUTING_CHANGED` - the documented outcome of a switch
+  racing a purchase, not a defect: no row, no request, nothing payable. The race was in the TEST's
+  assertion, which demanded one interleaving out of three; production behaves the same in all three
+  (one request at Lydia per issued purchase, a refusal never issued).
 - **2701** on a switched Business is the ordinary revert (a pause), never a switch back: routing
   around Lydia's block onto another account is not the bridge's to decide. A 2701 naming a PENDING
   Business (after a switch back) is recorded on it, nothing re-issued, and holds it (above).
