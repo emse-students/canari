@@ -610,6 +610,20 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   line sent without a roster cannot be checked, so the publish is refused `CARTE_ROSTER_UNSTRUCTURED`;
   the editor adopts whatever a save or a publish dropped (`adoptDroppedPeople`), so it does not send
   the same ids again.
+- **A roster that failed to load is not an empty roster** (2026-11-14). The editor keeps each
+  roster with its load state (`$lib/carte/rosterLoads.ts`: `loading`, `loaded`, `failed`), typed at
+  the catch; the model is drawn from LOADED rosters only. A failed one is shown in an alert naming
+  the association, with its own retry (`RosterLoadAlert.svelte`), and is not counted among the
+  memberless associations. While any DRAWN association's roster is not loaded, or a switched-on
+  association of the space is missing from the catalogue the editor read (read fresh on open, never
+  from the shared five-minute cache), publishing, the publication update and the PDF export are
+  refused in the client with a message naming what is missing (`publishBlock`). A save is not
+  blocked: it persists the layout only, and an association's bureau picks are kept as they were
+  (a failed roster offers nothing to untick). **The server checks it too, from durable state**: a
+  directory entry sent with an EMPTY roster (`members: []`) for an association that has members in
+  `association_members` - review-cohort accounts aside, which the roster route hides - is refused
+  `CARTE_ROSTER_MISSING` (`400`, WARN, the association ids in the body). A map published with its
+  directory HIDDEN carries no roster, so there the client's refusal is the only guard.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a
@@ -683,11 +697,11 @@ checks of step 4 read zero on production.
      layout and the rosters it fetches now (`listMembers`, current members only), so legacy lines and
      erased accounts are simply not in what it would publish. `adoptDroppedPeople` acts only on the
      ANSWER of a save or a publish, removing whomever the server dropped.
-   - **Check before publishing.** Every association's roster is shown in the directory panel: a
-     roster that failed to load is drawn EMPTY (logged `admin.carte.id.loadData roster failed`) and
-     would be published empty - reload if one is unexpectedly empty. The bar shows "Mettre a jour la
-     publication": every carte published by an older client reads as changed, since the fingerprint
-     now covers the roster.
+   - **Before publishing.** A roster that fails to load is no longer drawn empty: the editor shows
+     an alert naming the association with a retry, and refuses the publish until it is loaded (the
+     server refuses an empty roster for an association with members too, `CARTE_ROSTER_MISSING`;
+     [rules](#rules)). The bar shows "Mettre a jour la publication": every carte published by an
+     older client reads as changed, since the fingerprint now covers the roster.
    - **Publish.** One click on "Mettre a jour la publication": the editor saves, then publishes
      (`publishAfterSave`); the live carte is replaced in place.
    - **If it is refused `CARTE_ROSTER_UNSTRUCTURED`** (`carte_publish_refused_roster`, "... Rechargez

@@ -31,6 +31,12 @@ export const CARTE_ERROR = {
    * can neither check it against the membership table nor scrub an erased account out of it.
    */
   ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
+  /**
+   * A published directory entry carries an EMPTY roster for an association that has members: the
+   * editor did not load that roster (a transport failure is not an empty association), and the
+   * publish would print it empty on the live map.
+   */
+  ROSTER_MISSING: 'CARTE_ROSTER_MISSING',
   /** A zone id that is not one of this map's zones. */
   ZONE_UNKNOWN: 'CARTE_ZONE_UNKNOWN',
   /** A switch written for an association that is not of the map's space. */

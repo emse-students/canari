@@ -28,6 +28,7 @@ import {
   type CarteCaller,
   type CarteSpaceKey,
 } from './poster-scope';
+import { isInReviewCohort } from '../review-cohort';
 
 /** The published map plus the metadata the showcase displays alongside it. */
 export interface PublishedCarteResponse extends PublishedCarte {
@@ -614,6 +615,7 @@ export class PosterService {
       // `currentMembership`): a membership an erasure has deleted but not committed is waited for
       // and then read gone, so this publish cannot commit the account back after the erasure's scan.
       const isMember = await this.currentMembership(manager, publishedMemberPairs(publication));
+      await this.refuseMissingRosters(manager, id, publication);
       const kept = keepCurrentMembers(publication, isMember);
       const dropped = kept.droppedCards + kept.droppedMembers;
       if (dropped > 0) {
@@ -662,6 +664,46 @@ export class PosterService {
     const project = await this.posterRepo.findOne({ where: { id } });
     if (!project) throw new NotFoundException('Poster project not found');
     return project;
+  }
+
+  /**
+   * Refuses a publish that would print an association's roster EMPTY while that association has
+   * members (`CARTE_ROSTER_MISSING`). The editor sends the roster it loaded; an empty one is either a
+   * genuinely empty association or a roster the editor never received, and only the membership table
+   * tells the two apart - so it is read here rather than believed. A member of the review cohort is
+   * not counted: the roster route hides one from every caller but the platform admin, so an
+   * association of review accounts alone is empty to the editor and rightly published empty.
+   *
+   * Only the directory carries rosters: a map published with its directory hidden has no roster to
+   * check, and the editor's own refusal is then the only guard (docs/wiki/carte-vie-asso.md).
+   */
+  private async refuseMissingRosters(
+    manager: EntityManager,
+    id: string,
+    publication: PublishedCarte
+  ): Promise<void> {
+    const empty = emptyRosterAssociationIds(publication);
+    if (empty.length === 0) return;
+    const rows: { assoId: string; userId: string }[] = await manager.query(
+      `SELECT "associationId"::text AS "assoId", "userId" FROM association_members
+        WHERE "associationId" = ANY($1::uuid[])`,
+      [empty]
+    );
+    const withMembers = [
+      ...new Set(rows.filter((r) => !isInReviewCohort(r.userId)).map((r) => r.assoId)),
+    ];
+    this.logger.debug(
+      `[CARTE] empty rosters of map ${id}: ${empty.length} sent, ${withMembers.length} with members`
+    );
+    if (withMembers.length === 0) return;
+    this.logger.warn(
+      `[CARTE] publish of map ${id} refused: ${CARTE_ERROR.ROSTER_MISSING} (${withMembers.length} association(s) with members sent with an empty roster: ${withMembers.join(',')})`
+    );
+    throw new BadRequestException({
+      code: CARTE_ERROR.ROSTER_MISSING,
+      message: 'A roster was sent empty for an association that has members; reload the editor.',
+      associationIds: withMembers,
+    });
   }
 
   /**
@@ -788,6 +830,19 @@ export function unstructuredRosterEntries(carte: PublishedCarte): number {
   return (carte.directory?.zones ?? [])
     .flatMap((z) => z.assos)
     .filter((a) => !a.members && a.line.trim() !== '').length;
+}
+
+/**
+ * The associations a published directory sends with an EMPTY roster (`members: []`), lower-cased and
+ * restricted to uuids (anything else is no association, and never reaches the query).
+ */
+export function emptyRosterAssociationIds(carte: PublishedCarte): string[] {
+  const ids = (carte.directory?.zones ?? [])
+    .flatMap((z) => z.assos)
+    .filter((a) => Array.isArray(a.members) && a.members.length === 0)
+    .map((a) => a.assoId.toLowerCase())
+    .filter((assoId) => UUID_PATTERN.test(assoId));
+  return [...new Set(ids)];
 }
 
 /** The association ids a saved layout placed (`layout.bubbles[].assoId`), read defensively. */

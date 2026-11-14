@@ -13,6 +13,7 @@
     updatePosterProject,
     publishPosterProject,
     unpublishPosterProject,
+    invalidateAssociationDirectory,
     listAssociations,
     listMembers,
     listCarteSpaces,
@@ -27,7 +28,6 @@
     type PosterEntry,
     type PosterProject,
     type PosterZone,
-    type AssociationMember,
   } from '$lib/associations/api';
   import { classifyMapAssociations, parkedPlacements } from '$lib/carte/mapEntries';
   import { carteSpaceLabel } from '$lib/carte/spaceLabel';
@@ -70,7 +70,17 @@
   import { barPublishAction, overflowActions, type OverflowAction } from '$lib/carte/publishAction';
   import { buildPublishedCarte, fingerprintPublishedCarte } from '$lib/carte/publish';
   import { publishAfterSave } from '$lib/carte/publishAfterSave';
+  import {
+    loadRoster,
+    loadRosters,
+    loadedMembers,
+    publishBlock,
+    rostersNotLoaded,
+    shownButUnlisted,
+    type RosterLoads,
+  } from '$lib/carte/rosterLoads';
   import ZoneGrip from '$lib/carte/ZoneGrip.svelte';
+  import RosterLoadAlert from '$lib/carte/RosterLoadAlert.svelte';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import { MonitorSmartphone } from '@lucide/svelte';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -140,7 +150,13 @@
   let spaceAssociationIds = $state<string[]>([]);
   /** Live data of the space's associations, and their rosters, re-read on every open. */
   let spaceAssociations = $state<Association[]>([]);
-  let membersByAsso = $state<Record<string, AssociationMember[]>>({});
+  /**
+   * Each roster with its load state: a roster that FAILED is not an empty one, and blocks publishing
+   * and exporting until it is retried ($lib/carte/rosterLoads).
+   */
+  let rosterLoads = $state<RosterLoads>({});
+  /** The members of every LOADED roster, which is what the model is drawn from. */
+  const membersByAsso = $derived(loadedMembers(rosterLoads));
   /** Saved placements of associations not drawn now (off, or no longer of the space): kept, never dropped. */
   let parked = $state<PositionedBubble[]>([]);
   const classified = $derived(classifyMapAssociations(spaceAssociationIds, entries));
@@ -295,10 +311,58 @@
    */
   const memberlessNames = $derived(
     positioned
+      .filter((bubble) => rosterLoads[bubble.assoId]?.state === 'loaded')
       .map((bubble) => content[bubble.assoId])
       .filter((asso) => asso !== undefined && asso.members.length === 0)
       .map((asso) => asso.name)
   );
+
+  /** The associations the map draws now (switched on, of its space, listed). */
+  const drawnIds = $derived(
+    spaceAssociations.filter((a) => classified.on.has(a.id)).map((a) => a.id)
+  );
+  /** Drawn associations whose roster is not loaded: the map would print them with nobody. */
+  const rostersMissing = $derived(
+    rostersNotLoaded(drawnIds, rosterLoads).map((id) => ({
+      id,
+      name: spaceAssociations.find((a) => a.id === id)?.name ?? id,
+      loading: rosterLoads[id]?.state === 'loading',
+    }))
+  );
+  /** Switched-on associations of the space the catalogue did not list: they would not be drawn. */
+  const associationsUnlisted = $derived(
+    shownButUnlisted(
+      classified.on,
+      spaceAssociationIds,
+      new Set(spaceAssociations.map((a) => a.id))
+    )
+  );
+
+  /**
+   * Why the map cannot be published or exported now, or null when it can: a roster not loaded, or a
+   * shown association the editor could not read. Named, because the author has to act on it.
+   */
+  function publishBlocker(): string | null {
+    const block = publishBlock(drawnIds, rosterLoads, associationsUnlisted);
+    if (!block) return null;
+    if (block.rosters.length > 0) {
+      const nameOf = (id: string) => spaceAssociations.find((a) => a.id === id)?.name ?? id;
+      return m.carte_publish_blocked_rosters({ names: block.rosters.map(nameOf).join(', ') });
+    }
+    return m.carte_publish_blocked_unlisted({ count: block.unlisted.length });
+  }
+
+  /** Re-reads one roster that failed, then redraws with it. */
+  async function retryRoster(associationId: string): Promise<void> {
+    Log.d('admin.carte.id.retryRoster', { associationId });
+    rosterLoads = { ...rosterLoads, [associationId]: { state: 'loading' } };
+    const load = await loadRoster(associationId, listMembers);
+    rosterLoads = { ...rosterLoads, [associationId]: load };
+    if (load.state !== 'loaded') return;
+    error = null;
+    rebuildModel();
+    void refreshPublishFingerprint();
+  }
 
   // ── The canvas fills the window (owner, 2026-11-11) ───────────────────────────────────────
   /** Which half of the poster the canvas shows: the whole map, or the directory column alone. */
@@ -375,6 +439,9 @@
     loading = true;
     error = null;
     try {
+      // The map's own associations are read FRESH: the shared catalogue is cached for minutes, and
+      // an association offered since would be missing from the map with nothing to say so.
+      invalidateAssociationDirectory();
       const [proj, associations] = await Promise.all([
         getPosterProject(projectId),
         listAssociations('association'),
@@ -404,19 +471,12 @@
         typeof layout.titleColor === 'string' ? layout.titleColor : CARTE_STYLE.titleColor;
       decorations = sanitizeDecorations(layout.decorations);
 
-      // Rosters of the space's associations only (president detection, directory). A failed
-      // roster is logged and drawn empty - the editor names memberless associations anyway.
-      const rosters = await Promise.all(
-        spaceAssociations.map((a) =>
-          listMembers(a.id).catch((e: unknown) => {
-            Log.d('admin.carte.id.loadData roster failed', { assoId: a.id, e });
-            return [] as AssociationMember[];
-          })
-        )
+      // Rosters of the space's associations only (president detection, directory). A roster that
+      // fails is FAILED, never empty: it is shown with a retry, and blocks publishing until loaded.
+      rosterLoads = await loadRosters(
+        spaceAssociations.map((a) => a.id),
+        listMembers
       );
-      const byAsso: Record<string, AssociationMember[]> = {};
-      spaceAssociations.forEach((a, i) => (byAsso[a.id] = rosters[i]));
-      membersByAsso = byAsso;
 
       // Reconcile saved positions with the live model (adds switched-on assos, parks the rest).
       positioned = [];
@@ -737,7 +797,11 @@
     Log.d('admin.carte.id.adoptDropped', { dropped: kept.dropped });
     positioned = kept.people.positioned;
     parked = kept.people.parked;
-    membersByAsso = kept.people.members;
+    const adopted: RosterLoads = { ...rosterLoads };
+    for (const [id, members] of Object.entries(kept.people.members)) {
+      adopted[id] = { state: 'loaded', members };
+    }
+    rosterLoads = adopted;
     rebuildModel();
     return kept.dropped;
   }
@@ -882,6 +946,15 @@
   async function handlePublish() {
     if (!project || publishing) return;
     Log.d('admin.carte.id.handlePublish', { projectId: project.id });
+    const blocked = publishBlocker();
+    if (blocked) {
+      Log.w('admin.carte.id.handlePublish refused: a roster or an association is not loaded', {
+        rosters: rostersMissing.map((r) => r.id),
+        unlisted: associationsUnlisted,
+      });
+      error = blocked;
+      return;
+    }
     publishing = true;
     error = null;
     try {
@@ -897,7 +970,9 @@
             ? m.carte_publish_refused_unattached()
             : code === CARTE_REFUSAL.ROSTER_UNSTRUCTURED
               ? m.carte_publish_refused_roster()
-              : m.common_save_error();
+              : code === CARTE_REFUSAL.ROSTER_MISSING
+                ? m.carte_publish_refused_roster_missing()
+                : m.common_save_error();
     } finally {
       publishing = false;
     }
@@ -982,6 +1057,15 @@
 
   async function handleExport() {
     if (!posterEl || !project || exporting) return;
+    const blocked = publishBlocker();
+    if (blocked) {
+      Log.w('admin.carte.id.handleExport refused: a roster or an association is not loaded', {
+        rosters: rostersMissing.map((r) => r.id),
+        unlisted: associationsUnlisted,
+      });
+      error = blocked;
+      return;
+    }
     exporting = true;
     error = null;
     // Clear selections and the overlap outlines so none of them is captured in the PDF.
@@ -1273,6 +1357,14 @@
             <p class="text-text-muted shrink-0 px-4 pt-2 text-sm">
               {m.carte_export_foreground_hint()}
             </p>
+          {/if}
+
+          {#if rostersMissing.length > 0 || associationsUnlisted.length > 0}
+            <RosterLoadAlert
+              missing={rostersMissing}
+              unlisted={associationsUnlisted.length}
+              onRetry={retryRoster}
+            />
           {/if}
 
           {#if !space}

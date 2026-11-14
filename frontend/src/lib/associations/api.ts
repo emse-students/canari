@@ -3190,6 +3190,8 @@ export const CARTE_REFUSAL = {
   NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
   /** A directory line with no roster: an editor older than the structured roster - reload it. */
   ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
+  /** An association with members sent with an empty roster: the editor did not load it. */
+  ROSTER_MISSING: 'CARTE_ROSTER_MISSING',
 } as const;
 
 /**
