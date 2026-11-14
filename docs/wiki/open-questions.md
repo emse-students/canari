@@ -664,12 +664,17 @@ is written until the owner answers. Live replays are not part of the question: t
 
 ## DECIDED 2026-11-14 by the owner ("Oui, par campus") - an institution's Personnel public reaches every staff account of its campuses
 
-**The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" post or calendar event
+**The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" POST
 of an institution also opens to every staff account (a campus, no cursus) whose campus is the campus
 of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
-in both predicates, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
+in `postVisibleToUserSql`, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
 
-**Left open, for the owner - the institution as a whole.** The door is per ITEM: it needs a chosen
+**Not decided, so not built - the agenda.** The owner's answer is for POSTS. An institution's
+calendar event with "Personnel" still reaches only the staff who already have a door
+(`eventVisibleToUserSql` unchanged), although the question below said one answer would settle both:
+whether the same door opens on events waits for the owner.
+
+**Not decided either - the institution as a whole.** The door is per ITEM: it needs a chosen
 public. The association-level readers that the audiences audit of 2026-11-14 found with the same
 dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
 (`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,

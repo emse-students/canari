@@ -2735,7 +2735,7 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   `campusWideReaderCampus`, held to it by `reader-spaces.integration.spec.ts`) whose campus is the
   campus of a space the post ticked AND that the institution's rules still reach. So the School
   addresses its staff without naming each one. It sits beside the rules door in
-  `postVisibleToUserSql` (and `eventVisibleToUserSql`, the same fragment), so every consumer below
+  `postVisibleToUserSql`, so every consumer below
   gets it - the bell and the announcement included: such staff are TOLD of the post. Under the
   public gate like every door: "Étudiants" closes it. Not opened: a post with no reach (legacy, or
   not an institution's), staff of another campus, a ticked space outside the audience; a student
@@ -2817,10 +2817,10 @@ would be refused word for word - the banner offers Delete alone.
    reposter's staff readers). Built on 2026-11-10 as "only the staff who already have a door" and
    parked for the owner, who answered on 2026-11-14
    ([open-questions](open-questions.md#decided-2026-11-14-by-the-owner-oui-par-campus---an-institutions-personnel-public-reaches-every-staff-account-of-its-campuses)).
-   Reversible: one disjunct and one gate term. The association-level readers (the shop, the
-   partnerships, the directory, an institution's live, an event or a post with no reach) are NOT
-   widened: they carry no per-item public, and opening an institution to its campus's staff as a
-   whole is a separate question, parked in the same entry.
+   Reversible: one disjunct and one gate term. NOT decided, so not built: the same door on an
+   institution's calendar EVENTS (the agenda), and the association-level readers (the shop, the
+   partnerships, the directory, an institution's live, a post with no reach) - parked in the same
+   entry.
 2. **A republication and a member repost keep reaching their own readers** (G4); only the public
    follows the post there.
 3. **An institution's members read every post of it**, whatever its reach (D21), as the switch lets
@@ -2889,10 +2889,9 @@ every door (`institutionReachAdmitsUserSql`), the spaces narrow the organiser's 
 read grants, through `ReadOpts.spaceFilter`), and a `students` event closes the read-grant door.
 `eventReachesSpaceMatchingSql` (the agenda's space filter and the anonymous per-selection feed) asks
 the same filter, and a `staff` event reaches no space, as `postReachesSpaceSql` does. **Staff by
-campus** (owner, 2026-11-14): a "Tous" or "Personnel" event opens to the staff of a ticked space's
-campus through the posts' fragment, `institutionReachStaffCampusDoorSql` - so the signed-in agenda,
-the event by id, the opening reminders and a post's event card all follow; the anonymous feeds do
-not change (a `staff` event is still withheld from them).
+campus is NOT applied to events**: the owner's decision of 2026-11-14 is for posts only, so an
+event's "Personnel" still reaches only the staff who already have a door (not decided, parked in
+[open-questions](open-questions.md#decided-2026-11-14-by-the-owner-oui-par-campus---an-institutions-personnel-public-reaches-every-staff-account-of-its-campuses)).
 
 **Co-organised events - decided by the lead, reversible:**
 

@@ -16,10 +16,7 @@
  *   mb - a member of I, no cursus                            - its membership (D21)
  *   cm - a member of C, no cursus                            - none (C's membership, once C co-organises)
  *   nr - a named reader (grant: ICM x Saint-Etienne), staff - the grant
- *   os - staff of Saint-Etienne, no other door               - staff by campus ("Tous", "Personnel")
- *
- * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14): a "Tous" or "Personnel" event opens to every staff
- * account of a ticked space's campus (`os`), never to staff of another campus (`cm`, Gardanne).
+ *   os - staff of Saint-Etienne, no door at all              - nothing
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here. Locally:
  *
@@ -100,11 +97,10 @@ const CASES: { name: string; reach: InstitutionReach | null; readers: Reader[] }
     readers: ['si', 'ss', 'mb', 'nr'],
   },
   {
-    // ss loses its unticked space; the member and the named reader of the ticked cell keep it;
-    // Saint-Etienne's staff comes in by campus (2026-11-14), Gardanne's (cm) does not.
+    // ss loses its unticked space; the member and the named reader of the ticked cell keep it.
     name: 'ICM x Saint-Etienne, everyone',
     reach: { spaces: [ICM_SE], public: 'all' },
-    readers: ['si', 'mb', 'nr', 'os'],
+    readers: ['si', 'mb', 'nr'],
   },
   {
     // The named reader (staff) loses it - "students" closes the grant door; I's member keeps it.
@@ -113,11 +109,10 @@ const CASES: { name: string; reach: InstitutionReach | null; readers: Reader[] }
     readers: ['si', 'ss', 'mb'],
   },
   {
-    // Students lose it; staff keep the doors they had (the member, the named reader), and
-    // Saint-Etienne's staff reads it by campus (2026-11-14).
+    // Students lose it; staff keep the doors they had (the member, the named reader).
     name: 'ICM and ISMIN x Saint-Etienne, staff',
     reach: { spaces: [ICM_SE, ISMIN_SE], public: 'staff' },
-    readers: ['mb', 'nr', 'os'],
+    readers: ['mb', 'nr'],
   },
 ];
 
@@ -269,18 +264,6 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
     expect(await sees('ss')).toBe(true);
   });
 
-  it('the staff-by-campus door: a Personnel event of a ticked Saint-Etienne space, closed by "Étudiants"', async () => {
-    await setReach({ spaces: [ISMIN_SE], public: 'staff' });
-    expect(await sees('os')).toBe(true);
-    expect(await sees('cm')).toBe(false);
-    // A student is not affected: si's space is not ticked, ss's is but the public refuses students.
-    expect(await sees('si')).toBe(false);
-    expect(await sees('ss')).toBe(false);
-    await setReach({ spaces: [ISMIN_SE], public: 'students' });
-    expect(await sees('os')).toBe(false);
-    expect(await sees('ss')).toBe(true);
-  });
-
   it('a ticked space outside the audience opens nothing (never wider than the audience)', async () => {
     await setReach({ spaces: [ICM_GA], public: 'all' });
     // No Gardanne student is reached through I's rules, which reach Saint-Etienne only.
@@ -296,9 +279,9 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
     // C's staff member cm because a co-organiser's members read the event they co-own.
     await setReach({ spaces: [ICM_SE], public: 'students' });
     expect(await readersOf(sees)).toEqual(['si', 'sg', 'mb', 'cm']);
-    // For staff: no student, whichever door; Saint-Etienne's staff by campus.
+    // For staff: no student, whichever door.
     await setReach({ spaces: [ICM_SE], public: 'staff' });
-    expect(await readersOf(sees)).toEqual(['mb', 'cm', 'nr', 'os']);
+    expect(await readersOf(sees)).toEqual(['mb', 'cm', 'nr']);
   });
 
   it('the anonymous selection: a ticked space matches, an unticked one does not, a staff event reaches no space', async () => {
@@ -377,9 +360,7 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
     // No reach: the card follows its post, whoever reads it (a republication's reader included).
     expect(await shown('os')).toBe(true);
     await setReach({ spaces: [ICM_SE], public: 'all' });
-    // Gardanne's staff has no door; Saint-Etienne's reads it by campus (2026-11-14).
-    expect(await shown('cm')).toBe(false);
-    expect(await shown('os')).toBe(true);
+    expect(await shown('os')).toBe(false);
     expect(await shown('ss')).toBe(false);
     expect(await shown('si')).toBe(true);
     expect(await shown(null)).toBe(false);

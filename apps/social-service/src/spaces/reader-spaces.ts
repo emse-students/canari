@@ -506,8 +506,8 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
  *
  * A "staff" reader is an account with no space: staff (a campus and an empty cursus). A staff account
  * has no space for the post's rules to reach, so they reach an institution's post through a door they
- * already had - a membership, a read grant, a republisher, a member repost - or, since 2026-11-14,
- * the staff-by-campus door of a "Tous" or "Personnel" item ({@link institutionReachStaffCampusDoorSql}).
+ * already had - a membership, a read grant, a republisher, a member repost - or, on a POST since
+ * 2026-11-14, the staff-by-campus door of "Tous" and "Personnel" ({@link institutionReachStaffCampusDoorSql}).
  */
 export function institutionReachAdmitsUserSql(post: string, user: string): string {
   return `(${post}."reachPublic" IS NULL OR ${post}."reachPublic" = 'all'
@@ -563,8 +563,8 @@ export function isCampusStaffSql(user: string): string {
 }
 
 /**
- * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14: "Oui, par campus"): row `item` - a post or a calendar
- * event an institution gave a reach - whose public is "Tous" or "Personnel" opens to user row `user`
+ * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14: "Oui, par campus"): post row `item` - one an
+ * institution gave a reach - whose public is "Tous" or "Personnel" opens to user row `user`
  * when they are staff of a campus ({@link isCampusStaffSql}) and one of the spaces the item TICKED is
  * on that campus AND is still reached by the institution's own rules. So the School addresses its
  * staff without naming each one; a staff account of another campus is not reached, a student gains
@@ -1030,9 +1030,9 @@ export function sameCampusAsViewerSql(owner: string, viewer: string): string {
  *   ({@link institutionReachHoldsSpaceSql}), as a post's narrow the post's own institution door. An
  *   accepted co-organiser's door keeps its own audience: the institution invited it, which is the
  *   event's widening mechanism exactly as a republication is a post's (G4). Only the public follows
- *   the event there;
- * - "Tous" and "Personnel" also open it to the staff of a ticked space's campus
- *   ({@link institutionReachStaffCampusDoorSql}, owner 2026-11-14), as on a post.
+ *   the event there.
+ * The staff-by-campus door of a post (owner, 2026-11-14) is NOT spliced here: the owner decided it
+ * for POSTS only, and an event's "Personnel" keeps the doors its readers already had.
  * Read from the row at every query: an edit narrows or widens the event for every path at once.
  *
  * Status and dates are NOT decided here: each caller keeps its own (validated only, a window).
@@ -1051,7 +1051,6 @@ export function eventVisibleToUserSql(event: string, user: string, opts: ReadOpt
         AND ${isMemberSql('vis_comember.association_id', user)})`;
   return `((${institutionReachAdmitsUserSql(event, user)} OR ${coOrganiserMember})
     AND (${associationVisibleToUserSql(`${event}."associationId"`, user, ownOpts)}
-    OR ${institutionReachStaffCampusDoorSql(event, user)}
     OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners vis_coorg
       WHERE vis_coorg.event_id = ${event}.id
         AND ${associationVisibleToUserSql('vis_coorg.association_id', user, coOpts)})))`;
