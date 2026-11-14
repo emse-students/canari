@@ -1,3 +1,0 @@
-### Fixed - log noise read in three 1.6.8 logs, each fixed at its cause
-
-A token refresh that got no answer under a media request is a `MediaUnreachableError`; a switched-off estate's lives list is an expected debug line, asked again on every load (its switch is a runtime one); the foreground triggers stand down while the socket is paused (the two refused reconnects per resume are gone); `[SYNC] WASM kept` and `[DISCOVERY] ... kept` are said once per change and a removed row of a registered key-distribution group is dropped; a presence poll with no answer is one line, not an error. What was left is filed in [backlog.d](docs/wiki/backlog.d/p3-a-suspension-is-logged-as-the-server-being-unreachable.md).

@@ -121,11 +121,33 @@ export interface PublishedCarteUnit {
   cards: PublishedCarteCard[];
 }
 
+/**
+ * One member of an association's directory roster, as the publisher sends it: STORED so the roster
+ * can be checked against the membership table and an erased account found by id, NEVER served
+ * (it carries account ids; {@link publicCarte} strips it).
+ */
+export interface PublishedCarteDirectoryMember {
+  userId: string;
+  name: string;
+  /** The member's role, generic or not; {@link directoryLine} decides whether it is printed. */
+  role: string;
+}
+
 /** One association's line in the directory. */
 export interface PublishedCarteDirectoryAsso {
   assoId: string;
-  /** The roster as the poster prints it: "Name (Role) - Name - ...", alphabetical. */
+  /**
+   * The roster as the poster prints it: "Name (Role) - Name - ...", by family name. Derived HERE
+   * from {@link members} ({@link directoryLine}) when the publisher sent them; taken as sent only
+   * from a client that predates them.
+   */
   line: string;
+  /**
+   * The roster behind {@link line}, in print order. Absent on a document published by a client
+   * older than 2026-11-14, whose line can therefore not be checked or scrubbed by id. Stored, never
+   * served.
+   */
+  members?: PublishedCarteDirectoryMember[];
 }
 
 /** A category section of the directory. */
@@ -181,6 +203,8 @@ const MAX_NAME_LENGTH = 200;
 const MAX_LINE_LENGTH = 4000;
 const MAX_ZONES = 40;
 const MAX_ASSOS_PER_ZONE = 400;
+/** Members of one association's directory roster; no association of a school comes near it. */
+const MAX_MEMBERS_PER_ASSO = 1000;
 const MAX_ID_LENGTH = 64;
 const MAX_RADIUS_LENGTH = 96;
 const MAX_COLOR_LENGTH = 64;
@@ -365,6 +389,53 @@ function toText(raw: unknown): PublishedCarteText | null {
   };
 }
 
+/**
+ * Roles that say nothing: being in the directory already says the person is a member. The same set
+ * as the editor's (`frontend/src/lib/carte/generator.ts`), pinned by `directory-line.cases.json`.
+ */
+const GENERIC_ROLES = new Set(['membre', 'member', 'adherent', 'adherente']);
+
+/** Whether a role is one of {@link GENERIC_ROLES}, ignoring case and accents. */
+function isGenericRole(role: string): boolean {
+  const plain = role.normalize('NFD').replaceAll(/[̀-ͯ]/g, '').trim().toLowerCase();
+  return GENERIC_ROLES.has(plain);
+}
+
+/**
+ * One association's roster line, exactly as the poster prints it: "Name (Role) - Name - ...", a
+ * role in parentheses only when it says something. `members` come in PRINT order (the publisher
+ * sorts them by family name, a field it alone holds), so this formats and never reorders.
+ *
+ * The ONE server-side derivation: the publish path stores it, the erasure re-derives it after
+ * removing a member. The editor formats the poster and the PDF with its own copy, and the two are
+ * pinned to the same strings by `directory-line.cases.json`. Capped like every served string.
+ */
+export function directoryLine(
+  members: readonly Pick<PublishedCarteDirectoryMember, 'name' | 'role'>[]
+): string {
+  return members
+    .map((m) => (m.role && !isGenericRole(m.role) ? `${m.name} (${m.role})` : m.name))
+    .join(' - ')
+    .slice(0, MAX_LINE_LENGTH);
+}
+
+/** Validates a directory roster, dropping a member with no user id. */
+function toDirectoryMembers(raw: unknown[]): PublishedCarteDirectoryMember[] {
+  const members: PublishedCarteDirectoryMember[] = [];
+  for (const item of raw.slice(0, MAX_MEMBERS_PER_ASSO)) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const userId = id(r.userId);
+    if (!userId) continue;
+    members.push({
+      userId,
+      name: text(r.name, MAX_NAME_LENGTH),
+      role: text(r.role, MAX_NAME_LENGTH),
+    });
+  }
+  return members;
+}
+
 /** Validates the directory panel, returning null when the author published none. */
 function toDirectory(raw: unknown): PublishedCarteDirectory | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -382,7 +453,14 @@ function toDirectory(raw: unknown): PublishedCarteDirectory | null {
           const a = entry as Record<string, unknown>;
           const assoId = id(a.assoId);
           if (!assoId) continue;
-          assos.push({ assoId, line: text(a.line, MAX_LINE_LENGTH) });
+          // A structured roster is the truth and the line is derived from it; a client that sends
+          // only the line (built before 2026-11-14) is still accepted, its line taken as sent.
+          if (Array.isArray(a.members)) {
+            const members = toDirectoryMembers(a.members);
+            assos.push({ assoId, line: directoryLine(members), members });
+          } else {
+            assos.push({ assoId, line: text(a.line, MAX_LINE_LENGTH) });
+          }
         }
       }
       zones.push({ label: text(z.label, MAX_NAME_LENGTH), assos });
@@ -469,4 +547,71 @@ export function sanitizePublishedCarte(raw: unknown): PublishedCarte | null {
     texts,
     directory: toDirectory(r.directory),
   };
+}
+
+/**
+ * The published document as it may leave the server unauthenticated: the stored one minus every
+ * directory roster ({@link PublishedCarteDirectoryAsso.members}), which carries account ids. Each
+ * directory entry is served as `{ assoId, line }`, the shape the portail has always read, and every
+ * other key keeps its place - the served bytes are what they were before rosters were stored.
+ */
+export function publicCarte(carte: PublishedCarte): PublishedCarte {
+  const directory = carte.directory;
+  if (!directory || !Array.isArray(directory.zones)) return carte;
+  return {
+    ...carte,
+    directory: {
+      ...directory,
+      zones: directory.zones.map((zone) => ({
+        ...zone,
+        assos: zone.assos.map(({ assoId, line }) => ({ assoId, line })),
+      })),
+    },
+  };
+}
+
+/** Whether `userId` is a member of `assoId` today. */
+export type CurrentMembership = (assoId: string, userId: string) => boolean;
+
+/** Every (association, account) pair a publication names: its cards and its directory rosters. */
+export function publishedMemberPairs(carte: PublishedCarte): { assoId: string; userId: string }[] {
+  const cards = carte.units.flatMap((u) =>
+    u.cards.map((c) => ({ assoId: u.assoId, userId: c.userId }))
+  );
+  const rosters = (carte.directory?.zones ?? []).flatMap((z) =>
+    z.assos.flatMap((a) => (a.members ?? []).map((m) => ({ assoId: a.assoId, userId: m.userId })))
+  );
+  return [...cards, ...rosters];
+}
+
+/**
+ * The publication without every card and roster member that is not a CURRENT member of the
+ * association it is drawn under - what a stale editor (opened before a member left, or before an
+ * account was erased) would otherwise put back on the public map. A roster's line is re-derived
+ * from what is kept; a line sent without a roster cannot be checked and is kept as sent.
+ */
+export function keepCurrentMembers(
+  carte: PublishedCarte,
+  isMember: CurrentMembership
+): { carte: PublishedCarte; droppedCards: number; droppedMembers: number } {
+  let droppedCards = 0;
+  let droppedMembers = 0;
+  const units = carte.units.map((u) => {
+    const cards = u.cards.filter((c) => isMember(u.assoId, c.userId));
+    droppedCards += u.cards.length - cards.length;
+    return { ...u, cards };
+  });
+  const directory = carte.directory && {
+    ...carte.directory,
+    zones: carte.directory.zones.map((z) => ({
+      ...z,
+      assos: z.assos.map((a) => {
+        if (!a.members) return a;
+        const members = a.members.filter((m) => isMember(a.assoId, m.userId));
+        droppedMembers += a.members.length - members.length;
+        return { assoId: a.assoId, line: directoryLine(members), members };
+      }),
+    })),
+  };
+  return { carte: { ...carte, units, directory }, droppedCards, droppedMembers };
 }

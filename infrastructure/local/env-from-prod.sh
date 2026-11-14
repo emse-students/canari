@@ -117,8 +117,11 @@ TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES COMMUNITY_OWNED_MAX"
 # token for anybody. Not REGENERATE either: a regenerated hex string is no EC key, and core-service
 # would say so at error on every boot. Empty, the local stack mints nothing and opens sites plainly.
 # MICONNECT_READER_TOKEN because it reads every MiConnect account: read-only, still personal data.
+# The CLOUDFLARE_SFU_* pair because it is production's SFU app, billed to production: a local stack
+# that opened sessions on it would spend production's quota and mix its sessions with real calls.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
-LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY MICONNECT_READER_TOKEN"
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY MICONNECT_READER_TOKEN
+CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

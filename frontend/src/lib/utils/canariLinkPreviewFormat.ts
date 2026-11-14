@@ -38,6 +38,7 @@ export interface CanariLinkPreview {
 export type CanariLinkTarget =
   | { kind: 'post'; postId: string }
   | { kind: 'form'; formId: string }
+  | { kind: 'guest-form'; formId: string }
   | { kind: 'association'; slug: string }
   | { kind: 'profile'; userId: string }
   | { kind: 'community-invite'; token: string }
@@ -58,7 +59,12 @@ export function parseCanariLinkTarget(href: string): CanariLinkTarget | null {
   const form = pathname.match(/^\/forms\/([^/]+)$/);
   if (form) return { kind: 'form', formId: form[1] };
 
-  const asso = pathname.match(/^\/associations\/([^/]+)$/);
+  // The guest address of a public form: the one a post or a chat carries, since a form that takes
+  // guest answers is SHARED by it (`formSharePath`). It names the same form as `/forms/<id>`.
+  const guestForm = pathname.match(/^\/f\/([^/]+)$/);
+  if (guestForm) return { kind: 'guest-form', formId: guestForm[1] };
+
+  const asso = pathname.match(/^\/(?:associations|lists)\/([^/]+)$/);
   if (asso) return { kind: 'association', slug: asso[1] };
 
   const profile = pathname.match(/^\/profile\/([^/]+)$/);

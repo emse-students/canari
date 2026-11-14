@@ -1048,7 +1048,7 @@ replays) and ended the reachability probe, all on the say-so of something that i
   `{ groupId, level }`, `{ disabled }`, `{ status: 'added' }`).
 
 **Still open:** under a portal nothing MARKS the server down, so the store stays "reachable" and the
-portal's end brings no reconnect edge ([backlog](../backlog.md#p3---connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for-the-ladder-review-of-2428-2026-10-25)).
+portal's end brings no reconnect edge ([backlog](../backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)).
 **Owed:** one dev reading behind a portal, because this changes reachability for every REST call.
 
 Tests: `trackedFetch.test.ts` (a portal `511`, an HTML `403`, an edge `502` page neither clear offline

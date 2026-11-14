@@ -16,6 +16,7 @@ import {
   PRESENCE_SESSIONS,
   type SessionCapability,
   addressingSessionsKey,
+  addressabilityOf,
   declaresAddressedHistory,
   joinAskSessionsKey,
   publishIfAddressable,
@@ -143,6 +144,25 @@ maybe('the check-and-publish scripts against a real Redis', () => {
     await redis.del(hash, joinAsk);
     expect(await send('frame-4')).toBe(false);
     expect(await send('frame-4b', JOIN_ASK_CAPABILITY)).toBe(false);
+    expect(frames()).toEqual([]);
+  });
+
+  /** The script says WHY it refused, so the log never has to read Redis a second time. */
+  it('tells an offline device (no presence key) from an online one that did not declare', async () => {
+    expect(await addressabilityOf(redis, user, device)).toBe('offline');
+    expect(await addressabilityOf(redis, user, device, undefined, JOIN_ASK_CAPABILITY)).toBe(
+      'offline'
+    );
+
+    await redis.set(presence, 'true');
+    expect(await addressabilityOf(redis, user, device)).toBe('undeclared');
+
+    await redis.set(presence, PRESENCE_SESSIONS);
+    await session('p1:1', false, false);
+    expect(await addressabilityOf(redis, user, device)).toBe('undeclared');
+
+    await session('p1:1', true, true);
+    expect(await addressabilityOf(redis, user, device)).toBe('addressable');
     expect(frames()).toEqual([]);
   });
 

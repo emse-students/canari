@@ -16,7 +16,12 @@
     pickGridRendition,
     type GifResult,
   } from '$lib/utils/chat/gifSearch';
-  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
+  import {
+    MediaService,
+    compressImage,
+    IMAGE_COMPRESS_PRESETS,
+    readImageDimensions,
+  } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
@@ -134,6 +139,11 @@
         const compressed = await compressImage(file, maxWidth, maxHeight, quality);
         uploadFile = compressed.file;
         dims = { width: compressed.width, height: compressed.height };
+      } else if (file.type === 'image/gif') {
+        // A GIF is never re-encoded, so its size is read here: without it the comment drew it in a
+        // 4:3 fallback box and cropped it (2026-11-13).
+        dims = (await readImageDimensions(file)) ?? undefined;
+        if (!dims) console.warn('[comment-media] GIF dimensions unreadable, sent without a size');
       }
       // Read at upload time: a token held since the card was drawn expires after 15 min.
       const ref = await mediaService.encryptAndUpload(

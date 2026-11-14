@@ -1,5 +1,7 @@
 ## P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - designed, not built
 
+target: 1.10.0
+
 **What is true after #3185.** The inviter's join push (`joinPush.ts`, `sendFullHistoryBundle`) is an
 ADDRESSED history answer, and an addressed frame is transport-only: the server publishes it only to a
 device whose every live session declared the capability, and refuses it otherwise
@@ -51,7 +53,7 @@ pull request and its own adversarial review for that.
 asks; an older responder leaves the marker set.
 
 **The reading owed on a pre-release, which FAILS until this ships and must then pass:** reading 2 of
-the nicknames row of the [verification table](../backlog.md#owed-a-verification-and-nothing-else) with the new
+the nicknames row of the [readings owed](../plan.md#readings-owed) with the new
 member's device NOT connected (the app killed, or the tab closed) when "Ajouter" is pressed, then
 opened a minute later. Today the inviter's log reads `[JOIN_PUSH] <group>... NOT DELIVERED to
 <account>:<device>` at warn and the new member shows no nickname; once built, the nickname reads

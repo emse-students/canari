@@ -349,19 +349,35 @@ describe('a post and a neutral event', () => {
   });
 
   it('the two forward post readers read an association-presented event only', async () => {
-    const calendarRepo = { findOne: jest.fn(async () => null) };
+    const wheres: [string, Record<string, unknown> | undefined][] = [];
+    const qb = {
+      where: jest.fn((sql: string, params?: Record<string, unknown>) => {
+        wheres.push([sql, params]);
+        return qb;
+      }),
+      andWhere: jest.fn((sql: string, params?: Record<string, unknown>) => {
+        wheres.push([sql, params]);
+        return qb;
+      }),
+      getOne: jest.fn(async () => null),
+    };
+    const calendarRepo = { createQueryBuilder: jest.fn(() => qb) };
     const postRepo = {
       findOne: jest.fn(async () => ({ id: 'p1', linkedCalendarEventId: 'ev-1' })),
     };
     const service = construct({ calendarRepo });
     Object.assign(service, { postRepo });
-    await expect(service.findCalendarEventByLinkedPost('p1')).resolves.toBeNull();
-    await expect(service.findValidatedCalendarEventSummary('ev-1')).resolves.toBeNull();
-    const queries = calendarRepo.findOne.mock.calls as unknown as [{ where: Overrides }][];
-    expect(queries).toHaveLength(2);
-    for (const [query] of queries) {
-      expect(query.where.presentation).toBe(AssociationCalendarEventPresentation.Association);
+    await expect(service.findCalendarEventByLinkedPost('p1', 'reader-1')).resolves.toBeNull();
+    await expect(service.findValidatedCalendarEventSummary('ev-1', 'reader-1')).resolves.toBeNull();
+    expect(calendarRepo.createQueryBuilder).toHaveBeenCalledTimes(2);
+    const presented = wheres.filter(([sql]) => sql.includes('e.presentation'));
+    expect(presented).toHaveLength(2);
+    for (const [, params] of presented) {
+      expect(params?.presented).toBe(AssociationCalendarEventPresentation.Association);
     }
+    // Each read also asks the event's own predicate of the reader (an institution's reach).
+    const gated = wheres.filter(([sql]) => sql.includes('"reachPublic" IS NULL'));
+    expect(gated.map(([, params]) => params?.cardViewerId)).toEqual(['reader-1', 'reader-1']);
   });
 });
 

@@ -559,3 +559,19 @@ describe('the cell border is adjustable (user, 2026-10-18)', () => {
     expect(html).toContain('border-top:1px solid rgba(0,0,0,0.10);');
   });
 });
+
+describe('buildPreviewInnerHtml - a neutral Campus event', () => {
+  it('draws its colour band only: no logo, no initials', () => {
+    const html = buildPreviewInnerHtml(
+      [makeEvent({ title: 'Gala', presentation: 'neutral', associationLogoUrl: '/logo1.png' })],
+      2026,
+      4,
+      { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null }
+    );
+
+    expect(html).toContain('Gala');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('logo1.png');
+    expect(html).not.toContain('>CA<');
+  });
+});

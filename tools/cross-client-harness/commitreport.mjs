@@ -35,6 +35,12 @@ const RATE = /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \
 const BUSY = /\[CRON\] reportCommitLogHealth: (\d+) group\(s\) were re-keyed \d+ or more times in the last hour by ONE device - .* Busiest \d+ of \d+: (.+)$/;
 const BUSY_ENTRY = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\((?:key group, )?epoch \d+, \d+ commit\(s\) by \d+ device\(s\), (\S+) x\d+\)/g;
 const CONTIGUOUS = /\[CRON\] reportCommitLogHealth: every commit log is contiguous from its oldest retained commit to its group's head$/;
+// EACH HOLE IS ACCUSED ONCE (`report_accusations`, migration 049): the holes already accused are
+// counted by ONE daily line, and a hole that leaves the report (its group deleted) is said once. Both
+// are LOG lines about holes the ERROR already named - a note here, never a finding. A NEW hole is
+// still the ERROR, and still unmatched below.
+const DAILY = /\[CRON\] reportCommitLogHealth: daily summary - (\d+) group\(s\) with a hole in their commit log already accused\b/;
+const LEFT = /\[CRON\] reportCommitLogHealth: (\d+) item\(s\) accused earlier are no longer reported \(healed, or gone with their group\) and leave the ledger: /;
 
 /** Docker's receive instant at the head of a `--timestamps` line, in ms, or null. */
 export function lineInstant(line) {
@@ -71,6 +77,16 @@ export function judgeCommitReports({ lines, ownedIds, killOneSpans, spanMs }) {
     const at = lineInstant(line);
     if (RATE_NONE.test(line) || CONTIGUOUS.test(line)) {
       if (!CONTIGUOUS.test(line)) reports += 1;
+      continue;
+    }
+    const daily = DAILY.exec(line);
+    if (daily) {
+      notes.push(`${daily[1]} commit-log hole(s) already accused, counted by the daily summary`);
+      continue;
+    }
+    const left = LEFT.exec(line);
+    if (left) {
+      notes.push(`${left[1]} accused commit-log hole(s) left the report: ${short(line)}`);
       continue;
     }
     const rate = RATE.exec(line);

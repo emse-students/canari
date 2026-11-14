@@ -1,9 +1,15 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import {
+  agendaSubscriptionToken,
   assertAgendaSignature,
   canonicalAgendaSelection,
+  eventIcsSignatureMatches,
+  legacyAgendaLinkShape,
+  logDigest,
   selectionWithinSpaces,
   signAgendaSelection,
+  signEventIcs,
+  verifiedAgendaSubscriptionId,
 } from './agenda-signature';
 import { AssociationsService } from './associations.service';
 
@@ -133,53 +139,194 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
     });
   });
 
-  it('signs the whole own campus for staff (campus, empty cursus), and nothing narrower or wider', async () => {
-    const svc = makeService([], { campus: 'saint-etienne', cursus: [] });
-    const { sig } = await svc.signAgendaFeedSelection(
-      'staff-1',
-      { campus: 'saint-etienne', formation: null },
-      null
-    );
-    expect(() =>
-      assertAgendaSignature({ campus: 'saint-etienne', formation: null, associationId: null }, sig)
-    ).not.toThrow();
-    for (const selection of [
-      { campus: 'gardanne', formation: null },
-      { campus: 'saint-etienne', formation: 'ICM' },
-      { campus: null, formation: 'ICM' },
+  it('signs a PAIR only: a campus, a formation or an association alone is a typed 403, looked up nowhere (2026-11-14)', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    for (const [selection, associationId] of [
+      // The staff link: a whole campus, allowed to subscribe, but a `sig` for it now serves nothing.
+      [{ campus: 'saint-etienne', formation: null }, null],
+      [{ campus: null, formation: 'ICM' }, null],
+      [{ campus: null, formation: null }, id],
     ] as const) {
-      await expect(svc.signAgendaFeedSelection('staff-1', selection, null)).rejects.toMatchObject({
-        response: { code: 'AGENDA_SELECTION_FORBIDDEN' },
-      });
+      const svc = makeService([], { campus: 'saint-etienne', cursus: [] });
+      await expect(
+        svc.signAgendaFeedSelection('staff-1', selection, associationId)
+      ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
+      const query = (svc as unknown as { assoRepo: { manager: { query: jest.Mock } } }).assoRepo
+        .manager.query;
+      expect(query).not.toHaveBeenCalled();
     }
   });
 
-  it('refuses a campus to a reader with no campus, and to a student whose formation has no space', async () => {
-    await expect(
-      makeService([], { campus: null, cursus: [] }).signAgendaFeedSelection(
-        'u',
-        { campus: 'gardanne', formation: null },
-        null
-      )
-    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
-    await expect(
-      makeService([], {
-        campus: 'gardanne',
-        cursus: [{ formation: 'ICM', promo: 2021 }],
-      }).signAgendaFeedSelection('u', { campus: 'gardanne', formation: null }, null)
-    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
+  it('signs a pair with an association when the pair is the reader own space', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    const { sig } = await makeService([
+      { campus: 'gardanne', formation: 'ICM' },
+    ]).signAgendaFeedSelection('user-1', { campus: 'gardanne', formation: 'ICM' }, id);
+    expect(() =>
+      assertAgendaSignature({ campus: 'gardanne', formation: 'ICM', associationId: id }, sig)
+    ).not.toThrow();
+  });
+});
+
+describe('the subscription token (2026-11-14)', () => {
+  const previous = process.env.AGENDA_SIGNING_KEY;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previous;
   });
 
-  it('signs an association for a reader with no space and no membership (membership never matters)', async () => {
-    const svc = makeService([]);
-    const id = '00000000-0000-4000-8000-000000000001';
-    const { sig } = await svc.signAgendaFeedSelection(
-      'user-1',
-      { campus: null, formation: null },
-      id
-    );
+  const ID = '00000000-0000-4000-8000-00000000a001';
+
+  it('is `<id>.<HMAC>`, deterministic, and verifies back to its id', () => {
+    const token = agendaSubscriptionToken(ID);
+    expect(token.startsWith(`${ID}.`)).toBe(true);
+    expect(agendaSubscriptionToken(ID)).toBe(token);
+    expect(verifiedAgendaSubscriptionId(token)).toBe(ID);
+    expect(verifiedAgendaSubscriptionId(` ${token} `)).toBe(ID);
+  });
+
+  it('refuses a tampered signature, a swapped id, a non-uuid and an empty token', () => {
+    const token = agendaSubscriptionToken(ID);
+    const flipped = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+    const other = '00000000-0000-4000-8000-00000000a002';
+    expect(verifiedAgendaSubscriptionId(flipped)).toBeNull();
+    expect(verifiedAgendaSubscriptionId(`${other}.${token.split('.')[1]}`)).toBeNull();
+    expect(verifiedAgendaSubscriptionId(`not-a-uuid.${token.split('.')[1]}`)).toBeNull();
+    expect(verifiedAgendaSubscriptionId(ID)).toBeNull();
+    expect(verifiedAgendaSubscriptionId('')).toBeNull();
+    expect(verifiedAgendaSubscriptionId(undefined)).toBeNull();
+  });
+
+  it('is no selection signature and no event signature, and neither is one', () => {
+    const token = agendaSubscriptionToken(ID);
+    const hmac = token.split('.')[1];
+    // A selection's `sig` or an event's put after the id is not a token...
+    const selectionSig = signAgendaSelection({ campus: null, formation: null, associationId: ID });
+    expect(verifiedAgendaSubscriptionId(`${ID}.${selectionSig}`)).toBeNull();
+    expect(verifiedAgendaSubscriptionId(`${ID}.${signEventIcs(ID)}`)).toBeNull();
+    // ...and a token's HMAC is no selection's nor event's signature.
     expect(() =>
-      assertAgendaSignature({ campus: null, formation: null, associationId: id }, sig)
-    ).not.toThrow();
+      assertAgendaSignature({ campus: null, formation: null, associationId: ID }, hmac)
+    ).toThrow(ForbiddenException);
+    expect(eventIcsSignatureMatches(ID, hmac)).toBe(false);
+  });
+
+  it('dies with the key: a rotated key ends every token', () => {
+    const token = agendaSubscriptionToken(ID);
+    process.env.AGENDA_SIGNING_KEY = `${KEY}-rotated`;
+    try {
+      expect(verifiedAgendaSubscriptionId(token)).toBeNull();
+    } finally {
+      process.env.AGENDA_SIGNING_KEY = KEY;
+    }
+  });
+
+  it('names a legacy link by 8 hex of its hash, never by the link itself', () => {
+    const sig = signAgendaSelection({ campus: 'gardanne', formation: 'ICM', associationId: null });
+    const name = logDigest(sig);
+    expect(name).toMatch(/^[0-9a-f]{8}$/);
+    expect(logDigest(` ${sig} `)).toBe(name);
+    expect(sig).not.toContain(name);
+  });
+
+  it('names the shape of a legacy selection link', () => {
+    expect(legacyAgendaLinkShape({ campus: 'gardanne', formation: 'ICM' })).toBe('pair');
+    expect(legacyAgendaLinkShape({ campus: 'gardanne', formation: null })).toBe('campus');
+    expect(legacyAgendaLinkShape({ campus: null, formation: 'ICM' })).toBe('formation');
+    expect(legacyAgendaLinkShape({ campus: null, formation: null })).toBe('association');
+  });
+});
+
+describe('AssociationsService.subscribeAgenda (2026-11-14)', () => {
+  const previous = process.env.AGENDA_SIGNING_KEY;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previous;
+  });
+
+  const ID = '00000000-0000-4000-8000-00000000a001';
+
+  function makeService(
+    spaces: Array<{ campus: string; formation: string }>,
+    profile: { campus: string | null; cursus: unknown } | null = null,
+    insert: () => Promise<unknown> = () => Promise.resolve([{ id: ID }])
+  ) {
+    const query = jest.fn((sql: string) => {
+      if (sql.includes('INSERT INTO agenda_subscriptions')) return insert();
+      if (sql.includes('FROM users WHERE')) return Promise.resolve(profile ? [profile] : []);
+      return Promise.resolve(spaces);
+    });
+    const svc = Object.create(AssociationsService.prototype) as AssociationsService;
+    Object.assign(svc, {
+      assoRepo: { manager: { query } },
+      logger: { warn: jest.fn(), log: jest.fn(), debug: jest.fn(), error: jest.fn() },
+      findById: jest.fn(() => Promise.resolve({})),
+    });
+    return { svc, query };
+  }
+  const inserts = (query: jest.Mock) =>
+    query.mock.calls.map((c) => String(c[0])).filter((sql) => sql.includes('INSERT'));
+
+  it('writes ONE statement, keyed on the selection, and answers the token of the row it returns', async () => {
+    const { svc, query } = makeService([{ campus: 'gardanne', formation: 'ICM' }]);
+    await expect(
+      svc.subscribeAgenda('user-1', { campus: 'gardanne', formation: 'ICM' }, null)
+    ).resolves.toEqual({ token: agendaSubscriptionToken(ID) });
+    const written = inserts(query);
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(/ON CONFLICT \("userId", "selectionKey"\) DO UPDATE/);
+    expect(written[0]).toMatch(/RETURNING id/);
+    expect(query.mock.calls.some((c) => String(c[0]).includes('SELECT id FROM agenda'))).toBe(
+      false
+    );
+    const insertCall = query.mock.calls.find((c) => String(c[0]).includes('INSERT')) as unknown[];
+    expect(insertCall[1]).toEqual(['user-1', 'gardanne', 'ICM', null, 'gardanne|ICM|-']);
+  });
+
+  it('lets staff subscribe to their whole campus (the bound the legacy signature had)', async () => {
+    const { svc, query } = makeService([], { campus: 'saint-etienne', cursus: [] });
+    await svc.subscribeAgenda('staff-1', { campus: 'saint-etienne', formation: null }, null);
+    expect(inserts(query)).toHaveLength(1);
+  });
+
+  it('refuses a selection outside the reader spaces and writes nothing', async () => {
+    const { svc, query } = makeService([{ campus: 'gardanne', formation: 'ICM' }]);
+    await expect(
+      svc.subscribeAgenda('user-1', { campus: 'saint-etienne', formation: 'ICM' }, null)
+    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
+    expect(inserts(query)).toHaveLength(0);
+  });
+
+  it('checks the signing key BEFORE writing: an unset key is a 503 and no row', async () => {
+    const { svc, query } = makeService([{ campus: 'gardanne', formation: 'ICM' }]);
+    delete process.env.AGENDA_SIGNING_KEY;
+    try {
+      await expect(
+        svc.subscribeAgenda('user-1', { campus: 'gardanne', formation: 'ICM' }, null)
+      ).rejects.toMatchObject({ status: 503 });
+    } finally {
+      process.env.AGENDA_SIGNING_KEY = KEY;
+    }
+    expect(inserts(query)).toHaveLength(0);
+  });
+
+  it('maps a foreign-key violation (the association deleted meanwhile) to the 404 findById gives, by SQLSTATE', async () => {
+    const fk = Object.assign(new Error('any wording at all'), { code: '23503' });
+    const { svc } = makeService([], null, () => Promise.reject(fk));
+    await expect(
+      svc.subscribeAgenda('user-1', { campus: null, formation: null }, ID)
+    ).rejects.toBeInstanceOf(NotFoundException);
+    // Any other failure is not dressed up as a 404.
+    const other = Object.assign(new Error('violates foreign key constraint'), { code: '57014' });
+    const { svc: svc2 } = makeService([], null, () => Promise.reject(other));
+    await expect(
+      svc2.subscribeAgenda('user-1', { campus: null, formation: null }, ID)
+    ).rejects.toBe(other);
   });
 });

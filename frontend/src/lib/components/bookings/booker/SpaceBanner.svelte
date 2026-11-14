@@ -1,13 +1,18 @@
 <script lang="ts">
-  import { CalendarClock, QrCode, Settings2, Share2 } from '@lucide/svelte';
+  import { CalendarClock, MessageCircle, QrCode, Settings2, Share2 } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { internalPath } from '$lib/utils/internalPath';
+  import Button from '$lib/components/ui/Button.svelte';
   import SpacePoster from '$lib/components/bookings/SpacePoster.svelte';
   import type { BookerSpace } from '$lib/bookings/api';
   import { spaceDashboardHref, spaceHref } from '$lib/bookings/routes';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import { canShareOut, runShareOut, shareTextOut } from '$lib/sharing/shareOut';
+  import { getSavedUserId } from '$lib/stores/user';
+  import { requestDirectConversationWith } from '$lib/utils/chat/pendingChatOpening';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -32,6 +37,26 @@
     } else {
       void copyPublicShareLink(spaceHref(space.id));
     }
+  }
+
+  /** The person responsible, unless that is the reader: nobody writes to themselves. */
+  const contact = $derived(
+    space.contact && space.contact.userId !== getSavedUserId() ? space.contact : null
+  );
+
+  /**
+   * Asks the chat page for the DM with the person responsible - found or created there, the same
+   * hand-over as a profile's "Message" button (`pendingChatOpening.ts`).
+   */
+  function writeToContact() {
+    const owner = getSavedUserId();
+    if (!contact || !owner) {
+      console.warn('[BOOKINGS] "Contact" pressed with no contact or no signed-in account');
+      return;
+    }
+    Log.d(`[BOOKINGS] "Contact": asking the chat page for the DM with the space's responsible`);
+    requestDirectConversationWith(owner, contact.userId, sessionStorage);
+    goto(resolve('/chat'));
   }
 
   const button =
@@ -59,6 +84,17 @@
       <h1 class="text-text-main text-2xl font-bold break-words">{space.name}</h1>
       {#if space.description}
         <p class="text-text-main mt-1 text-sm">{space.description}</p>
+      {/if}
+      {#if contact}
+        <p
+          class="text-text-muted mt-2 flex flex-wrap items-center gap-2 text-sm"
+          data-testid="space-contact"
+        >
+          <span>{m.bookings_space_contact_label({ name: contact.displayName })}</span>
+          <Button variant="secondary" size="compact" onclick={writeToContact}>
+            <MessageCircle size={16} />{m.bookings_space_contact_button()}
+          </Button>
+        </p>
       {/if}
     </div>
     <div class="flex flex-wrap items-center gap-2 sm:shrink-0">

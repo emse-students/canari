@@ -44,6 +44,7 @@
   } from '$lib/forms/questionMenus';
   import { ensureMatrixAxes } from '$lib/forms/matrixEditor';
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -191,11 +192,14 @@
   const hasOptions = $derived(
     !['short_text', 'long_text', 'linear_scale', 'file', PRODUCT_GRID_TYPE].includes(item.type)
   );
-  /**
-   * A priced grid is never required on its own - the ORDER is, across the form's grids - so its
-   * card has no asterisk and no required switch (it is sent `required: true`, `toFormItemsPayload`).
-   */
+  /** A priced grid: its own editor, and its "Obligatoire" switch like every question's. */
   const isPricedGrid = $derived(item.type === PRODUCT_GRID_TYPE);
+  /**
+   * Whether this card draws the switch and the asterisk: every question's, a priced grid's only on an
+   * estate that stores its switch ([LEGACY] `gridRequiredSwitchOn`: an older one saves every grid
+   * required and means nothing by it, so the card says nothing).
+   */
+  const drawsRequired = $derived(!isPricedGrid || gridRequiredSwitchOn());
 
   /**
    * The type menu's choice. A kind already on screen changes nothing (a "Grille de choix" keeps
@@ -228,10 +232,13 @@
     else if (action === 'remove') onRemove();
   }
 
-  /** Turns the question into a priced grid: its definition, its stored flag, and the page told. */
+  /**
+   * Turns the question into a priced grid: its definition, its "Obligatoire" switch off (the
+   * owner's default, 2026-11-13: a merch form is ordered from whichever article), and the page told.
+   */
   function becomePricedGrid() {
     if (!item.productGrid) item.productGrid = newProductGrid();
-    item.required = true;
+    item.required = false;
     onBecamePricedGrid?.();
   }
 
@@ -359,7 +366,7 @@
             ? 'text-text-main'
             : 'text-text-muted/60 italic'}"
           >{item.label ||
-            m.form_builder_title_placeholder()}{#if item.required && !isPricedGrid}<span
+            m.form_builder_title_placeholder()}{#if item.required && drawsRequired}<span
               class="ml-0.5 text-red-500"
               data-testid="required-mark">*</span
             >{/if}</span
@@ -658,7 +665,7 @@
       role="toolbar"
       aria-label={m.form_builder_settings_row_aria()}
     >
-      {#if !isPricedGrid}
+      {#if drawsRequired}
         <button
           type="button"
           onclick={() => (item.required = !item.required)}

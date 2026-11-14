@@ -15,6 +15,10 @@ import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
+import {
+  memoryAccusationLedger,
+  type MemoryAccusationLedger,
+} from './testing/memoryAccusationLedger';
 import { COMMIT_LOG_REPORT_TOP_N, COMMIT_RATE_WARN_PER_DEVICE_HOUR } from './retention.constants';
 
 /**
@@ -28,6 +32,8 @@ import { COMMIT_LOG_REPORT_TOP_N, COMMIT_RATE_WARN_PER_DEVICE_HOUR } from './ret
  */
 describe('AppController - reportCommitLogHealth', () => {
   let controller: AppController;
+  /** The report's ledger; fresh per test, shared by every run within one. */
+  let ledger: MemoryAccusationLedger;
   let rateRows: unknown[];
   let holeRows: unknown[];
   let query: jest.Mock;
@@ -66,6 +72,7 @@ describe('AppController - reportCommitLogHealth', () => {
   });
 
   beforeEach(async () => {
+    ledger = memoryAccusationLedger();
     jest.clearAllMocks();
     rateRows = [];
     holeRows = [];
@@ -79,7 +86,7 @@ describe('AppController - reportCommitLogHealth', () => {
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: { ...emptyRepo(), manager: ledger } },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
@@ -198,5 +205,68 @@ describe('AppController - reportCommitLogHealth', () => {
     // One grouped query over the estate, never one per group.
     expect(sql).toContain('GROUP BY "groupId"');
     expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  describe('each hole is accused ONCE (report_accusations)', () => {
+    it('accuses a hole on first sighting, then counts it silently while it stands still', async () => {
+      holeRows = [hole('g-old', 121, 129, 130)];
+      await run();
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(ledger.rows.get('commit_log_hole')?.get('g-old')?.state).toBe(
+        'first hole 121, 1 missing'
+      );
+
+      // The next hour: the head moved (a commit landed above the hole), the hole did not.
+      holeRows = [hole('g-old', 121, 130, 131)];
+      await run();
+      expect(error).toHaveBeenCalledTimes(1);
+    });
+
+    it('accuses a NEW hole alone, saying how many are known, while the known one stays quiet', async () => {
+      holeRows = [hole('g-old', 121, 129, 130)];
+      await run();
+
+      holeRows = [hole('g-new', 40, 50, 51), hole('g-old', 121, 129, 130)];
+      await run();
+
+      expect(error).toHaveBeenCalledTimes(2);
+      const line = String(error.mock.calls[1][0]);
+      expect(line).toContain(
+        '1 group(s) have a HOLE in their commit log that no earlier run accused'
+      );
+      expect(line).toContain('g-new(first hole at 40, 1 missing');
+      expect(line).toContain('(1 group(s) with a hole accused earlier, unchanged)');
+      expect(line).not.toContain('g-old(');
+    });
+
+    it('accuses a hole again when it GROWS', async () => {
+      holeRows = [hole('g-grow', 121, 129, 130)];
+      await run();
+
+      holeRows = [hole('g-grow', 121, 128, 130)];
+      await run();
+
+      expect(error).toHaveBeenCalledTimes(2);
+      expect(String(error.mock.calls[1][0])).toContain('g-grow(first hole at 121, 2 missing');
+    });
+
+    it('logs a healed hole once at LOG, and accuses it afresh if it ever returns', async () => {
+      holeRows = [hole('g-gone', 121, 129, 130)];
+      await run();
+
+      holeRows = [];
+      await run();
+      const healed = logged().filter((l) => l.includes('no longer reported'));
+      expect(healed).toHaveLength(1);
+      expect(healed[0]).toContain('g-gone(first hole 121, 1 missing, accused ');
+      expect(ledger.rows.get('commit_log_hole')?.size).toBe(0);
+
+      await run();
+      expect(logged().filter((l) => l.includes('no longer reported'))).toHaveLength(1);
+
+      holeRows = [hole('g-gone', 121, 129, 130)];
+      await run();
+      expect(error).toHaveBeenCalledTimes(2);
+    });
   });
 });

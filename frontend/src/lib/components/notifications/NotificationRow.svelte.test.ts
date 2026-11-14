@@ -528,6 +528,15 @@ describe('NotificationRow for the Lydia payments notices', () => {
     expect(target.textContent).toContain(m.notif_lydia_payments_paused_text({ name: 'BDE' }));
   });
 
+  it('words a bridge switch back as one: the historical account collects again, nothing paused', () => {
+    const target = renderRow({
+      ...row('lydia_payments_paused'),
+      meta: { cause: 'request-refused', bridge: 'switched-back' },
+    });
+    expect(target.textContent).toContain(m.notif_lydia_bridge_switched_back_text({ name: 'BDE' }));
+    expect(target.textContent).not.toContain(m.notif_lydia_payments_paused_text({ name: 'BDE' }));
+  });
+
   it('tells a new cashier which association added them, as a known row that opens', () => {
     const target = renderRow(row('lydia_cashier_added'));
     expect(target.textContent).toContain(m.notif_lydia_cashier_added_text({ name: 'BDE' }));

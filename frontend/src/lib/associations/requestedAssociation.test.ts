@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Association } from './api';
-import { withRequestedAssociation } from './requestedAssociation';
+import { AssociationPermissionFlag, type Association } from './api';
+import { formManagedAssociations, withRequestedAssociation } from './requestedAssociation';
 
 const asso = (id: string) => ({ id, name: id }) as Association;
 
@@ -21,5 +21,19 @@ describe('withRequestedAssociation', () => {
   it('leaves the list alone when the requested one cannot be loaded', async () => {
     const fetchOne = vi.fn().mockRejectedValue(new Error('404'));
     expect(await withRequestedAssociation([asso('a')], 'x', fetchOne)).toHaveLength(1);
+  });
+});
+
+describe('formManagedAssociations', () => {
+  // Owner, 2026-11-14: only the members holding "gérer les formulaires" manage an association's
+  // forms - a plain membership is not offered as a form's association.
+  it('keeps the memberships holding MANAGE_FORMS, and only those', () => {
+    const mine = [
+      { ...asso('plain'), permissions: 0 },
+      { ...asso('forms'), permissions: AssociationPermissionFlag.MANAGE_FORMS },
+      { ...asso('members'), permissions: AssociationPermissionFlag.MANAGE_MEMBERS },
+      asso('none'),
+    ];
+    expect(formManagedAssociations(mine).map((a) => a.id)).toEqual(['forms']);
   });
 });

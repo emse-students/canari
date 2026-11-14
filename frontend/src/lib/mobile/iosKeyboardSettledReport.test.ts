@@ -12,12 +12,31 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
   const native = readFileSync('src-tauri/gen/apple/Sources/canari/canari_ios.mm', 'utf8');
   const composer = readFileSync('src/lib/components/chat/ChatComposer.svelte', 'utf8');
 
-  it('runs in the keyboard animation completion, after the clamp', () => {
-    const completion = native.slice(native.indexOf('completion:^(__unused BOOL finished)'));
-    const clamp = completion.indexOf('CanariClampDocumentScroll(webView.scrollView)');
-    const report = completion.indexOf('CanariReportSettledKeyboardGeometry(webView)');
+  it('runs once every keyboard layout is in place, after the clamp', () => {
+    const settled = native.slice(native.indexOf('static void CanariKeyboardLayoutSettled('));
+    const body = settled.slice(0, settled.indexOf('\n}\n'));
+    const clamp = body.indexOf('CanariClampDocumentScroll(webView.scrollView)');
+    const report = body.indexOf('CanariReportSettledKeyboardGeometry(webView)');
     expect(clamp).toBeGreaterThan(-1);
     expect(report).toBeGreaterThan(clamp);
+    // The report reads the PAGE, so it runs once the page's reaction to the resize is on screen -
+    // after a screen-update proof - and only for the keyboard change still current: every call to the
+    // settle sits inside a proof's callback, behind a sequence check.
+    const calls = native.split('CanariKeyboardLayoutSettled(webView);').length - 1;
+    expect(calls).toBe(2);
+    for (const signature of [
+      'static void CanariSnapKeyboardFrame(',
+      'completion:^(__unused BOOL finished)',
+    ]) {
+      const from = native.slice(native.indexOf(signature));
+      const until = from.indexOf('CanariKeyboardLayoutSettled(webView);');
+      const before = from.slice(0, until);
+      expect(until).toBeGreaterThan(-1);
+      expect(before).toContain('CanariAfterScreenUpdates(webView,');
+      expect(before.lastIndexOf('g_keyboardChangeSeq')).toBeGreaterThan(
+        before.indexOf('CanariAfterScreenUpdates(webView,')
+      );
+    }
   });
 
   it('reads both halves: UIKit offset and range, and the page scroll, viewport and composer', () => {

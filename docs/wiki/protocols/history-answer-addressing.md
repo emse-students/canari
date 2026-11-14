@@ -58,6 +58,11 @@ a member of any age, and that push is filtered for its own reader like every oth
      online now and never enters the history stream;
    - **every addressed member device declared, on its live socket, that it applies rule 5** (rule 6).
    Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
+   The refusal's log line names the cause PER DEVICE (2026-11-13): `offline` (no presence key - the
+   usual one, a newcomer's phone when its Welcome is delivered, [backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md))
+   or `did-not-declare` (online, a live session without the capability). The Lua check returns `2` for
+   the first and `0` for the second (`addressabilityOf`), so nothing reads Redis a second time to
+   classify it; the behaviour is the same for both.
 4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`, which sets a
    `lock_timeout` so it fails rather than queue every send behind a long transaction), set when the
    send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule

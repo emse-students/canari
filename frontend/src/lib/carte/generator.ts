@@ -92,17 +92,28 @@ function isGenericRole(role: string): boolean {
 }
 
 /**
- * One association's roster, formatted exactly as the printed directory reads it.
+ * A roster already in print order, formatted as the printed directory reads it: "Name (Role) -
+ * Name - ...", only a role that says something in parentheses (user, D5).
+ *
+ * The server derives the PUBLISHED line with its own copy (`directoryLine` in
+ * `apps/social-service/src/associations/published-carte.ts`), from the roster this editor sends; the
+ * two are pinned to the same strings by `directory-line.cases.json` there, read by both specs.
+ */
+export function rosterLine(members: readonly Pick<PosterMemberRef, 'name' | 'role'>[]): string {
+  return members
+    .map((mem) => (mem.role && !isGenericRole(mem.role) ? `${mem.name} (${mem.role})` : mem.name))
+    .join(' - ');
+}
+
+/**
+ * One association's roster, formatted exactly as the printed directory reads it: by family name
+ * ({@link orderByFamilyName}), then {@link rosterLine}.
  *
  * Lives here because the poster and the PUBLISHED document both print it and must print the same
  * thing - it was written twice, and a change to one was a change only half the readers saw.
- *
- * Only a role that says something goes in parentheses (user, D5).
  */
 export function directoryLine(asso: Pick<PosterBubble, 'members'>): string {
-  return orderByFamilyName(asso.members)
-    .map((mem) => (mem.role && !isGenericRole(mem.role) ? `${mem.name} (${mem.role})` : mem.name))
-    .join(' - ');
+  return rosterLine(orderByFamilyName(asso.members));
 }
 
 /** One association rendered as a colored blob unit on the poster. */

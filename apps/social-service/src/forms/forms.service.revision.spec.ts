@@ -170,7 +170,8 @@ describe('FormsService - unpublished revisions', () => {
     };
     const associations: any = {
       isMember: jest.fn(async () => true),
-      mayAct: jest.fn(async () => false),
+      // The owner manages the association's forms (MANAGE_FORMS, owner 2026-11-14); a stranger not.
+      mayAct: jest.fn(async (user: string) => user === OWNER),
       collectsNow: jest.fn(async () => true),
       collectionSubjectOf: jest.fn(async () => null),
       assertPaymentsReady: jest.fn(async () => undefined),

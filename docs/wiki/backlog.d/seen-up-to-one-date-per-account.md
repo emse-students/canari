@@ -1,5 +1,7 @@
 ## P3 - "Seen up to": one server-side date per account, for the "Nouveau" badge and a real "unseen" first in Pour toi (owner, 2026-11-10, after 1.6.9)
 
+target: 1.10.0
+
 **Decided by the owner on 2026-11-10 (decision B of the 1.6.9 feed tabs). To build AFTER the
 `1.6.9` stable; not built.**
 

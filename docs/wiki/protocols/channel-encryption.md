@@ -915,6 +915,12 @@ nobody, which is exactly the shape of row the 2026-08-17 purge had to find by ha
 re-joins by external commit instead. That is the intended rung for this group - it holds seeds, not
 a conversation - but it is a difference from ordinary groups, not an oversight.
 
+**Read on production, 2026-11-14, read-only.** The commit limit: over the 30 days of
+`mls_commit_log` (1924 commits), the busiest user-minute held 99 commits (p99 17) against the 600
+limit, and 0 `[THROTTLE] REFUSED` on production or dev. The entitlement gate: 0
+`[ENTITLEMENT] UNANSWERED` on production (14 key-group entitlement questions, all answered
+`entitled=true`, in the 15.5 hours of log since `v1.6.11`) and on dev.
+
 #### WP-22, and the race that had no election
 
 **The client joins where the community is loaded** (`useChannelWorkspaces`), through one function,
@@ -1166,6 +1172,13 @@ decision, rather than learning it by failing:
   offline and park again, in a loop;
 - a row the server returned WITHOUT the flag is elected as if online and accused at warn level: that
   is a social service predating the field, and a bandwidth decision must not strand a want on it.
+
+**Read on the rig on 2026-11-14** (local estate at `ad2053fc0`, two web seats): a newcomer reaching a
+salon whose only holder was closed logged `wait for a holder to come online - 1 member(s) could
+answer and none has a device online` and showed nothing from before; once the holder came back it
+answered and the salon filled, and every ask of the day's rows named one online device. That is the
+production shape of 2026-09-24 reproduced on demand, so the reading closed on it; that community
+itself, as it stood that day, cannot be re-staged.
 
 **What presence does not see.** A backgrounded Android can hold its socket open, so `user:online` can
 be true for a device that will not process the frame (the DM history election randomises for that
@@ -3494,7 +3507,7 @@ rows until those age out of the 365-day window, and the v1 reader goes with the 
 ([legacy-compatibility](../legacy-compatibility.md)). **The verified MLS sender is MEASURED before it
 refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
 legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
-the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
+the [backlog](../backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md).
 
 ### 21.1 The verified sender, measured then refused (WP-G2-1, G2-1b)
 
@@ -3519,8 +3532,11 @@ An alpha deploys dev alone, so production cannot run it before a stable: the pre
 evidence is the INDIRECT reading - zero `[SENDER_MISMATCH]` of any kind on chat-delivery from
 2026-10-10 to 2026-10-24, the `live` path comparing the same envelope field throughout. The order is
 alpha, `path=distribution` read on dev (weak: a fictional seed plus testers), the stable, then the
-same line read on production AFTER it, a nonzero count triaged as the
-[backlog](../backlog.md#p3---the-distribution-paths-device-check-read-dev-on-the-alpha-production-after-the-stable) says. Three kinds:
+same line read on production AFTER it. **Read 2026-11-14, `v1.6.11` (#2090 is in every stable since
+`v1.5.0`): 0 `[SENDER_MISMATCH]` of any path or kind on production and on dev, and 0
+`POST /api/mls/sender-mismatch` in either access log.** A nonzero `kind=device` later is triaged from
+its reports before any further stable: an honest client disagreeing with its own credential reverts
+the device hand-over in a patch release; a sibling naming another device is the case it refuses. Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
@@ -4749,11 +4765,18 @@ one parked ask per device, bounded; the creator is a root; an unreadable roster 
 `BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
 (the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
 `appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
-`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
-COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link
-handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
-rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
-`admission is not proven` line on the answerer for an unproven newcomer.
+`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Read on the rig on 2026-11-14** (local
+estate at `ad2053fc0`, web seats): a fresh link WITH its fragment gave the newcomer a message written
+before the join once a holder was online (COMM-26, web), and an unproven salon grantee was answered
+`admission is not proven ... answering as 'joined', nothing from before their arrival` (COMM-31's
+line). The other proposed rows have no runner and are pinned by named cases instead, so the reading
+was closed on them: the app's link handler keeping the fragment (`appLinkNavigation.test.ts`, "keeps
+an invite link fragment"); an old link reading from arrival (`frameHandler.test.ts`, "hands an
+unproven newcomer ... what spans their arrival" and "answers an unproven repair as joined"); a
+member's add giving the past ("hands the past to a newcomer a rooted member admitted directly"); a
+rooted member's new device ("hands a member's NEW device everything since that member arrived"); a
+re-added member's old voucher (`graineAdmission.test.ts`, "does not verify once moved to another
+place in the history").
 
 ## 26. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
 

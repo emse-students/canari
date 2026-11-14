@@ -233,6 +233,16 @@
   );
   /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
   let frameReachesBottom = $state(true);
+  /**
+   * A LANDSCAPE VIDEO IN A PORTRAIT SCREEN (owner, 2026-11-14, iPhone): its frame is a thin strip in
+   * the middle, and a caption and a rail laid over that strip were squeezed and half hidden. They
+   * are drawn against the SCREEN instead, where a portrait reel carries them (Instagram's reels do
+   * the same: the picture centred full width, the author, the text and the actions on the dark
+   * page). A landscape window (a desktop, a turned phone) keeps them in the frame, which is wide.
+   */
+  const detachedOverlays = $derived(ratio > 1 && !viewportOrientation.landscape);
+  /** Whether what is drawn at the bottom touches the screen bottom, hence owes the inset. */
+  const overlaysReachBottom = $derived(detachedOverlays || frameReachesBottom);
 
   /**
    * The room under the caption and the rail: the bottom safe-area inset when the frame reaches the
@@ -241,7 +251,7 @@
    * 1rem let a tap on "Voir plus" grab the seek line (owner, 2026-11-10 and 2026-11-11).
    */
   const bottomPad = $derived(
-    `padding-bottom: calc(${frameReachesBottom ? 'var(--safe-area-inset-bottom, 0px) + ' : ''}${clearanceAboveSeekLineRem(CAPTION_TOGGLE_LINE_REM)}rem)`
+    `padding-bottom: calc(${overlaysReachBottom ? 'var(--safe-area-inset-bottom, 0px) + ' : ''}${clearanceAboveSeekLineRem(CAPTION_TOGGLE_LINE_REM)}rem)`
   );
   /** The rail carries a reel's tools (save, sound) even when it carries no social action. */
   const showRail = $derived(!!rail || page === 'reel' || page === 'replay' || visibleIsVideo);
@@ -301,6 +311,187 @@
     <ReelSaveButton reel={saveable} rail save={() => saveReplayFlow(post)} />
   {:else}
     <ReelSaveButton reel={saveable} rail />
+  {/if}
+{/snippet}
+
+<!-- THE CAPTION AND THE RAIL, drawn inside the frame (`ReelFrame`) or, over a landscape video in a
+     portrait screen, on the slide itself (`detachedOverlays`). One snippet, so the two places
+     are never two copies. -->
+{#snippet overlays()}
+  <!-- WHO PUBLISHED IT, AND WHAT THEY WROTE, BOTTOM-LEFT OVER A SCRIM (user, 2026-10-16, as on
+       Instagram). Anchored to the bottom, so a longer text or 2x type grows UPWARD, above the
+       player's bar. NEVER TALLER THAN THE FRAME: a letterboxed reel's frame can be shorter than
+       half the screen, so the block is a column capped at the frame (`max-h-full`) and the text
+       is the part that SHRINKS (`min-h-0`) and scrolls - the author row and the toggle stay.
+       Above the tap-outside layer (`z-20` over its `z-10`). Pointer-transparent except the
+       author link and the text controls, so a tap anywhere else still reaches the video.
+       The bottom safe-area inset is paid ONLY when the frame reaches the screen bottom: a
+       letterboxed frame sits well above the home indicator, and the inset there would leave the
+       caption about one line. -->
+  <div
+    class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {turnedOverVideo
+      ? 'pl-[calc(var(--safe-area-inset-left,env(safe-area-inset-left,0px))+1rem)] ' +
+        (showRail
+          ? 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+4rem)]'
+          : 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+1rem)]')
+      : showRail
+        ? 'pr-16 pl-4'
+        : 'pr-4 pl-4'} {expanded ? 'pt-4' : turnedOverVideo ? 'pt-6' : 'pt-16'}"
+    data-reel-turned={turnedOverVideo ? '' : undefined}
+    style={bottomPad}
+    data-reel-caption
+    data-reel-caption-inset={overlaysReachBottom ? 'safe-area' : 'none'}
+  >
+    {#if page === 'carousel' && panes.length > 1}
+      <!-- WHERE THE READER IS IN THE CAROUSEL (owner, 2026-11-11, as Instagram's under the photo):
+           one dot per media, the visible one lit, named "2 of 5". THE FIRST ROW OF THE CAPTION
+           BLOCK, so it sits on the media's bottom edge directly above the author line, rises with
+           the block when "Voir plus" unfolds it (the text is the part that shrinks, never this
+           row) and clears the player's line by the block's own bottom padding. The negative
+           margins undo the block's side padding so the row is centred on the MEDIA, not on the
+           room the rail leaves; the dots are far narrower than that room. Pointer-transparent. -->
+      <div
+        class="pointer-events-none mb-2 -ml-4 flex shrink-0 justify-center gap-1 self-stretch {showRail
+          ? '-mr-16'
+          : '-mr-4'}"
+        role="img"
+        aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
+        data-reel-carousel-dots
+      >
+        {#each panes as _pane, i (i)}
+          <span
+            class="size-1.5 rounded-full drop-shadow-sm {i === visibleIndex
+              ? 'bg-white'
+              : 'bg-white/40'}"
+            data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
+          ></span>
+        {/each}
+      </div>
+    {/if}
+    <div class="flex min-w-0 shrink-0 items-center gap-2">
+      {#if authorHref}
+        <!-- ONE NAME AND ONE BOX FOR ASSISTIVE TECH: the link is named by its `aria-label` and its
+             content is hidden from the tree, so VoiceOver no longer reads a second "Avatar de"
+             element inside it, and the link's frame is its own 44 px row rather than a rect
+             unioned from its children (iPhone 12, v1.2.9-alpha.4: the frame read 242 x 869 pt
+             around a 20 pt picture and a 23 pt name). -->
+        <a
+          href={authorHref}
+          class="focus-visible:ring-accent-icon pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2"
+          aria-label={postAuthorLinkLabel(post)}
+          data-reel-author
+        >
+          <span class="shrink-0" aria-hidden="true"><PostAuthorAvatar {post} size="sm" /></span>
+          <span class="truncate text-sm font-bold" aria-hidden="true">{authorName}</span>
+        </a>
+      {:else}
+        <span class="flex min-w-0 items-center gap-2" data-reel-author>
+          <span class="shrink-0"><PostAuthorAvatar {post} size="sm" /></span>
+          <span class="truncate text-sm font-bold">{authorName}</span>
+        </span>
+      {/if}
+      <!-- The same age, from the same helper, as the post header's: the viewer has no header. And
+           the same "Republie par X" beside it, which gives way BEFORE the name: the wrapper is
+           `contents`, so the time, the dot and the icon are items of this row that never shrink,
+           and the republishers are an item of basis 0 - they take only the room the name and the
+           time leave, and truncate to nothing first. The name shrinks only when it alone and the
+           time overflow the row. -->
+      <span class="contents text-xs font-medium" data-reel-time-line>
+        <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
+          >{timeAgo(post.createdAt)}</span
+        >
+        {#if post.studentsOnly}
+          <StudentsOnlyChip onMedia />
+        {/if}
+        {#if post.reach}
+          <InstitutionReachChip reach={post.reach} onMedia />
+        {/if}
+        {#if republished}
+          <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
+          <Repeat2 size={12} strokeWidth={2.5} class="shrink-0 opacity-70" aria-hidden="true" />
+          <span class="min-w-0 flex-1 basis-0 truncate opacity-70" data-reel-republished-by
+            ><EmojiText text={republished} /></span
+          >
+        {/if}
+      </span>
+    </div>
+    {#if revealed}
+      <RevealedAuthorLine
+        userId={revealed.userId}
+        fallback={revealed.name}
+        class="pointer-events-auto ml-8 shrink-0 text-white/80"
+        tall
+      />
+    {/if}
+    {#if post.markdown}
+      <!-- EXPANDED, THE TEXT SCROLLS ITSELF, up to half the screen: `data-reel-caption-open` keeps
+           the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it.
+           ITS LINKS AND MENTIONS ARE TAPPABLE, folded or not (owner, 2026-11-06: a post with a
+           link is in CanaReels): the text is pointer-transparent, its `a` and `button` are not.
+           They are the post card's own (`PostMarkdown` -> `PostMentionLink` -> `AppLink`, and
+           the app's link handler with its Safe Browsing gate). A tap on one is never a double
+           tap (`tapBelongsToInnerControl`) nor a swipe (no movement); a drag that starts on one
+           still pages, as everywhere on the reel. A long URL wraps anywhere, never past the
+           frame.
+           THE TEXT IS ALWAYS ON THE VIEWER'S DARK SCRIM, whatever the app's theme: `data-theme="dark"`
+           puts it in the `dark:` variant's scope (`app.css`), so its links, mentions and hashtags
+           - and their hover - take the colours they were given for a dark surface, the post
+           card's own. One attribute for every renderer, never a recolour per element. -->
+      <div
+        data-theme="dark"
+        class="mt-1 min-h-0 {expanded
+          ? 'pointer-events-auto max-h-[50dvh] touch-pan-y overflow-y-auto overscroll-contain'
+          : 'shrink-0'}"
+        data-reel-caption-open={expanded ? '' : undefined}
+      >
+        <PostMarkdown
+          markdown={post.markdown}
+          bind:element={textEl}
+          class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_button]:pointer-events-auto {expanded
+            ? ''
+            : turnedOverVideo
+              ? 'line-clamp-1'
+              : 'line-clamp-2'}"
+        />
+      </div>
+      {#if overflows || expanded}
+        <button
+          type="button"
+          class="tap-target pointer-events-auto mt-1 shrink-0 self-start text-xs font-bold outline-none hover:underline focus-visible:underline"
+          aria-expanded={expanded}
+          onclick={() => setExpanded(!expanded)}
+          data-reel-caption-toggle
+        >
+          {expanded ? m.post_voir_moins() : m.post_voir_plus()}
+        </button>
+      {/if}
+    {/if}
+  </div>
+
+  {#if showRail}
+    <!-- THE RAIL, BOTTOM-RIGHT, ON THE CAPTION'S BASELINE (Instagram's, measured on the Mi 9T:
+         the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
+         (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
+         and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
+    <div
+      class="pointer-events-none absolute bottom-0 z-30 {turnedOverVideo
+        ? 'right-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+0.25rem)]'
+        : 'right-1'}"
+      style={bottomPad}
+    >
+      <ReelActionRail
+        {readerReaction}
+        reactionCount={reactionTotal(post.reactions, post.otherReactionCounts)}
+        commentCount={commentCountOf(post)}
+        onHeart={rail?.onHeart}
+        onReact={rail?.onReact}
+        onComments={post.canSeeComments === false ? undefined : rail?.onComments}
+        onSend={rail?.onSend}
+        tools={page === 'reel' || page === 'replay' || visibleIsVideo ? railTools : undefined}
+        sound={page === 'reel' || page === 'replay' || visibleIsVideo}
+        bind:drawerOpen={railDrawerOpen}
+      />
+    </div>
   {/if}
 {/snippet}
 
@@ -375,182 +566,14 @@
       {/if}
     </div>
 
-    <!-- WHO PUBLISHED IT, AND WHAT THEY WROTE, BOTTOM-LEFT OVER A SCRIM (user, 2026-10-16, as on
-         Instagram). Anchored to the bottom, so a longer text or 2x type grows UPWARD, above the
-         player's bar. NEVER TALLER THAN THE FRAME: a letterboxed reel's frame can be shorter than
-         half the screen, so the block is a column capped at the frame (`max-h-full`) and the text
-         is the part that SHRINKS (`min-h-0`) and scrolls - the author row and the toggle stay.
-         Above the tap-outside layer (`z-20` over its `z-10`). Pointer-transparent except the
-         author link and the text controls, so a tap anywhere else still reaches the video.
-         The bottom safe-area inset is paid ONLY when the frame reaches the screen bottom: a
-         letterboxed frame sits well above the home indicator, and the inset there would leave the
-         caption about one line. -->
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {turnedOverVideo
-        ? 'pl-[calc(var(--safe-area-inset-left,env(safe-area-inset-left,0px))+1rem)] ' +
-          (showRail
-            ? 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+4rem)]'
-            : 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+1rem)]')
-        : showRail
-          ? 'pr-16 pl-4'
-          : 'pr-4 pl-4'} {expanded ? 'pt-4' : turnedOverVideo ? 'pt-6' : 'pt-16'}"
-      data-reel-turned={turnedOverVideo ? '' : undefined}
-      style={bottomPad}
-      data-reel-caption
-      data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
-    >
-      {#if page === 'carousel' && panes.length > 1}
-        <!-- WHERE THE READER IS IN THE CAROUSEL (owner, 2026-11-11, as Instagram's under the photo):
-             one dot per media, the visible one lit, named "2 of 5". THE FIRST ROW OF THE CAPTION
-             BLOCK, so it sits on the media's bottom edge directly above the author line, rises with
-             the block when "Voir plus" unfolds it (the text is the part that shrinks, never this
-             row) and clears the player's line by the block's own bottom padding. The negative
-             margins undo the block's side padding so the row is centred on the MEDIA, not on the
-             room the rail leaves; the dots are far narrower than that room. Pointer-transparent. -->
-        <div
-          class="pointer-events-none mb-2 -ml-4 flex shrink-0 justify-center gap-1 self-stretch {showRail
-            ? '-mr-16'
-            : '-mr-4'}"
-          role="img"
-          aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
-          data-reel-carousel-dots
-        >
-          {#each panes as _pane, i (i)}
-            <span
-              class="size-1.5 rounded-full drop-shadow-sm {i === visibleIndex
-                ? 'bg-white'
-                : 'bg-white/40'}"
-              data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
-            ></span>
-          {/each}
-        </div>
-      {/if}
-      <div class="flex min-w-0 shrink-0 items-center gap-2">
-        {#if authorHref}
-          <!-- ONE NAME AND ONE BOX FOR ASSISTIVE TECH: the link is named by its `aria-label` and its
-               content is hidden from the tree, so VoiceOver no longer reads a second "Avatar de"
-               element inside it, and the link's frame is its own 44 px row rather than a rect
-               unioned from its children (iPhone 12, v1.2.9-alpha.4: the frame read 242 x 869 pt
-               around a 20 pt picture and a 23 pt name). -->
-          <a
-            href={authorHref}
-            class="focus-visible:ring-accent-icon pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2"
-            aria-label={postAuthorLinkLabel(post)}
-            data-reel-author
-          >
-            <span class="shrink-0" aria-hidden="true"><PostAuthorAvatar {post} size="sm" /></span>
-            <span class="truncate text-sm font-bold" aria-hidden="true">{authorName}</span>
-          </a>
-        {:else}
-          <span class="flex min-w-0 items-center gap-2" data-reel-author>
-            <span class="shrink-0"><PostAuthorAvatar {post} size="sm" /></span>
-            <span class="truncate text-sm font-bold">{authorName}</span>
-          </span>
-        {/if}
-        <!-- The same age, from the same helper, as the post header's: the viewer has no header. And
-             the same "Republie par X" beside it, which gives way BEFORE the name: the wrapper is
-             `contents`, so the time, the dot and the icon are items of this row that never shrink,
-             and the republishers are an item of basis 0 - they take only the room the name and the
-             time leave, and truncate to nothing first. The name shrinks only when it alone and the
-             time overflow the row. -->
-        <span class="contents text-xs font-medium" data-reel-time-line>
-          <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
-            >{timeAgo(post.createdAt)}</span
-          >
-          {#if post.studentsOnly}
-            <StudentsOnlyChip onMedia />
-          {/if}
-          {#if post.reach}
-            <InstitutionReachChip reach={post.reach} onMedia />
-          {/if}
-          {#if republished}
-            <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
-            <Repeat2 size={12} strokeWidth={2.5} class="shrink-0 opacity-70" aria-hidden="true" />
-            <span class="min-w-0 flex-1 basis-0 truncate opacity-70" data-reel-republished-by
-              ><EmojiText text={republished} /></span
-            >
-          {/if}
-        </span>
-      </div>
-      {#if revealed}
-        <RevealedAuthorLine
-          userId={revealed.userId}
-          fallback={revealed.name}
-          class="pointer-events-auto ml-8 shrink-0 text-white/80"
-          tall
-        />
-      {/if}
-      {#if post.markdown}
-        <!-- EXPANDED, THE TEXT SCROLLS ITSELF, up to half the screen: `data-reel-caption-open` keeps
-             the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it.
-             ITS LINKS AND MENTIONS ARE TAPPABLE, folded or not (owner, 2026-11-06: a post with a
-             link is in CanaReels): the text is pointer-transparent, its `a` and `button` are not.
-             They are the post card's own (`PostMarkdown` -> `PostMentionLink` -> `AppLink`, and
-             the app's link handler with its Safe Browsing gate). A tap on one is never a double
-             tap (`tapBelongsToInnerControl`) nor a swipe (no movement); a drag that starts on one
-             still pages, as everywhere on the reel. A long URL wraps anywhere, never past the
-             frame.
-             THE TEXT IS ALWAYS ON THE VIEWER'S DARK SCRIM, whatever the app's theme: `data-theme="dark"`
-             puts it in the `dark:` variant's scope (`app.css`), so its links, mentions and hashtags
-             - and their hover - take the colours they were given for a dark surface, the post
-             card's own. One attribute for every renderer, never a recolour per element. -->
-        <div
-          data-theme="dark"
-          class="mt-1 min-h-0 {expanded
-            ? 'pointer-events-auto max-h-[50dvh] touch-pan-y overflow-y-auto overscroll-contain'
-            : 'shrink-0'}"
-          data-reel-caption-open={expanded ? '' : undefined}
-        >
-          <PostMarkdown
-            markdown={post.markdown}
-            bind:element={textEl}
-            class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_button]:pointer-events-auto {expanded
-              ? ''
-              : turnedOverVideo
-                ? 'line-clamp-1'
-                : 'line-clamp-2'}"
-          />
-        </div>
-        {#if overflows || expanded}
-          <button
-            type="button"
-            class="tap-target pointer-events-auto mt-1 shrink-0 self-start text-xs font-bold outline-none hover:underline focus-visible:underline"
-            aria-expanded={expanded}
-            onclick={() => setExpanded(!expanded)}
-            data-reel-caption-toggle
-          >
-            {expanded ? m.post_voir_moins() : m.post_voir_plus()}
-          </button>
-        {/if}
-      {/if}
-    </div>
-
-    {#if showRail}
-      <!-- THE RAIL, BOTTOM-RIGHT, ON THE CAPTION'S BASELINE (Instagram's, measured on the Mi 9T:
-           the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
-           (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
-           and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
-      <div
-        class="pointer-events-none absolute bottom-0 z-30 {turnedOverVideo
-          ? 'right-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+0.25rem)]'
-          : 'right-1'}"
-        style={bottomPad}
-      >
-        <ReelActionRail
-          {readerReaction}
-          reactionCount={reactionTotal(post.reactions, post.otherReactionCounts)}
-          commentCount={commentCountOf(post)}
-          onHeart={rail?.onHeart}
-          onReact={rail?.onReact}
-          onComments={post.canSeeComments === false ? undefined : rail?.onComments}
-          onSend={rail?.onSend}
-          tools={page === 'reel' || page === 'replay' || visibleIsVideo ? railTools : undefined}
-          sound={page === 'reel' || page === 'replay' || visibleIsVideo}
-          bind:drawerOpen={railDrawerOpen}
-        />
-      </div>
+    {#if !detachedOverlays}
+      {@render overlays()}
     {/if}
   </ReelFrame>
+
+  {#if detachedOverlays}
+    {@render overlays()}
+  {/if}
 
   {#if page === 'carousel' && panes.length > 1}
     {#if active && onMediaStep}

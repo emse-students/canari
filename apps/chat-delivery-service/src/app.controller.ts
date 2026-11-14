@@ -46,7 +46,14 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
+import {
+  REPORT_KINDS,
+  settleAccusations,
+  summarizeAccusations,
+  type ReportKind,
+} from './utils/report-accusations';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -72,6 +79,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
   private reportSafeBrowsingInterval: ReturnType<typeof setInterval>;
+  private reportKnownAccusationsInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -292,6 +300,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Count what the hourly reports above already accused: each item is printed at its level ONCE,
+    // so this daily line is what says the known ones are still there - see reportKnownAccusations.
+    this.reportKnownAccusationsInterval = setInterval(() => {
+      void this.reportKnownAccusations().catch((e) =>
+        this.logger.error('[CRON] reportKnownAccusations failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
@@ -300,7 +316,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
-        'expired device revocations purge (24h), orphan device report (24h) scheduled'
+        'expired device revocations purge (24h), orphan device report (24h), ' +
+        'known accusations summary (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -340,6 +357,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
       // After the GC above, so it counts only what the GC left - the population it cannot reach.
       ['reportOrphanDevices', () => this.reportOrphanDevices()],
+      // After the four reports that settle their ledgers, so it counts what they just left there.
+      ['reportKnownAccusations', () => this.reportKnownAccusations()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -395,6 +414,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportCommitLogInterval);
     clearInterval(this.reportOrphanDevicesInterval);
     clearInterval(this.reportSafeBrowsingInterval);
+    clearInterval(this.reportKnownAccusationsInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -494,6 +514,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
+    }
+    // The receipts that answer a resend under one messageId (migration 048) age out with the copies
+    // they stand for: past this window there is no queued copy left to duplicate.
+    const receipts = await deleteSentFrameReceiptsBefore(this.queuedMessageRepo.manager, expiry);
+    if (receipts > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: deleted ${receipts} sent-frame receipt(s)`
+      );
     }
     const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
     if (payloads > 0) {
@@ -608,6 +636,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * incident (see {@link STRANDED_PENDING_MEMBERSHIP_MS}), and a predicate that named one incident
    * has to be re-measured against the population it actually runs on before its name is believed;
    * printing the whole partition is what makes that possible from the log alone.
+   *
+   * The partition LOG line is printed every run; the WARN and ERROR name each stranded DEVICE once
+   * per set of seats ({@link settleStrandedDevices}) - eleven devices used to be re-accused every
+   * hour, and the ones already accused are now counted by the daily summary
+   * ({@link reportKnownAccusations}).
    */
   private async reportStrandedDeviceMemberships() {
     const cutoff = new Date(Date.now() - STRANDED_PENDING_MEMBERSHIP_MS);
@@ -617,6 +650,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       where: { status: 'pending', pendingSince: LessThan(cutoff) },
     });
     if (pending.length === 0) {
+      // Nothing is stranded, so every device accused earlier has left: released here, once.
+      await this.settleStrandedDevices([]);
       this.logger.log(
         '[CRON] reportStrandedDeviceMemberships: no pending membership older than ' +
           `${STRANDED_PENDING_MEMBERSHIP_MS / 60000}min`
@@ -680,7 +715,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         `${awaitingAnswer} awaiting a member's answer to an invitation link, ` +
         `${neverAdded.length} never added, ${kicked.length} kicked with no re-add`
     );
-    if (stranded.length === 0) return;
+    const { fresh, known } = await this.settleStrandedDevices(stranded);
+    if (fresh.size === 0) return;
+    // Only the seats of a device no earlier run accused in this state are printed; a device whose
+    // seats are unchanged is the daily summary's.
+    const freshNeverAdded = neverAdded.filter((m) => fresh.has(m.deviceId));
+    const freshKicked = kicked.filter((m) => fresh.has(m.deviceId));
+    const knownNote = `(not accused before in this state; ${known} device(s) accused earlier, unchanged)`;
 
     // ONE line per cause, not one per row: this fires hourly, and a report whose reader learns to
     // skip it is the one that hides the next defect. The oldest are named because age is what
@@ -693,27 +734,56 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         .join(' ');
     const capped = (n: number) => Math.min(n, STRANDED_MEMBERSHIP_REPORT_TOP_N);
 
-    if (neverAdded.length > 0) {
+    if (freshNeverAdded.length > 0) {
       this.logger.warn(
-        `[CRON] reportStrandedDeviceMemberships: ${neverAdded.length} device(s) hold a roster seat ` +
+        `[CRON] reportStrandedDeviceMemberships: ${freshNeverAdded.length} device(s) hold a roster seat ` +
           `with no Welcome ever queued and no kick recorded - they were registered as members and ` +
-          `never added to the MLS group, so they receive nothing and notify nothing. Oldest ` +
-          `${capped(neverAdded.length)}: ${oldest(neverAdded, (m) => m.updatedAt)}`
+          `never added to the MLS group, so they receive nothing and notify nothing ${knownNote}. Oldest ` +
+          `${capped(freshNeverAdded.length)}: ${oldest(freshNeverAdded, (m) => m.updatedAt)}`
       );
     }
-    if (kicked.length > 0) {
+    if (freshKicked.length > 0) {
       // AT THE LEVEL THAT ACCUSES, because this one is a failure rather than a state: a member
       // removed the leaf and undertook to put it back. The device is not stuck - a seat with
       // nothing following it is an invitation to join by external commit - but the Add that threw
       // is a defect with a rate, and this is the only place that rate is visible. Dated by the
       // KICK, not by `updatedAt`: the age that matters is how long the promise has been outstanding.
       this.logger.error(
-        `[CRON] reportStrandedDeviceMemberships: ${kicked.length} device(s) were KICKED and never ` +
+        `[CRON] reportStrandedDeviceMemberships: ${freshKicked.length} device(s) were KICKED and never ` +
           `re-added - a member removed their leaf and the Add that was supposed to follow did not ` +
-          `land, which is reported nowhere else. Oldest ${capped(kicked.length)}: ` +
-          `${oldest(kicked, (m) => m.kickedAt as Date)}`
+          `land, which is reported nowhere else ${knownNote}. Oldest ${capped(freshKicked.length)}: ` +
+          `${oldest(freshKicked, (m) => m.kickedAt as Date)}`
       );
     }
+  }
+
+  /**
+   * The ledger half of {@link reportStrandedDeviceMemberships}: ONE item per DEVICE, its state the
+   * sorted set of its stranded seats, each with its cause (`never` or `kicked`).
+   *
+   * Per device, because a device is what is stranded and what a reader goes to look at; its seats
+   * are the state, so a device that gains a stranded seat, loses one, or is kicked from one it was
+   * merely never added to is accused again with every seat it holds. No clock is in the state - the
+   * window that admits a row is the report's predicate, not part of what was accused.
+   *
+   * @returns the devices THIS run accuses, and how many it found already accused unchanged.
+   */
+  private async settleStrandedDevices(
+    stranded: DeviceGroupMembership[]
+  ): Promise<{ fresh: Set<string>; known: number }> {
+    const seatsOf = new Map<string, string[]>();
+    for (const m of stranded) {
+      const seat = `${m.groupId}:${m.kickedAt === null ? 'never' : 'kicked'}`;
+      seatsOf.set(m.deviceId, [...(seatsOf.get(m.deviceId) ?? []), seat]);
+    }
+    const { fresh, known } = await settleAccusations(
+      this.groupRepo.manager,
+      REPORT_KINDS.strandedDevice,
+      [...seatsOf].map(([id, seats]) => ({ id, state: seats.sort().join(' ') })),
+      this.logger,
+      '[CRON] reportStrandedDeviceMemberships'
+    );
+    return { fresh: new Set(fresh.map((f) => f.id)), known: known.length };
   }
 
   /**
@@ -745,6 +815,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * lost, and the answer to it is a Welcome from a member rather than a republish. Reading it as
    * zero is the silent arithmetic that would call every unpublished group the worst case in the
    * table.
+   *
+   * Each group is accused ONCE per state ({@link settleAccusations}): a base shut since August does
+   * not change by being printed every hour. The ones already accused are counted by the daily
+   * summary ({@link reportKnownAccusations}).
    */
   private async reportStaleExternalJoinBases() {
     // One join rather than two scans: the population is small but the group table is not, and the
@@ -767,6 +841,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       }>();
 
     if (stale.length === 0) {
+      // Every base accused earlier is current again: released here, once.
+      await settleAccusations(
+        this.groupRepo.manager,
+        REPORT_KINDS.staleBase,
+        [],
+        this.logger,
+        '[CRON] reportStaleExternalJoinBases'
+      );
       this.logger.log(
         '[CRON] reportStaleExternalJoinBases: every published base names the current epoch of its group'
       );
@@ -818,8 +900,26 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getRawMany<{ groupId: string }>();
     const headRecorded = new Set(headCommits.map((r) => r.groupId));
 
-    const unrepairable = stale.filter((r) => !headRecorded.has(r.groupId));
-    const lockedOut = stale.reduce((n, r) => n + (pendingOf.get(r.groupId) ?? 0), 0);
+    // THE STATE ACCUSED is the base and head epochs and whether the head commit is recorded: a group
+    // that commits again while its base stays behind, or loses the commit that made it repairable,
+    // is a new accusation. The age is evidence, not state - it grows every hour by itself.
+    const { fresh: freshStale, known } = await settleAccusations(
+      this.groupRepo.manager,
+      REPORT_KINDS.staleBase,
+      stale.map((r) => ({
+        ...r,
+        id: r.groupId,
+        state:
+          `base ${r.baseEpoch}/${r.activeEpoch}, ` +
+          (headRecorded.has(r.groupId) ? 'head commit recorded' : 'head commit absent'),
+      })),
+      this.logger,
+      '[CRON] reportStaleExternalJoinBases'
+    );
+    if (freshStale.length === 0) return;
+
+    const unrepairable = freshStale.filter((r) => !headRecorded.has(r.groupId));
+    const lockedOut = freshStale.reduce((n, r) => n + (pendingOf.get(r.groupId) ?? 0), 0);
     const ageDays = (at: Date) =>
       Math.floor((Date.now() - new Date(at).getTime()) / (24 * 60 * 60 * 1000));
     // Named oldest-first, because age is the whole accusation: a base written a minute ago is a
@@ -832,10 +932,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         .join(' ');
 
     this.logger.warn(
-      `[CRON] reportStaleExternalJoinBases: ${stale.length} group(s) publish a base behind their ` +
+      `[CRON] reportStaleExternalJoinBases: ${freshStale.length} group(s) publish a base behind their ` +
         `own epoch, so no device without local MLS state can enter them - ${lockedOut} device(s) ` +
-        `hold a pending seat on one. Oldest ` +
-        `${Math.min(stale.length, STALE_BASE_REPORT_TOP_N)}: ${name(stale)}`
+        `hold a pending seat on one (not accused before in this state; ${known.length} group(s) ` +
+        `accused earlier, unchanged). Oldest ` +
+        `${Math.min(freshStale.length, STALE_BASE_REPORT_TOP_N)}: ${name(freshStale)}`
     );
 
     if (unrepairable.length > 0) {
@@ -873,6 +974,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * user-level members. The five that remained are real conversations, one of them at epoch 284.
    *
    * Purely a report. It deletes nothing and repairs nothing - there is nothing it COULD repair.
+   *
+   * **EACH CONVERSATION IS ACCUSED ONCE PER HOLDER COUNT** ({@link settleAccusations}): a closed
+   * conversation stays closed, and printing it at ERROR every hour (two of them, since 2026-10-14)
+   * taught the reader to skip the line. One that loses a holder is accused again; the ones already
+   * accused are counted by the daily summary ({@link reportKnownAccusations}).
    */
   private async reportSingleHolderGroups() {
     // One query rather than three scans: the answer is a comparison between aggregates over two
@@ -919,6 +1025,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       [MIN_MEMBERS_FOR_HOLDER_REPORT]
     );
 
+    // THE STATE ACCUSED is the holder count: a conversation that loses its last holder goes from
+    // `holders 1` to `holders 0` and is accused again, at ERROR. The epoch is evidence, not state - it
+    // moves with every commit the one holder makes while the risk stands still.
+    const { fresh, known } = await settleAccusations(
+      this.groupRepo.manager,
+      REPORT_KINDS.holders,
+      rows.map((r) => ({ ...r, id: r.groupId, state: `holders ${Number(r.holders)}` })),
+      this.logger,
+      '[CRON] reportSingleHolderGroups'
+    );
+
     if (rows.length === 0) {
       this.logger.log(
         '[CRON] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree'
@@ -926,8 +1043,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const none = rows.filter((r) => Number(r.holders) === 0);
-    const one = rows.filter((r) => Number(r.holders) === 1);
+    // Only what no earlier run accused in this state is printed; the rest is the daily summary's.
+    const none = fresh.filter((r) => Number(r.holders) === 0);
+    const one = fresh.filter((r) => Number(r.holders) === 1);
+    const knownNote = `(not accused before in this state; ${known.length} conversation(s) accused earlier, unchanged)`;
     const name = (rs: typeof rows) =>
       rs
         .slice(0, SINGLE_HOLDER_REPORT_TOP_N)
@@ -945,7 +1064,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `[CRON] reportSingleHolderGroups: ${one.length} conversation(s) have exactly ONE user ` +
           `holding the MLS tree - if that user uninstalls, each is closed while its base is stale ` +
-          `or absent. Highest epoch first, ` +
+          `or absent ${knownNote}. Highest epoch first, ` +
           `${Math.min(one.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${one.length}: ${name(one)}`
       );
     }
@@ -957,7 +1076,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       this.logger.error(
         `[CRON] reportSingleHolderGroups: ${none.length} conversation(s) have NO holder at all - ` +
           `every member's client has lost its MLS state, so they are closed permanently rather ` +
-          `than waiting for anyone to return. ` +
+          `than waiting for anyone to return ${knownNote}. ` +
           `${Math.min(none.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${none.length}: ${name(none)}`
       );
     }
@@ -1079,9 +1198,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * (age, then the per-group cap) and a trimmed floor is not a defect.
    *
    * Each group is named by its FIRST missing epoch and dated by the last commit recorded before it,
-   * newest first: the holes this estate already knows are permanent and repeat every hour, so a NEW
-   * one - the only kind that accuses current code - lands at the front of the line rather than
-   * behind them. A hole at `activeEpoch - 1` is also what `reportStaleExternalJoinBases` calls
+   * newest first. A hole is permanent, so it is ACCUSED ONCE ({@link settleAccusations}): the ERROR
+   * names only the holes no earlier run accused in this state, and the ones already accused are
+   * counted by the daily summary ({@link reportKnownAccusations}) - before that, the same eleven
+   * holes of 2026-08-29..31 were printed at ERROR every hour, and a NEW one, the only kind that
+   * accuses current code, would have been the twelfth name in a line nobody read any more. A hole at `activeEpoch - 1` is also what `reportStaleExternalJoinBases` calls
    * "shut"; that report reads it through a stale base, this one reads it in every group.
    */
   private async reportCommitLogHoles() {
@@ -1119,23 +1240,42 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         ORDER BY "holeAfter" DESC`
     );
 
+    const missing = (r: (typeof rows)[number]) => r.activeEpoch - r.floorEpoch - Number(r.recorded);
+    // THE STATE ACCUSED is the first missing epoch and how many are missing - never the head or the
+    // floor, which move with every commit and every prune while the hole itself stands still. A hole
+    // that grows, or a second one below the first, changes it and is accused again.
+    const { fresh, known } = await settleAccusations(
+      this.groupRepo.manager,
+      REPORT_KINDS.commitLogHole,
+      rows.map((r) => ({
+        ...r,
+        id: r.groupId,
+        state: `first hole ${r.firstHole}, ${missing(r)} missing`,
+      })),
+      this.logger,
+      '[CRON] reportCommitLogHealth'
+    );
+
     if (rows.length === 0) {
       this.logger.log(
         "[CRON] reportCommitLogHealth: every commit log is contiguous from its oldest retained commit to its group's head"
       );
       return;
     }
+    if (fresh.length === 0) return;
 
-    const missing = (r: (typeof rows)[number]) => r.activeEpoch - r.floorEpoch - Number(r.recorded);
-    const totalMissing = rows.reduce((n, r) => n + missing(r), 0);
-    // AT THE LEVEL THAT ACCUSES: an epoch the server accepted and never recorded is a defect in the
-    // commit path, permanent by construction, and nothing else names it until a device asks across it.
+    const totalMissing = fresh.reduce((n, r) => n + missing(r), 0);
+    // AT THE LEVEL THAT ACCUSES, ONCE PER HOLE: an epoch the server accepted and never recorded is a
+    // defect in the commit path, permanent by construction, and nothing else names it until a device
+    // asks across it. The holes already accused are counted by the daily summary, so a NEW one is
+    // the whole line rather than the twelfth name in it.
     this.logger.error(
-      `[CRON] reportCommitLogHealth: ${rows.length} group(s) have a HOLE in their commit log - ` +
+      `[CRON] reportCommitLogHealth: ${fresh.length} group(s) have a HOLE in their commit log that no earlier run accused - ` +
         `${totalMissing} epoch(s) between the oldest retained commit and the head were accepted and ` +
         `never recorded, so no device below one can replay past it and only a re-Welcome reaches the ` +
-        `head. Newest ${Math.min(rows.length, COMMIT_LOG_REPORT_TOP_N)} of ${rows.length}: ` +
-        rows
+        `head (${known.length} group(s) with a hole accused earlier, unchanged). ` +
+        `Newest ${Math.min(fresh.length, COMMIT_LOG_REPORT_TOP_N)} of ${fresh.length}: ` +
+        fresh
           .slice(0, COMMIT_LOG_REPORT_TOP_N)
           .map(
             (r) =>
@@ -1170,6 +1310,34 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     } else {
       this.logger.log('[SAFE_BROWSING] refusals=0');
     }
+  }
+
+  /**
+   * The daily count of what the hourly health reports already accused - one LOG line per report,
+   * read from `report_accusations` ({@link summarizeAccusations}). Each item is printed at its level
+   * once, by the run that first finds it in its state; this line is what says the known ones still
+   * stand. Read-only.
+   */
+  private async reportKnownAccusations() {
+    const labels: Record<ReportKind, { prefix: string; items: string }> = {
+      [REPORT_KINDS.commitLogHole]: {
+        prefix: '[CRON] reportCommitLogHealth',
+        items: 'group(s) with a hole in their commit log',
+      },
+      [REPORT_KINDS.holders]: {
+        prefix: '[CRON] reportSingleHolderGroups',
+        items: 'conversation(s) with fewer than two holders',
+      },
+      [REPORT_KINDS.strandedDevice]: {
+        prefix: '[CRON] reportStrandedDeviceMemberships',
+        items: 'stranded device(s)',
+      },
+      [REPORT_KINDS.staleBase]: {
+        prefix: '[CRON] reportStaleExternalJoinBases',
+        items: 'group(s) publishing a stale base',
+      },
+    };
+    await summarizeAccusations(this.groupRepo.manager, this.logger, labels);
   }
 
   /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */

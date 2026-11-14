@@ -44,9 +44,9 @@ describe('profile sections', () => {
 
   it('the hub lists every section but sponsorship, which exists only with someone in the tree', () => {
     const without = profileHubRows(NONE).map((r) => r.key);
-    expect(without).toEqual(PROFILE_SECTIONS.filter((k) => k !== 'sponsorship'));
+    expect(without).toEqual([...PROFILE_SECTIONS.filter((k) => k !== 'sponsorship'), 'settings']);
     const withTree = profileHubRows({ ...NONE, hasSponsorship: true }).map((r) => r.key);
-    expect(withTree).toEqual([...PROFILE_SECTIONS]);
+    expect(withTree).toEqual([...PROFILE_SECTIONS, 'settings']);
   });
 
   it('the route and the hub ask the same rule', () => {
@@ -59,6 +59,7 @@ describe('profile sections', () => {
 
   it('carries a summary only for a list that has loaded', () => {
     const loading = profileHubRows(NONE);
+    expect(loading.at(-1)?.href).toBe('/settings');
     expect(loading.every((r) => r.summary === undefined)).toBe(true);
     const loaded = profileHubRows({
       ...NONE,

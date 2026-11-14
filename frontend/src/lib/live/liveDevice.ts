@@ -29,14 +29,20 @@ import {
  * lens is asked as the reel camera asks it (`lensIsExact`): EXACT on a phone and on a switch, IDEAL on
  * a desktop's first capture, whose webcam has no facing for an exact one to match.
  *
+ * `withMicrophone` false opens the lens alone: a desktop live's microphone is its own capture
+ * ({@link openLiveMicrophone}), so a desktop with no webcam can still go live on its screen.
+ *
  * @throws {CameraAccessError} for every refusal, with its fault.
  */
 export async function openLiveCamera(
   facing: CameraFacing,
-  switching = false
+  switching = false,
+  withMicrophone = true
 ): Promise<MediaStream> {
   const exact = lensIsExact(switching);
-  console.debug(`[LIVE-CAM] opening ${facing} (${exact ? 'exact' : 'ideal'})`);
+  console.debug(
+    `[LIVE-CAM] opening ${facing} (${exact ? 'exact' : 'ideal'}${withMicrophone ? '' : ', no microphone'})`
+  );
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
   if (!devices?.getUserMedia) {
     console.warn('[LIVE-CAM] navigator.mediaDevices.getUserMedia is absent');
@@ -52,11 +58,11 @@ export async function openLiveCamera(
           height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
           frameRate: { ideal: LIVE_CAPTURE_FPS },
         },
-        audio: REEL_AUDIO_CONSTRAINTS,
+        audio: withMicrophone ? REEL_AUDIO_CONSTRAINTS : false,
       },
       'live-camera'
     );
-    logCaptureAudioLayout('LIVE-CAM', stream);
+    if (withMicrophone) logCaptureAudioLayout('LIVE-CAM', stream);
     const settings = stream.getVideoTracks()[0]?.getSettings?.();
     console.debug(
       `[LIVE-CAM] opened ${facing}: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}`
@@ -198,120 +204,70 @@ export function batteryWarrantsWarning(level: number | null): boolean {
 }
 
 /**
- * Whether this browser can broadcast its SCREEN instead of the camera (owner, 2026-10-31): the
- * engine has `getDisplayMedia`, and the primary pointer is a mouse - phones and tablets keep the
- * camera. **NEVER IN THE TAURI SHELL, EXPLICITLY**: its webviews have no reliable screen picker
- * (WebView2 and WebKitGTK each answer `getDisplayMedia` differently, or not at all), and a desktop
- * app that offers a button that may do nothing is worse than one that does not offer it. The check
- * is on the runtime, not on the pointer, because a Tauri desktop window has a mouse.
+ * Whether this browser broadcasts through the SCENES (owner, 2026-10-31 for the screen, 2026-11-14
+ * for the scenes): the engine has `getDisplayMedia` and an `AudioContext` (the scenes' sound is
+ * mixed, `liveAudioMixer.svelte.ts`), and the primary pointer is a mouse - phones and tablets keep
+ * the camera recorded directly. **NEVER IN THE TAURI SHELL, EXPLICITLY**: its webviews have no
+ * reliable screen picker (WebView2 and WebKitGTK each answer `getDisplayMedia` differently, or not
+ * at all), and a desktop app that offers a button that may do nothing is worse than one that does
+ * not offer it. The check is on the runtime, not on the pointer, because a Tauri desktop window has
+ * a mouse.
  */
-export function screenShareAvailable(): boolean {
+export function liveScenesAvailable(): boolean {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) return false;
+  if (typeof AudioContext === 'undefined') return false;
   if (isTauriRuntime()) return false;
   return !isCoarsePointerDevice();
 }
 
 /**
- * Creates the context that will mix a screen share's audio, and starts its `resume()` WITHOUT
- * waiting for it. **CALL IT SYNCHRONOUSLY INSIDE THE CLICK that opens the picker**: a context made
- * or resumed after the picker and the microphone prompt (two awaits) has lost its user activation
- * (Safari), and its `resume()` can stay pending forever - which is why nothing here awaits it.
- * Answers `null` when the engine has no `AudioContext` (the share then goes out with the
- * microphone alone).
- */
-export function createMixContext(): AudioContext | null {
-  try {
-    const context = new AudioContext();
-    context.resume().catch((err: unknown) => {
-      console.warn('[LIVE-CAM] the audio context could not be resumed', err);
-    });
-    return context;
-  } catch (err) {
-    console.warn('[LIVE-CAM] no AudioContext - the share goes out without mixing', err);
-    return null;
-  }
-}
-
-/**
- * Mixes the microphone and the share's audio into ONE track through `context`, or answers `null`
- * (and logs why) when the context is not `running` - the caller then keeps the microphone alone.
- * The context was resumed inside the click ({@link createMixContext}), so by now (a picker and a
- * prompt later) its state is settled; it is READ, never awaited. It is CLOSED on every path that
- * does not hand it to the returned track, whose `stop()` closes it.
+ * Opens the MICROPHONE alone, for a desktop live whose picture is composed (`liveStudio.svelte.ts`):
+ * the camera and the screen come and go with the scenes, the voice stays. Asked mono, as every
+ * capture of a live or a reel is (`REEL_AUDIO_CONSTRAINTS`).
  *
- * KNOWN LIMIT: the mixed track's `ended` event does NOT follow the microphone. A microphone that
- * dies mid-live (a USB headset pulled) leaves the mixed track alive and silent for the mic's half,
- * with the share's sound still in it - the recorder keeps recording and nothing ends. Wiring it
- * would end a live over half of its audio; the live is not interrupted over it.
+ * @throws {CameraAccessError} for every refusal, with its fault (a refused microphone refuses the live).
  */
-function mixAudio(
-  context: AudioContext,
-  mic: MediaStreamTrack,
-  share: MediaStreamTrack,
-  sources: MediaStreamTrack[]
-): MediaStreamTrack | null {
-  try {
-    if (context.state !== 'running') {
-      console.warn(
-        `[LIVE-CAM] the audio context is ${context.state} - the microphone alone goes on air, without the share's sound`
-      );
-      void context.close();
-      return null;
-    }
-    const destination = context.createMediaStreamDestination();
-    context.createMediaStreamSource(new MediaStream([mic])).connect(destination);
-    context.createMediaStreamSource(new MediaStream([share])).connect(destination);
-    const track = destination.stream.getAudioTracks()[0];
-    const stopMixed = track.stop.bind(track);
-    track.stop = () => {
-      stopMixed();
-      for (const source of sources) source.stop();
-      void context.close();
-    };
-    console.debug("[LIVE-CAM] screen audio: the microphone mixed with the share's own audio");
-    return track;
-  } catch (err) {
-    console.warn(
-      "[LIVE-CAM] mixing the share's audio failed - the microphone alone goes on air",
-      err
-    );
-    void context.close();
-    return null;
-  }
-}
-
-/**
- * Opens the SCREEN for a live: the video of what the member picks (a screen, a window or a tab) at
- * the live's size, and ONE audio track that is the microphone, mixed with the share's own audio
- * (a tab's or the system's) when the browser offers one. The microphone is kept: a live has a
- * voice. `audio: true` on the share only ASKS - the picker shows its "share audio" choice where
- * the browser has one and the member decides, so a share without sound is an answer, not a failure.
- *
- * The mix lives in `context`, made and resumed INSIDE the click ({@link createMixContext}) and
- * passed down; a Retry reuses the opener with a context already closed, so a closed or absent one is
- * replaced by a fresh (possibly not activated, then mic-only) one. It is closed on EVERY exit path
- * here. Releasing the stream (`releaseCamera` stops every track)
- * stops the mixed track, whose `stop` is wrapped to close the context and stop the sources it
- * reads - nothing else would ever end them.
- *
- * @throws {CameraAccessError} `denied` when the picker is dismissed or the microphone refused (the
- * caller returns to the camera on a dismissed picker), `unavailable` when the engine cannot share.
- */
-export async function openLiveScreen(
-  givenContext: AudioContext | null = null
-): Promise<MediaStream> {
-  console.debug('[LIVE-CAM] opening the screen');
-  const context =
-    givenContext && givenContext.state !== 'closed' ? givenContext : createMixContext();
+export async function openLiveMicrophone(): Promise<MediaStream> {
+  console.debug('[LIVE-CAM] opening the microphone');
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
-  if (!devices?.getDisplayMedia || !devices.getUserMedia) {
+  if (!devices?.getUserMedia) {
+    console.warn('[LIVE-CAM] navigator.mediaDevices.getUserMedia is absent');
+    throw new CameraAccessError('unavailable', 'live microphone: getUserMedia is not available');
+  }
+  try {
+    const stream = await captureUserMedia(devices, { audio: REEL_AUDIO_CONSTRAINTS }, 'live-mic');
+    logCaptureAudioLayout('LIVE-CAM', stream);
+    return stream;
+  } catch (err) {
+    const fault = classifyCameraError(err);
+    console.warn(`[LIVE-CAM] the microphone answered ${fault}`, err);
+    throw new CameraAccessError(fault, `live microphone: ${fault}`, { cause: err });
+  }
+}
+
+/**
+ * Opens the SCREEN for a desktop live: what the member picks (a screen, a window or a tab), at the
+ * live's size where the browser can scale it, with the share's own sound when the picker offers one
+ * and the member ticks it - `audio: true` only ASKS, so a share without sound is an answer, not a
+ * failure. **CALL IT FROM A CLICK**: a browser opens the picker only on one. No microphone here: the
+ * live's microphone is opened once for the whole live ({@link openLiveMicrophone}) and mixed with
+ * this stream's sound (`liveAudioMixer.svelte.ts`).
+ *
+ * The size the share answers is NOT the live's: the compositor fits it into a fixed frame, so a
+ * window resized mid-share changes nothing the recorder sees (`liveCompositor.ts`).
+ *
+ * @throws {CameraAccessError} `denied` when the picker is dismissed, `unavailable` when the engine
+ * cannot share.
+ */
+export async function openLiveDisplay(): Promise<MediaStream> {
+  console.debug('[LIVE-CAM] opening the screen picker');
+  const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+  if (!devices?.getDisplayMedia) {
     console.warn('[LIVE-CAM] getDisplayMedia is absent');
-    void context?.close();
     throw new CameraAccessError('unavailable', 'live screen: getDisplayMedia is not available');
   }
-  let display: MediaStream;
   try {
-    display = await devices.getDisplayMedia({
+    const display = await devices.getDisplayMedia({
       video: {
         width: { ideal: LIVE_CAPTURE_LONG_SIDE_PX },
         height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
@@ -319,42 +275,15 @@ export async function openLiveScreen(
       },
       audio: true,
     });
+    const settings = display.getVideoTracks()[0]?.getSettings?.();
+    console.debug(
+      `[LIVE-CAM] screen opened: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}, ` +
+        `${display.getAudioTracks().length > 0 ? "with the share's sound" : 'no sound of its own'}`
+    );
+    return display;
   } catch (err) {
     const fault = classifyCameraError(err);
     console.warn(`[LIVE-CAM] the screen picker answered ${fault}`, err);
-    void context?.close();
     throw new CameraAccessError(fault, `live screen: ${fault}`, { cause: err });
   }
-  let mic: MediaStream;
-  try {
-    mic = await captureUserMedia(devices, { audio: REEL_AUDIO_CONSTRAINTS }, 'live-screen');
-  } catch (err) {
-    for (const track of display.getTracks()) track.stop();
-    void context?.close();
-    const fault = classifyCameraError(err);
-    console.warn(`[LIVE-CAM] the microphone for the screen share answered ${fault}`, err);
-    throw new CameraAccessError(fault, `live screen: microphone ${fault}`, { cause: err });
-  }
-  const video = display.getVideoTracks()[0];
-  const shareAudio = display.getAudioTracks();
-  const micTrack = mic.getAudioTracks()[0];
-  logCaptureAudioLayout('LIVE-CAM', mic);
-  const sources: MediaStreamTrack[] = micTrack ? [micTrack, ...shareAudio] : [...shareAudio];
-  let audio: MediaStreamTrack | undefined = micTrack;
-  if (micTrack && shareAudio.length > 0 && context) {
-    // A suspended context mixes NOTHING and the live would go out silent: one that is not running
-    // is given up for the microphone alone.
-    const mixed = mixAudio(context, micTrack, shareAudio[0], sources);
-    if (mixed) audio = mixed;
-    else for (const track of shareAudio) track.stop();
-  } else {
-    void context?.close();
-    for (const track of shareAudio) track.stop();
-    console.debug(`[LIVE-CAM] screen audio: ${micTrack ? 'the microphone alone' : 'none'}`);
-  }
-  const settings = video?.getSettings?.();
-  console.debug(
-    `[LIVE-CAM] screen opened: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}`
-  );
-  return new MediaStream([...(video ? [video] : []), ...(audio ? [audio] : [])]);
 }

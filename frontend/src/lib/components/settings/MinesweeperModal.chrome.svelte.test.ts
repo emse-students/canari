@@ -19,6 +19,7 @@ vi.mock('$lib/minesweeper/api', () => ({
   submitMinesweeperChallenge: vi.fn(),
   formatDurationMs: (ms: number) => `${ms}ms`,
   MinesweeperBannedError: class extends Error {},
+  MinesweeperUpdateRequiredError: class extends Error {},
 }));
 
 import MinesweeperModal from './MinesweeperModal.svelte';

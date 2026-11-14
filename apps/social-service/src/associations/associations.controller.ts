@@ -27,6 +27,7 @@ import type { Response } from 'express';
 import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { RouteParams } from '../common/route-params';
 import { isInReviewCohort, profileOpenAcrossCohort } from '../review-cohort';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
@@ -86,14 +87,24 @@ import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
   assertAgendaAccess,
+  AGENDA_TOKEN_NOT_ALONE,
+  assertSubscriptionTokenAlone,
   parseDirectoryQuery,
   parseSpaceSelection,
+  type SpaceSelection,
 } from './directory-query';
 import {
+  AGENDA_LEGACY_LINK_TAG,
+  AGENDA_SUBSCRIPTION_REFUSED_TAG,
   EVENT_ICS_REFUSED_TAG,
   eventIcsSignatureMatches,
+  legacyAgendaLinkShape,
+  DailySightings,
+  logDigest,
+  verifiedAgendaSubscriptionId,
   withEventIcsSig,
 } from './agenda-signature';
+import type { AgendaSubscriptionRow } from './associations.service';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -109,13 +120,45 @@ export const LYDIA_KEY_PASTE_RETIRED = 'LYDIA_KEY_PASTE_RETIRED';
  */
 export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
 
+/**
+ * The cache policy of an answer to a subscription token: the feed is ONE holder's agenda, so no shared
+ * cache may keep it (never `public`), and a calendar app re-polling within two minutes reads its own.
+ */
+export const AGENDA_TOKEN_CACHE_CONTROL = 'private, max-age=120';
+
 /** The `code` of the 403 a BDE caller gets deleting an institution: the global admin's alone (2026-11-02). */
 export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 
-/** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
+/**
+ * Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products.
+ *
+ * `RouteParams` names every path parameter of this controller by kind: each `uuid` is the key of a
+ * row, checked by the global guard before `GlobalAdminOrAssociationRoleGuard` asks the database
+ * about `:id`; a user id is not a uuid in this service, and a slug is a word. A NEW ROUTE REUSING
+ * ONE OF THESE NAMES FOR SOMETHING ELSE must say so on its handler (`@RouteParams({ id: 'opaque' })`).
+ */
+@RouteParams({
+  id: 'uuid',
+  cardId: 'uuid',
+  checkoutId: 'uuid',
+  childId: 'uuid',
+  deliveryId: 'uuid',
+  docId: 'uuid',
+  entryId: 'uuid',
+  eventId: 'uuid',
+  productId: 'uuid',
+  purchaseId: 'uuid',
+  tagId: 'uuid',
+  userId: 'opaque',
+  slug: 'opaque',
+})
 @Controller('associations')
 export class AssociationsController {
   private readonly logger = new Logger(AssociationsController.name);
+  /** The legacy agenda links already logged today by this process (`legacySelectionRead`). */
+  private readonly legacySightings = new DailySightings();
+  /** The refused subscription tokens already logged today by this process (`subscriptionHolder`). */
+  private readonly refusedSightings = new DailySightings();
 
   constructor(
     private readonly service: AssociationsService,
@@ -200,7 +243,8 @@ export class AssociationsController {
    * Returns associations. `?type=association|list` restricts; omit for both.
    *
    * THE DIRECTORY (D37) BY DEFAULT: only the associations whose rules reach one of the caller's
-   * spaces, plus those the caller is a member of - a global admin included, as in the feed.
+   * spaces, plus those the caller is a member of, plus those a nominative read grant of the caller
+   * reaches (owner, 2026-11-14) - a global admin included, as in the feed.
    * `?scope=all` is the whole catalogue, for screens that PICK an association (see
    * `directory-query.ts`); it is open to any signed-in caller because a hidden association is not
    * a secret - its page stays reachable by its link. `?campus=` / `?formation=` keep only the
@@ -341,6 +385,11 @@ export class AssociationsController {
    * A SIGNED-IN READER'S HISTORY STOPS WHERE THEIR OWN DOES: nothing starting before the August
    * their promo opens on (`promo-visibility.ts`, the rule the posts feed already used). An
    * anonymous reader is unchanged, having no promo to stop at.
+   *
+   * A subscription TOKEN is not read here (2026-11-14): only `feed.ics` takes one, so a token on this
+   * route is a 400 `AGENDA_TOKEN_NOT_ALONE` and never a holder's agenda in JSON (which would carry
+   * account ids and per-event links that outlive a revocation). An anonymous read with a legacy
+   * `sig` follows `legacySelectionRead`.
    */
   @Get('calendar/feed')
   async aggregatedCalendarFeed(
@@ -352,10 +401,20 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string,
     @Query('campus') campus?: string,
     @Query('formation') formation?: string,
-    @Query('sig') sig?: string
+    @Query('sig') sig?: string,
+    @Query('token') token?: string
   ) {
+    if (token?.trim()) {
+      this.logger.warn(`${AGENDA_SUBSCRIPTION_REFUSED_TAG} a token on the JSON feed: refused`);
+      throw new BadRequestException({
+        code: AGENDA_TOKEN_NOT_ALONE,
+        message: 'A subscription token is read by calendar/feed.ics only',
+      });
+    }
     const selection = parseSpaceSelection({ campus, formation });
-    assertAgendaAccess({ selection, associationId, sig, signedIn: Boolean(userId?.trim()) });
+    const signedIn = Boolean(userId?.trim());
+    assertAgendaAccess({ selection, associationId, sig, signedIn });
+    if (!signedIn && !this.legacySelectionRead(selection, sig)) return [];
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -375,6 +434,60 @@ export class AssociationsController {
   }
 
   /**
+   * The subscription row a token names, or null - malformed, wrongly signed, revoked or erased, each
+   * logged once with the tag the refusals are counted by (the id's first 8 characters, never more).
+   */
+  private async subscriptionHolder(token: string): Promise<AgendaSubscriptionRow | null> {
+    const id = verifiedAgendaSubscriptionId(token);
+    const holder = id ? await this.service.findAgendaSubscription(id) : null;
+    if (!holder) {
+      // A verified id is a link Canari made: once per row a day. An unverified token is anyone's
+      // string: ONE key for all of them, so a forger grows neither the set nor the log.
+      const key = id ? `${logDigest(id)}|unknown` : 'signature';
+      if (this.refusedSightings.firstToday(key, new Date().toISOString().slice(0, 10))) {
+        this.logger.warn(
+          id
+            ? `${AGENDA_SUBSCRIPTION_REFUSED_TAG} id=${logDigest(id)} reason=unknown`
+            : `${AGENDA_SUBSCRIPTION_REFUSED_TAG} reason=signature (the first today; later ones are not logged)`
+        );
+      }
+    }
+    return holder;
+  }
+
+  /**
+   * WHAT A SUBSCRIPTION LINK SERVES (owner, 2026-11-14, "Respecter les publics"): EXACTLY the signed-in
+   * agenda of its holder, narrowed to the row's selection - read at every poll, so a profile change, a
+   * lost membership or a read grant follows by itself. Validated events only, the promo cutoff included.
+   */
+  private holderFeed(holder: AgendaSubscriptionRow, from?: string, to?: string) {
+    return this.service.listAggregatedCalendarFeed(from, to, holder.associationId ?? undefined, {
+      viewer: { userId: holder.userId },
+      selection: { campus: holder.campus, formation: holder.formation },
+    });
+  }
+
+  /**
+   * A VERIFIED LEGACY `sig` READ (docs/wiki/legacy-compatibility.md): whether it serves anything. A
+   * `sig` names no holder, so it serves what EVERY reader who could hold it sees. A PAIR (campus AND
+   * formation, with or without an association) was signed only for readers of that space: served as
+   * before. Any other shape - a campus alone (signed for staff, who reach nothing through audience
+   * rules), a formation alone, an association alone (signed for anyone) - has a holder who sees
+   * nothing: it answers an EMPTY calendar, the link still resolving (owner's review, 2026-11-14).
+   * Each distinct link is logged ONCE per process per UTC day (`DailySightings`).
+   */
+  private legacySelectionRead(selection: SpaceSelection, sig: string | undefined): boolean {
+    const shape = legacyAgendaLinkShape(selection);
+    const link = logDigest(sig ?? '');
+    if (
+      this.legacySightings.firstToday(`${link}|${shape}`, new Date().toISOString().slice(0, 10))
+    ) {
+      this.logger.warn(`${AGENDA_LEGACY_LINK_TAG} shape=${shape} link=${link}`);
+    }
+    return shape === 'pair';
+  }
+
+  /**
    * Returns the iCalendar document for the aggregated feed.
    * Suitable for "subscribe by URL" in Apple/Google Calendar - `from`/`to` are optional and
    * default to a rolling window (see `AssociationsService.defaultCalendarFeedRange`), since a
@@ -389,10 +502,15 @@ export class AssociationsController {
    * campus / formation reaches. An anonymous read with neither (and no `associationId`) is REFUSED
    * with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
    *
-   * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
-   * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
-   * not a confidentiality boundary - see `promo-visibility.ts`. Anything that must be SECRET is
-   * refused by a guard, and this route has never served anything of the sort.
+   * `token` (owner, 2026-11-14, "Respecter les publics"): THE SUBSCRIPTION LINK. It names a row of
+   * `agenda_subscriptions` (`<id>.<HMAC>`), and serves EXACTLY its holder's signed-in agenda for the
+   * row's selection (`holderFeed`), promo cutoff included, `Cache-Control: private`. Unknown, revoked or
+   * wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED]`. It is alone in its request:
+   * with `sig`, a selection or an `eventId` it is a 400.
+   *
+   * A `sig` selection link is the LEGACY shim (docs/wiki/legacy-compatibility.md,
+   * `legacySelectionRead`): a pair is served as before, any other shape an EMPTY calendar. It has no
+   * promo cutoff: it names no holder to cut at.
    */
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
@@ -401,10 +519,29 @@ export class AssociationsController {
     @Query('associationId') associationId: string | undefined,
     @Query('eventId') eventId: string | undefined,
     @Res({ passthrough: true }) res: Response,
-    @Query('campus') campus?: string,
-    @Query('formation') formation?: string,
-    @Query('sig') sig?: string
+    @Query('campus') campus: string | undefined,
+    @Query('formation') formation: string | undefined,
+    @Query('sig') sig: string | undefined,
+    @Query('token') token: string | undefined
   ) {
+    const icsHeaders = (cacheControl: string) => {
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Cache-Control', cacheControl);
+    };
+    const frontendBaseUrl = process.env.FRONTEND_URL || 'http://localhost';
+    if (token?.trim()) {
+      assertSubscriptionTokenAlone({ token, sig, campus, formation, associationId, eventId });
+      const holder = await this.subscriptionHolder(token);
+      if (!holder) {
+        res.status(403);
+        return '';
+      }
+      const body = buildAggregatedCalendarIcs(await this.holderFeed(holder, from, to), {
+        frontendBaseUrl,
+      });
+      icsHeaders(AGENDA_TOKEN_CACHE_CONTROL);
+      return body;
+    }
     const selection = parseSpaceSelection({ campus, formation });
     const wanted = eventId?.trim();
     if (wanted) {
@@ -420,27 +557,30 @@ export class AssociationsController {
     } else {
       // `.ics` is always anonymous: a calendar app sends no identity.
       assertAgendaAccess({ selection, associationId, sig, signedIn: false });
+      if (!this.legacySelectionRead(selection, sig)) {
+        icsHeaders('public, max-age=120');
+        return buildAggregatedCalendarIcs([], { frontendBaseUrl });
+      }
     }
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
+      signedEvent: Boolean(wanted),
     });
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
     // response; Android downloads it for whichever calendar app owns .ics). Same route, same
     // builder, same UID as the subscription - so importing one and subscribing never doubles it.
     const rows = wanted ? all.filter((r) => r.id === wanted) : all;
-    const body = buildAggregatedCalendarIcs(rows, {
-      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost',
-    });
-    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=120');
+    const body = buildAggregatedCalendarIcs(rows, { frontendBaseUrl });
+    icsHeaders('public, max-age=120');
     return body;
   }
 
   /**
-   * The signature a subscription URL needs (D40 amended 2026-10-06): signed-in readers only, and
-   * only for a selection inside their own spaces (403 `AGENDA_SELECTION_FORBIDDEN` otherwise; 400
-   * `AGENDA_SELECTION_REQUIRED` for an empty one). The result names no one, see `agenda-signature.ts`.
+   * LEGACY (docs/wiki/legacy-compatibility.md): the signature a pre-2026-11-14 store build puts in its
+   * subscription URL (D40 amended 2026-10-06). Signed-in readers only, same bound and same 400 as
+   * `calendar/subscription`, and since 2026-11-14 a PAIR only (`signAgendaFeedSelection`). Removed
+   * with the `sig` branch of the feeds.
    */
   @UseGuards(NginxAuthGuard)
   @Post('calendar/feed-signature')
@@ -448,15 +588,54 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Body() body: { campus?: string; formation?: string; associationId?: string }
   ) {
+    const { selection, associationId } = this.subscriptionSelection(body);
+    return this.service.signAgendaFeedSelection(userId, selection, associationId);
+  }
+
+  /**
+   * THE CALLER'S SUBSCRIPTION LINK for a selection (owner, 2026-11-14, "Respecter les publics"):
+   * answers `{ token }`, the same one for the same selection until the caller revokes. Bound as the
+   * selector always was (403 `AGENDA_SELECTION_FORBIDDEN` outside the caller's own spaces, a staff
+   * reader's own campus included; 404 for an unknown association); an empty body is a 400
+   * `AGENDA_SELECTION_REQUIRED`. What the link serves is the caller's own agenda, read at every poll.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('calendar/subscription')
+  async subscribeCalendarFeed(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { campus?: string; formation?: string; associationId?: string }
+  ) {
+    const { selection, associationId } = this.subscriptionSelection(body);
+    return this.service.subscribeAgenda(userId, selection, associationId);
+  }
+
+  /**
+   * Revokes EVERY subscription link of the caller (`{ revoked }`, the count): each link handed out
+   * answers 403 from now on, and the next `calendar/subscription` mints a new one.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete('calendar/subscriptions')
+  revokeCalendarSubscriptions(@Headers('x-user-id') userId: string) {
+    return this.service.revokeAgendaSubscriptions(userId);
+  }
+
+  /** The parsed body of a subscription request, or the 400 an empty one gets. */
+  private subscriptionSelection(body: {
+    campus?: string;
+    formation?: string;
+    associationId?: string;
+  }): { selection: SpaceSelection; associationId: string | null } {
     const selection = parseSpaceSelection({ campus: body?.campus, formation: body?.formation });
-    const associationId = body?.associationId?.trim() || null;
+    // Lower-cased HERE, the one place a selection is built: an upper-case uuid names the same
+    // association, and must meet the same `selectionKey` (so the same row, the same link).
+    const associationId = body?.associationId?.trim().toLowerCase() || null;
     if (selection.campus === null && selection.formation === null && !associationId) {
       throw new BadRequestException({
         code: AGENDA_SELECTION_REQUIRED,
-        message: 'Name a campus, a formation or an association to sign',
+        message: 'Name a campus, a formation or an association to subscribe to',
       });
     }
-    return this.service.signAgendaFeedSelection(userId, selection, associationId);
+    return { selection, associationId };
   }
 
   /**
@@ -516,7 +695,11 @@ export class AssociationsController {
       { isGlobalAdmin: ga === 'true' }
     );
     const members = await this.service.listMembers(id, { includePermissions, callerId: userId });
-    if (ga === 'true' || isInReviewCohort(userId)) return members;
+    // A caller who sees the review accounts is told which rows they are (`reviewAccount`), so a
+    // screen that builds something PUBLIC from a roster (the carte) can leave them out.
+    if (ga === 'true' || isInReviewCohort(userId)) {
+      return members.map((m) => (isInReviewCohort(m.userId) ? { ...m, reviewAccount: true } : m));
+    }
     return members.filter((m) => !isInReviewCohort(m.userId));
   }
 
@@ -619,14 +802,14 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Param('id', ParseUUIDPipe) id: string
   ) {
-    const allowed = await this.service.canManagePayoutAccount(userId, id, {
-      isGlobalAdmin: ga === 'true',
-    });
+    const isGlobalAdmin = ga === 'true';
+    const allowed = await this.service.canManagePayoutAccount(userId, id, { isGlobalAdmin });
     if (!allowed) {
       this.logger.debug(`[PERM] payout account read refused on ${sanitizeLog(id)}`);
       throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
     }
-    return this.service.getPayoutAccount(id);
+    // A global admin also reads a bridge's both states (lydia-account-bridge.ts).
+    return this.service.getPayoutAccount(id, { isGlobalAdmin });
   }
 
   /**
@@ -1099,6 +1282,22 @@ export class AssociationsController {
       );
     }
     return this.service.createCalendarEvent(id, dto, userId, { isGlobalAdmin, isBde });
+  }
+
+  /**
+   * The spaces an INSTITUTION's event may target (owner, 2026-11-13): every space of its own
+   * audience, which the event form offers to tick and the write checks a reach against - the posts'
+   * statement. `:id` is the event's OWNER (the target of a deposit). Only for a caller who may file
+   * or write its events (403), and only for an institution (400 `institution_reach_not_offered`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/events/reach-options')
+  listEventReachOptions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.listEventReachOptions(userId, id, ga === 'true');
   }
 
   /**

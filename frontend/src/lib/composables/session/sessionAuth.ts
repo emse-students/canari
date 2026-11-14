@@ -194,6 +194,7 @@ import {
   wipeDeviceToFactory,
 } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
+import { sessionPushAuth } from '$lib/services/sessionPushAuth';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
@@ -2159,7 +2160,7 @@ export async function loginImpl(
     if (offlineSession) {
       cb.log('[PUSH] Registration deferred - offline session.');
     } else {
-      void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
+      void startPushService(ctx.getHistoryBaseUrl(), sessionPushAuth, ctx.getMyDeviceId())
         .then(async () => {
           cb.log('[PUSH] Push token registration complete.');
           if (!isTauriRuntime()) return;
@@ -2341,14 +2342,15 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at, group) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
           ctx.getUserId(),
-          at
+          at,
+          group
         );
         void ctx
           .getCallService()
@@ -2357,7 +2359,8 @@ export async function loginImpl(
             groupId,
             callMsg,
             ctx.getUserId(),
-            ctx.ensureMls().getDeviceId()
+            ctx.ensureMls().getDeviceId(),
+            group
           );
       },
       // The group just became sendable (a Welcome processed): the one seam an external join shares.
