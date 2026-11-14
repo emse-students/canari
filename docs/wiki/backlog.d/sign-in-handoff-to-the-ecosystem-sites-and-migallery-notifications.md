@@ -48,6 +48,12 @@ production, and core-service logged no `MICONNECT_READER_TOKEN is unset` line ov
 a state-changing request of a `viaHandoff` session until a fresh MiConnect sign-in. The flag acts
 only from the next Canari stable.
 
+Two notes from the review of the flip (#3575), neither blocking: MiGallery's admin
+`login-as` / `stop-impersonating` are GET routes, so the step-up (which guards every non-GET of a
+handoff session) does not cover them - admin-only, they set an impersonation cookie and write no
+user data; and at the stable that ships the flag, confirm Canari's `iss` (the first `FRONTEND_URL`)
+equals MiGallery's `CANARI_HANDOFF_ISSUER`, then open MiGallery from Canari once and read it signed in.
+
 **A site's flag goes on only when ALL of these hold** (security review of #3155, 2026-11-08; the
 same list heads `libs/contracts/ecosystem-sites.json`):
 
@@ -692,7 +698,7 @@ for these three today is "the account exists and is active"; Sky's ICM rule live
 users, negation, mode, the empty-result flag), so evaluating it from Canari would duplicate
 MiConnect's decision - rejected for the reason F2 was.
 
-**Condition 1 of section 0 therefore cannot be met as written**, and no flag goes on. The
+**Condition 1 of section 0 therefore cannot be met as written**, and no flag goes on (superseded: F3-bound, #3364, meets it from `v1.6.12`). The
 alternatives, for the lead/owner to choose (not taken here):
 
 - **F3-bound (recommended):** read-only account with `view_user`, `view_application` and
