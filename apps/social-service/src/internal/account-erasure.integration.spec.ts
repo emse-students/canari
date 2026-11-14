@@ -16,9 +16,15 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { Client } from 'pg';
 import { DataSource, getMetadataArgsStorage } from 'typeorm';
-import { ACCOUNT_ERASURE_COVERAGE, ERASURE_STATEMENTS, eraseSocialRows } from './account-erasure';
+import {
+  ACCOUNT_ERASURE_COVERAGE,
+  ERASURE_STATEMENTS,
+  eraseSocialRows,
+  type SocialErasureResult,
+} from './account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -46,10 +52,14 @@ function entityOfTable(table: string): Function | undefined {
 const ERASED = 'erased-it-0000';
 const OTHER = 'other-it-0000';
 
-/** Every table a statement names, plus `posts` for the JSONB scrub. */
+/**
+ * Every table a statement names, plus `posts` for the JSONB scrub and `spaces`, whose rows the
+ * erasure locks before any map (`ERASURE_CARTE_SPACES_LOCK_SQL`).
+ */
 const TABLES = [
   ...new Set([
     'posts',
+    'spaces',
     ...ERASURE_STATEMENTS.map((s) => /(?:FROM|UPDATE)\s+([a-z_]+)/.exec(s.sql)![1]),
   ]),
 ].sort();
@@ -210,6 +220,115 @@ maybe('account erasure against PostgreSQL', () => {
     );
   }
 
+  /** Two associations the erased account is a member of, `CARTE.a1` with the other account too. */
+  const CARTE = {
+    a1: randomUUID(),
+    a2: randomUUID(),
+    a3: randomUUID(), // not one of the erased account's
+    legacySpace: randomUUID(),
+    rosterSpace: randomUUID(),
+    strangerSpace: randomUUID(),
+    legacyMap: randomUUID(),
+    rosterMap: randomUUID(),
+    strangerMap: randomUUID(),
+  };
+  /**
+   * A realistic printed name with no id in it: a member of `CARTE.a3` who left, or the erased
+   * account under its display name - the erasure cannot tell, which is the point.
+   */
+  const STRANGER_LINE = 'Camille Martin (Presidente) - Louis Bernard';
+  /** The name the editor prints for an account; it holds the id, so a leftover name is found too. */
+  const nameOf = (userId: string) => `Name of ${userId}`;
+
+  /**
+   * Two LIVE maps showing both accounts, as production holds them. The first was published before
+   * rosters were stored: its directory prints the names in a `line` and carries no id. The second
+   * carries its roster (`members`), and its line derived from it. Both have a card each and both
+   * pick both accounts for a bubble's bureau; the second was created by the erased account. A third
+   * map's ONLY trace of anyone is a legacy line of `CARTE.a3`, an association the erased account is
+   * not a member of: no card, no pick, no id - nothing names the account, and it is still blanked.
+   */
+  async function seedCarte(): Promise<void> {
+    await client.query(
+      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, $3), ($1, $4), ($2, $3)`,
+      [CARTE.a1, CARTE.a2, ERASED, OTHER]
+    );
+    await client.query(`INSERT INTO spaces (id) VALUES ($1), ($2), ($3)`, [
+      CARTE.legacySpace,
+      CARTE.rosterSpace,
+      CARTE.strangerSpace,
+    ]);
+    const card = (userId: string) => ({ userId, name: nameOf(userId), role: 'President' });
+    const layout = { bubbles: [{ assoId: CARTE.a1, selectedBureau: [ERASED, OTHER] }] };
+    const units = [{ assoId: CARTE.a1, cards: [card(ERASED), card(OTHER)] }];
+    const legacy = {
+      units,
+      directory: {
+        heading: 'Annuaire',
+        zones: [
+          {
+            label: 'Z',
+            assos: [
+              { assoId: CARTE.a1, line: `${nameOf(ERASED)} (Tresorier) - ${nameOf(OTHER)}` },
+              { assoId: CARTE.a2, line: nameOf(ERASED) },
+              { assoId: CARTE.a3, line: 'Third Person' },
+            ],
+          },
+        ],
+      },
+    };
+    const roster = {
+      units,
+      directory: {
+        heading: 'Annuaire',
+        zones: [
+          {
+            label: 'Z',
+            assos: [
+              {
+                assoId: CARTE.a1,
+                line: `${nameOf(ERASED)} (Tresorier) - ${nameOf(OTHER)}`,
+                members: [
+                  { userId: ERASED, name: nameOf(ERASED), role: 'Tresorier' },
+                  { userId: OTHER, name: nameOf(OTHER), role: 'Membre' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+    await client.query(
+      `INSERT INTO poster_projects (id, name, "spaceId", "createdBy", layout, publication, "publishedAt", "publicationFingerprint")
+       VALUES ($1, 'legacy', $2, $3, $4::jsonb, $5::jsonb, now(), $6),
+              ($7, 'roster', $8, $9, $4::jsonb, $10::jsonb, now(), $6)`,
+      [
+        CARTE.legacyMap,
+        CARTE.legacySpace,
+        OTHER,
+        JSON.stringify(layout),
+        JSON.stringify(legacy),
+        'f'.repeat(64),
+        CARTE.rosterMap,
+        CARTE.rosterSpace,
+        ERASED,
+        JSON.stringify(roster),
+      ]
+    );
+    const stranger = {
+      units: [{ assoId: CARTE.a3, cards: [] }],
+      directory: {
+        heading: 'Annuaire',
+        zones: [{ label: 'Z', assos: [{ assoId: CARTE.a3, line: STRANGER_LINE }] }],
+      },
+    };
+    await client.query(
+      `INSERT INTO poster_projects (id, name, "spaceId", "createdBy", layout, publication, "publishedAt", "publicationFingerprint")
+       VALUES ($1, 'stranger', $2, $3, '{}'::jsonb, $4::jsonb, now(), $5)`,
+      [CARTE.strangerMap, CARTE.strangerSpace, OTHER, JSON.stringify(stranger), 'f'.repeat(64)]
+    );
+  }
+
   /** A post by somebody else that MENTIONS the account: in its column, its text and a comment's. */
   async function seedMention(): Promise<void> {
     await client.query(
@@ -224,11 +343,12 @@ maybe('account erasure against PostgreSQL', () => {
     );
   }
 
-  async function erase(): Promise<void> {
+  async function erase(): Promise<SocialErasureResult> {
     await client.query('BEGIN');
     try {
-      await eraseInTransaction();
+      const result = await eraseInTransaction();
       await client.query('COMMIT');
+      return result;
     } catch (err) {
       // An aborted transaction refuses every later statement, the schema drop included - and the
       // open connection then holds the run for ever instead of reporting this error.
@@ -237,9 +357,9 @@ maybe('account erasure against PostgreSQL', () => {
     }
   }
 
-  async function eraseInTransaction(): Promise<void> {
+  async function eraseInTransaction(): Promise<SocialErasureResult> {
     // The ONE implementation the route runs, over this connection.
-    await eraseSocialRows(
+    return eraseSocialRows(
       {
         write: async (sql, params) => (await client.query(sql, params)).rowCount ?? 0,
         read: async <T>(sql: string, params: unknown[]) =>
@@ -264,11 +384,12 @@ maybe('account erasure against PostgreSQL', () => {
   it('leaves no row naming the account, keeps the other account, and is idempotent', async () => {
     await seed();
     await seedMention();
+    await seedCarte();
     expect((await tablesStillNaming(ERASED)).length).toBeGreaterThan(10);
     const submissionsBefore = (await client.query(`SELECT count(*)::int AS n FROM submissions`))
       .rows[0].n;
 
-    await erase();
+    const first = await erase();
     expect(await tablesStillNaming(ERASED)).toEqual([]);
 
     // The other account is untouched wherever it was named - including the shared post.
@@ -291,6 +412,63 @@ maybe('account erasure against PostgreSQL', () => {
     expect(mention.markdown).toBe(`hello @[deleted] and @[${OTHER}]`);
     expect(mention.mentions).toBe(OTHER);
     expect(mention.comments[0].text).toBe('thanks @[deleted]');
+    // Both maps stay live and keep the other member; the erased one leaves the cards, the rosters
+    // and the layouts. EVERY legacy line prints names and no id, in every map: withheld.
+    const maps = (
+      await client.query(
+        `SELECT name, layout, publication, "publishedAt", "publicationFingerprint", "createdBy"
+           FROM poster_projects WHERE name IN ('legacy', 'roster')`
+      )
+    ).rows as {
+      name: string;
+      layout: unknown;
+      publication: { units: { cards: unknown[] }[]; directory: { zones: { assos: unknown[] }[] } };
+      publishedAt: Date | null;
+      publicationFingerprint: string | null;
+      createdBy: string;
+    }[];
+    const map = (name: string) => maps.find((m) => m.name === name)!;
+    for (const m of maps) {
+      expect(m.publishedAt).not.toBeNull();
+      expect(m.publicationFingerprint).toBeNull();
+      expect(m.layout).toEqual({ bubbles: [{ assoId: CARTE.a1, selectedBureau: [OTHER] }] });
+      expect(m.publication.units[0].cards).toEqual([
+        { userId: OTHER, name: nameOf(OTHER), role: 'President' },
+      ]);
+    }
+    expect(map('legacy').publication.directory.zones[0].assos).toEqual([
+      { assoId: CARTE.a1, line: '' },
+      { assoId: CARTE.a2, line: '' },
+      { assoId: CARTE.a3, line: '' },
+    ]);
+    // The map nothing ties to the account: its one legacy line is blanked all the same, and reported.
+    const strangerMap = (
+      await client.query(
+        `SELECT publication, "publishedAt", "publicationFingerprint" FROM poster_projects WHERE id = $1`,
+        [CARTE.strangerMap]
+      )
+    ).rows[0];
+    expect(strangerMap.publishedAt).not.toBeNull();
+    expect(strangerMap.publicationFingerprint).toBeNull();
+    expect(strangerMap.publication.directory.zones[0].assos).toEqual([
+      { assoId: CARTE.a3, line: '' },
+    ]);
+    expect(JSON.stringify(strangerMap.publication)).not.toContain('Camille');
+    expect(first.cartesWithheld).toEqual(
+      expect.arrayContaining([
+        { id: CARTE.legacyMap, lines: 3 },
+        { id: CARTE.strangerMap, lines: 1 },
+      ])
+    );
+    expect(first.cartesWithheld).toHaveLength(2);
+    expect(map('roster').publication.directory.zones[0].assos).toEqual([
+      {
+        assoId: CARTE.a1,
+        line: nameOf(OTHER),
+        members: [{ userId: OTHER, name: nameOf(OTHER), role: 'Membre' }],
+      },
+    ]);
+    expect(map('roster').createdBy).not.toBe(ERASED);
     // A submission keeps its seat and loses its answers and address.
     const subs = await client.query(
       `SELECT count(*)::int AS seats,
@@ -299,8 +477,9 @@ maybe('account erasure against PostgreSQL', () => {
     );
     expect(subs.rows[0]).toEqual({ seats: submissionsBefore, named: 0 });
 
-    // The queue's final pass: nothing left, nothing changes, nothing fails.
-    await erase();
+    // The queue's final pass: nothing left, nothing changes, nothing fails, nothing withheld again.
+    const again = await erase();
+    expect(again.cartesWithheld).toEqual([]);
     expect(await tablesStillNaming(ERASED)).toEqual([]);
   }, 120_000);
 });

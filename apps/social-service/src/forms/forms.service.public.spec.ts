@@ -59,7 +59,15 @@ describe('FormsService - public forms', () => {
       manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
     const namesByIds = jest.fn((_ids: string[]) => Promise.resolve(new Map<string, string>()));
-    const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
+    const pricingFacts: any = {
+      build: jest.fn(() =>
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
+      ),
+    };
     const service = new FormsService(
       formRepo,
       submissionRepo,
@@ -170,6 +178,7 @@ describe('FormsService - public forms', () => {
           'basePrice',
           'closedAt',
           'currency',
+          'cursusSlices',
           'description',
           'formFull',
           'guestFields',
@@ -184,6 +193,8 @@ describe('FormsService - public forms', () => {
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+      // A guest has no cursus: one slice, the same one the legacy fields carry.
+      expect(form.cursusSlices).toEqual([{ pricing: null, productGridPrices: {} }]);
     });
 
     // Owner, 2026-11-02: a paid form of an entity that cannot collect now (a list whose delegation

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,7 +14,16 @@ import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
-import { CHALLENGE as BOARD_CONFIG, verifySolve, type MinesweeperMove } from './engine/game';
+import {
+  CHALLENGE as BOARD_CONFIG,
+  LATEST_GENERATOR_VERSION,
+  verifySolve,
+  type GeneratorVersion,
+  type MinesweeperMove,
+} from './engine/game';
+
+/** HTTP 426: Nest's `HttpStatus` has no name for it. */
+const UPGRADE_REQUIRED = 426;
 
 /** Challenge board must be cleared in at least this long (blocks 0ms cheats). */
 const MIN_DURATION_MS = 8_000;
@@ -71,6 +81,20 @@ function sameSideAsSql(userId: string | undefined, column: string): string {
   return isInReviewCohort(userId) ? inCohort : `NOT ${inCohort}`;
 }
 
+/**
+ * The generator a new ranked challenge is issued with, or null when this client cannot be ranked.
+ *
+ * RANKED IS OPEN ONLY TO A CLIENT THAT CAN MAKE THE LATEST GENERATOR (owner, 2026-11-13). A time is
+ * only comparable with another on a board of the same difficulty: letting a build that makes the
+ * older, easier boards into the same ranking would hand it faster times for less reasoning. A client
+ * that names nothing - every build before versions - is therefore refused, not served the old one.
+ * It still plays: the screen falls back to an unranked game.
+ */
+export function issuedGeneratorVersion(requested: number | undefined): GeneratorVersion | null {
+  if (requested === undefined || requested < LATEST_GENERATOR_VERSION) return null;
+  return LATEST_GENERATOR_VERSION;
+}
+
 @Injectable()
 export class MinesweeperService {
   private readonly logger = new Logger(MinesweeperService.name);
@@ -99,10 +123,26 @@ export class MinesweeperService {
 
   /**
    * Starts a ranked run: cancels prior open challenges for this user and returns
-   * a fresh seed. Duration is measured from `startedAt` on the server.
+   * a fresh seed. Duration is measured from `startedAt` on the server. A client that cannot make the
+   * latest generator is refused (`426`, `generator_update_required`).
    */
-  async startChallenge(userId: string) {
+  async startChallenge(userId: string, maxGeneratorVersion?: number) {
     await this.assertNotBanned(userId);
+    // Before anything is expired: a refused client keeps the challenge it already holds.
+    const generatorVersion = issuedGeneratorVersion(maxGeneratorVersion);
+    if (generatorVersion === null) {
+      this.logger.warn(
+        `minesweeper refused: generator_update_required user=${userId} requested=${maxGeneratorVersion ?? 'none'} latest=${LATEST_GENERATOR_VERSION}`
+      );
+      throw new HttpException(
+        {
+          code: 'generator_update_required',
+          message: 'This app version cannot play ranked Minesweeper: update it',
+          latestGeneratorVersion: LATEST_GENERATOR_VERSION,
+        },
+        UPGRADE_REQUIRED
+      );
+    }
     const now = new Date();
     await this.challenges
       .createQueryBuilder()
@@ -115,6 +155,7 @@ export class MinesweeperService {
     const row = this.challenges.create({
       userId,
       seed,
+      generatorVersion,
       width: BOARD_CONFIG.width,
       height: BOARD_CONFIG.height,
       mineCount: BOARD_CONFIG.mineCount,
@@ -123,11 +164,14 @@ export class MinesweeperService {
       status: 'open',
     });
     await this.challenges.save(row);
-    this.logger.log(`minesweeper challenge started user=${userId} id=${row.id}`);
+    this.logger.log(
+      `minesweeper challenge started user=${userId} id=${row.id} generator=${generatorVersion}`
+    );
 
     return {
       challengeId: row.id,
       seed: row.seed,
+      generatorVersion: row.generatorVersion,
       config: {
         width: row.width,
         height: row.height,
@@ -182,11 +226,39 @@ export class MinesweeperService {
       y: m.y,
     }));
 
-    const result = verifySolve(challenge.seed, moves, {
-      width: challenge.width,
-      height: challenge.height,
-      mineCount: challenge.mineCount,
-    });
+    // A version this server does not know cannot be replayed, and replaying it with another would
+    // judge an honest solve on a board the player never saw.
+    if (
+      !Number.isInteger(challenge.generatorVersion) ||
+      challenge.generatorVersion < 1 ||
+      challenge.generatorVersion > LATEST_GENERATOR_VERSION
+    ) {
+      // NOT stored as rejected: a server rolled back past a generator would otherwise turn every honest
+      // in-flight solve into a permanent loss, and the roll-forward could not retry it.
+      this.logger.error(
+        `minesweeper refuse unknown_generator user=${userId} id=${challengeId} generator=${challenge.generatorVersion}`
+      );
+      throw new BadRequestException('Challenge was issued with an unknown generator');
+    }
+
+    const result = verifySolve(
+      challenge.seed,
+      moves,
+      {
+        width: challenge.width,
+        height: challenge.height,
+        mineCount: challenge.mineCount,
+      },
+      challenge.generatorVersion as GeneratorVersion
+    );
+
+    if (result.generation?.fellBack) {
+      // Generator 2 found no layout its solver can clear, so this board may have needed a guess: it is
+      // accepted, and this line is the only way to learn how often (the client logs it too).
+      this.logger.warn(
+        `minesweeper generation fell back user=${userId} id=${challengeId} generator=${challenge.generatorVersion} score=${result.generation.score}`
+      );
+    }
 
     if (!result.ok) {
       challenge.status = 'rejected';

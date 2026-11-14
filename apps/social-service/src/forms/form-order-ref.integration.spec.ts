@@ -76,7 +76,13 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       associationsService,
       { grantCotisant: jest.fn() } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
-      { build: async () => ({ answers: {} }) } as any,
+      {
+        build: async () => ({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        }),
+      } as any,
       ds.getRepository(FormRespondent),
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.

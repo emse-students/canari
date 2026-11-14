@@ -1,6 +1,7 @@
 import {
   allCellKeys,
   assertMatrixValid,
+  cheapestCell,
   expectedCellCount,
   hasCell,
   pricedQuestionIds,
@@ -8,16 +9,12 @@ import {
   resolveCellPrice,
   type PriceMatrix,
 } from './price-matrix';
-import { OTHERS_BUCKET_ID, type Dimension, type PricingFacts } from './audience';
+import { NO_CURSUS, OTHERS_BUCKET_ID, type Dimension } from './audience';
+import { factsOf, viewOf } from './facts.it-fixture';
 
 describe('price matrix', () => {
-  const facts = (over: Partial<PricingFacts> = {}): PricingFacts => ({
-    promo: null,
-    formation: null,
-    cotisationTiers: [],
-    answers: {},
-    ...over,
-  });
+  /** One cursus: what a cell is read from. */
+  const facts = viewOf;
 
   const cotisation: Dimension = {
     id: 'cot',
@@ -306,6 +303,94 @@ describe('price matrix', () => {
         },
       };
       expect(pricingViewFor(closed, facts()).baseCents).toBeNull();
+    });
+  });
+
+  // D32: two cursus pay the MOST FAVOURABLE price - the grid is read through each cursus and the
+  // cheapest cell wins. Each case failed when only the first cursus was read.
+  describe('cheapestCell (two cursus, D32)', () => {
+    const promo: Dimension = {
+      id: 'promo',
+      kind: 'promo',
+      buckets: [{ id: 'p1a', label: '1A', values: [2026] }],
+    };
+    const byPromo: PriceMatrix = {
+      dimensions: [promo],
+      cells: { p1a: 500, [OTHERS_BUCKET_ID]: 2000 },
+    };
+
+    it('charges the formation bucket of the SECOND cursus when it is cheaper', () => {
+      const person = factsOf({
+        cursus: [
+          { formation: 'ISMIN', promo: 2024 },
+          { formation: 'ICM', promo: 2025 },
+        ],
+      });
+      const choice = cheapestCell(twoByTwo, person, 'product');
+      expect(choice.cents).toBe(1500);
+      expect(choice.index).toBe(1);
+      expect(pricingViewFor(twoByTwo, choice.view).appliedLabels).toEqual(['ICM']);
+    });
+
+    it('charges the promo bucket of the SECOND cursus when it is cheaper', () => {
+      const person = factsOf({
+        cursus: [
+          { formation: 'ICM', promo: 2022 },
+          { formation: 'Autre', promo: 2026 },
+        ],
+      });
+      expect(cheapestCell(byPromo, person).cents).toBe(500);
+    });
+
+    it('never pairs the promo of one cursus with the formation of another', () => {
+      const icm1a: PriceMatrix = {
+        dimensions: [formation, promo],
+        cells: {
+          'icm|p1a': 100,
+          [`icm|${OTHERS_BUCKET_ID}`]: 1000,
+          [`${OTHERS_BUCKET_ID}|p1a`]: 1000,
+          [`${OTHERS_BUCKET_ID}|${OTHERS_BUCKET_ID}`]: 1000,
+        },
+      };
+      // ICM 2022 and ISMIN 2026: nobody here is "ICM 1A".
+      const person = factsOf({
+        cursus: [
+          { formation: 'ICM', promo: 2022 },
+          { formation: 'ISMIN', promo: 2026 },
+        ],
+      });
+      expect(cheapestCell(icm1a, person).cents).toBe(1000);
+    });
+
+    it('gives a tie to the first cursus', () => {
+      const person = factsOf({
+        cursus: [
+          { formation: 'ISMIN', promo: 2026 },
+          { formation: 'Autre', promo: 2026 },
+        ],
+      });
+      expect(cheapestCell(byPromo, person).index).toBe(0);
+    });
+
+    it('sells through the cursus whose combination exists when the other is closed', () => {
+      const closedForOthers: PriceMatrix = {
+        dimensions: [formation],
+        cells: { icm: 3000, [OTHERS_BUCKET_ID]: null },
+      };
+      const person = factsOf({
+        cursus: [
+          { formation: 'ISMIN', promo: 2024 },
+          { formation: 'ICM', promo: 2024 },
+        ],
+      });
+      expect(cheapestCell(closedForOthers, person).cents).toBe(3000);
+    });
+
+    it('prices a person with no cursus exactly as before', () => {
+      const none = factsOf({ cursus: NO_CURSUS, cotisationTiers: [null] });
+      const choice = cheapestCell(twoByTwo, none);
+      expect(choice.cents).toBe(1000);
+      expect(choice.of).toBe(1);
     });
   });
 });

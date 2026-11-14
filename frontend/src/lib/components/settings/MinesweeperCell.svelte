@@ -36,7 +36,7 @@
    */
   const tone = $derived(
     pending
-      ? 'bg-cn-bg animate-pulse'
+      ? 'bg-cn-bg ms-pending'
       : cell.state !== 'revealed'
         ? 'ms-hidden'
         : cell.mine
@@ -63,6 +63,21 @@
 </button>
 
 <style>
+  /*
+   * The pressed first-dig cell pulses at Tailwind's own rhythm (2 s) scaled by the player's animation
+   * speed (`--ms-anim`, set on the modal). A factor of 0 makes the duration zero, which ends the
+   * infinite animation at once - the "off" setting.
+   */
+  @keyframes ms-pending-pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .ms-pending {
+    animation: ms-pending-pulse calc(2s * var(--ms-anim, 1)) cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
   /* Hidden tile: the board colour pulled 14% toward the text colour, 22% on hover and 30% pressed. */
   .ms-hidden {
     background: color-mix(in srgb, var(--text-main) 14%, var(--cn-bg));

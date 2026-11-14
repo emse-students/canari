@@ -125,7 +125,7 @@ ne prend qu'une petite partie de l'ecran"*. It was reworked in depth (`routes/ad
   while something is unsaved. While the editor is mounted the app shell is `inert`
   (`actions/inertAppShell.ts`), so Tab and screen readers do not reach the page behind it.
 - **Updating the publication needs no server change.** `publish` is already a replacement (one
-  transaction clears the space's live map and sets this one), so "Mettre à jour la publication" is
+  transaction clears the space's live map and sets this one), so "Mettre a jour la publication" is
   the same call as Publier: save first, publish the saved state, record its fingerprint
   (`carte/publishAfterSave.ts`: the document is read BEFORE the save and published only if the
   save wrote that state, so an edit made while the save is in flight is never published unsaved; a
@@ -268,6 +268,13 @@ wait for an animation frame" below.
 | D16 | The generic roles are exactly four: Membre, Member, Adherent, Adherente (case and accents ignored). |
 | D17 | An overlap is never raised at publish time. |
 | D18 | The dev pre-release was canari-64's to cut; the chantier cut none of its own. |
+
+**D8's cost, measured 2026-11-14** (dev `1.6.12-alpha.2`, desktop Chrome at 1440 px, the tab in the
+foreground, the one carte dev holds): "Export to PDF" to a finished download in **2.9 s**, the tab's
+JS heap 19 MB before and 23 MB at its peak, a **600 KB** one-page PDF on an A0 landscape page
+(3370 x 2384 pt) carrying a 7200 x 5089 raster with its text layer on top; the text runs are set
+from 8.6 pt to 109.5 pt. The owner's look at an export is a row of
+[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
 ## The directory is ordered by FAMILY NAME, and that needs two columns
 
@@ -455,7 +462,7 @@ decides nothing.
 | Coordinates | poster px, 1600 px stage | poster px + the `stage` dims, so the consumer scales once |
 | Silhouettes | shape KEYS into `shapes.ts` | resolved CSS `border-radius` values |
 | Unit | blob + bureau crown + president card + name band | the same, every sub-box resolved |
-| Members | re-resolved live on every open | frozen: `cards[]` per unit + the directory lines |
+| Members | re-resolved live on every open | frozen: `cards[]` per unit + the directory rosters and lines |
 | Palette | `CARTE_STYLE` | a resolved `style` block |
 | Directory | rendered from the model | a resolved panel: rect, heading, zones, rosters |
 
@@ -473,6 +480,30 @@ its own (Canari seeds one from the id; the showcase seeds from the name, so this
 **What is frozen, on purpose:** which member sits in which crown slot is an authoring decision
 (`selectedBureau`), and so is the roster order, so member names, roles and initials travel in the
 payload. **A roster change therefore needs a republish** - the same way a printed poster does.
+
+**A directory entry carries its roster, and the server writes its line** (2026-11-14). Each
+`directory.zones[].assos[]` entry is sent as `{ assoId, line, members }`: `members` is
+`{ userId, name, role }[]` in PRINT order (by family name - the editor alone holds the name parts).
+`sanitizePublishedCarte` stores the roster and DERIVES `line` from it with `directoryLine` in
+`published-carte.ts`, ignoring the line sent; the editor's own `rosterLine` (`generator.ts`) prints
+the poster and the PDF, and both specs read `directory-line.cases.json` so the two cannot drift.
+**A publish whose entry prints a non-empty `line` with no `members` is REFUSED** (`400`,
+`CARTE_ROSTER_UNSTRUCTURED`, at WARN): names with no id can be neither checked nor scrubbed by an
+erasure, and only an editor older than this change sends one - the editor tells its author to
+reload. An entry naming nobody (empty line) needs no roster. The line-only entries ALREADY stored
+are served as they are until their map's next publication or the first account erasure, which
+blanks them all ([account-erasure](account-erasure.md#the-dispositions-and-why),
+[legacy-compatibility](legacy-compatibility.md)). **The
+roster is never served**: it holds account ids, and `PosterService.toPublished` strips it
+(`publicCarte`), so `GET /api/public/carte` answers `{ assoId, line }` per entry, as it always has.
+It exists so the server can CHECK a roster against the membership table and an account erasure can
+find a member by id ([account-erasure](account-erasure.md#the-dispositions-and-why)).
+
+**Every map published by an older client reads "changed since publication" after this release.**
+The client's fingerprint now covers the roster (`members`) the document carries, so the fingerprint
+of what the editor would publish no longer equals the one stored for a map published without it,
+even when nothing was edited. That is the intended prompt: one republish stores the roster, after
+which the map is checked at every publish and scrubbed by id at an erasure rather than blanked.
 
 **One measurement is duplicated, deliberately:** the directory shrinks its font until the roster
 fits its fixed panel. That is a DOM measurement, not a constant, so both sides run the same loop -
@@ -573,6 +604,19 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   transaction): the later one replaces the earlier instead of hitting the index with a 500.
 - **Every association the document names - unit AND directory line - must be switched on and of
   the space**, or the publish is refused `CARTE_UNIT_OUTSIDE_MAP`.
+- **Only a CURRENT member may appear on a map.** An
+  editor tab opened before someone left an association - or before their account was erased - still
+  holds their card, their roster entry and their bureau pick. Under the space's lock, a publish keeps
+  only the cards and roster members whose `(assoId, userId)` is an `association_members` row today,
+  re-derives each line from what is kept, and says at WARN how many it dropped; the stored
+  fingerprint is then NULL (it described the document sent, not the one stored), which the editor
+  reads as "unknown" and answers with an update. A save does the same to each bubble's
+  `selectedBureau`, after locking the map's row. One query for the whole document
+  (`PosterService.currentMembership`), used by those two paths and nothing else; it reads the
+  memberships `FOR KEY SHARE`, so an erasure's uncommitted DELETE is waited for, never read past. A
+  line sent without a roster cannot be checked, so the publish is refused `CARTE_ROSTER_UNSTRUCTURED`;
+  the editor adopts whatever a save or a publish dropped (`adoptDroppedPeople`), so it does not send
+  the same ids again.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a
@@ -617,6 +661,51 @@ Three things to know before changing the contract:
 Avatars are not in the payload: the showcase already proxies MiGallery at
 `/api/users/:id/avatar`, so only `userId` travels. That also keeps a publication small enough to
 serve from one row.
+
+## After the release that carries #3526: republish every live carte once
+
+**Owed by the lead, once, right after the stable carrying #3526 is in production** (owner,
+2026-11-14, [decisions](backlog.d/owner-decisions-of-2026-11-14.md)). Delete this section when the
+checks of step 4 read zero on production.
+
+1. **Why.** A publication stored before #3526 keeps its old shape until it is republished: directory
+   entries `{ assoId, line }` with names and no id, and the cards of accounts erased before #3526,
+   which no later erasure matches (it searches by id). A publish now refuses a non-empty line-only
+   entry (`CARTE_ROSTER_UNSTRUCTURED`) and the first erasure blanks every one that is stored
+   ([legacy-compatibility](legacy-compatibility.md)), so a carte left alone loses its directory text
+   at the next erasure. One publish by the current editor stores a roster per entry and keeps current
+   members only (`keepCurrentMembers`), which closes both.
+2. **The list.** A carte is live when its `poster_projects.publication` is NOT NULL (`publishedAt`
+   is set with it); its space is `poster_projects."spaceId"`, one live carte per space at most. A
+   read-only `SELECT id, name, "spaceId", "publishedAt" FROM poster_projects WHERE publication IS
+   NOT NULL` lists them; in the app, `/admin/carte` marks a live map with a globe next to its space, and the editor
+   says "En ligne depuis le ...".
+3. **The gesture, per carte, in the editor (`/admin/carte/<id>`):**
+   - **Who can.** The editor opens a map only for the platform admin (`isGlobalAdmin`, every space)
+     or for a member holding `MANAGE_ASSO` in the BDE that governs its space (`listSpaces`,
+     `MANAGED_CARTE_SPACES_SQL`); anyone else gets a `404`. **The lead can do it only from an
+     account that is one of those** - a platform admin account covers every carte; otherwise the
+     gesture belongs to each space's BDE officer.
+   - **Open it.** On load the editor never reads the stored publication: it draws from the saved
+     layout and the rosters it fetches now (`listMembers`, current members only), so legacy lines and
+     erased accounts are simply not in what it would publish. `adoptDroppedPeople` acts only on the
+     ANSWER of a save or a publish, removing whomever the server dropped.
+   - **Check before publishing.** Every association's roster is shown in the directory panel: a
+     roster that failed to load is drawn EMPTY (logged `admin.carte.id.loadData roster failed`) and
+     would be published empty - reload if one is unexpectedly empty. The bar shows "Mettre a jour la
+     publication": every carte published by an older client reads as changed, since the fingerprint
+     now covers the roster.
+   - **Publish.** One click on "Mettre a jour la publication": the editor saves, then publishes
+     (`publishAfterSave`); the live carte is replaced in place.
+   - **If it is refused `CARTE_ROSTER_UNSTRUCTURED`** (`carte_publish_refused_roster`, "... Rechargez
+     l'editeur puis republiez"): the tab runs a bundle older than #3526. Reload the page
+     (a native app: update it, or use the web) and publish again. `CARTE_UNIT_OUTSIDE_MAP` means an
+     association of the map was switched off or left the space since: reload, then publish.
+4. **Verify.** The anonymous document, `GET /api/public/carte?space=<the space's id>`, carries no
+   `members` key anywhere (it never does: `publicCarte` strips it) and, after the republish, the
+   stored row has no line-only entry: the two counts of the
+   [legacy-compatibility entry](legacy-compatibility.md) (no card or roster member without a
+   `users` row; no non-empty line-only entry) read `0` on production.
 
 ## Rendering traps
 

@@ -34,6 +34,10 @@ const productGrid = (rows: string[], cols: string[]) => ({
   pricing: { mode: 'single' },
 });
 
+const FREE_GRIDS = vi.hoisted(() => ({
+  hoodie: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+  jacket: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+}));
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
   getPublicForm: () =>
@@ -75,10 +79,8 @@ vi.mock('$lib/forms/api', async (orig) => ({
         },
       ],
       // Free articles, so a send goes straight out (a paid one first asks the payer's address).
-      productGridPrices: {
-        hoodie: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
-        jacket: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
-      },
+      productGridPrices: FREE_GRIDS,
+      cursusSlices: [{ pricing: null, productGridPrices: FREE_GRIDS }],
     }),
   submitPublicForm,
 }));

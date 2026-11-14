@@ -16,7 +16,7 @@
     getFormDraft,
     submitForm as submitFormService,
     checkSubmission,
-    type PricingView,
+    type CursusSlice,
     getSubmission,
     cancelPendingSubmission,
     confirmSubmissionPayment,
@@ -25,8 +25,12 @@
     type EditableAnswer,
     type Form,
   } from '$lib/forms/api';
-  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
-  import type { ProductGridPrices } from '$lib/forms/productGridContract';
+  import {
+    cursusSlicesOf,
+    fillPriceState,
+    NO_PRICING_SLICE,
+    optionModifierOf,
+  } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
@@ -139,16 +143,16 @@
   let paidOverCapacity = $state(false);
   let formFull = $state(false);
   /**
-   * This submitter's slice of the pricing grid, from the server. Null when the form has one price.
+   * This submitter's slices of the pricing grid, from the server: one per distinct cursus (D32), the
+   * page showing the cheapest (`fillPriceState`). A slice's `pricing` is null when the form has one
+   * price; its `productGridPrices` are this member's prices on each priced grid.
    *
    * The page derives no pricing RULE of its own: everything about who the person is has already been
    * resolved server-side (cotisation, promo, formation - none of which a browser can be trusted
    * with), and what is left is their own answers, which the page resolves as they click. The server
    * recomputes the whole thing at submit and that figure is what gets charged.
    */
-  let pricing = $state<PricingView | null>(null);
-  /** This member's prices on each priced grid (`product_grid`), their category resolved server-side. */
-  let productGridPrices = $state<ProductGridPrices>({});
+  let slices = $state<readonly CursusSlice[]>(NO_PRICING_SLICE);
   /**
    * The required question the last send stopped on: its card says why, until it is answered. Kept
    * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
@@ -316,8 +320,7 @@
     pendingCheckout = null;
     paidOverCapacity = false;
     formFull = false;
-    pricing = null;
-    productGridPrices = {};
+    slices = NO_PRICING_SLICE;
     missingAnswer = null;
     hiddenItemIds = [];
     maySubmit = true;
@@ -421,18 +424,16 @@
         hasSubmitted,
         paymentStatus,
         formFull: full,
-        pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
         refusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
-      pricing = view;
+      slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
       cotisationHeld = refusalCode === FORM_COTISATION_HELD;
-      productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
         watchCheckout(submission.submissionId, null);
@@ -480,24 +481,23 @@
   );
 
   /**
-   * Everything the page shows about the price, from the slice the server sent (`fillPriceState`,
+   * Everything the page shows about the price, from the slices the server sent (`fillPriceState`,
    * shared with the guest's page): the cell their answers land on, whether it is decided or does
    * not exist, the options that would close it, and the total the pay button names.
    */
   const price = $derived(
     fillPriceState({
       basePrice: form?.basePrice ?? 0,
-      pricing,
+      slices,
       items: form?.items ?? [],
       visibleItems,
       selections,
-      productGridPrices,
     })
   );
   /** Whether the form holds a priced grid this member sees: the bar then totals the order. */
   const hasProductGrid = $derived(visibleItems.some(isProductGrid));
   /** The categories this member is charged under, for the read-only line under the header. */
-  const tierLabels = $derived(appliedTierLabels(visibleItems, productGridPrices));
+  const tierLabels = $derived(appliedTierLabels(visibleItems, price.productGridPrices));
   const priceUnavailable = $derived(price.priceUnavailable);
   const appliedPricingLabel = $derived(price.appliedLabel);
 
@@ -1147,7 +1147,7 @@
             grid={item.productGrid}
             bind:value={selections[item.id]}
             disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
-            prices={productGridPrices[item.id]}
+            prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
           />

@@ -3126,6 +3126,11 @@ export interface PosterProject {
    * by a client older than 2026-09-28. Null therefore means "unknown", never "unchanged".
    */
   publicationFingerprint?: string | null;
+  /**
+   * The document that is live, as STORED (a publish keeps only current members); null when offline.
+   * Present on a single map's answer, absent from the list.
+   */
+  publication?: Record<string, unknown> | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -3170,7 +3175,6 @@ export interface CreatePosterProjectPayload {
   name: string;
   /** The space the map is drawn for - one the caller manages. */
   spaceId: string;
-  layout?: Record<string, unknown>;
 }
 
 export interface UpdatePosterProjectPayload {
@@ -3184,6 +3188,8 @@ export interface UpdatePosterProjectPayload {
 export const CARTE_REFUSAL = {
   UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
   NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
+  /** A directory line with no roster: an editor older than the structured roster - reload it. */
+  ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
 } as const;
 
 /**

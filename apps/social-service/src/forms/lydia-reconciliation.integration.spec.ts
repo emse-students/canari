@@ -144,7 +144,13 @@ RESET lock_timeout;`
       associationsService,
       { grantCotisant: jest.fn() } as any,
       purchaseRecordService,
-      { build: async () => ({ answers: {} }) } as any,
+      {
+        build: async () => ({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        }),
+      } as any,
       ds.getRepository(FormRespondent),
       {} as any,
       { enabled: () => false } as any,

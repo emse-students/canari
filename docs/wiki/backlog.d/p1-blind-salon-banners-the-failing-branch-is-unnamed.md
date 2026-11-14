@@ -1,4 +1,4 @@
-## Reading owed - the `[PUSH_BLIND] refused=` reasons on production and on a real-size key group
+## P1 - blind salon banners: the seed is absent when the push lands
 
 target: 1.7.0
 
@@ -53,3 +53,5 @@ owed.
 **Step (1) again, 2026-11-14, 09:11-10:40 UTC after the `1.6.12` deploy:** 2 `[PUSH_BLIND]` lines,
 both iOS, `missing=seed held=false refused=none`, same shape as the 6 above. Still no `refused=`
 value other than `none` on production: the failing branch remains the seed's absence.
+
+**Re-triaged 2026-11-14 (owner: every owed reading is read or deleted, never left waiting).** Step (1) is read and answers the title's question: every `[PUSH_BLIND]` line on production since the `refused=` report shipped says `missing=seed refused=none` (8 lines over two windows on 2026-11-14, iOS and Android), so the failing branch is the seed's ABSENCE on the phone, never a refused open. This is a defect to find, not a reading: steps (2) and (3) are its investigation (the rig's real-size key group, then the iPhone's NSE as receiver).

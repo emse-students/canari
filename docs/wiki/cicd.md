@@ -278,6 +278,16 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+A rollback also runs the services in the SAME order as a forward deploy (`replace-modes.py`, from
+`depends_on`), so a contract a newer core-service serves and a newer social-service reads has a window
+on the way back that it has not on the way forward: the older core-service is up while the newer
+social-service still runs. **Known window (D32, 2026-11-14):** social-service reads `cursusViews` from
+core-service's internal profile; across a rollback past the release carrying D32, every operation priced
+on a profile (a form's `/check` and submit, a boutique purchase, a booking space's listing) answers
+`503` with the typed code `PRICING_CORE_BEHIND` - logged `[PRICING] PRICING_CORE_BEHIND ... core-service
+older than the cursus views` - for the minutes social-service's own replacement takes. Failing closed
+is deliberate: pricing on no cursus would overcharge every student
+([forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong)).
 
 #### A migration the owner must approve is held (2026-11-01)
 
