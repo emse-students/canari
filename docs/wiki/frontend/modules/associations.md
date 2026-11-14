@@ -327,8 +327,13 @@ since 2026-11-14 - **its forms and booking spaces, by their link as well as in e
   association row `FOR SHARE` (`isAssociationArchived`, `associations/association-archived.ts`)
   BEFORE their own lock - the order an association delete takes - while the archive writes it under
   `FOR UPDATE`. So each is decided either before the archive commits or after it, never across it,
-  as a shop checkout is.
-- **Taken by default, to confirm with the owner (2026-11-14)**: a space's managers may still book on
+  as a shop checkout is. What is ordered is the ANSWER: the payment request of
+  an answer decided before the archive is issued after the answer's transaction commits, so it may
+  follow the archive, and it settles as any other payment.
+- **The agenda link of a form** (`GET /forms/:id/calendar-link`) answers by the same read
+  (`FormsService.mayRead`): no link to a reader who may not read the form, so the id is not
+  confirmed there either.
+- **Decided by the lead, 2026-11-14, reversible (the owner's absence delegation)**: a space's managers may still book on
   someone's behalf in an archived association's space; a manager cannot submit their own archived
   association's form (as with a draft); respondents get the existing 404, with no new wording.
 

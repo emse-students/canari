@@ -708,6 +708,9 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     try {
       const stranger = { userId: BOB, isGlobalAdmin: false };
       expect(await refusal(service.get(paidForm, stranger))).toEqual({ status: 404 });
+      // The form's agenda link answers by the same rule (`FormsController.getFormCalendarLink`).
+      expect(await service.mayRead(paidForm, stranger)).toBe(false);
+      expect(await service.mayRead(paidForm, { userId: OWNER, isGlobalAdmin: false })).toBe(true);
       expect((await service.hasSubmission(paidForm, BOB)).maySubmit).toBe(false);
       const requestsBefore = issued;
       expect(

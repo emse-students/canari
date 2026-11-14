@@ -1127,14 +1127,7 @@ export class FormsService {
       this.logger.debug(`get: form ${id} not found`);
       throw new NotFoundException('Form not found');
     }
-    // A form no respondent may reach - a DRAFT, or one of an ARCHIVED association - is its
-    // managers' alone: anyone else is answered what an absent form answers, so the id cannot be
-    // probed. Judged by the ONE respondent `where` (`respondentFormWhere`), never a second copy of
-    // its clauses. Managers keep reading it, to export.
-    const reachable =
-      form.status !== FORM_DRAFT &&
-      !!(await this.formRepo.findOne({ select: { id: true }, where: respondentFormWhere(id) }));
-    if (!reachable && !(await this.managesForm(form, viewer))) {
+    if (!(await this.readableBy(form, viewer))) {
       this.logger.debug(
         `get: form ${id.slice(0, 8)} is a draft or of an archived association, not served to a non-manager`
       );
@@ -1155,6 +1148,36 @@ export class FormsService {
     const names = await this.associationNamesOf([form]);
     const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
     return { ...form, submissionCount, cotisationDisabled, paymentsPaused, associationName };
+  }
+
+  /**
+   * Whether `viewer` may read form `id` at all - what `get` serves and what the form's agenda link
+   * (`GET /forms/:id/calendar-link`) answers by: false for a form that does not exist (a deleted one
+   * included), and see {@link readableBy}.
+   */
+  async mayRead(id: string, viewer: { userId: string; isGlobalAdmin: boolean }): Promise<boolean> {
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    if (!form) return false;
+    return this.readableBy(form, viewer);
+  }
+
+  /**
+   * A form no respondent may reach - a DRAFT, or one of an ARCHIVED association - is its managers'
+   * alone: anyone else is answered what an absent form answers, so the id cannot be probed. Judged
+   * by the ONE respondent `where` (`respondentFormWhere`), never a second copy of its clauses.
+   * Managers keep reading it, to export.
+   */
+  private async readableBy(
+    form: Form,
+    viewer: { userId: string; isGlobalAdmin: boolean } | undefined
+  ): Promise<boolean> {
+    const reachable =
+      form.status !== FORM_DRAFT &&
+      !!(await this.formRepo.findOne({
+        select: { id: true },
+        where: respondentFormWhere(form.id),
+      }));
+    return reachable || (await this.managesForm(form, viewer));
   }
 
   /**
@@ -1191,8 +1214,10 @@ export class FormsService {
    * order `AssociationsService.remove` takes, association first - reads the form's association
    * `FOR SHARE` and refuses (404, what `respondentFormWhere` answered before the lock) one ARCHIVED
    * since the first read: the archive and the answer are ordered on the association row, as a shop
-   * checkout is (`isAssociationArchived`), so no answer - and no payment request - is decided after
-   * the archive committed. A personal form has no association and is never refused here.
+   * checkout is (`isAssociationArchived`), so no ANSWER is decided after the archive committed. The
+   * payment request of an answer decided before it is issued after the answer's transaction commits,
+   * so it may follow the archive - and it settles as any other. A personal form has no association
+   * and is never refused here.
    */
   private async assertAssociationLiveUnderLock(
     manager: EntityManager,
