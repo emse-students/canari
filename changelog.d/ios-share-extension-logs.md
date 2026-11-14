@@ -1,0 +1,1 @@
+### Changed - the iOS share extension logs at notice level with a `[CanariShare]` prefix, like the notification extension, and says at entry which path the share sheet took (an intent handed over or not, of what shape) so the suggestion row can be read on a store build ([entry](docs/wiki/backlog.d/reading-owed-sharing-into-canari-on-ios.md)).

@@ -123,12 +123,12 @@ final class ShareCapture {
         ProcessInfo.processInfo.performExpiringActivity(withReason: "Copying a share into Canari") { expired in
             if expired {
                 if self.cancellation.cancel() {
-                    self.log.error("the system is taking the capture's time back - cancelling it")
+                    self.log.error("[CanariShare] the system is taking the capture's time back - cancelling it")
                     // Wait for the capture to delete its copies and release the lock: returning
                     // here lets the system suspend the process.
                     finished.wait()
                 } else {
-                    self.log.error("the system gave the capture no time - nothing was copied")
+                    self.log.error("[CanariShare] the system gave the capture no time - nothing was copied")
                     finished.leave()
                 }
                 return
@@ -150,17 +150,17 @@ final class ShareCapture {
     /// The capture itself, under the App Group lock (released when this returns).
     private func captureLocked(items: [NSExtensionItem], target: String?) -> ShareCaptureOutcome {
         let providers = items.flatMap { $0.attachments ?? [] }
-        log.info("share received: \(items.count) item(s), \(providers.count) attachment(s)")
+        log.notice("[CanariShare] share received: \(items.count) item(s), \(providers.count) attachment(s)")
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: ShareCapture.appGroupId)
         else {
-            log.error("the App Group container is unavailable (entitlement missing?)")
+            log.error("[CanariShare] the App Group container is unavailable (entitlement missing?)")
             return .failed
         }
         let lockPath = container.appendingPathComponent(ShareCapture.lockFile).path
         let lockFd = open(lockPath, O_CREAT | O_RDWR, 0o644)
         if lockFd < 0 {
-            log.error("the share lock could not be opened: errno \(errno)")
+            log.error("[CanariShare] the share lock could not be opened: errno \(errno)")
             return .failed
         }
         defer {
@@ -168,7 +168,7 @@ final class ShareCapture {
             close(lockFd)
         }
         if flock(lockFd, LOCK_EX) != 0 {
-            log.error("the share lock could not be taken: errno \(errno)")
+            log.error("[CanariShare] the share lock could not be taken: errno \(errno)")
             return .failed
         }
         // READ ONCE THE LOCK IS HELD, so a sign-out that found the lock free and advanced the epoch
@@ -181,7 +181,7 @@ final class ShareCapture {
             try FileManager.default.createDirectory(
                 at: dir, withIntermediateDirectories: true, attributes: ShareCapture.lockedAtRest)
         } catch {
-            log.error("the share directory could not be made: \(error.localizedDescription)")
+            log.error("[CanariShare] the share directory could not be made: \(error.localizedDescription)")
             return .failed
         }
         // The inbox holds only share copies (never the App Group's push or MLS files), so the
@@ -228,13 +228,13 @@ final class ShareCapture {
                 let position = fileIndex
                 fileIndex += 1
                 if position >= ShareRules.maxFiles {
-                    log.warning("file \(position) refused: past \(ShareRules.maxFiles) files")
+                    log.warning("[CanariShare] file \(position) refused: past \(ShareRules.maxFiles) files")
                     refused += 1
                     continue
                 }
                 let ceiling = ShareRules.nextFileCeiling(keptSoFar: kept)
                 if ceiling <= 0 {
-                    log.warning("file \(position) refused: the share already holds \(ShareRules.maxTotalBytes / 1024 / 1024) MB")
+                    log.warning("[CanariShare] file \(position) refused: the share already holds \(ShareRules.maxTotalBytes / 1024 / 1024) MB")
                     refused += 1
                     continue
                 }
@@ -246,7 +246,7 @@ final class ShareCapture {
                     refused += 1
                 }
             case .unsupported:
-                log.warning("attachment \(index) refused: no type Canari can take")
+                log.warning("[CanariShare] attachment \(index) refused: no type Canari can take")
                 refused += 1
             }
         }
@@ -260,7 +260,7 @@ final class ShareCapture {
         if text.isEmpty && files.isEmpty {
             deleteDir(dir, why: "share kept nothing")
             if refused == 0 {
-                log.info("the share carried nothing")
+                log.notice("[CanariShare] the share carried nothing")
                 return .empty
             }
             return reportRefusals(container, refused: refused, epoch: epoch) ? .keptNothing(refused: refused) : .failed
@@ -289,7 +289,7 @@ final class ShareCapture {
             // The phone locked during the capture, and the share still waiting cannot be read: which
             // session it belongs to cannot be told, so it is KEPT (put back by `claimPending`) and
             // this one goes, said - the app's rule for the same case (`hand_over`).
-            log.error("share dropped: the share still waiting is locked with the device and cannot be compared with it")
+            log.error("[CanariShare] share dropped: the share still waiting is locked with the device and cannot be compared with it")
             deleteDir(dir, why: "a share arriving over a locked one")
             return .failed
         }
@@ -308,10 +308,10 @@ final class ShareCapture {
         // Handed over: the older share nobody imported is now unreachable, and only now is it gone.
         if let older = replaced, let olderId = older["id"] as? String, ShareCapture.isSafeId(olderId),
            olderId != shareId {
-            log.info("a share nobody imported was replaced by a newer one")
+            log.notice("[CanariShare] a share nobody imported was replaced by a newer one")
             deleteDir(inbox.appendingPathComponent(olderId, isDirectory: true), why: "replaced share")
         }
-        log.info("share ready: \(files.count) file(s), \(kept) bytes, \(refused) refused")
+        log.notice("[CanariShare] share ready: \(files.count) file(s), \(kept) bytes, \(refused) refused")
         return .handedOver(files: files.count, refused: refused)
     }
 
@@ -362,11 +362,11 @@ final class ShareCapture {
                 url = URL(dataRepresentation: data, relativeTo: nil)
             }
             guard let found = url else {
-                self.log.warning("attachment \(index) refused: its link is unreadable (\(error?.localizedDescription ?? "no item"))")
+                self.log.warning("[CanariShare] attachment \(index) refused: its link is unreadable (\(error?.localizedDescription ?? "no item"))")
                 return
             }
             if found.isFileURL {
-                self.log.warning("attachment \(index) refused: a file URL is never opened")
+                self.log.warning("[CanariShare] attachment \(index) refused: a file URL is never opened")
                 return
             }
             link = found.absoluteString
@@ -390,7 +390,7 @@ final class ShareCapture {
             }
             if text == nil {
                 let reason = error?.localizedDescription ?? "no text"
-                self.log.warning("attachment \(index) refused: its text is unreadable (\(reason))")
+                self.log.warning("[CanariShare] attachment \(index) refused: its text is unreadable (\(reason))")
             }
         }
         done.wait()
@@ -405,7 +405,7 @@ final class ShareCapture {
     private func fitsTextCeiling(_ part: String, what: String, held: inout Int) -> Bool {
         let size = part.utf8.count
         if held + size > ShareRules.maxTextBytes {
-            log.warning("\(what, privacy: .public) refused: its text (\(size) bytes) passes the share's \(ShareRules.maxTextBytes / 1024) KiB of text")
+            log.warning("[CanariShare] \(what, privacy: .public) refused: its text (\(size) bytes) passes the share's \(ShareRules.maxTextBytes / 1024) KiB of text")
             return false
         }
         held += size
@@ -422,7 +422,7 @@ final class ShareCapture {
         let progress = provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
             defer { done.signal() }
             guard let url = url else {
-                self.log.warning("file \(index) refused: no file representation (\(error?.localizedDescription ?? "none"))")
+                self.log.warning("[CanariShare] file \(index) refused: no file representation (\(error?.localizedDescription ?? "none"))")
                 return
             }
             // The file exists only until this handler returns, so it is copied HERE.
@@ -440,7 +440,7 @@ final class ShareCapture {
         let resolved = source.resolvingSymlinksInPath().standardizedFileURL.path
         let group = container.resolvingSymlinksInPath().standardizedFileURL.path
         if resolved == group || resolved.hasPrefix(group + "/") {
-            log.warning("file \(index) refused: it lies inside Canari's own App Group")
+            log.warning("[CanariShare] file \(index) refused: it lies inside Canari's own App Group")
             return nil
         }
         let ext = source.pathExtension
@@ -458,7 +458,7 @@ final class ShareCapture {
         guard FileManager.default.createFile(
             atPath: target.path, contents: nil, attributes: ShareCapture.lockedAtRest)
         else {
-            log.warning("file \(index) refused: its copy could not be created")
+            log.warning("[CanariShare] file \(index) refused: its copy could not be created")
             return nil
         }
         do {
@@ -475,14 +475,14 @@ final class ShareCapture {
                 if cancellation.isCancelled {
                     try? output.close()
                     try? FileManager.default.removeItem(at: target)
-                    log.warning("file \(index) abandoned: the capture was cancelled")
+                    log.warning("[CanariShare] file \(index) abandoned: the capture was cancelled")
                     return nil
                 }
                 total += Int64(data.count)
                 if total > ceiling {
                     try? output.close()
                     try? FileManager.default.removeItem(at: target)
-                    log.warning("file \(index) refused: over its ceiling of \(ceiling / 1024 / 1024) MB")
+                    log.warning("[CanariShare] file \(index) refused: over its ceiling of \(ceiling / 1024 / 1024) MB")
                     return nil
                 }
                 try output.write(contentsOf: data)
@@ -491,7 +491,7 @@ final class ShareCapture {
             return (["path": target.path, "name": name, "mime": mime, "size": total], total)
         } catch {
             try? FileManager.default.removeItem(at: target)
-            log.warning("file \(index) refused: \(error.localizedDescription)")
+            log.warning("[CanariShare] file \(index) refused: \(error.localizedDescription)")
             return nil
         }
     }
@@ -517,13 +517,13 @@ final class ShareCapture {
         case .read(let manifest):
             waiting = manifest
         case .locked:
-            log.warning("\(refused) refusal(s) not reported: the share still waiting is locked with the device")
+            log.warning("[CanariShare] \(refused) refusal(s) not reported: the share still waiting is locked with the device")
             return false
         }
         let waitingEpoch = waiting.map { epochOf($0) } ?? epoch
         if let newer = waiting, waitingEpoch > epoch {
             _ = writePending(container, newer)
-            log.warning("\(refused) refusal(s) from a signed-out session (epoch \(epoch)) dropped")
+            log.warning("[CanariShare] \(refused) refusal(s) from a signed-out session (epoch \(epoch)) dropped")
             return false
         }
         if let stale = waiting, waitingEpoch < epoch, let staleId = stale["id"] as? String,
@@ -538,7 +538,7 @@ final class ShareCapture {
         } else {
             payload = ["id": UUID().uuidString, "epoch": epoch, "text": "", "files": [Any](), "refused": refused]
         }
-        log.warning("a share kept nothing: \(refused) refusal(s) reported")
+        log.warning("[CanariShare] a share kept nothing: \(refused) refusal(s) reported")
         return writePending(container, payload)
     }
 
@@ -551,7 +551,7 @@ final class ShareCapture {
         guard let raw = try? String(contentsOf: file, encoding: .utf8),
               let value = Int64(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         else {
-            log.error("the share epoch is unreadable - this share is stamped 0, which is stale")
+            log.error("[CanariShare] the share epoch is unreadable - this share is stamped 0, which is stale")
             return 0
         }
         return value
@@ -587,19 +587,19 @@ final class ShareCapture {
                 // RENAME_EXCL: a manifest landing at the name meanwhile is never overwritten; the
                 // claim then stays as `.replacing`, which the app's launch sweep puts back or says.
                 if renamex_np(claimed.path, pending, UInt32(RENAME_EXCL)) != 0 {
-                    log.error("the locked waiting manifest could not be put back: errno \(errno)")
+                    log.error("[CanariShare] the locked waiting manifest could not be put back: errno \(errno)")
                 }
-                log.info("the share still waiting is locked with the device - left in place")
+                log.notice("[CanariShare] the share still waiting is locked with the device - left in place")
                 return .locked
             }
             let failure = error as NSError
-            log.warning("the waiting share manifest is unreadable: \(failure.domain, privacy: .public) \(failure.code)")
+            log.warning("[CanariShare] the waiting share manifest is unreadable: \(failure.domain, privacy: .public) \(failure.code)")
             deleteClaim(claimed)
             return .nothing
         }
         deleteClaim(claimed)
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            log.warning("the waiting share manifest is unreadable")
+            log.warning("[CanariShare] the waiting share manifest is unreadable")
             return .nothing
         }
         return .read(object)
@@ -609,7 +609,7 @@ final class ShareCapture {
         do {
             try FileManager.default.removeItem(at: claimed)
         } catch {
-            log.warning("the claimed manifest was not deleted: \(error.localizedDescription)")
+            log.warning("[CanariShare] the claimed manifest was not deleted: \(error.localizedDescription)")
         }
     }
 
@@ -638,7 +638,7 @@ final class ShareCapture {
             let data = try JSONSerialization.data(withJSONObject: payload)
             try data.write(to: staging, options: [.completeFileProtectionUnlessOpen])
         } catch {
-            log.error("the share manifest could not be written: \(error.localizedDescription)")
+            log.error("[CanariShare] the share manifest could not be written: \(error.localizedDescription)")
             return false
         }
         if rename(staging.path, target) == 0 {
@@ -647,7 +647,7 @@ final class ShareCapture {
             excludeFromBackup(URL(fileURLWithPath: target))
             return true
         }
-        log.error("the share manifest could not be renamed into place: errno \(errno)")
+        log.error("[CanariShare] the share manifest could not be renamed into place: errno \(errno)")
         try? FileManager.default.removeItem(at: staging)
         return false
     }
@@ -657,7 +657,7 @@ final class ShareCapture {
             try FileManager.default.removeItem(at: dir)
             log.debug("\(why, privacy: .public): share directory deleted")
         } catch {
-            log.warning("\(why, privacy: .public): share directory not deleted: \(error.localizedDescription)")
+            log.warning("[CanariShare] \(why, privacy: .public): share directory not deleted: \(error.localizedDescription)")
         }
     }
 
@@ -673,7 +673,7 @@ final class ShareCapture {
             try target.setResourceValues(values)
         } catch {
             let failure = error as NSError
-            log.error("\(url.lastPathComponent, privacy: .public) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
+            log.error("[CanariShare] \(url.lastPathComponent, privacy: .public) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
         }
     }
 
