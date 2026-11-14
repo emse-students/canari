@@ -249,4 +249,12 @@ export const ACKNOWLEDGED_IDIOMS = [
       'frontend/src/lib/components/settings/MinesweeperModal.svelte',
     ],
   },
+  {
+    what: 'the calendar date in Europe/Paris (`parisDate`), an Intl.DateTimeFormat call',
+    why: 'one idiom in two runtimes that share no package: the browser decides whose birthday ring to draw today, core-service which Lydia contract year today falls in. Neither decision follows the other, and the body is the standard library formatting a date - extracting it would mean a package for six lines.',
+    files: [
+      'frontend/src/lib/birthdays/birthdaysToday.svelte.ts',
+      'apps/core-service/src/platform/lydia-contract.ts',
+    ],
+  },
 ];
