@@ -4626,3 +4626,7 @@ width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 p
 - [`frontend/modules/calls.md`](modules/calls.md) — CallKit and call signaling
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Push notification backend (FCM, APNs VoIP)
 - [`cicd.md`](../cicd.md) — Mobile build workflows
+
+## Back at a root tab goes to the background (owner, 2026-11-14)
+
+Back at a root tab with no history used to reach `super.onBackPressed()`, which finishes `MainActivity`; tao's Android event loop then ends with `std::process::exit`, so the process died about 400 ms later and the next launch was a cold start (read on the Mi 9T, 2026-11-14). The owner chose "Arriere-plan, comme Messenger": `MainActivity.onBackPressed` now calls `moveTaskToBack(true)` on every API level once the page has no overlay left to close, and logs the decision (`Back at the root with no history ... moving the task to the background`). The overlay hand-over to the page and the pre-Android-12 call branch are unchanged. `MainActivity.kt` is compiled by no PR gate: the reading (Back at a root tab, the app listed in Recents, the process alive, a warm reopen) is taken on a phone after the next pre-release.
