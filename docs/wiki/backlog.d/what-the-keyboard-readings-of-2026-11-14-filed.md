@@ -23,20 +23,19 @@ rises, and **~50 ms after it settles the thread jumps to older messages** (the v
 a long message), the scroll-down arrow up. Closing the keyboard leaves the reader there.
 
 That is the defect of [a reader at the bottom is anchored to the bottom](../frontend/modules/chat.md#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30),
-reported on `1.5.1` on this same phone, fixed by `threadGrowthResponse` and **owed "one reading of
-the built change on an Android phone, a DM with a portrait photo near its end"**. This is that
-reading, and it FAILS on `1.6.12`. The fix's mechanism (the `svh` shrink of `--media-max-height`)
-may not be the one at work here: a photo LOADING during the rise is a second growth that the 214 px
-analysis did not have. **Next: the Mi 9T on a dev build, CDP attached, a DM ending in a portrait
-photo not yet cached, the `[ChatArea]` and `threadGrowthResponse` answers read through the rise.**
+whose owed Android reading this was, and it FAILS on `1.6.12`. **It is a defect with its own entry,
+candidate causes and hunt**: [a DM ending in photos lands on older messages](p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md).
 
 ### 2. P2 - a short DM closing its keyboard shows a history spinner and jumps twice
 
 DM 3: ~6 rows, shorter than the screen. On the close, mid-animation, a loading spinner appears at
 the top (older history asked for, in a DM whose first day is already shown), the thread drops ~80 px
 for it, then jumps up ~130 px when it goes, and the composer is missing for one frame. Four
-movements for one Back. The likely trigger is the scroller growing back, which brings the top
-sentinel into view, but that is not read from the code.
+movements for one Back. **The likely trigger, from the code, not from a log**: `measureScroll`
+(`ChatArea.svelte`) calls `loadOlderGroups()` whenever `scrollTop < OLDER_TRIGGER_PX`, and a thread
+shorter than its pane sits at `scrollTop` 0 for good, so ANY scroll event (the box growing back as
+the keyboard leaves) asks for older history, whether or not there is any. Refuted if no
+`loadOlderGroups` runs during the close on a dev build.
 
 ### 3. P3 - the composer steps 12 CSS px down one frame before every close
 
