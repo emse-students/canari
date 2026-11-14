@@ -1608,6 +1608,11 @@ all shut iPhones waits for one of them to open the app.
   (`JoinRequestRow`), for an invitation-link ask
   ([who admits a new person](#who-admits-a-new-person-2026-10-23)). Never in a 1:1, where the other
   person is a member by definition.
+- **Read on the rig on 2026-11-14** (DEV-1, local estate at `ad2053fc0`): the owner's new device was
+  seated with no ask (133 ms), the line showed once on the contact and once on the owner's other
+  device, the alert was written to the owner's notifications, and no list preview carried the line.
+  **Production, the same day:** 24 to 128 further devices of an existing user enrolled per week over
+  the seven weeks from 2026-09-28 (`device_signature_key.firstSeenAt`, read-only count).
 
 **What "is a member" rests on, and why the new device cannot claim it.** The verdict reads the leaf
 credentials of the ratchet tree this device holds (`getGroupMemberIdentities`, `treeHoldsUser`),
@@ -2881,8 +2886,9 @@ PIN-protected backup files. **The writer cannot move first**: an older build han
 reads the magic as a nonce and reports the state unopenable - this very defect, caused by a
 downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flipped
 once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 2 (PK1, 2026-10-17)**
-- `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`
-([backlog](../backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)).
+- `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`. Read on the
+rig on 2026-11-14 (CORRUPT-2, local estate at `ad2053fc0`): one byte flipped inside a web state reads
+`STATE_ALTERED`, `init` rotates the device identity and the client comes up with no PIN asked.
 **Never roll a client back past `v0.18.18`.**
 
 **What each verdict does at `init`** (both platforms, `noFreshStart` set):

@@ -2,7 +2,7 @@
 
 ## PostgreSQL
 
-**Image**: `postgres:18-alpine`, pinned by digest - **PostgreSQL 18, crossed on 2026-09-18** on both estates (18.6 then; the pin moved to an 18.7 build on 2026-11-13, a minor release that keeps the same cluster on the same volume, so no dump and restore).  
+**Image**: `postgres:18-alpine`, pinned by digest - **PostgreSQL 18, crossed on 2026-09-18** on both estates (18.6 then; the pin moved to an 18.7 build on 2026-11-13, a minor release that keeps the same cluster on the same volume, so no dump and restore; read from the two deploy logs, the container was recreated and answering again in 3.7 s on dev (`1.6.12-alpha.1`, the image pulled in 13.5 s BEFORE the recreate) and in 4.5 s on production (`1.6.12`, image already on the host), with no transport reset counted on either estate).  
 **Port**: 5432 (container), 5433 (dev host)  
 **Database**: `auth_db`
 
