@@ -176,6 +176,10 @@ services:
       - "3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
+      # What one connection may send (docs/wiki/services/chat-gateway.md). Unset means the
+      # gateway's own defaults, 4096 bytes a frame and 240 frames a minute.
+      WS_MAX_FRAME_BYTES: ${WS_MAX_FRAME_BYTES:-}
+      WS_MAX_FRAMES_PER_MINUTE: ${WS_MAX_FRAMES_PER_MINUTE:-}
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010

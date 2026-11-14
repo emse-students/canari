@@ -153,7 +153,6 @@ earliest version, as a checklist.
 - [ ] [a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the...](backlog.d/reading-owed-a-call-that-loses-the-audio-focus-holds-its-microphone-and-never.md)
 - [ ] [a new-device alert is dropped once its device is revoked](backlog.d/reading-owed-a-new-device-alert-is-dropped-once-its-device-is-revoked.md)
 - [ ] [an institution chooses the reach of each calendar event (owner, 2026-11-13)](backlog.d/institution-event-reach.md)
-- [ ] [the daily upload bound's refusal rate a week after its release](backlog.d/p2-a-daily-upload-bound-per-member.md)
 - [ ] [a message resent under one `messageId` is stored once](backlog.d/reading-owed-a-message-resent-under-one-messageid-is-stored-once.md)
 - [ ] [a picture in a message keeps its height when the keyboard opens](backlog.d/reading-owed-a-picture-in-a-message-keeps-its-height-when-the-keyboard-opens.md)
 - [ ] [a three-way group call, audio and video, on the Mi 9T and the iPhone 12](backlog.d/reading-owed-a-three-way-group-call-audio-and-video-on-the-bench-phones.md)
@@ -372,7 +371,6 @@ earliest version, as a checklist.
 - [P2 - two vendored forks are behind upstream: `wry` 0.57.2 and `tauri-plugin-keystore` 2.1.0-alpha.2 (2026-11-11)](backlog.d/p2-two-vendored-forks-are-behind-upstream.md)
 - [P2 - a call started while another call holds the audio focus runs with a live microphone (review of #3395, 2026-11-12)](backlog.d/p2-a-call-started-during-a-phone-call-runs-with-a-live-microphone.md)
 - [P2 - a crossed 1:1 pair: what the 1.6.11 fix left (owner's decision of 2026-11-12)](backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md)
-- [P2 - the gateway's frame size and rate limits, sized from a week of its own counts](backlog.d/p2-gateway-frame-limits-sized-from-a-week-of-counts.md)
 - [P2 - the Android background/resume sequence hangs on a visibility edge that never fires (owed ONE device run)](backlog.d/p2-the-android-background-resume-sequence-hangs-on-a-visibility-edge-that-never.md)
 - [P2 - before D1 opens: a further device's self-join and a member's Add of it are not exclusive on the server](backlog.d/p2-the-further-device-self-join-and-a-members-add-are-not-exclusive.md)
 

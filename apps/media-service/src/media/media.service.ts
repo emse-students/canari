@@ -79,7 +79,7 @@ export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
  * together - the plain upload, the legacy chunked routes, the resumable sessions -
  * (lead, 2026-11-13: 2 GB). Measured on production over 60 days before it was chosen: the busiest
  * member-day held 22 files, under a per-file ceiling of 100 MB
- * (docs/wiki/backlog.d/p2-a-daily-upload-bound-per-member.md).
+ * (docs/wiki/services/media-service.md).
  */
 const MEMBER_DAILY_UPLOAD_BYTES = positiveIntEnv(
   'MEDIA_MEMBER_DAILY_UPLOAD_BYTES',
