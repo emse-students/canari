@@ -414,9 +414,15 @@ export async function dropNoticesOfRevokedDevices(
   account: string,
   isRevoked: (deviceId: string) => Promise<boolean>
 ): Promise<number> {
-  if (!account || boundAccount !== account) return 0;
+  if (!account || boundAccount !== account) {
+    console.warn(
+      `[DEVICE_NOTICE] revoked-device check skipped: the asked account is ${account ? 'not the bound one' : 'empty'} (${boundAccount ? 'an account is bound' : 'none bound'})`
+    );
+    return 0;
+  }
   const deviceIds: string[] = [];
   for (const n of pending.values()) if (!deviceIds.includes(n.deviceId)) deviceIds.push(n.deviceId);
+  if (deviceIds.length === 0) return 0;
   const revoked: string[] = [];
   for (const deviceId of deviceIds) {
     try {
@@ -428,7 +434,18 @@ export async function dropNoticesOfRevokedDevices(
     }
   }
   // Re-read after the awaits: the account may have changed, or the alert been dismissed, meanwhile.
-  if (boundAccount !== account || revoked.length === 0) return 0;
+  if (boundAccount !== account) {
+    console.warn(
+      '[DEVICE_NOTICE] revoked-device check abandoned: the account changed while it was asked'
+    );
+    return 0;
+  }
+  if (revoked.length === 0) {
+    console.log(
+      `[DEVICE_NOTICE] revoked-device check: ${deviceIds.length} alerted device(s), none revoked`
+    );
+    return 0;
+  }
   let dropped = 0;
   // Deleting the entry being visited is safe while iterating a Map.
   for (const n of pending.values()) {

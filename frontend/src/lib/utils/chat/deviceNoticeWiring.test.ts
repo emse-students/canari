@@ -137,4 +137,35 @@ describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
     unregisterDeviceNotices();
     localStorage.clear();
   });
+
+  it('a check asked BEFORE the account registers is owed and runs at registration', async () => {
+    unregisterDeviceNotices();
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('alice'),
+      JSON.stringify({ pending: [{ key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: 1 }] })
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await dropAlertsOfRevokedDevices();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('deferred'))).toBe(true);
+    warn.mockRestore();
+
+    const isDeviceRevoked = vi.fn(async () => true);
+    const mls = {
+      setDeviceEventConsumer: vi.fn(),
+      listUserDevices: vi.fn(async () => []),
+      fetchDeviceSignatureKeys: vi.fn(async () => ({ kind: 'unanswered', detail: 'x' })),
+      isDeviceRevoked,
+    } as unknown as IMlsService;
+    registerDeviceNotices(mls, {
+      getUserId: () => 'alice',
+      getMyDeviceId: () => 'phone-a',
+      conversations: new SvelteMap(),
+      storedConversation: vi.fn(async () => null),
+      addMessageToChat: vi.fn(),
+    });
+    await vi.waitFor(() => expect(pendingDeviceNotices()).toEqual([]));
+    expect(isDeviceRevoked).toHaveBeenCalledTimes(1);
+    unregisterDeviceNotices();
+    localStorage.clear();
+  });
 });
