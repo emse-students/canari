@@ -7,8 +7,9 @@ cover social-service, core-service and media-service. chat-delivery has routes w
 and neither the guard nor the coverage spec, so what each of its parameters is, and whether it is
 checked, is still read handler by handler.
 
-What is left: copy the guard and its spec (`route-params-copies.test.mjs` then holds the fourth
-copy), provide it in `AppModule`, declare every parameter after reading what it reaches, and add
-the coverage spec. call-service and chat-gateway are Rust and are not concerned.
+What is left: copy the guard into chat-delivery and add it to its declared group
+(`declared-duplicates.mjs`; `route-params-wired.test.mjs` then asks for the rest), provide it in
+`AppModule`, declare every parameter after reading what it reaches, and add the coverage spec.
+call-service and chat-gateway are Rust and are not concerned.
 
-Done when chat-delivery carries the same two specs.
+Done when chat-delivery provides the guard and carries its coverage spec.

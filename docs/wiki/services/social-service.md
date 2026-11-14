@@ -215,14 +215,16 @@ count it: the answer is a `400` built from the path alone, with no query behind 
 **Where it stands.** social-service is whole: 32 controllers with a path parameter, all declared.
 [core-service](core-service.md#path-parameters-are-declared-2026-11-14) and
 [media-service](media-service.md#path-parameters-are-declared-2026-11-14) carry the same guard and
-the same two specs. chat-delivery does not yet, one
+a coverage spec of their own. chat-delivery does not yet, one
 [backlog entry](../backlog.d/p3-path-parameters-are-declared-in-chat-delivery-too.md). Query
 parameters are not covered: they are optional and typed by their DTOs.
 
 **One file, one copy per service.** The Nest services share no TypeScript package, and their common
-guards have always been a copy each, so `src/common/route-params.ts` and its spec are copied.
-`.github/scripts/tests/route-params-copies.test.mjs` holds the copies byte-identical and fails on a
-service that carries the guard without its coverage spec or without providing it in `AppModule`.
+guards have always been a copy each, so `src/common/route-params.ts` is copied and declared in
+`.github/scripts/lib/declared-duplicates.mjs`: `declared-duplicates.test.mjs` holds the copies
+byte-identical, and the one spec of the guard sits beside the first copy, here. What is per service
+is the wiring, held by `.github/scripts/tests/route-params-wired.test.mjs`: a service that carries
+the guard provides it in its `AppModule`, has its own coverage spec, and is in the declared group.
 
 ### Posts (`/api/posts`)
 

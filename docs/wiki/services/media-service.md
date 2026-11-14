@@ -132,7 +132,7 @@ the one exception is a REEL file, on its sender's release or a salon moderator's
 
 ## Path parameters are declared (2026-11-14)
 
-The guard and the two specs are social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14)). **Every path
+The guard and the coverage spec are social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14)). **Every path
 parameter of this service is declared `opaque`, and that is the decision, not an omission.** None
 of them is a database key, and the service already judges each one itself, more strictly than the
 guard would:
