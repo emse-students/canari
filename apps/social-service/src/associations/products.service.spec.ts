@@ -4820,6 +4820,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.checkouts.rows).toHaveLength(0);
     });
 
+    it('a product WITHHELD by a revert committed before the purchase: the typed not-ready 409, never "not found"', async () => {
+      // A switch back onto a historical account that is not ready withholds the products; the
+      // re-issue, or the payer's retry, is owed the reason, as `decidePurchase` answers it.
+      const t = setup({ isActive: false, activationWithheld: true } as any);
+      t.assoRepo.findOne.mockResolvedValue(
+        asso({ lydiaOnboardingComplete: false, lydiaReadinessCause: 'request-refused' })
+      );
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_NOT_ACTIVATED',
+      });
+      expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+      expect(t.checkouts.rows).toHaveLength(0);
+    });
+
+    it('a product a manager took off sale stays "not found", whatever the readiness; a withheld one of a ready association too', async () => {
+      for (const [overrides, ready] of [
+        [{ isActive: false, activationWithheld: false }, false],
+        [{ isActive: false, activationWithheld: false }, true],
+        [{ isActive: false, activationWithheld: true }, true],
+      ] as const) {
+        const t = setup(overrides as any);
+        t.assoRepo.findOne.mockResolvedValue(asso({ lydiaOnboardingComplete: ready }));
+        await expect(t.checkout()).rejects.toBeInstanceOf(NotFoundException);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toHaveLength(0);
+      }
+    });
+
     describe('an attempt whose request/do was LOST (no answer) is read by its order_ref', () => {
       it('is left OPEN, never closed on a guess, and answers the 502', async () => {
         const t = setup();

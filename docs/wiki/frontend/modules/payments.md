@@ -1463,11 +1463,26 @@ every readiness write, cashier claim and purchase decision already takes - the a
   again and is re-issued the same way. A purchase PREPARED on the switched Business whose decision
   runs after a concurrent error 5 switched back never reaches Lydia: a switch back is a switch, so
   it is the typed 409 `PAYMENT_ROUTING_CHANGED` below, no row and no request, and the payer's retry
-  goes to the historical account. The integration spec (`lydia-account-bridge.integration.spec.ts`)
-  proves each of the two, with the interleaving forced rather than hoped for: three purchases
-  DECIDED on the switched Business and answered error 5 together (the fake core holds the three
-  refusals until all three arrived) make ONE switch back and three re-issues, one request at Lydia
-  each; and a purchase prepared before another's error 5 and decided after it is refused unissued.
+  goes to the historical account - when that account collects. When it is NOT ready, the decision
+  reads the readiness first and answers the payments-not-ready refusal
+  (`PAYMENTS_NOT_ACTIVATED` / `PAYMENTS_BLOCKED`) instead.
+- **A switch back onto a historical account that is not ready withholds the products**
+  (`withholdOnSaleProductsOf`, `isActive = false, activationWithheld = true`). The re-issue, and
+  every retry, then answers the typed payments-not-ready refusal, never "Product not found": the
+  purchase's preparation (`preparePurchase`) judges a WITHHELD product after the readiness, as its
+  decision under the lock does, carrying the fact (`activationWithheld`) the revert wrote. A
+  product a manager took off sale stays "not found" whatever the readiness, and so does a withheld
+  one whose association reads ready again before the release reached it. The check that the caller
+  may reach the association (`assertReviewerReachesAssociation`) runs before any of this. Until
+  2026-11-14 the preparation checked `isActive` first and the payer read a 404 for a product that
+  was only waiting for its payments (any revert, not only the bridge's).
+- **What the integration spec proves** (`lydia-account-bridge.integration.spec.ts`), with each
+  interleaving forced rather than hoped for: three purchases DECIDED on the switched Business and
+  answered error 5 together (the fake core holds the three refusals until all three arrived) make
+  ONE switch back and three re-issues, one request at Lydia each; a purchase prepared before
+  another's error 5 and decided after it is refused unissued; and a switch back onto a historical
+  account that is not ready answers the re-issue and the retries (own and delegated) with the
+  typed not-ready refusal, one request at Lydia in all (the error 5).
 - **Why the spec forces the interleaving (flake of 2026-11-14).** The first version of the
   three-purchase test fired three purchases with `Promise.all` and asserted all three issued on the
   historical account. That holds only when no purchase's preparation precedes, and its decision

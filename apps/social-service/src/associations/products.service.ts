@@ -3136,7 +3136,11 @@ export class ProductsService {
 
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
-    if (!product.isActive) {
+    // A product a manager took off sale is not found. One WITHHELD (`activationWithheld`, set by
+    // the revert that stopped its association's payments, a bridge's switch back included) is
+    // judged after the readiness below, like `decidePurchase` does: the payer is owed the reason
+    // (payments not active), not "not found" - the flag is the fact, carried from the revert.
+    if (!product.isActive && !product.activationWithheld) {
       throw new NotFoundException('Product not found or inactive');
     }
     this.assertNotArchived(asso, product);
@@ -3154,6 +3158,13 @@ export class ProductsService {
         throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
       }
       throw paymentsNotReady(paymentTarget.readinessCause, paymentTarget.delegated);
+    }
+    if (!product.isActive) {
+      // Withheld, yet its association collects: the release has not reached it - not on sale.
+      this.logger.warn(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} - withheld while its payments read ready`
+      );
+      throw new NotFoundException('Product not found or inactive');
     }
     const profileFetched = product.priceMatrix
       ? dimensionsNeedProfile(product.priceMatrix.dimensions)

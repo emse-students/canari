@@ -626,7 +626,7 @@ maybe(
       }
     });
 
-    it('a purchase PREPARED on the switched Business, decided after another`s error 5 switched back: the typed ROUTING_CHANGED, NO request, its retry on the historical account', async () => {
+    it('a purchase PREPARED on the switched Business, decided after the error 5 of another one switched back: the typed ROUTING_CHANGED, NO request, its retry on the historical account', async () => {
       for (const [associationId, name] of [
         [BDE, 'error5-straddle-own'],
         [LIST, 'error5-straddle-delegated'],
@@ -669,6 +669,51 @@ maybe(
         await buy(associationId, item.id);
         expect(core.calls).toEqual([ENROLLED, HISTORICAL, HISTORICAL]);
       }
+    });
+
+    it('a switch back onto a historical account that is NOT ready: the re-issue and the retry answer the typed not-ready 409, never "not found", no request', async () => {
+      if ((await bridge()).state !== 'switched') {
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+      }
+      // The account standing by stopped being ready while the enrolled Business collected.
+      await ds.query(
+        `UPDATE lydia_account_bridges SET "standbyReady" = false WHERE "associationId" = $1`,
+        [BDE]
+      );
+      // On sale BEFORE the switch back, so the switch back withholds both (own and delegated).
+      const own = await product(BDE, 'not-ready-back-own');
+      const delegated = await product(LIST, 'not-ready-back-delegated');
+      core.calls = [];
+      core.refusing.add(ENROLLED);
+      const first = await buy(BDE, own.id).catch((e: unknown) => e);
+      core.refusing.clear();
+      // The switch back withheld the products: the re-issue is told why it cannot be issued.
+      const notReady = (refusal: unknown) => {
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: 'PAYMENTS_NOT_ACTIVATED',
+        });
+      };
+      notReady(first);
+      expect(await active()).toEqual({ token: HISTORICAL, ready: false });
+      const flags = await ds.query(
+        `SELECT "isActive", "activationWithheld" FROM association_products WHERE id = ANY($1)`,
+        [[own.id, delegated.id]]
+      );
+      expect(flags).toEqual([
+        { isActive: false, activationWithheld: true },
+        { isActive: false, activationWithheld: true },
+      ]);
+      // The payers' retries, own and delegated: the same typed refusal.
+      notReady(await buy(BDE, own.id).catch((e: unknown) => e));
+      notReady(await buy(LIST, delegated.id).catch((e: unknown) => e));
+      // Only the error 5 reached core; the one attempt it released is the only row.
+      expect(core.calls).toEqual([ENROLLED]);
+      const rows = await ds.query(
+        `SELECT "productId", status FROM product_checkouts WHERE "productId" = ANY($1)`,
+        [[own.id, delegated.id]]
+      );
+      expect(rows).toEqual([{ productId: own.id, status: 'cancelled' }]);
     });
 
     it('a VALIDATED naming a Business nobody holds is no-holder, the bridge untouched', async () => {
