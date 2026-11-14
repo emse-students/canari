@@ -4756,13 +4756,38 @@ cannot be scrolled.**
 - **When it loads its past.** The older-history load is triggered by `measureScroll` near the top
   (`OLDER_TRIGGER_PX`). A pane that cannot scroll reached it only on the first stray scroll event,
   and the keyboard closing was one. That is the spinner, and the prepend under the motion is the jump.
-  `fillShortThread` now runs once the entry has widened (both entry paths). It calls
-  `loadOlderGroups` (the window, then the store, then the one peer ask of the visit) until the pane
-  overflows or a pass changes none of the window start, the group count, `hasMoreInDb` and
-  `scrollbackState`. **It ends on a fact, not a count.**
-- `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it: an exhausted store is asked
-  once with no scroll, a growing one until the pane overflows, and an overflowing pane is never asked.
-  Both fill cases fail without the change.
+  Once the entry has widened (both entry paths), the fill is armed. **It is driven by state, not by
+  one pass** (review of #3545). An effect asks `loadOlderGroups` for one more page whenever something
+  it reads moves, while the pane is still short and a source can still bring something. The things
+  it reads:
+  - a load ending, whether the reader's or its own;
+  - a store page read, even one that adds no group (`storePagesRead`);
+  - the window stepping;
+  - the peer's answer returning `scrollbackState` to `idle`.
+
+  **It ends because nothing moves any more, never on a count or a clock.** A pane with no height
+  (display:none, a collapsed panel) is never paged, because everything measures "short" there.
+- **The entry fill is SILENT** (lead decision, review of #3545). Two things show only for a load the
+  READER asked for by scrolling (`olderAskedBy`), never for one the fill asked:
+  - the older-history spinner;
+  - the scrollback banners ("loading", "no device can supply older messages").
+
+  A reader who later reaches the top takes over whatever load is running, and its state shows from
+  then on. A scroll event on a pane that cannot scroll is a box changing under the keyboard, so it no
+  longer counts as the reader reaching the top.
+- `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it:
+  - an exhausted store is asked once with no scroll;
+  - a growing store is asked until the pane overflows;
+  - a page with no row does not end the fill;
+  - a pane with no height is never paged;
+  - the fill's peer ask shows no banner;
+  - an overflowing pane is never asked.
+
+  Each fails on the code before it.
+- **A reader at the bottom follows the keyboard during a store read.** While older messages are
+  being prepended, the observer keeps the row at the top of the viewport (`keep-row`). The exception
+  is a change of the pane's BOX alone (`scrollHeight` unchanged) under a reader at the bottom: it
+  only moved the bottom, so that reader follows it (`threadGrowthResponse`, `boxOnly`).
 - **The store's page keeps the reader's place by the row anchor alone.** `loadOlderGroups` used to
   capture `scrollTop` and `scrollHeight`, await the store, then write `prevTop + delta`. A keyboard
   rising during that await, with the thread taken to its end for it, was undone by the write: the
@@ -4770,7 +4795,8 @@ cannot be scrolled.**
   "lands on older messages when the keyboard opens" (Pixel 6a, 2026-11-14), and a load this fill now
   starts at entry would have made it likelier. The growth observer's row anchor already kept the
   reader's place for the window step, which never had a restore; the store's page is left to it too
-  (`threadGrowthObserver.test.ts`, "an older page prepended").
+  (`threadGrowthObserver.test.ts`, "an older page prepended"; `ChatArea.entryWindow.svelte.test.ts`,
+  "leaves scrollTop as the pane holds it", which fails on the old restore).
 - **Owed: one reading on the Mi 9T, a short DM and the photo DM, keyboard open and closed.**
 
 ### A picture keeps its height when the keyboard opens (2026-11-13)

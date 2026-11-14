@@ -591,7 +591,7 @@
       // In the SAME flush as the reveal, so the floor never rises between the two.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch).then(() => fillShortThread(epoch));
+      void widenEntryWindow(epoch).then(() => armShortThreadFill(epoch));
     });
   }
 
@@ -756,7 +756,73 @@
       // widen after it has finished.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch).then(() => fillShortThread(epoch));
+      void widenEntryWindow(epoch).then(() => armShortThreadFill(epoch));
+    });
+  }
+
+  /**
+   * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY, NOT AT THE NEXT STRAY SCROLL (owner's
+   * Pixel 6a, 1.6.12, 2026-11-14: a six-row DM showed the older-history spinner in the middle of a
+   * keyboard CLOSE, and the thread jumped twice). Such a pane cannot be scrolled, so `measureScroll`'s
+   * trigger was reached only by whatever scroll event came first - a box changing under the keyboard.
+   *
+   * DRIVEN BY STATE, NOT BY ONE PASS (review of #3545): once the entry has widened, the effect below
+   * asks for one more older page each time the state it reads moves - a load ending, a store page read
+   * (even one that adds no group), the window stepping, the peer's answer returning `scrollbackState`
+   * to `idle` - while the pane is still short and a source can still bring something. It ends because
+   * nothing moves any more, never on a count or a clock. The fill is SILENT: neither the spinner nor
+   * the scrollback banners show for it (`olderAskedBy`, chat.md).
+   */
+  let shortFillEpoch = $state<number | null>(null);
+  let shortFillInFlight = $state(false);
+  /** Whether the load the thread is showing was asked by the reader, or by the silent entry fill. */
+  let olderAskedBy = $state<'reader' | 'fill'>('reader');
+  /** Store pages read in this conversation: a page that adds no group still moves this. */
+  let storePagesRead = $state(0);
+
+  function armShortThreadFill(epoch: number) {
+    if (epoch !== entryEpoch) return;
+    shortFillEpoch = epoch;
+  }
+
+  $effect(() => {
+    const armed = shortFillEpoch;
+    // Every value whose change can make one more page worth asking for.
+    void [
+      shortFillInFlight,
+      isLoadingOlder,
+      scrollbackState,
+      storePagesRead,
+      renderWindow.start,
+      messageGroups.length,
+      hasMoreInDb,
+    ];
+    if (armed === null) return;
+    untrack(() => continueShortThreadFill(armed));
+  });
+
+  function continueShortThreadFill(epoch: number) {
+    if (epoch !== entryEpoch || !chatContainer || shortFillInFlight) return;
+    // A load already running - the reader's or the fill's - is waited for: its end re-runs this.
+    if (isLoadingOlder || scrollbackState === 'asking') return;
+    // A pane with no box measures as "short" whatever it holds: never page the store on it.
+    if (chatContainer.clientHeight === 0) {
+      Log.d(
+        'chat.entry',
+        'short thread: the pane has no height yet - nothing measured, nothing asked'
+      );
+      return;
+    }
+    if (chatContainer.scrollHeight > chatContainer.clientHeight) return;
+    const canBring =
+      renderWindow.start > 0 ||
+      (!!onLoadOlderMessages && hasMoreInDb) ||
+      (!!onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle');
+    if (!canBring) return;
+    Log.d('chat.entry', `short thread: asking for older history (window ${renderWindow.start})`);
+    shortFillInFlight = true;
+    void loadOlderGroups('fill').finally(() => {
+      if (epoch === entryEpoch) shortFillInFlight = false;
     });
   }
 
@@ -768,32 +834,6 @@
    * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
-  /**
-   * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY, NOT AT THE NEXT STRAY SCROLL (owner's
-   * Pixel 6a, 1.6.12, 2026-11-14: a six-row DM showed the older-history spinner in the middle of a
-   * keyboard CLOSE, and the thread jumped twice). Such a pane cannot be scrolled, so `measureScroll`'s
-   * trigger was reached only by whatever scroll event came first - a box changing under the keyboard -
-   * and the fill ran then. Here it runs once the entry has settled, from the local sources outward
-   * (`loadOlderGroups`: the in-memory window, the device's store, then the one peer ask per visit),
-   * until the pane overflows or a pass changes nothing. TERMINATION IS A FACT, NOT A COUNT: a pass that
-   * moved none of the four values below has nothing left to bring.
-   */
-  async function fillShortThread(epoch: number) {
-    for (;;) {
-      if (epoch !== entryEpoch || !chatContainer) return;
-      if (chatContainer.scrollHeight > chatContainer.clientHeight) return;
-      const before = [renderWindow.start, messageGroups.length, hasMoreInDb, scrollbackState];
-      Log.d('chat.entry', `short thread: asking for older history (window ${before[0]})`);
-      await loadOlderGroups();
-      await tick();
-      const after = [renderWindow.start, messageGroups.length, hasMoreInDb, scrollbackState];
-      if (before.every((value, i) => value === after[i])) {
-        Log.d('chat.entry', 'short thread: nothing older to bring - the fill ends');
-        return;
-      }
-    }
-  }
-
   async function widenEntryWindow(epoch: number) {
     try {
       await yieldToMainThread();
@@ -893,7 +933,12 @@
     lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
-    if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
+    // A pane its thread does not fill cannot be scrolled by the reader: a scroll event there is a box
+    // changing (the keyboard), and its past is the silent entry fill's to bring.
+    if (
+      chatContainer.scrollTop < OLDER_TRIGGER_PX &&
+      chatContainer.scrollHeight > chatContainer.clientHeight
+    ) {
       void loadOlderGroups();
     }
   }
@@ -1164,7 +1209,9 @@
   /** Hold the message list invisible during entry, but never hide the skeleton placeholder. */
   let hideDuringEntry = $derived(entering && !showSkeleton);
 
-  async function loadOlderGroups() {
+  async function loadOlderGroups(by: 'reader' | 'fill' = 'reader') {
+    // A reader reaching the top owns whatever load is running from then on: its spinner shows.
+    if (by === 'reader' || !isLoadingOlder) olderAskedBy = by;
     // Paginate from where the window ACTUALLY is, never from the stored index: after the list has
     // been replaced by a shorter page the two differ, and stepping back from the stale one would
     // walk a window that is already past the end.
@@ -1187,6 +1234,7 @@
           return;
         }
         if (!hasMore) hasMoreInDb = false;
+        storePagesRead++;
         // The prepend is rendered while `isLoadingOlder` still holds the observer to `keep-row`.
         await tick();
       } finally {
@@ -1498,6 +1546,9 @@
         entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
+        shortFillEpoch = null;
+        shortFillInFlight = false;
+        olderAskedBy = 'reader';
         entryReportOwed = true;
         if (entryAnchor.kind === 'restore') {
           isNearBottom = false;
@@ -2088,7 +2139,9 @@
             when that ask is running and when nobody could answer it. Silence on success: the
             messages simply appear.
           -->
-          {#if scrollbackState === 'asking'}
+          {#if olderAskedBy === 'fill'}
+            <!-- The entry fill is silent (review of #3545): no spinner, no banner. -->
+          {:else if scrollbackState === 'asking'}
             <div
               class="text-muted-foreground flex items-center justify-center gap-2 py-2 text-xs"
               role="status"
@@ -2119,7 +2172,7 @@
           {/if}
           <ChatMessageGroups
             {visibleMessageGroups}
-            {isLoadingOlder}
+            isLoadingOlder={isLoadingOlder && olderAskedBy === 'reader'}
             {messageReactions}
             {currentUserId}
             readWatermarks={conversation?.readWatermarks}

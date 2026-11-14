@@ -221,14 +221,12 @@ describe('observeThreadGrowth - an older page prepended', () => {
     });
   });
 
-  it('a keyboard rise during the load: the reader taken to the end stays at the end', async () => {
+  it('a keyboard rise during the load: the reader at the end follows it, and stays there', async () => {
     const { scroller, layout, relayout, reach, prepend } = makeThread(rowsWithPhoto(), 711);
     scroller.scrollTop = reach();
     const stop = observeThreadGrowth(scroller, loading);
-    // The keyboard rises while the store is read; the composer's focus takes the thread to its end.
+    // The keyboard rises while the store is read: the box alone moved, and the reader follows it.
     layout.box -= KEYBOARD;
-    relayout();
-    scroller.scrollTop = scroller.scrollHeight;
     relayout();
     expect(scroller.scrollTop).toBe(reach());
     prepend([60, 60, 60, 60, 60]);

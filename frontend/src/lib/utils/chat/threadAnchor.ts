@@ -29,6 +29,11 @@ export interface ThreadGrowth {
   wasNearBottom: boolean;
   /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
+  /**
+   * The change moved only the pane's own box: `scrollHeight` did not move (the keyboard, a resize).
+   * Optional: a caller that cannot tell says nothing, and the change is treated as content.
+   */
+  boxOnly?: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
@@ -89,7 +94,13 @@ export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
   // and the row anchor keeps their row; following the bottom here would throw away the history it
   // had just fetched.
-  if (growth.isLoadingOlder) return 'keep-row';
+  // EXCEPT THE BOX ALONE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
+  // store is read brings no row to keep - only the bottom moved, and that reader follows it.
+  if (growth.isLoadingOlder) {
+    const boxMovedTheBottom =
+      growth.boxOnly === true && growth.currentReach !== growth.previousReach;
+    return growth.wasNearBottom && boxMovedTheBottom ? 'follow-bottom' : 'keep-row';
+  }
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }

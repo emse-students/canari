@@ -36,6 +36,8 @@ const ROW_SELECTOR = '[id^="msg-"]';
 const THREAD = 61;
 
 let rowPx = 36;
+/** The pane's height: `PANE_PX`, or 0 for a pane that is not laid out yet. */
+let panePx = PANE_PX;
 const mounted: (() => void)[] = [];
 const restore: (() => void)[] = [];
 
@@ -49,7 +51,9 @@ function modelGeometry() {
   Object.defineProperty(proto, 'scrollHeight', {
     configurable: true,
     get(this: HTMLElement) {
-      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, PANE_PX);
+      // A pane that is not laid out (display:none) reports 0 for both, as a browser does.
+      if (panePx === 0) return 0;
+      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, panePx);
     },
   });
   // Rows are stacked from the top of the scroller, `rowPx` each: what the fill measures.
@@ -65,7 +69,7 @@ function modelGeometry() {
       return { top, bottom: top + rowPx, left: 0, right: 0, width: 0, height: rowPx, x: 0, y: top };
     },
   });
-  Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => PANE_PX });
+  Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => panePx });
   restore.push(() => {
     delete (proto as unknown as Record<string, unknown>).scrollHeight;
     delete (proto as unknown as Record<string, unknown>).clientHeight;
@@ -179,6 +183,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   mounted.splice(0).forEach((f) => f());
+  panePx = PANE_PX;
   restore.splice(0).forEach((f) => f());
   vi.restoreAllMocks();
 });
@@ -429,6 +434,60 @@ describe('ChatArea short thread fill', () => {
     expect(held).toBe(25);
   });
 
+  it('a pane with no height yet pages nothing, whatever the store holds (review of #3545)', async () => {
+    rowPx = 36;
+    panePx = 0; // display:none, a collapsed panel: every pane measures as "short".
+    modelGeometry();
+    const load = vi.fn(async () => true); // an endless store
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('a store page that adds no row does not end the fill: the next page is asked', async () => {
+    rowPx = 36;
+    modelGeometry();
+    // Two pages of nothing shown (a run of hidden events), then the end of the store.
+    const answers = [true, true, false];
+    const load = vi.fn(async () => answers.shift() ?? false);
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('the fill is silent: its peer ask shows no spinner and no banner', async () => {
+    rowPx = 36;
+    modelGeometry();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const ask = vi.fn(() => new Promise<'no-peer'>(() => {}));
+    const app = mount(ChatArea, {
+      target,
+      props: {
+        conversation: conversationOf(5),
+        messageText: '',
+        onMessageChange: () => {},
+        bindDraftWriter: () => () => {},
+        onSend: () => {},
+        onInviteMembers: () => {},
+        onLoadOlderMessages: async () => false,
+        onRequestOlderFromPeers: ask,
+      },
+    });
+    mounted.push(() => {
+      void unmount(app);
+      target.remove();
+    });
+    flushSync();
+    await settleEntry();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(1);
+    // The scrollback banner of an ask in flight is the one `aria-busy` status in the thread.
+    expect(target.querySelector('.chat-messages-scroll [aria-busy="true"]')).toBeNull();
+  });
+
   it('a pane the thread already overflows asks nothing at entry', async () => {
     rowPx = 48; // 25 rows = 1200 px.
     modelGeometry();
@@ -437,5 +496,31 @@ describe('ChatArea short thread fill', () => {
     await settleEntry();
     await settleEntry();
     expect(load).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE STORE'S PAGE NEVER WRITES A `scrollTop` CAPTURED BEFORE ITS AWAIT (review of #3545, P2-1). The
+ * reader's place across the prepend is the growth observer's row anchor; a `prevTop + delta` written
+ * after the await undid whatever moved the pane meanwhile - a keyboard, the reader's own fling.
+ */
+describe('ChatArea older-history page', () => {
+  it('leaves scrollTop as the pane holds it when the store answers', async () => {
+    rowPx = 48; // 25 rows = 1200 px in a 700 px pane: scrollable, the window whole.
+    modelGeometry();
+    let answer: (more: boolean) => void = () => {};
+    const load = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const { target } = mountSwitchable(25, load);
+    await settleEntry();
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    scroller.scrollTop = 10;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(load).toHaveBeenCalledTimes(1);
+    // Mid-await the pane moves: the keyboard took the thread elsewhere.
+    scroller.scrollTop = 400;
+    answer(true);
+    await settleEntry();
+    expect(scroller.scrollTop).toBe(400);
   });
 });
