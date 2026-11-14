@@ -7,7 +7,7 @@ import type { RouteParamKinds } from './common/route-params';
 
 /**
  * EVERY PATH PARAMETER OF EVERY CONTROLLER IS DECLARED, AND EVERY DECLARATION NAMES A REAL ONE
- * (docs/wiki/services/social-service.md, "Path parameters are declared").
+ * (docs/wiki/services/chat-delivery.md, "Path parameters are declared").
  *
  * The declaration (`@RouteParams`) is what the global guard reads, so a route parameter nobody
  * declared is validated by nothing, and a declaration with a typo validates nothing while looking

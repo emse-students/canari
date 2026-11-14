@@ -150,7 +150,8 @@ export class MessagingController {
     @Param('groupId') groupId: string,
     @Query('baseEpoch') baseEpochRaw?: string
   ) {
-    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked.
+    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked
+    // of a well-formed path (a `groupId` that is not a uuid never reaches a handler: `@RouteParams`).
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }

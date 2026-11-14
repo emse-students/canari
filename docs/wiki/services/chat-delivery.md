@@ -1605,8 +1605,8 @@ variable when its decorator is evaluated, and only its metadata is read.
 | `sessionId` | `uuid` | the session of the internal sign-out route; its handler still lower-cases it |
 | `dismissedGroupId` | `opaque` | `user_dismissed_groups.groupId` is text, and the un-dismiss route is a "make sure it is not there" a Welcome calls for any id |
 | `userId`, `targetUserId` | `opaque` | the identity provider's subject, not a uuid |
-| `deviceId` | `opaque` | `<platform>-<hex>-...`, not a uuid |
-| `token`, `scope`, `departure`, `mediaId` | `opaque` | an invitation token, an enum, a marker and a media id, each judged by its handler |
+| `deviceId` | `opaque` | built by the client from its platform, the user id and a suffix (`libs/contracts/device-id.json` is its contract), not a uuid |
+| `token`, `scope`, `departure`, `mediaId` | `opaque` | an invitation token, an enum, a positive integer and a media id, each judged by its handler |
 
 **A name means one thing in the whole service**, which the coverage spec holds: the un-dismiss
 route's parameter is `dismissedGroupId`, not `groupId` (the URL does not change), because `groupId`
