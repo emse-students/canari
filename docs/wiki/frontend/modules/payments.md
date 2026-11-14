@@ -1456,16 +1456,35 @@ every readiness write, cashier claim and purchase decision already takes - the a
   bridgeReissue = true)`: re-resolved and re-decided, a new attempt row and `order_ref`), a form
   re-issues its answer with a new `order_ref` on the re-resolved account. Each is logged
   (`[LYDIA-BRIDGE]` WARN at the re-issue, ERROR at the switch back) and counted (`reissueCount`,
-  `switchBackCount` on the bridge row). **No double charge:** Lydia answers error 5 BEFORE any request
+  `switchBackCount` on the bridge row). `reissueCount` counts re-issues ATTEMPTED: both rules
+  (`switchBackOnRefusal`, `countReissueAfterSwitchBack` below) write it when the re-issue is
+  decided, before the re-entry runs, so a re-entry that then ends refused is counted, and none goes
+  uncounted. **No double charge:** Lydia answers error 5 BEFORE any request
   exists, so the first attempt holds nothing payable (it is released, `cancelled`), and a re-issued
   purchase that meets a second switch back is refused, never issued a third time. A purchase whose
   error 5 is answered after a CONCURRENT refusal already switched back finds the Business pending
-  again and is re-issued the same way. A purchase PREPARED on the switched Business whose decision
-  runs after a concurrent error 5 switched back never reaches Lydia: a switch back is a switch, so
-  it is the typed 409 `PAYMENT_ROUTING_CHANGED` below, no row and no request, and the payer's retry
-  goes to the historical account - when that account collects. When it is NOT ready, the decision
-  reads the readiness first and answers the payments-not-ready refusal
-  (`PAYMENTS_NOT_ACTIVATED` / `PAYMENTS_BLOCKED`) instead.
+  again and is re-issued the same way.
+- **A purchase PREPARED on the switched Business and DECIDED after a concurrent switch back is
+  re-issued too (lead, 2026-11-14, under the owner's absence delegation; reversible).** Before, it got
+  the typed 409 `PAYMENT_ROUTING_CHANGED` (below) and the payer tapped again, while a purchase
+  decided a moment earlier was re-issued by the server; the same switch back now costs both the
+  same. The conditions, each in the code: the refusal is caught by its TYPE
+  (`PaymentRoutingChangedException`, carrying both routings), never a message; the bridge's durable
+  state must prove it is ITS switch back - same payee association, provider and delegation, the
+  prepared routing naming the bridge's ENROLLED Business, the routing read under the lock its
+  HISTORICAL account, and the bridge reading `historical` (`countReissueAfterSwitchBack`, ONE
+  `UPDATE ... RETURNING` that is both the proof and the `reissueCount`); exactly ONE re-entry
+  (`openCheckoutAttempt(..., bridgeReissue = true)`, which a second refusal of any kind propagates
+  from); logged `[LYDIA-BRIDGE]` WARN by `openCheckoutAttempt` after the attempt's transaction rolled
+  back, just before it re-enters (the proof itself logs a LOG line). Any other routing change - a forward switch,
+  a delegation that ended, a relinked account - keeps the 409. **Safe because nothing used the stale
+  routing:** the refusal is thrown inside the attempt's transaction, before its row is saved, and
+  the request to Lydia is sent only after that transaction commits; the rollback leaves no row and
+  no request, so the re-entry is the purchase's first and only attempt at Lydia. When the
+  historical account is NOT ready, the decision reads the readiness before the routing and answers
+  the payments-not-ready refusal (`PAYMENTS_NOT_ACTIVATED` / `PAYMENTS_BLOCKED`): nothing re-enters.
+  Neither this re-issue nor the withheld product's not-ready answer (below) has been read on a dev
+  estate yet: both are proven by the integration spec on PostgreSQL only.
 - **A switch back onto a historical account that is not ready withholds the products**
   (`withholdOnSaleProductsOf`, `isActive = false, activationWithheld = true`). The re-issue, and
   every retry, then answers the typed payments-not-ready refusal, never "Product not found": the
@@ -1487,17 +1506,19 @@ every readiness write, cashier claim and purchase decision already takes - the a
   interleaving forced rather than hoped for: three purchases DECIDED on the switched Business and
   answered error 5 together (the fake core holds the three refusals until all three arrived) make
   ONE switch back and three re-issues, one request at Lydia each; a purchase prepared before
-  another's error 5 and decided after it is refused unissued; and a switch back onto a historical
-  account that is not ready answers the re-issue and the retries (own and delegated) with the
-  typed not-ready refusal, one request at Lydia in all (the error 5).
+  another's error 5 and decided after it is re-issued once on the historical account, counted,
+  own and delegated; a forward switch keeps the 409, and a second change during the re-entry
+  propagates it; and a switch back onto a historical account that is not ready answers the
+  re-issue, a straddling purchase and the retries (own and delegated) with the typed not-ready
+  refusal, one request at Lydia in all (the error 5).
 - **Why the spec forces the interleaving (flake of 2026-11-14).** The first version of the
   three-purchase test fired three purchases with `Promise.all` and asserted all three issued on the
   historical account. That holds only when no purchase's preparation precedes, and its decision
   follows, another purchase's switch back; in one CI run of 1574 tests one did, and the routing
   check under the lock refused it `PAYMENT_ROUTING_CHANGED` - the documented outcome of a switch
   racing a purchase, not a defect: no row, no request, nothing payable. The race was in the TEST's
-  assertion, which demanded one interleaving out of three; production behaves the same in all three
-  (one request at Lydia per issued purchase, a refusal never issued).
+  assertion, which demanded one interleaving out of three. That outcome is now re-issued by the
+  server (above), and the spec forces each interleaving.
 - **2701** on a switched Business is the ordinary revert (a pause), never a switch back: routing
   around Lydia's block onto another account is not the bridge's to decide. A 2701 naming a PENDING
   Business (after a switch back) is recorded on it, nothing re-issued, and holds it (above).
@@ -1506,7 +1527,8 @@ every readiness write, cashier claim and purchase decision already takes - the a
 - **A switch racing a purchase.** The purchase decision re-reads the routing under a SHARE lock on the
   payee row (the parent's too, for a delegate): a switch committed between the preparation and the
   decision is the typed 409 `PAYMENT_ROUTING_CHANGED`, no row and no request - the payer retries and
-  the retry goes to the new Business. Every request issued names the Business its row names.
+  the retry goes to the new Business (a bridge's switch back alone is re-issued by the server,
+  above). Every request issued names the Business its row names.
 
 **The platform's Lydia flux never counts a historical account's payments** - they belong to the
 association's earlier contract - and counts the enrolled Business's from its link
@@ -1514,7 +1536,7 @@ association's earlier contract - and counts the enrolled Business's from its lin
 
 **After the switch** the historical account's tokens are KEPT, sealed, ONLY to refund the payments
 taken on it and to verify their callbacks: a refund resolves the key by the ROW's vendor token
-(`vendorTokensHeldBy`, `lydiaCallbackKey`). No new payment goes to it, except the error-5 re-issue.
+(`vendorTokensHeldBy`, `lydiaCallbackKey`). No new payment goes to it, except the switch-back re-issue.
 The same holds the other way: an enrolled Business that collected between a switch and a switch back
 cannot be UNLINKED while a checkout it took (not `cancelled`, `expired` or `declined`) or a form
 answer names it - the typed 409 `LYDIA_BUSINESS_HOLDS_PAYMENTS`, passed through core-service's
