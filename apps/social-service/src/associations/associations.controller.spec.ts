@@ -1,5 +1,7 @@
-import { BadRequestException, ForbiddenException, Logger, ParseUUIDPipe } from '@nestjs/common';
-import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
+import { routeParamKindsOf } from '../common/route-params';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
@@ -291,30 +293,17 @@ describe('AssociationsController response shape', () => {
 
 /**
  * A MALFORMED ID IS A 400, NEVER A 500. The two payout-account routes hand `:id` to `mayAct`, whose
- * SQL compares it with a `uuid` column, so a non-UUID reached Postgres as a syntax error.
+ * SQL compares it with a `uuid` column, so a non-UUID reached Postgres as a syntax error. The id is
+ * declared a uuid, which is what the global guard reads (its refusal is `route-params.spec.ts`'s).
  */
 describe('AssociationsController payout routes validate the id', () => {
-  type ArgMeta = { index: number; data?: unknown; pipes?: unknown[] };
-
-  function idPipes(handler: 'payoutAccount' | 'managePermission'): unknown[] {
-    const meta = (Reflect.getMetadata(ROUTE_ARGS_METADATA, AssociationsController, handler) ??
-      {}) as Record<string, ArgMeta>;
-    const id = Object.values(meta).find((arg) => arg.data === 'id');
-    return id?.pipes ?? [];
-  }
-
   it.each(['payoutAccount', 'managePermission'] as const)(
-    '%s parses :id with ParseUUIDPipe',
+    '%s declares :id as a uuid',
     (handler) => {
-      expect(idPipes(handler)).toContain(ParseUUIDPipe);
+      const fn = Reflect.get(AssociationsController.prototype, handler) as object;
+      expect(routeParamKindsOf(new Reflector(), AssociationsController, fn).id).toBe('uuid');
     }
   );
-
-  it('and that pipe answers 400 to a malformed id', async () => {
-    await expect(
-      new ParseUUIDPipe().transform('not-a-uuid', { type: 'param', data: 'id' })
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
 });
 
 /**
