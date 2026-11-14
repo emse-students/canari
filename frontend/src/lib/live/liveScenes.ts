@@ -213,8 +213,26 @@ export function snapCorner(
   return `${top ? 'top' : 'bottom'}-${left ? 'left' : 'right'}`;
 }
 
-/** The corner an arrow key moves the overlay to (the keyboard's drag), or the same corner. */
+/** The corners in clockwise order, from the top left: the order Enter and Space walk. */
+const CLOCKWISE: readonly OverlayCorner[] = [
+  'top-left',
+  'top-right',
+  'bottom-right',
+  'bottom-left',
+];
+
+/** The keys the overlay's handle answers, for its `aria-keyshortcuts`. */
+export const OVERLAY_KEYS = 'ArrowUp ArrowDown ArrowLeft ArrowRight Enter Space';
+
+/**
+ * The corner a key moves the overlay to (the keyboard's drag), or the same corner. An arrow goes
+ * to the corner on that side; Enter or Space - the handle's activation, being a button - moves it to
+ * the next corner clockwise, so a keyboard reaches every corner with the one key too.
+ */
 export function cornerAfterKey(corner: OverlayCorner, key: string): OverlayCorner {
+  if (key === 'Enter' || key === ' ') {
+    return CLOCKWISE[(CLOCKWISE.indexOf(corner) + 1) % CLOCKWISE.length];
+  }
   const top = corner.startsWith('top');
   const left = corner.endsWith('left');
   const next = (t: boolean, l: boolean): OverlayCorner =>

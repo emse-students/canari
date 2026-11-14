@@ -10,6 +10,7 @@
    * select); `activation="manual"` moves focus only and Enter/Space selects.
    */
   import type { Component } from 'svelte';
+  import { rovingTarget } from './rovingFocus';
 
   interface Item {
     key: K;
@@ -70,16 +71,9 @@
   // `binding_property_non_reactive` warning on every mount of the feed.
   let buttons = $state<HTMLButtonElement[]>([]);
 
-  /** Arrow keys wrap around; Home/End jump. The newly selected tab takes focus. */
+  /** Arrow keys wrap around; Home/End jump (`rovingTarget`). The newly selected tab takes focus. */
   function onKeydown(event: KeyboardEvent, index: number) {
-    const last = items.length - 1;
-    let next = -1;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      next = index === last ? 0 : index + 1;
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      next = index === 0 ? last : index - 1;
-    } else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = last;
+    const next = rovingTarget(event.key, index, items.length);
     if (next < 0) return;
     event.preventDefault();
     if (activation === 'auto') onSelect(items[next].key);

@@ -1322,7 +1322,12 @@ they had chosen to show something else is a surprise nobody agreed to.
 **The overlay** (`OverlaySettings`): a corner, a size (22 %, 30 %, 40 % of the frame's height),
 round (a square clipped to its circle) or a 16:9 rectangle. The handle over the preview is DRAGGED;
 only its release reaches the picture, snapped to the corner of the dropped box's centre
-(`snapCorner`), so viewers see a jump, never a drag. The arrow keys move it corner to corner.
+(`snapCorner`), so viewers see a jump, never a drag. The arrow keys move it corner to corner, and
+Enter or Space - the handle being a button - to the next corner clockwise (`cornerAfterKey`, named in
+its `aria-keyshortcuts`). The five scene radios are ONE tab stop (the chosen scene) the arrows, Home
+and End walk (`rovingTarget`, `ui/rovingFocus.ts`, the keys `SegmentedControl` answers); the arrows
+move focus only and Enter or Space chooses, since passing over a screen scene must not open the
+picker or change what viewers see.
 
 **The two switches**: the microphone muted is its gain at 0 in the mixer, the camera off is its card
 - neither stops a recorded track. The camera's lens stays open while off (the light may stay on in

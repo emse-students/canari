@@ -195,7 +195,17 @@ describe('snapCorner and the arrow keys', () => {
     expect(cornerAfterKey('top-left', 'ArrowRight')).toBe('top-right');
     expect(cornerAfterKey('top-right', 'ArrowDown')).toBe('bottom-right');
     expect(cornerAfterKey('top-right', 'ArrowUp')).toBe('top-right');
-    expect(cornerAfterKey('top-right', 'Enter')).toBe('top-right');
+    expect(cornerAfterKey('top-right', 'Tab')).toBe('top-right');
+  });
+
+  it('Enter and Space walk the corners clockwise, back to the start after four', () => {
+    let corner: OverlayCorner = 'top-left';
+    const seen: OverlayCorner[] = [];
+    for (const key of ['Enter', ' ', 'Enter', ' ']) {
+      corner = cornerAfterKey(corner, key);
+      seen.push(corner);
+    }
+    expect(seen).toEqual(['top-right', 'bottom-right', 'bottom-left', 'top-left']);
   });
 });
 

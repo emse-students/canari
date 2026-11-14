@@ -614,6 +614,30 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     expect(video.className).not.toContain('-scale-x-100');
   });
 
+  it('the five scenes are ONE tab stop the arrows walk, moving focus only - Enter chooses', async () => {
+    const { s } = sheet(true);
+    await settle();
+    const radios = [...document.querySelectorAll<HTMLButtonElement>('[data-live-scene]')];
+    expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    radios[0].focus();
+    radios[0].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[4]);
+    radios[4].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[0]);
+    radios[0].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[1]);
+    // Passing over a scene never chooses it (a screen scene would open the picker).
+    await settle();
+    expect(s!.studio.scene).toBe('camera');
+    expect(s!.deps.openDisplay).not.toHaveBeenCalled();
+  });
+
   it('screen + camera offers the overlay options and a handle the arrow keys move', async () => {
     const { s } = sheet(true);
     await settle();
@@ -748,6 +772,19 @@ describe('LiveOverlayHandle - drag and snap (owner, 2026-11-14)', () => {
     el().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     await settle();
     expect(studio.overlay.corner).toBe('bottom-left');
+  });
+
+  it("Enter and Space - a button's activation - move it to the next corner clockwise", async () => {
+    const { studio, el } = handle();
+    await settle();
+    expect(el().getAttribute('aria-keyshortcuts')).toContain('Enter');
+    expect(studio.overlay.corner).toBe('bottom-right');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-left');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('top-left');
   });
 });
 

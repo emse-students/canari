@@ -18,6 +18,7 @@
   import type { Component } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import { rovingTarget } from '$lib/components/ui/rovingFocus';
   import { m } from '$lib/paraglide/messages';
   import type { LiveStudio } from '$lib/live/liveStudio.svelte';
   import {
@@ -66,6 +67,21 @@
     void studio.selectScene(scene);
   }
 
+  let sceneGroup = $state<HTMLDivElement | null>(null);
+
+  /**
+   * The scene radios are ONE tab stop (the chosen scene) and the arrows move between them
+   * (`rovingTarget`, the keys `SegmentedControl` answers). The arrows move FOCUS only - Enter or
+   * Space selects, as the segmented control's `manual` activation: a scene changes what the viewers
+   * see, and a screen scene opens the browser's picker, so passing over one must not choose it.
+   */
+  function onSceneKeydown(event: KeyboardEvent, index: number) {
+    const next = rovingTarget(event.key, index, LIVE_SCENES.length);
+    if (next < 0) return;
+    event.preventDefault();
+    sceneGroup?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+  }
+
   /**
    * A scene is a `ui/Button` (controls.md): the chosen one wears the fill, the others the quiet
    * filled secondary - the bar's ONE fill, which says which scene is on air.
@@ -76,16 +92,23 @@
 </script>
 
 <div class="flex flex-col gap-2" data-live-scene-bar>
-  <div class="flex flex-wrap gap-1.5" role="radiogroup" aria-label={m.live_scene_bar_label()}>
-    {#each LIVE_SCENES as scene (scene)}
+  <div
+    bind:this={sceneGroup}
+    class="flex flex-wrap gap-1.5"
+    role="radiogroup"
+    aria-label={m.live_scene_bar_label()}
+  >
+    {#each LIVE_SCENES as scene, index (scene)}
       {@const Icon = SCENE_ICON[scene]}
       <Button
         variant={variantOf(studio.scene === scene)}
         size="compact"
         role="radio"
         aria-checked={studio.scene === scene}
+        tabindex={studio.scene === scene ? 0 : -1}
         disabled={studio.choosingScreen}
         onclick={() => choose(scene)}
+        onkeydown={(event: KeyboardEvent) => onSceneKeydown(event, index)}
         data-live-scene={scene}
       >
         <Icon size={16} strokeWidth={2.25} />

@@ -3,7 +3,7 @@
    * THE CAMERA OVERLAY'S HANDLE (owner, 2026-11-14): an outline laid over the overlay the preview
    * shows, which the member DRAGS; let go, the overlay SNAPS to the nearest corner (`snapCorner`) -
    * only the snap reaches the picture, so the viewers never watch a drag. The arrow keys move it
-   * corner to corner for a keyboard. The preview draws the composed frame with `object-fit:
+   * corner to corner for a keyboard, and Enter or Space to the next corner clockwise. The preview draws the composed frame with `object-fit:
    * contain`, so the handle is placed with the same fit (`frameToDisplay`), and the pointer is read
    * back onto the frame (`displayToFrame`).
    */
@@ -11,6 +11,7 @@
   import { m } from '$lib/paraglide/messages';
   import type { LiveStudio } from '$lib/live/liveStudio.svelte';
   import {
+    OVERLAY_KEYS,
     cornerAfterKey,
     displayToFrame,
     frameToDisplay,
@@ -84,7 +85,8 @@
 {#if box}
   <!-- A drag surface, not a button in controls.md's sense: it has no box of its own (it IS the
        overlay's outline, sized and placed by the frame), so `ui/Button` cannot draw it. It keeps a
-       button's role and keyboard path (the arrow keys) for a screen reader and a keyboard. -->
+       button's role and keyboard path for a screen reader and a keyboard: Enter and Space (a
+       button's activation) move it to the next corner clockwise, the arrows to a side. -->
   <div
     role="button"
     tabindex="0"
@@ -95,7 +97,7 @@
     style="left: {box.x}px; top: {box.y}px; width: {box.width}px; height: {box.height}px; transform: translate({drag?.dx ??
       0}px, {drag?.dy ?? 0}px);"
     aria-label={m.live_scene_overlay_move_label()}
-    aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+    aria-keyshortcuts={OVERLAY_KEYS}
     title={m.live_scene_overlay_move_label()}
     {onpointerdown}
     {onpointermove}
