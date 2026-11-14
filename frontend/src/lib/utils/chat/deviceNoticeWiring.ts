@@ -13,6 +13,7 @@ import {
   loadDeviceNotices,
   noteRefusedOwnDevices,
   type KeyAge,
+  type RosterSeat,
 } from './deviceNotices.svelte';
 
 /** The MLS service the notices consume events from, while an account is signed in. */
@@ -206,22 +207,19 @@ export async function keyAgeOf(
  * `POST /api/mls/group-rosters` for the one group, the read the stray sweep makes; asked only for a
  * self-admitted entrant this device saw no departure of.
  *
- * THROWS when the server did not answer for the group - unanswered, or refused (this account holds
- * no seat there, so it cannot read who does): the entry stays owed to the next delivery, never
- * guessed.
+ * `refused` when the server refuses this account the roster (it holds no seat there): an answer,
+ * which settles the entry. THROWS only when the server did not answer for the group: the entry stays
+ * owed to the next delivery, never guessed.
  */
 export async function rosterSeatOf(
   mls: IMlsService,
   groupId: string,
   userId: string
-): Promise<'admitted' | 'not-admitted'> {
+): Promise<RosterSeat> {
   const batch = await mls.getGroupRosters([groupId]);
+  if (batch.refused.has(groupId)) return 'refused';
   const roster = batch.rosters.get(groupId);
-  if (!roster) {
-    throw new Error(
-      `roster of ${groupId.slice(0, 8)}... ${batch.refused.has(groupId) ? 'refused to this account' : 'not answered'}`
-    );
-  }
+  if (!roster) throw new Error(`roster of ${groupId.slice(0, 8)}... not answered`);
   const who = canonicalUserId(userId);
   const seated = roster.some((id) => canonicalUserId(id) === who);
   const awaiting = (batch.awaiting.get(groupId) ?? []).some((id) => canonicalUserId(id) === who);

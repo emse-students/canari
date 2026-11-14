@@ -84,6 +84,13 @@ export interface OwnDeviceNotice {
  */
 export type KeyAge = KeyFirstSight | { kind: 'unanswered' };
 
+/**
+ * What the server's roster says of an entrant, as an ANSWER: seated and admitted, not (absent, or
+ * awaiting a member), or `refused` - the roster is refused to this account because it holds no seat
+ * in the group, so the conversation is no longer one it speaks in. Only no answer at all is a throw.
+ */
+export type RosterSeat = 'admitted' | 'not-admitted' | 'refused';
+
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
   /** The account whose MLS state handed the events over - fixed when the consumer was registered. */
@@ -108,11 +115,12 @@ export interface DeviceNoticeContext {
   removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
   /**
    * Whether the server's roster of `groupId` seats `userId` as an ADMITTED member (`admitted`: on
-   * the roster, not awaiting a member's answer) or not (`not-admitted`) - read from the same
-   * `POST /api/mls/group-rosters` the stray sweep reads (`rosterSeatOf`). Throws when the server did
-   * not answer for the group, so nothing is guessed.
+   * the roster, not awaiting a member's answer) or not (`not-admitted`), or refuses this account the
+   * roster (`refused`: it holds no seat there) - read from the same `POST /api/mls/group-rosters` the
+   * stray sweep reads (`rosterSeatOf`). Throws when the server did not answer for the group, so
+   * nothing is guessed.
    */
-  rosterSeat: (groupId: string, userId: string) => Promise<'admitted' | 'not-admitted'>;
+  rosterSeat: (groupId: string, userId: string) => Promise<RosterSeat>;
   /**
    * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
    * commitAcceptedAt`, the commit log's `createdAt`), as a {@link ServerInstant}; throws when the
@@ -923,7 +931,14 @@ type NoticeConversation =
  * removed since - and a member's removal is a commit this device then sees as a later departure.
  *
  * A departure or roster read that fails throws: the entry stays owed to the next delivery rather
- * than being guessed either way.
+ * than being guessed either way. A roster REFUSED to this account is an answer, not a failure: it
+ * holds no seat in the group, and the entry is settled as `not-a-conversation`.
+ *
+ * WHAT IT TRUSTS. `returning` from the roster is the delivery service's word. Against an HONEST
+ * server whose gate has a defect, the line still fires (the roster does not seat the entrant).
+ * Against a server that lies - accepts an outsider's external commit AND seats them on the roster it
+ * serves - it does NOT: the decision that used to rest on this device's own tree now rests on the
+ * party the line watches. Stated in mls-protocol.md ("Who admits a new person").
  *
  * `not-self-admitted`: the event is no longer an entry no member made ({@link isSelfAdmittedEntry}).
  * The predicate is enforced HERE, where the decision is acted on, because an entry retried from the
@@ -967,6 +982,10 @@ async function decideUninvitedEntry(
   console.info(
     `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): no departure seen here, roster seat ${seat}`
   );
+  // A refusal is the server's ANSWER that this account holds no seat here any more: the
+  // conversation is not one it speaks in, so the entry is settled, never owed - kept owed, it was
+  // asked again, and refused again, at every drain for as long as the device kept the row.
+  if (seat === 'refused') return 'not-a-conversation';
   if (seat === 'admitted') return { kind: 'returning', convo };
   return { kind: 'new-person', convo };
 }

@@ -17,6 +17,7 @@ import {
   pendingDeviceNotices,
   type DeviceNoticeContext,
   type KeyAge,
+  type RosterSeat,
 } from './deviceNotices.svelte';
 import {
   MAX_HISTORY_WITHHELD,
@@ -116,7 +117,7 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     // By default this device saw nobody leave any tree.
     removalEpochs: vi.fn(async (): Promise<number[]> => []),
     // By default the server's roster names nobody as an admitted member.
-    rosterSeat: vi.fn(async (): Promise<'admitted' | 'not-admitted'> => 'not-admitted'),
+    rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'not-admitted'),
     // The commit log's instant for every commit: the admitting commit was accepted six minutes ago.
     commitAcceptedAt: vi.fn(async (): Promise<ServerInstant> => ({ kind: 'at', at: COMMIT_AT })),
     addMessageToChat,
@@ -657,7 +658,7 @@ describe('deliverDeviceEvents - an entry no member made', () => {
   // here. The server's roster decides it (owner, 2026-11-14), not this device's tree.
   it("reads a member's own new device as `returning` from the server's roster, and writes nothing", async () => {
     const error = quiet();
-    const rosterSeat = vi.fn(async (): Promise<'admitted' | 'not-admitted'> => 'admitted');
+    const rosterSeat = vi.fn(async (): Promise<RosterSeat> => 'admitted');
     const { ctx, addMessageToChat } = makeCtx({ rosterSeat });
     await deliverDeviceEvents([intruder()], ctx);
 
@@ -691,7 +692,7 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     const error = quiet();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const first = makeCtx({
-      rosterSeat: vi.fn(async (): Promise<'admitted' | 'not-admitted'> => {
+      rosterSeat: vi.fn(async (): Promise<RosterSeat> => {
         throw new Error('roster of group-1... not answered');
       }),
     });
@@ -704,11 +705,31 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     );
 
     const second = makeCtx({
-      rosterSeat: vi.fn(async (): Promise<'admitted' | 'not-admitted'> => 'admitted'),
+      rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'admitted'),
     });
     await deliverDeviceEvents([], second.ctx);
     expect(second.addMessageToChat).not.toHaveBeenCalled();
     expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('settles the entry when the roster is refused to this account, and never asks again', async () => {
+    const error = quiet();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = makeCtx({ rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'refused') });
+    await deliverDeviceEvents([intruder()], first.ctx);
+    expect(first.addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+
+    // The next delivery has nothing owed: no second roster read, nothing written or reported.
+    const second = makeCtx();
+    await deliverDeviceEvents([], second.ctx);
+    expect(second.ctx.rosterSeat).not.toHaveBeenCalled();
+    expect(second.addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
     warn.mockRestore();

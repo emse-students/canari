@@ -172,9 +172,12 @@ describe('rosterSeatOf - whether the server seats an entrant as an admitted memb
     await expect(rosterSeatOf(waiting.mls, 'g1', 'alice')).resolves.toBe('not-admitted');
   });
 
-  it('throws when the group was not answered, or refused - never guessed', async () => {
+  it('throws when the group was not answered - never guessed', async () => {
     await expect(rosterSeatOf(answering({}).mls, 'g1', 'alice')).rejects.toThrow('not answered');
-    await expect(rosterSeatOf(answering({ refused: ['g1'] }).mls, 'g1', 'alice')).rejects.toThrow(
+  });
+
+  it('answers `refused` when the roster is refused to this account - an answer, not a failure', async () => {
+    await expect(rosterSeatOf(answering({ refused: ['g1'] }).mls, 'g1', 'alice')).resolves.toBe(
       'refused'
     );
   });

@@ -1554,8 +1554,24 @@ The server accepts an external commit into a conversation only from an admitted 
 commit, or written by a member's later Add - a member's admission either way: `returning`. Absent
 from the roster or awaiting a member: `new-person` - the server accepted what its gate refuses, or a
 member removed the person since. The read is asked only for a self-admitted entrant with no leaf in
-this device's tree and no departure seen, which is rare, and never per commit. A departure or roster
-read that fails, or a roster refused to this account, keeps the entry owed rather than guessing.
+this device's tree and no departure seen, which is rare, and never per commit: one request per such
+entry per member device, plus one per later delivery only while the server gives no answer. A
+departure or roster read that fails keeps the entry owed rather than guessing. A roster REFUSED to
+this account (it holds no seat in the group any more) is an answer: the entry is settled as
+not-a-conversation, never owed - owed, it was re-asked and re-refused at every drain (review of #3519).
+
+**What this trusts, stated plainly.** The `returning` verdict is now the delivery service's word.
+Against an HONEST server whose commit gate has a defect, the line still fires: its roster does not
+seat the person it wrongly let in. Against a server that LIES - accepts an outsider's external commit
+and seats them on the roster it serves - the line stays silent, where the tree-only verdict wrote it
+(at the cost of the false positive above). What still holds against such a server is the other half
+of this section: no member's client ever Adds a new person on the server's say-so
+(`automaticAdmission` reads the tree). The member list is drawn from the same roster, so nothing
+else on screen names a leaf the roster hides. A verdict independent of the server would need local
+evidence that the entrant was a member here - a message this device holds signed by them in this
+conversation, or a leaf of theirs this device once saw - and is not built. Two races, both rare: a
+member removed right after their legitimate entry reads as `new-person` (an accusation of someone the
+gate did admit); a new person a member Added right after their entry reads as `returning`.
 
 The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
