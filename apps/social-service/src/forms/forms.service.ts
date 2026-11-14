@@ -27,6 +27,7 @@ import {
   publishPaymentRefusal,
 } from './payment-offer';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
+import { managesForm } from './form-ownership';
 import {
   FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
@@ -1251,14 +1252,8 @@ export class FormsService {
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
   ): Promise<boolean> {
-    if (!viewer?.userId) return false;
-    if (viewer.isGlobalAdmin) return true;
-    if (!form.associationId) return form.ownerId === viewer.userId;
-    return this.associationsService.mayAct(
-      viewer.userId,
-      form.associationId,
-      AssociationPermissionFlag.MANAGE_FORMS,
-      { isGlobalAdmin: viewer.isGlobalAdmin }
+    return managesForm(form, viewer, (userId, associationId, flag, opts) =>
+      this.associationsService.mayAct(userId, associationId, flag, opts)
     );
   }
 
