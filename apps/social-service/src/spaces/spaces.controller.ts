@@ -1,24 +1,16 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Headers,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Put,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Put, UseGuards } from '@nestjs/common';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { SetAudiencesDto, SetDependencyDto, SetSpaceBdeDto } from './dto/space.dto';
 import { SpacesService } from './spaces.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The spaces admin API (WP6d). Registered BEFORE `AssociationsController` in the module so its
  * literal `associations/spaces` route wins over `associations/:id`. Every route is global-admin
  * only: choosing a BDE is a cross-space right (D24).
  */
+@RouteParams({ id: 'uuid', associationId: 'uuid' })
 @Controller('associations/spaces')
 @UseGuards(NginxAuthGuard, GlobalAdminGuard)
 export class SpacesController {
@@ -37,7 +29,7 @@ export class SpacesController {
   @Put(':id/bde')
   @HttpCode(204)
   async setBde(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Body() dto: SetSpaceBdeDto
   ) {
@@ -57,7 +49,7 @@ export class SpacesController {
   @Put('dependencies/:associationId')
   @HttpCode(204)
   async setDependency(
-    @Param('associationId', ParseUUIDPipe) associationId: string,
+    @Param('associationId') associationId: string,
     @Headers('x-user-id') userId: string,
     @Body() dto: SetDependencyDto
   ) {
@@ -76,6 +68,7 @@ export class SpacesController {
  * `SpacesService.getAudiencesFor` / `setAudiences`, which need the caller, so the guard is not
  * class-wide.
  */
+@RouteParams({ id: 'uuid' })
 @Controller('associations/:id/audiences')
 @UseGuards(NginxAuthGuard)
 export class AssociationAudiencesController {
@@ -84,7 +77,7 @@ export class AssociationAudiencesController {
   /** The rules of one association (global admin, or a BDE star within its campus). */
   @Get()
   get(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
@@ -94,7 +87,7 @@ export class AssociationAudiencesController {
   /** Replaces the rules of one association (global admin, or a BDE star within its campus). */
   @Put()
   set(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: SetAudiencesDto

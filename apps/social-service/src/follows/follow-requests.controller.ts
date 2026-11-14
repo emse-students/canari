@@ -20,6 +20,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { FOLLOW_PAGE_MAX, FollowRequestsService } from './follow-requests.service';
 import { FollowsService } from './follows.service';
 import { sameSideOfReviewCohort } from '../review-cohort';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Asks one account may make per minute, ALL targets together: the route's parameter is `:userId`,
@@ -46,6 +47,7 @@ export const FOLLOW_STATUS_BATCH_INVALID = 'FOLLOW_STATUS_BATCH_INVALID';
  * Shapes no `PostsController` route has: `users/:userId/follow*` (a literal first segment) and
  * `me/follow-requests...` (two or four segments, the second a literal no post route uses).
  */
+@RouteParams({ userId: 'opaque' })
 @Controller('posts')
 @UseGuards(NginxAuthGuard)
 export class FollowRequestsController {

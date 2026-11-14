@@ -8,7 +8,6 @@ import {
   HttpCode,
   Logger,
   Param,
-  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import {
@@ -19,6 +18,7 @@ import { ProductsService } from '../associations/products.service';
 import { LYDIA_ENROLMENT_PENDING } from '../associations/lydia-readiness';
 import { assertInternalSecret } from './internal-secret.util';
 import { claimTokenOf } from '../associations/lydia-cashier-claim';
+import { RouteParams } from '../common/route-params';
 
 /** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
 const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
@@ -29,6 +29,7 @@ const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
  * guarded (timing-safe) and `no-store`. A vendor token and a phone travel in the BODY, never the
  * path, so no access log records them; nothing here logs a phone.
  */
+@RouteParams({ id: 'uuid' })
 @Controller('internal/associations')
 export class InternalLydiaEnrolmentController {
   private readonly logger = new Logger(InternalLydiaEnrolmentController.name);
@@ -101,7 +102,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async claimEnrolment(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ): Promise<{ ok: true }> {
     assertInternalSecret(headerSecret);
     await this.associationsService.claimLydiaEnrolment(id);
@@ -117,7 +118,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async releaseEnrolment(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { why?: unknown }
   ): Promise<{ ok: true }> {
     assertInternalSecret(headerSecret);
@@ -138,7 +139,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async responsableClaim(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body()
     body: { userId?: unknown; phone?: unknown; mode?: unknown; allowNumberChange?: unknown }
   ): Promise<{
@@ -166,7 +167,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async responsableRelease(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { claimToken?: unknown }
   ): Promise<{ ok: true; released: boolean }> {
     assertInternalSecret(headerSecret);
@@ -187,7 +188,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async enrolmentVendorToken(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { vendorToken?: unknown }
   ): Promise<{ recorded: boolean }> {
     assertInternalSecret(headerSecret);
@@ -212,7 +213,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async recordResponsable(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: {
       vendorToken?: unknown;
       userId?: unknown;
