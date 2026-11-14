@@ -727,13 +727,11 @@ class MainActivity : TauriActivity() {
 
     /**
      * A BACK PRESS AT THE ROOT SENDS THE APP TO THE BACKGROUND, IT NEVER FINISHES IT (owner, 2026-11-14;
-     * the call-specific case below predates it and is kept: it logs why a call must never be torn down).
+     * the call case below predates it and is kept, so a call is never torn down by a Back).
      *
-     * A BACK PRESS AT THE ROOT DURING A CALL SENDS THE APP BACK, IT NEVER FINISHES IT.
-     *
-     * Wry's callback calls this once the WebView has no history left. Since Android 12 the platform
-     * already moves a root launcher activity's task back instead of finishing it; on API 28-30 it
-     * finishes the activity, which destroys the WebView and the call with it (see `onDestroy`). With
+     * Wry's callback calls this once the WebView has no history left. Left to the platform, it
+     * finishes the activity (measured on the Mi 9T: tao then exits the process), which destroys the
+     * WebView and any call with it (see `onDestroy`). With
      * a call in the foreground service, Back means "leave the screen", as on every phone app.
      */
     @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
