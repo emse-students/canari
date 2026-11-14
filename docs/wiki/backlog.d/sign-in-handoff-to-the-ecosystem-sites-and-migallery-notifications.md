@@ -1,4 +1,4 @@
-## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)
+## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)
 
 target: 1.8.0
 
@@ -37,8 +37,16 @@ the mint `POST /api/auth/handoff`, the JWKS `GET /api/auth/handoff/jwks`, the re
 `libs/contracts/ecosystem-sites.json`, the vectors `libs/contracts/handoff-token.cases.json`
 (written by `bun tools/handoff-vectors/generate.ts`), the one opener `openEcosystemSite`, and the
 secret `HANDOFF_SIGNING_KEY` (the production secret was provisioned by the lead, with the owner's
-approval, on 2026-11-08; PKCS#8 verified). **Every site's `handoff` flag is OFF**, so nothing
+approval, on 2026-11-08; PKCS#8 verified). **MiGallery's `handoff` flag is ON since 2026-11-14 (owner: merged now, shipped with the next stable once the readings reach 0); every other site's is OFF**, so nothing else
 changes for a user.
+
+**MiGallery's three conditions, measured 2026-11-14 before its flag went on** (owner's yes the same
+day): (1) F3-bound (#3364) is in the `v1.6.12` stable, `MICONNECT_READER_TOKEN` is set on
+production, and core-service logged no `MICONNECT_READER_TOKEN is unset` line over 72 h; (2)
+`miconnect-migallery`'s `sub_mode` is `hashed_user_id` (section 9); (3) MiGallery's redemption
+(its #461) ships in its `v2.24.1`, `/auth/handoff` answers 200, and its `hooks.server.ts` refuses
+a state-changing request of a `viaHandoff` session until a fresh MiConnect sign-in. The flag acts
+only from the next Canari stable.
 
 **A site's flag goes on only when ALL of these hold** (security review of #3155, 2026-11-08; the
 same list heads `libs/contracts/ecosystem-sites.json`):
