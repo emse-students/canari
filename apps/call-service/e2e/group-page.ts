@@ -33,6 +33,7 @@ import {
   legStats,
   log,
   note,
+  sendFrame,
   setFault,
   startWorker,
   transform,
@@ -94,11 +95,7 @@ let ending = false;
 let signalChain: Promise<void> = Promise.resolve();
 
 function send(frame: Record<string, unknown>) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    setFault(`could not send ${String(frame.type)}: the socket is not open`);
-    return;
-  }
-  ws.send(JSON.stringify(frame));
+  sendFrame(ws, frame);
 }
 
 /** The stand-in exporter: HKDF-SHA256 of the run's shared secret, salted by the group, over label|context. */
