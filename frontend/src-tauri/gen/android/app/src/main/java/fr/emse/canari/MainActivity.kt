@@ -33,6 +33,8 @@ import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
 import fr.emse.canari.keyboard.ImeAnimationSpec
 import fr.emse.canari.keyboard.ImeAnnouncements
+import fr.emse.canari.keyboard.ImeAnswer
+import fr.emse.canari.keyboard.imeAnswerOf
 import fr.emse.canari.keyboard.imeAnnouncementScript
 import fr.emse.canari.keyboard.imeCssPx
 import fr.emse.canari.keyboard.rideableImeAnimation
@@ -189,9 +191,10 @@ class MainActivity : TauriActivity() {
      * with the animation [ImeAnimationCapture] saw in `onPrepare` - before the keys move. The page
      * rides its composer and thread on that timing (`keyboardRide.ts`).
      *
-     * A value counts as told only once the page answered `true` for it ([ImeAnnouncements]): a
-     * refusal is a WARN, and the next insets pass carrying the same inset announces it again. A page
-     * that has just started a new document asks again (`ImeBridge.pageReady`).
+     * A value counts as told only once the page TOOK it ([ImeAnnouncements], [ImeAnswer]). A page with
+     * no hook yet is told when it says it is ready (`ImeBridge.pageReady`); a page that REFUSED is a
+     * broken contract, accused at `Log.e`, and told again on its next ready signal - which it gives
+     * at once after refusing an animated announcement - never by an insets pass.
      *
      * THE INSETS ARE PASSED ON UNTOUCHED - the navigation bar's included (review of #3556, D2). This
      * listener used to withdraw the bar's inset while the keyboard was up (the bar is then behind the
@@ -224,18 +227,26 @@ class MainActivity : TauriActivity() {
 
     /**
      * Tells the page the keyboard's height and, when it moves animated, the animation's duration and
-     * curve (`imeAnnouncementScript`). One logcat line per announcement; a page that does not take it
-     * is a WARN and nothing else.
+     * curve (`imeAnnouncementScript`). One logcat line per announcement, and one per answer that is
+     * not [ImeAnswer.TAKEN]: a page not ready yet at debug (its `pageReady` announces), a refusal at
+     * ERROR (a broken contract between the shell and the page).
      */
     private fun announceIme(ime: Int, animation: ImeAnimationSpec?, why: String) {
         val webView = liveWebView ?: return
         val css = imeCssPx(ime, resources.displayMetrics.density)
         val timing = if (animation != null) "${animation.durationMs} ms" else "no animation"
         Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")
-        imeAnnouncements.sent(ime)
-        webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { answer ->
-            if (!imeAnnouncements.answered(ime, answer == "true")) {
-                Log.w("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $answer) - it stays laid out as it was; announced again on the next insets pass")
+        val ticket = imeAnnouncements.sent(ime)
+        webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { raw ->
+            val answer = imeAnswerOf(raw)
+            if (!imeAnnouncements.answered(ticket, answer)) {
+                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")
+                return@evaluateJavascript
+            }
+            when (answer) {
+                ImeAnswer.TAKEN -> Unit
+                ImeAnswer.NOT_READY -> Log.d("MainActivity", "IME inset $ime: the page has no keyboard hook yet - announced when it says it is ready")
+                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")
             }
         }
     }
@@ -321,10 +332,12 @@ class MainActivity : TauriActivity() {
     }
 
     /**
-     * `window.canariIme`: the page's keyboard viewport tells the shell a NEW DOCUMENT is up
-     * (`initKeyboardViewport` registering `canariImeTarget`). An announcement made to the previous
-     * document - or made before this one could take it - is lost with it, so the keyboard's current
-     * inset is announced again, without an animation. Wry's generated client offers no page-start
+     * `window.canariIme`: the page's keyboard viewport tells the shell it is READY to be told the
+     * keyboard from scratch - a NEW DOCUMENT is up (`initKeyboardViewport` registering
+     * `canariImeTarget`), or the page has just refused an animated announcement (`takeImeTarget`). An
+     * announcement made to the previous document, made before this one could take it, or refused, is
+     * lost, so the keyboard's current inset is announced again, without an animation - the form the
+     * page always takes, which is why a refusal asks at most once. Wry's generated client offers no page-start
      * hook, and a gone renderer takes this process with it (wry's client does not override
      * `onRenderProcessGone`), so this is where the page's lifecycle is seen.
      */
@@ -335,7 +348,7 @@ class MainActivity : TauriActivity() {
                 val content = findViewById<View>(android.R.id.content) ?: return@runOnUiThread
                 val ime = ViewCompat.getRootWindowInsets(content)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
                 imeAnnouncements.forgetPage()
-                announceIme(ime, null, "the page started a new document")
+                announceIme(ime, null, "the page said it is ready")
             }
         }
     }

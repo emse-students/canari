@@ -47,45 +47,112 @@ fun rideableImeAnimation(durationMs: Long, curve: List<Float>?): ImeAnimationSpe
     if (durationMs < 0 || curve == null) null else ImeAnimationSpec(durationMs, curve)
 
 /**
+ * What the page answered to an announcement, classified where the answer is read ([imeAnswerOf]) -
+ * never a string compared at each call site.
+ */
+enum class ImeAnswer {
+    /** The page took the keyboard: it is laid out over it. */
+    TAKEN,
+
+    /**
+     * No `window.canariImeTarget` yet: the document is loading, or a new one replaced it. Not a
+     * defect - the page says when it is ready (`canariIme.pageReady`), and is announced then.
+     */
+    NOT_READY,
+
+    /**
+     * The page has the hook and refused what it was told, or the script failed: a BROKEN CONTRACT
+     * between the shell and the page. Accused at `Log.e`; the page asks again (`pageReady`) when what
+     * it refused carried an animation, and is then told the inset without one.
+     */
+    REFUSED,
+}
+
+/**
+ * The answer `evaluateJavascript` handed back for [imeAnnouncementScript]: a JSON value, so the
+ * script's strings arrive quoted (`"taken"`). Anything but the two expected strings - `"refused"`,
+ * `null` (the script threw), a value no version of the script returns - is [ImeAnswer.REFUSED]: a
+ * shell and a page that disagree must be accused, never read as "not ready yet".
+ */
+fun imeAnswerOf(raw: String?): ImeAnswer = when (raw) {
+    "\"taken\"" -> ImeAnswer.TAKEN
+    "\"not-ready\"" -> ImeAnswer.NOT_READY
+    else -> ImeAnswer.REFUSED
+}
+
+/** One announcement on its way: the inset it carried, and the document it was made to. */
+data class ImeTicket(val page: Int, val ime: Int)
+
+/**
  * Which keyboard inset the page HOLDS, and which one is on its way to it - so a change is announced
- * once, and an announcement the page refused is announced again on the next insets pass.
+ * once, and nothing is announced twice for the same reason.
  *
  * The inset used to be marked announced before `evaluateJavascript` even ran, so a page that answered
  * anything but `true` was never told again and kept the old layout for good (review of #3556, F2). A
- * value is now HELD only once the page answered `true` for it; while an announcement is in flight
- * its value is not sent a second time (a second announcement ends the ride the first one started).
- * UI thread only, like the listener that drives it.
+ * value is now HELD only once the page answered [ImeAnswer.TAKEN] for it; while an announcement is in
+ * flight its value is not sent a second time (a second announcement ends the ride the first one
+ * started).
+ *
+ * WHAT A REFUSAL WAITS FOR (second review of #3556). [ImeAnswer.NOT_READY] keeps the value unheld,
+ * and the page's `pageReady` announces it. [ImeAnswer.REFUSED] is not sent again by the next insets
+ * pass either - the same announcement to the same page is refused the same way, and with a steady
+ * keyboard no pass came at all, so the page stayed desynced. It waits for the page's next READY
+ * signal: the page asks again (`pageReady`) right after refusing an animated announcement, and a new
+ * document asks anyway. A ready signal forgets the page ([forgetPage]), so an answer still on its way
+ * from before it ([ImeTicket.page]) changes nothing, whichever arrives first. UI thread only, like
+ * the listener that drives it.
  */
 class ImeAnnouncements {
-    /** The inset, in px, the page answered `true` for. */
+    /** The inset, in px, the page answered [ImeAnswer.TAKEN] for. */
     var held = 0
         private set
+
+    /** The document announcements are made to: a ready signal starts a new one. */
+    private var page = 0
 
     /** The inset sent and not answered yet, or null. */
     private var inFlight: Int? = null
 
-    /** True when [ime] is neither what the page holds nor what is on its way to it. */
-    fun shouldAnnounce(ime: Int): Boolean = ime != (inFlight ?: held)
+    /** The inset this page REFUSED, owed to its next ready signal, or null. */
+    private var refused: Int? = null
 
-    /** [ime] was sent to the page. */
-    fun sent(ime: Int) {
+    /** True when [ime] is neither what the page holds, nor on its way, nor refused by this page. */
+    fun shouldAnnounce(ime: Int): Boolean = ime != (inFlight ?: refused ?: held)
+
+    /** [ime] was sent to the page: the ticket its answer is matched with. */
+    fun sent(ime: Int): ImeTicket {
         inFlight = ime
+        return ImeTicket(page, ime)
     }
 
     /**
-     * The page answered for [ime]: [took] when it answered `true`. Returns whether the page holds it.
-     * A refused value stays unheld, so the next insets pass with the same value sends it again.
+     * The page answered [answer] for [ticket]. Returns false when the answer is STALE - made by a page
+     * that has since said it is ready again - and changed nothing.
      */
-    fun answered(ime: Int, took: Boolean): Boolean {
-        if (inFlight == ime) inFlight = null
-        if (took) held = ime
-        return took
+    fun answered(ticket: ImeTicket, answer: ImeAnswer): Boolean {
+        if (ticket.page != page) return false
+        if (inFlight == ticket.ime) inFlight = null
+        when (answer) {
+            ImeAnswer.TAKEN -> {
+                held = ticket.ime
+                refused = null
+            }
+            ImeAnswer.REFUSED -> refused = ticket.ime
+            ImeAnswer.NOT_READY -> Unit
+        }
+        return true
     }
 
-    /** A new document holds nothing yet: whatever was told to the previous one is gone with it. */
+    /**
+     * The page said it is ready to be told the keyboard from scratch (a new document, or a page that
+     * refused an announcement): it holds nothing, owes nothing, and answers to earlier announcements
+     * are stale.
+     */
     fun forgetPage() {
+        page++
         held = -1
         inFlight = null
+        refused = null
     }
 }
 
@@ -125,10 +192,12 @@ private fun decimal4(value: Float): String {
 }
 
 /**
- * The script that announces the keyboard to the page: `window.canariImeTarget({...}) === true`, so
- * the WebView answers `true` only when the page took it. `durationMs` and `curve` are absent for a
- * change with no animation (a rotation, a page that asked again). No CSS string crosses the bridge:
- * the page builds its easing from the numbers.
+ * The script that announces the keyboard to the page. It answers which [ImeAnswer] it is - `'taken'`
+ * when `window.canariImeTarget(...)` returned `true`, `'not-ready'` when the page has no hook yet,
+ * `'refused'` otherwise - so the shell tells a page still loading from a page that refused
+ * ([imeAnswerOf]). `durationMs` and `curve` are absent for a change with no animation (a rotation, a
+ * page that asked again). No CSS string crosses the bridge: the page builds its easing from the
+ * numbers.
  *
  * @param cssPx the keyboard's height in CSS px, from [imeCssPx].
  * @param animation what `onPrepare` saw for this change, or null.
@@ -139,5 +208,7 @@ fun imeAnnouncementScript(cssPx: String, animation: ImeAnimationSpec?): String {
         fields.append(",durationMs:").append(animation.durationMs)
         fields.append(",curve:[").append(animation.curve.joinToString(",") { decimal4(it) }).append(']')
     }
-    return "window.canariImeTarget?.({$fields}) === true"
+    return "(function(){var f=window.canariImeTarget;" +
+        "if(typeof f!=='function')return 'not-ready';" +
+        "return f({$fields})===true?'taken':'refused';})()"
 }
