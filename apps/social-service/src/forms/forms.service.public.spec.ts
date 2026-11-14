@@ -58,6 +58,7 @@ describe('FormsService - public forms', () => {
       count: jest.fn(() => Promise.resolve(0)),
       manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
+    const namesByIds = jest.fn((_ids: string[]) => Promise.resolve(new Map<string, string>()));
     const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
     const service = new FormsService(
       formRepo,
@@ -70,6 +71,7 @@ describe('FormsService - public forms', () => {
         // An edit that starts charging asks what kind the association is: one that sells.
         collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
         assertPaymentsReady: jest.fn(() => Promise.resolve()),
+        namesByIds,
         canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       } as any,
       // UserTagService: the association sells no cotisation, so a grid on promo needs no tier.
@@ -82,7 +84,7 @@ describe('FormsService - public forms', () => {
       { enabled: () => false } as any,
       {} as any
     );
-    return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
+    return { service, manager, saved, formRepo, submissionRepo, pricingFacts, namesByIds };
   }
 
   describe('get', () => {
@@ -96,6 +98,13 @@ describe('FormsService - public forms', () => {
       const form = await service.get('f1');
       expect(form.id).toBe('f1');
       expect(form.submissionCount).toBe(0);
+      expect(form.associationName).toBeNull();
+    });
+
+    it('carries the association name on the single read, as the list does', async () => {
+      const { service, namesByIds } = makeService({ form: baseForm({ associationId: 'a1' }) });
+      namesByIds.mockResolvedValue(new Map([['a1', 'BDE']]));
+      expect((await service.get('f1')).associationName).toBe('BDE');
     });
   });
 

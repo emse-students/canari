@@ -191,7 +191,8 @@ export interface Form extends CreateFormPayload {
   createdAt: string;
   updatedAt: string;
   /**
-   * Display name of the linked association, resolved server-side for the list.
+   * Display name of the linked association, resolved server-side for the list AND the single read
+   * (`GET /forms/:id`, which the link-preview card draws its "Ouvert · <association>" from).
    *
    * The list covers forms reachable through MANAGE_FORMS as well as one's own, so a row has to say
    * whose form it is - and it says it by NAME. Null for a personal form, and also for a form whose
