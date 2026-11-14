@@ -216,6 +216,7 @@ earliest version, as a checklist.
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
+- [P3 - Path parameters are declared in every controller, not only the associations one (2026-11-14)](backlog.d/p3-path-parameters-are-declared-in-every-controller.md)
 
 ## 1.9.0
 
