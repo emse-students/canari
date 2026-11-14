@@ -260,6 +260,31 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     return { service, save, update };
   }
 
+  it('accuses a sign-in that takes away the campus or the whole cursus (no space left)', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service } = makeService(stored);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+        miconnectUuid: 'uuid-1',
+        campus: null,
+        cursus: [],
+        posts: [],
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
+      warn.mockClear();
+      // A change that keeps a campus and a cursus is not one.
+      const { service: other } = makeService(stored);
+      await other.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+        ...profile,
+        campus: 'saint-etienne',
+      });
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('creates an account carrying the profile and the derived promo/formation', async () => {
     const { service, save } = makeService(null);
     await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
