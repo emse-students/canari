@@ -196,17 +196,44 @@ export function leaderLockReleasedForUnload(): boolean {
   return releasedForUnload;
 }
 
-function holdLeaderLockUntilUnload(): Promise<void> {
+/**
+ * Lets go of the lock this document holds, whatever its role: set for the whole life of a hold, so a
+ * hold whose ROLE ended without a release - the lead handed to a visible tab that has not stolen it
+ * yet ({@link watchHandover}) - can still be released by a freeze. `null` when nothing is held.
+ * Calling it on a hold another tab stole releases nothing (the browser already moved the lock).
+ */
+let heldLock: (() => void) | null = null;
+
+/**
+ * A hold this document's request had is gone: the request rejected, so the lock was STOLEN from it
+ * (or never granted). `hold` is that request's own {@link heldLock}, so a rejection of another
+ * request - a queued one a freeze withdrew - never forgets a hold that is still this document's.
+ */
+function forgetHold(hold: (() => void) | null): void {
+  if (hold !== null && heldLock === hold) heldLock = null;
+}
+
+/**
+ * Holds the lock until the unload, a freeze or a steal. `onHold` receives this hold's release, so
+ * the request that holds it can forget it when it rejects ({@link forgetHold}).
+ */
+function holdLeaderLockUntilUnload(onHold: (letGo: () => void) => void): Promise<void> {
   return new Promise<void>((release) => {
     if (typeof window === 'undefined') {
       release();
       return;
     }
+    const letGo = () => {
+      if (heldLock === letGo) heldLock = null;
+      release();
+    };
+    heldLock = letGo;
+    onHold(letGo);
     const end = () => {
       if (releaseLeaderLock !== end) return;
       releaseLeaderLock = null;
       decide('follower');
-      release();
+      letGo();
     };
     releaseLeaderLock = end;
     // The unload is the one release a later write must name as such (`leaderLockReleasedForUnload`);
@@ -286,6 +313,16 @@ function watchPageLifecycle(log: (msg: string) => void): void {
       promotionRequest = null;
       requestWithdrawnByFreeze = true;
       request.abort();
+    }
+    // A LEAD HANDED OVER AND NOT TAKEN YET: this document is a follower already, but the lock is
+    // still its own until the asker steals it - and an asker that closed, or reloads, never will.
+    // Held by a frozen page, it would leave every tab a follower until this one is thawed. After
+    // the withdrawal above, so the release cannot grant the lock to this page's own request.
+    if (heldLock && leadership !== 'leader') {
+      log(
+        `[TAB] Page suspended by the browser (${cause}) holding a lead it handed over and nobody took yet - the lock is released.`
+      );
+      heldLock();
     }
   };
   const resume = (cause: string) => {
@@ -462,6 +499,7 @@ function queueForPromotion(log: (msg: string) => void): void {
   // Withdrawable, so a freeze can take it out of the queue (`watchPageLifecycle`).
   const request = new AbortController();
   promotionRequest = request;
+  let hold: (() => void) | null = null;
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', signal: request.signal }, async () => {
       if (promotionRequest === request) promotionRequest = null;
@@ -472,9 +510,12 @@ function queueForPromotion(log: (msg: string) => void): void {
       tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
       notifyTabLeaderPromoted();
 
-      await holdLeaderLockUntilUnload();
+      await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
     })
-    .catch((e: unknown) => onLeaderLockRejected(e, log));
+    .catch((e: unknown) => {
+      forgetHold(hold);
+      onLeaderLockRejected(e, log);
+    });
 }
 
 /**
@@ -518,8 +559,9 @@ function watchHandover(channel: BroadcastChannel, log: (msg: string) => void): v
       log(
         `[TAB] Hidden leader asked for the lead by a visible tab (${data.tabId.slice(0, 8)}) - handing it over.`
       );
-      // The lock is the requester's to steal: this document neither releases it into the queue
-      // nor touches it again (its unload, its freeze).
+      // The lock is the requester's to steal: this document does not release it into the queue,
+      // which would grant it to whichever tab queued first. The ROLE ends here; the hold stays
+      // until the steal, the unload, or a freeze ({@link heldLock}, `watchPageLifecycle`).
       releaseLeaderLock = null;
       decide('follower');
       channel.postMessage({ type: 'leader_handover_granted', to: data.tabId });
@@ -543,6 +585,7 @@ function takeHandedOverLead(log: (msg: string) => void): void {
   const queued = promotionRequest;
   promotionRequest = null;
   queued?.abort();
+  let hold: (() => void) | null = null;
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', steal: true }, async () => {
       if (leadership === 'leader') return;
@@ -551,9 +594,12 @@ function takeHandedOverLead(log: (msg: string) => void): void {
       requeueForPromotion = () => queueForPromotion(log);
       tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
       notifyTabLeaderPromoted();
-      await holdLeaderLockUntilUnload();
+      await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
     })
-    .catch((e: unknown) => onLeaderLockRejected(e, log));
+    .catch((e: unknown) => {
+      forgetHold(hold);
+      onLeaderLockRejected(e, log);
+    });
 }
 
 /**
@@ -592,6 +638,7 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
 
   const reclaim = consumePromotionReload();
   if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');
+  let hold: (() => void) | null = null;
   const acquired = await new Promise<boolean>((resolveLeadership) => {
     void navigator.locks
       .request(
@@ -606,10 +653,11 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
           log('[TAB] Leadership acquired (Web Locks).');
           requeueForPromotion = () => queueForPromotion(log);
           resolveLeadership(true);
-          await holdLeaderLockUntilUnload();
+          await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
         }
       )
       .catch((e: unknown) => {
+        forgetHold(hold);
         onLeaderLockRejected(e, log);
         resolveLeadership(false);
       });
@@ -835,6 +883,7 @@ export function resetTabLeaderStateForTests(): void {
   election = null;
   requeueForPromotion = null;
   releaseLeaderLock = null;
+  heldLock = null;
   promotionRequest = null;
   requestWithdrawnByFreeze = false;
   leaving = false;

@@ -1550,13 +1550,33 @@ refused at its last synchronous step before the ratchet moves:
 - the outbox checks `refusesCommitsHere()` at its last look before the send and leaves the entry
   queued for the leader (`skip`, no attempt counted).
 
-Commits were already refused there (`FollowerTabCommitError`). The new leader reloads before it
-serves, so it reads the state the old leader left - and **a checkpoint the old leader was sealing
+A commit is refused at its entry (`FollowerTabCommitError`); one already past it when the lead
+leaves is held by its stage checkpoint, which every commit awaits before its first request: refused
+at the put (below), the stage is cleared and nothing is sent; landed before the lead left, the stage
+is on disk and the new leader's settle resubmits it, as after a kill. The new leader reloads before
+it serves, so it reads the state the old leader left - and **a checkpoint the old leader was sealing
 when the lead left stores nothing**: the write latch reads `refusesCommitsHere()` again at the put,
 inside the IndexedDB transaction (`MlsStateWriteLatch.holdsNoLead`, outcome `follower-tab`). Without
 it, a put landing after the new leader's load would leave the disk ahead of the leader's memory -
 the fork the single writer exists to prevent. What that write held is what any kill loses, recovered
 by the send ledger's burn and the inbound replay.
+
+**Why this is one writer and not a race that heals (re-read with #3371, 2026-11-14).** A put lands
+only if its verdict, inside its IndexedDB transaction, reads the document as owning the state. The
+old leader decides `follower` before it lets go or grants, so every verdict it runs after that
+refuses, and every put it landed before belongs to a transaction created before the grant - which
+IndexedDB finishes before the new leader's later read of the same store starts. The new leader
+writes nothing until its reload reads the disk (`promotedSinceLoad`). So the two documents' writes
+never interleave: nothing reconciles them afterwards, the overlap does not exist. The old leader
+also keeps RUNNING after a hand-over (unlike an unload), and two of its tails had to be closed:
+- **a drain that ends after the lead left does not acknowledge** (`announceAck` reads
+  `refusesCommitsHere()` at the last step before its request, `[ACK] N id(s) not acknowledged: this
+  tab no longer owns the MLS state`): what it decrypted is in no checkpoint, and the ack would delete
+  from the server the one copy the new leader's state still needs. Left queued, the leader's pull
+  reads it;
+- **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
+  from the grant, but holds the lock until the asker steals it, and an asker that closed in between
+  never will. Frozen with that hold, it left every tab a follower until it was thawed.
 
 **The cost, accepted:** the asking tab reloads once it is promoted, as every promotion does. A tab
 switch reloads nothing unless the queue holds a due entry and the leader is hidden.
@@ -1589,7 +1609,13 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
   - a frozen leader releases the lock and the waiting tab is promoted;
   - the resumed former leader does not take the lead back;
   - a frozen follower withdraws its request and queues again at `resume`;
-  - `pagehide` into the back/forward cache releases the lock, a plain one does not.
+  - `pagehide` into the back/forward cache releases the lock, a plain one does not;
+  - with each document's own `stateAuthority` (#3371): at every grant after the first, NO document
+    may write - the old leader's latch is shut before the new holder starts, and the promoted asker
+    writes nothing before its reload;
+  - a lead handed to an asker that never takes it is released at `freeze`, and a stolen hold is
+    forgotten.
+- `BaseMlsService.leadLostAck.test.ts`: an ack reaching its request after the lead left is withheld.
 - the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
 - `outbox.test.ts`: the line is said once, and a lead lost during the gates leaves the entry queued.
 - `messageMerge.mergePage.test.ts`: the status is kept.

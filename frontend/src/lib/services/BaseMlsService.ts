@@ -1860,6 +1860,25 @@ export abstract class BaseMlsService implements IMlsService {
         for (const id of messageIds) this.unacknowledged.add(id);
         return;
       }
+      // NOT ACKNOWLEDGED BY A DOCUMENT THAT NO LONGER OWNS THE MLS STATE - read here, at the last
+      // step before the request, because the lead can leave while a drain runs: a hidden leader
+      // hands it to a visible tab, Chromium freezes it, a promotion reload steals it (`tabLeader.ts`).
+      // What this document decrypted since is in no checkpoint (`persistCheckpoint` refuses on the
+      // same fact, at the put too), and the tab that leads loaded the state on disk: an ack would
+      // take from the server the one copy of a frame that state still needs. Left queued, the
+      // leader's pull reads it on the state that is written.
+      // Ids a failed earlier ack persisted ride on every request, the empty flush included, so the
+      // flush is withheld too; it says nothing, having named no row.
+      if (refusesCommitsHere()) {
+        if (messageIds.length > 0) {
+          console.info(
+            `[ACK] ${messageIds.length} id(s) not acknowledged: this tab no longer owns the MLS state (${getTabLeadership()}) - ` +
+              'what it decrypted is in no checkpoint, so the rows stay on the server for the leader tab'
+          );
+        }
+        for (const id of messageIds) this.unacknowledged.add(id);
+        return;
+      }
       try {
         await this.delivery.ackMessages(messageIds);
         // One success covers every id a failed attempt had persisted, because the retry merged them

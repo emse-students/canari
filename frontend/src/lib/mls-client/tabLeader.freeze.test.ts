@@ -19,7 +19,7 @@ type LockCallback = (lock: { mode: string } | null) => unknown;
  * The browser's lock manager for one lock name: one holder, a FIFO queue, `ifAvailable`, `signal`,
  * and `steal` (the holder's request rejects with `AbortError` and the stealer holds at once).
  */
-function fakeLockManager() {
+function fakeLockManager(onGrant?: () => void) {
   type Entry = { cb: LockCallback; resolve: (v: unknown) => void; reject: (e: unknown) => void };
   let holder: Entry | null = null;
   let grants = 0;
@@ -33,6 +33,8 @@ function fakeLockManager() {
   function run(entry: Entry): void {
     holder = entry;
     grants += 1;
+    // The instant the browser hands the lock on, before the new holder's callback runs.
+    onGrant?.();
     void Promise.resolve()
       .then(() => entry.cb({ mode: 'exclusive' }))
       .then(entry.resolve, entry.reject)
@@ -94,6 +96,8 @@ async function settle(): Promise<void> {
 
 interface Doc {
   mod: typeof import('./tabLeader');
+  /** This document's own `stateAuthority` - the fact #3371 reads before every MLS state write. */
+  auth: typeof import('./stateAuthority');
   /** Dispatches a lifecycle event to THIS document only. */
   fire: (type: string, event?: unknown) => void;
   logs: string[];
@@ -108,6 +112,8 @@ interface Doc {
 async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): Promise<Doc> {
   vi.resetModules();
   const mod = await import('./tabLeader');
+  // Imported in the same module generation, so it reads THIS document's election.
+  const auth = await import('./stateAuthority');
   const listeners: Array<{ type: string; fn: Listener }> = [];
   const docAdd = vi
     .spyOn(document, 'addEventListener')
@@ -119,6 +125,7 @@ async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): Promise
       listeners.push({ type, fn })) as typeof window.addEventListener);
   const doc: Doc = {
     mod,
+    auth,
     fire: (type, event = {}) =>
       listeners.filter((l) => l.type === type).forEach((l) => l.fn(event)),
     logs: [],
@@ -136,6 +143,8 @@ async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): Promise
   });
   await mod.initTabLeadershipAsync((m) => doc.logs.push(m));
   await settle();
+  // What the login does right after the election, before it reads the state (`sessionAuth`).
+  auth.noteMlsStateLoaded(mod.getIsTabLeader());
   docAdd.mockRestore();
   winAdd.mockRestore();
   return doc;
@@ -359,5 +368,134 @@ describe('tabLeader - a hidden leader hands the lead to the visible tab that ask
     await deliver();
     expect(asker.mod.getTabLeadership()).toBe('leader');
     expect(leader.mod.getTabLeadership()).toBe('follower');
+  });
+});
+
+/**
+ * THE HAND-OVER AND #3371 TOGETHER: a follower never writes the MLS state (`stateAuthority`,
+ * `persistCheckpoint`, the latch at the put), and the lead now moves while both documents live.
+ *
+ * Asserted at the one instant that decides it - every time the browser hands the lock on, before the
+ * new holder's callback runs: NO document may write then. The old leader stopped (it decided
+ * `follower` before it let go or granted), and the new one has not loaded the state as leader (it
+ * reloads first). So the latch any in-flight checkpoint of the old leader reads at its put
+ * (`holdsNoLead`, its own `refusesCommitsHere`) is already shut when the new holder starts, and the
+ * new holder writes nothing before its reload reads what the old one left.
+ */
+describe('tabLeader x stateAuthority - the lead moves, the MLS state never has two writers', () => {
+  let manager: ReturnType<typeof fakeLockManager>;
+  const origLocks = navigator.locks;
+  let visibility: DocumentVisibilityState = 'visible';
+  const docs: Doc[] = [];
+  /** How many documents could write the MLS state at each grant after the first election. */
+  let writersAtGrant: number[] = [];
+
+  const writers = () => docs.filter((d) => !d.auth.refusesCommitsHere()).length;
+
+  async function deliver(): Promise<void> {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+      await settle();
+    }
+  }
+
+  async function open(opts?: { reloadsOnDemotion?: boolean }): Promise<Doc> {
+    const doc = await openDocument(opts);
+    docs.push(doc);
+    return doc;
+  }
+
+  beforeEach(() => {
+    docs.length = 0;
+    writersAtGrant = [];
+    manager = fakeLockManager(() => {
+      if (docs.length > 0) writersAtGrant.push(writers());
+    });
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: manager.locks });
+    visibility = 'visible';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: origLocks });
+    delete (document as unknown as { visibilityState?: unknown }).visibilityState;
+    vi.restoreAllMocks();
+  });
+
+  it('a hand-over: the old leader refuses every write before the asker holds the lock, and the asker writes nothing before its reload', async () => {
+    const hidden = await open();
+    const asker = await open();
+    expect(writers()).toBe(1);
+    expect(hidden.auth.refusesCommitsHere()).toBe(false);
+
+    asker.mod.requestLeaderHandover(() => {});
+    visibility = 'hidden';
+    await deliver();
+
+    expect(asker.mod.getTabLeadership()).toBe('leader');
+    // The steal was granted while NO document could write: the old leader's latch was already shut.
+    expect(writersAtGrant).toEqual([0]);
+    expect(hidden.auth.refusesCommitsHere()).toBe(true);
+    // Promoted in place on a copy it loaded as a follower: it leads, and writes nothing until the
+    // reload its promotion handler takes reads the state on disk.
+    expect(asker.auth.promotedSinceLoad()).toBe(true);
+    expect(asker.auth.refusesCommitsHere()).toBe(true);
+    expect(asker.auth.servesFollowerCommits()).toBe(false);
+    expect(writers()).toBe(0);
+  });
+
+  it('a freeze: the frozen leader refuses every write before the waiting tab holds the lock', async () => {
+    const hidden = await open();
+    const waiting = await open();
+
+    hidden.fire('freeze');
+    await settle();
+
+    expect(waiting.mod.getTabLeadership()).toBe('leader');
+    expect(writersAtGrant).toEqual([0]);
+    expect(hidden.auth.refusesCommitsHere()).toBe(true);
+    expect(waiting.auth.refusesCommitsHere()).toBe(true);
+  });
+
+  it('a lead handed to an asker that never takes it is released when the old leader is frozen - no lock is held by a page that leads nothing', async () => {
+    const hidden = await open();
+    const other = await open();
+    const asker = await open();
+    // The asker is gone before the grant reaches it (its channel closed with it): nothing steals.
+    asker.mod.requestLeaderHandover(() => {});
+    asker.mod.resetTabLeaderStateForTests();
+    docs.splice(docs.indexOf(asker), 1);
+    visibility = 'hidden';
+    await deliver();
+
+    expect(hidden.mod.getTabLeadership()).toBe('follower');
+    expect(manager.isHeld()).toBe(true);
+    expect(other.mod.getTabLeadership()).toBe('follower');
+
+    // Without the release, every tab stays a follower until this page is thawed.
+    hidden.fire('freeze');
+    await settle();
+    expect(other.mod.getTabLeadership()).toBe('leader');
+    expect(
+      hidden.logs.some((l) => l.includes('holding a lead it handed over and nobody took yet'))
+    ).toBe(true);
+    expect(writersAtGrant.every((n) => n === 0)).toBe(true);
+  });
+
+  it('a stolen hold is forgotten: a later freeze of the old leader says nothing and releases nothing', async () => {
+    const hidden = await open();
+    const asker = await open();
+    asker.mod.requestLeaderHandover(() => {});
+    visibility = 'hidden';
+    await deliver();
+    expect(asker.mod.getTabLeadership()).toBe('leader');
+
+    hidden.fire('freeze');
+    await settle();
+    expect(asker.mod.getTabLeadership()).toBe('leader');
+    expect(hidden.logs.some((l) => l.includes('nobody took yet'))).toBe(false);
   });
 });
