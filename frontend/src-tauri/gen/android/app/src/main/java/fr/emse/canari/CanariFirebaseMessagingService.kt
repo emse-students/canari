@@ -3852,7 +3852,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
-                    .also { Log.w(TAG, "Fallback notification: $it") }
+                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${groupId.take(8)}") }
             }
 
         if (silent) {
