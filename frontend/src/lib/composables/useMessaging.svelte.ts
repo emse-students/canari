@@ -79,6 +79,7 @@ import {
   resolveNotificationSenderName,
 } from '$lib/utils/users/displayName';
 import { flushNameMirror } from '$lib/utils/users/nameMirror';
+import { flushNicknameMirror } from '$lib/utils/users/nicknameMirror';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
@@ -786,15 +787,18 @@ export function useMessaging() {
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
-    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
-    void resolveNotificationSenderName(senderId, convo)
+    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`. Their
+    // nickname in THIS conversation wins (owner, 2026-11-14), so the key goes with it.
+    void resolveNotificationSenderName(senderId, conversationKey, convo)
       // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT. Resolving the sender notes the name
       // for `display_names.json`, whose write follows at the end of the task; the Android builder
       // reads that FILE to name a salon's speaker, so posting first raced the write and a proven
-      // author could read "Quelqu'un". `flushNameMirror` resolves once the write it finds - or the
-      // one in flight - is done (or kept after a failure, which it says).
+      // author could read "Quelqu'un". The nicknames copy (`conversation_nicknames.json`) is read
+      // there too, so both are flushed. Each resolves once the write it finds - or the one in
+      // flight - is done (or kept after a failure, which it says).
       .then(async (senderName) => {
         await flushNameMirror();
+        await flushNicknameMirror();
         return senderName;
       })
       .then((senderName) =>

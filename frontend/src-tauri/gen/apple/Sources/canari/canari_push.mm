@@ -3304,6 +3304,92 @@ static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
 }
 @end
 
+// THE NICKNAME A NOTIFICATION GIVES `memberId` IN ONE CONVERSATION (owner, 2026-11-14: "comme sur
+// Messenger, tous les pseudos"), from `root`, the parsed `conversation_nicknames.json`: nil for none.
+// The rule of `libs/contracts/notification-nickname.cases.json` - `salon` says `conversation` is a
+// salon id (its `channel_` prefix allowed), placed in its community through `channels`; otherwise it
+// is an MLS group id, itself the scope; another account's copy never answers. The app writes only
+// nicknames this account may SEE (`nicknameMirror.ts`), so no block rule is applied here. Twins: the
+// NSE's `conversationNickname`, Android's `ConversationNicknames.of`.
+static NSString *_Nullable CanariConversationNickname(NSDictionary *_Nullable root,
+                                                      NSString *_Nullable me, BOOL salon,
+                                                      NSString *conversation, NSString *memberId) {
+  NSString *owner = [me stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+                        .lowercaseString;
+  id fileOwner = root[@"userId"];
+  if (owner.length == 0 || ![fileOwner isKindOfClass:[NSString class]] ||
+      ![[(NSString *)fileOwner lowercaseString] isEqualToString:owner]) {
+    return nil;
+  }
+  NSString *scope = conversation;
+  if (salon) {
+    NSString *salonId =
+        [conversation hasPrefix:@"channel_"] ? [conversation substringFromIndex:8] : conversation;
+    id channels = root[@"channels"];
+    id placed = [channels isKindOfClass:[NSDictionary class]] ? channels[salonId] : nil;
+    if (![placed isKindOfClass:[NSString class]]) {
+      return nil;
+    }
+    scope = placed;
+  }
+  id scopes = root[@"scopes"];
+  id members = [scopes isKindOfClass:[NSDictionary class]] ? scopes[scope] : nil;
+  NSString *key = [memberId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+                      .lowercaseString;
+  id nick = [members isKindOfClass:[NSDictionary class]] ? members[key] : nil;
+  if (![nick isKindOfClass:[NSString class]]) {
+    return nil;
+  }
+  NSString *trimmed =
+      [(NSString *)nick stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  return trimmed.length > 0 ? trimmed : nil;
+}
+
+// `conversation_nicknames.json` in the app's data directory, parsed, or nil (absent, unreadable -
+// said under `label`). Written by `store_conversation_nicknames` (Rust).
+static NSDictionary *_Nullable CanariReadConversationNicknames(NSString *label) {
+  NSString *dir = CanariTauriDataDir();
+  NSData *data =
+      dir == nil ? nil
+                 : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
+                                                           @"conversation_nicknames.json"]];
+  if (data == nil) {
+    NSLog(@"[CanariPush] %@ no conversation_nicknames.json - profile names only", label);
+    return nil;
+  }
+  id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![root isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"[CanariPush] %@ WARN conversation_nicknames.json unreadable", label);
+    return nil;
+  }
+  return root;
+}
+
+// A member's nickname in one conversation, or nil.
+typedef NSString *_Nullable (^CanariNicknameLookup)(NSString *memberId);
+
+// THE ONE DOOR A NICKNAME HAS INTO THIS PROCESS'S NOTIFICATIONS: a lookup in `conversation` for the
+// account `me`, the file read at the first lookup only, each answer logged under `label` (named or
+// not, never the name). nil means "no nickname": the caller keeps the name it already had.
+static CanariNicknameLookup CanariConversationNicknameLookup(NSString *_Nullable me, BOOL salon,
+                                                            NSString *conversation,
+                                                            NSString *label) {
+  __block NSDictionary *root = nil;
+  __block BOOL read = NO;
+  return ^NSString *_Nullable(NSString *memberId) {
+    if (memberId.length == 0 || conversation.length == 0) {
+      return nil;
+    }
+    if (!read) {
+      root = CanariReadConversationNicknames(label);
+      read = YES;
+    }
+    NSString *nick = CanariConversationNickname(root, me, salon, conversation, memberId);
+    NSLog(@"[CanariPush] %@ nickname in conversation=%d", label, nick != nil);
+    return nick;
+  };
+}
+
 // Whether an unnamed salon speaker's reason is a FAULT (said with "WARN"): an unreadable name file,
 // a file of this account naming nobody, an opened push naming nobody, no push context. The rest are
 // states a banner ordinarily meets. Twins: the NSE's `salonAuthorAccuses`, Android's
@@ -3340,8 +3426,11 @@ static NSString *CanariSomeoneCapitalised(void) {
 //    "Someone", the "?" disc, and no face. ONE line, "WARN" only for a fault.
 // `*initialsName` is non-empty exactly for a named speaker, which is how the caller knows to draw
 // a face. `names` is the banner's one read of the names, shared with the author line and the tokens.
+// `nickname`, when set, names a PROVEN author by their nickname in the salon's community first
+// (owner, 2026-11-14).
 static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProven,
                                               NSString *senderId, CanariNameBook *names,
+                                              CanariNicknameLookup _Nullable nickname,
                                               NSString *channelId,
                                               NSString *_Nonnull *_Nonnull initialsName) {
   *initialsName = @"";
@@ -3357,6 +3446,8 @@ static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProv
     reason = @"no-sender-id";
   } else if (!authorProven) {
     reason = @"v1-session";
+  } else if (nickname != nil && (name = nickname(idLower)) != nil) {
+    // Their nickname in the salon's community (owner, 2026-11-14): a proven author only.
   } else {
     NSDictionary *book = [names names];
     if (book == nil) {
@@ -3393,9 +3484,12 @@ typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
 // "Someone" when the phone has never named them. Never from the push, which carries only
 // `senderId`. Salon only: an MLS banner already names its sender. Twin: the NSE's
 // `mentionAuthorLine` (Android has none since 2026-11-01: the speaker's Person names the author).
-static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook) {
+// `speakerName`, when set, is the name the salon rule already settled for that speaker - their
+// nickname in the community when they have one (owner, 2026-11-14) - and wins over the book.
+static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook,
+                                         NSString *_Nullable speakerName) {
   NSString *idLower = senderId.lowercaseString;
-  id name = idLower.length > 0 ? nameBook()[idLower] : nil;
+  id name = idLower.length == 0 ? nil : (speakerName.length > 0 ? speakerName : nameBook()[idLower]);
   BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
   NSLog(@"[CanariPush] [MENTION_NAME] author named=%d", known);
   // The placeholder opens the sentence in both languages, so the word is capitalised there.
@@ -3538,7 +3632,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
     return [book names];
   };
   if (namesMentionAuthor && mentionsMe) {
-    subtitle = CanariMentionAuthorLine(senderId, nameBook);
+    subtitle = CanariMentionAuthorLine(senderId, nameBook, senderName);
   }
   // Rendered for DISPLAY only, after the mention-of-me scan above has read the raw tokens.
   NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil, nameBook);
@@ -3960,10 +4054,15 @@ static void CanariEnsureCallProvider(void) {
 /// under the same owner rule as a mention, decision 6 of 2026-10-18), never from the push. A caller
 /// the phone has never named shows the neutral "Canari call" - a person it shares no conversation
 /// with is not somebody it should name.
-static NSString *CanariCallerDisplayName(NSString *callerId) {
+///
+/// Their nickname in the call's conversation (`groupId`) comes first (owner, 2026-11-14), as the call
+/// screen in the app names them.
+static NSString *CanariCallerDisplayName(NSString *callerId, NSString *groupId) {
   CanariPushContext *ctx = CanariLoadPushContext();
-  NSDictionary *names = CanariLoadMentionNames(ctx.userId.lowercaseString);
-  id name = callerId.length > 0 ? names[callerId.lowercaseString] : nil;
+  NSString *nick =
+      CanariConversationNicknameLookup(ctx.userId, NO, groupId ?: @"", @"[CALL_NAME]")(callerId);
+  NSDictionary *names = nick != nil ? nil : CanariLoadMentionNames(ctx.userId.lowercaseString);
+  id name = nick ?: (callerId.length > 0 ? names[callerId.lowercaseString] : nil);
   BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
   NSLog(@"[CanariCallKit] caller named=%d", known);
   return known ? (NSString *)name : CanariLocalized(@"notif.call.unknown_caller");
@@ -4003,7 +4102,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
     };
 
     CXCallUpdate *update = [[CXCallUpdate alloc] init];
-    NSString *display = CanariCallerDisplayName(callerId);
+    NSString *display = CanariCallerDisplayName(callerId, groupId);
     update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
     update.localizedCallerName = display;
     update.hasVideo = hasVideo;
@@ -4080,7 +4179,7 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
       @"hasVideo" : @(hasVideo),
     };
   }
-  NSString *display = CanariCallerDisplayName(callerId);
+  NSString *display = CanariCallerDisplayName(callerId, groupId);
   CXCallUpdate *update = [[CXCallUpdate alloc] init];
   update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
   update.localizedCallerName = display;
@@ -4358,13 +4457,19 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       return;
     }
 
+    // THE NAME THE BANNER GIVES THE SENDER: their nickname in THIS conversation, from the phone's
+    // copy (owner, 2026-11-14), else the push's profile name. The cache row keeps the profile name.
+    NSString *shownName =
+        CanariConversationNicknameLookup(CanariLoadPushContext().userId, NO, groupId,
+                                         @"[NOTIF_NAME]")(senderId)
+            ?: senderName;
     NSString *body = decrypted.text;
     if (body.length == 0) {
       if (queuedMessageId.length > 0) {
         CanariRunBackgroundCleanup();
         NSLog(@"[CanariPush] decrypt failed - cleanup pending db");
       }
-      body = CanariBuildFallbackText(senderName, groupName, isGroup);
+      body = CanariBuildFallbackText(shownName, groupName, isGroup);
     } else {
       CanariWriteFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted);
     }
@@ -4372,8 +4477,8 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides. The
       // payload's `isGroup` decides the shape: an unnamed group is still a group.
-      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO, YES, nil, isGroup);
+      CanariShowMessageNotification(shownName, groupName, body, groupId, senderId, decrypted, NO,
+                                    shownName, NO, YES, nil, isGroup);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -4538,8 +4643,11 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     // and the SALON's letter drawn as a face (the defect the owner read on Android `v1.6.0`).
     NSString *initialsName = @"";
     CanariNameBook *names = [[CanariNameBook alloc] initWithUserId:CanariLoadPushContext().userId];
-    NSString *speaker = CanariSalonSpeaker(showsMessage, authorProven, shownSenderId, names,
-                                           channelId, &initialsName);
+    NSString *speaker = CanariSalonSpeaker(
+        showsMessage, authorProven, shownSenderId, names,
+        CanariConversationNicknameLookup(CanariLoadPushContext().userId, YES, channelId,
+                                         @"[SALON_AUTHOR]"),
+        channelId, &initialsName);
     // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
     // already carries the reason; when it did not (a v1 row, a push naming nobody, a blind banner),
     // the author line or the tokens are the first reader, and they say it - never twice.
@@ -4664,12 +4772,15 @@ static void CanariHandleFcmData(NSDictionary *data) {
       NSLog(@"[CanariPush] reaction without groupId - dropped, nothing to attach it to");
       return;
     }
-    NSString *actorName = [data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"Canari";
     NSString *emoji = [data[@"emoji"] isKindOfClass:[NSString class]] ? data[@"emoji"] : @"";
     NSString *actorId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
 
     NSString *attachmentPath = nil;
     CanariPushContext *ctx = CanariLoadPushContext();
+    // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
+    NSString *actorName =
+        CanariConversationNicknameLookup(ctx.userId, NO, groupId, @"[REACTION_NAME]")(actorId)
+            ?: ([data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"Canari");
     if (ctx != nil && actorId.length > 0) {
       attachmentPath = CanariFetchAvatar(ctx, actorId);
     }

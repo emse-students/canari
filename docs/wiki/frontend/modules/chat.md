@@ -5820,15 +5820,53 @@ optional `scope`; with it, `visibleNickname` overrides the profile name, without
 - the shared-media panel;
 - the call overlay's title (the call's group).
 
-Nothing else passes it. An admin access list and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
+Nothing else passes it, except a NOTIFICATION about that conversation (below). An admin access list
+and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
 write bumps: a register first created inside a `$derived` would be a source of that derived, which
 Svelte does not track, and the screen kept the old name until that was found.
 
-**Push: a nickname never reaches a notification** (decided 2026-11-08). `notificationSenderName`,
-`resolveNotificationSenderName`, the native name mirror, the Rust scanner and the server's display-name
-copies call the resolver without a scope and name the profile. A lock screen is outside the
-conversation, a nickname somebody else set may be an insult, and the servers never see an MLS group's
-nicknames anyway - one rule for both kinds.
+**A notification names a member by their nickname in that conversation, composed by the device**
+(owner, 2026-11-14, reversing the 2026-11-08 rule that kept nicknames out of every notification):
+*"comme sur Messenger, tous les pseudos"* - the nickname set in THAT conversation, whoever set it,
+lock screen included; and *"Tout pourrait etre donne par l'appareil et rien par le serveur, ce serait
+plus homogene"* - no server puts a nickname in a push, for any kind (DM, group, community). The
+owner's reasoning: the server will soon know nothing (content-free push), and the device composes
+the notification and holds the nicknames. Blocks apply exactly as on the screen: a nickname of the
+viewer set by somebody in a block with them is not shown, and while that block status is unknown the
+profile name is.
+
+One rule, `libs/contracts/notification-nickname.cases.json`, asserted by every reader:
+
+| Path | Where | What names the member |
+| --- | --- | --- |
+| The WebView's own notifications (web, desktop, the iOS app alive, and Android's socket trigger) | `notifyInbound` -> `resolveNotificationSenderName(senderId, conversationKey, convo)` / `notificationSenderName` (`displayName.ts`) | the one resolver with the scope of `notificationNicknameScope` (the group itself, or a salon's `community:<id>`, from the salon placements `noteSalonCommunities` keeps) |
+| The native copy | `nicknameMirror.ts` -> Rust `store_conversation_nicknames` -> `conversation_nicknames.json` (data directory, and the iOS App Group) | `{userId, scopes: {scope: {member: nickname}}, channels: {salon: scope}}`, only nicknames the account may SEE (`mirroredNickname`: the block rule is applied before the write, and a block answer re-mirrors) |
+| Android FCM (killed app) | `CanariFirebaseMessagingService.nicknameLookup` -> pure `push/ConversationNicknames.kt` | an MLS frame's banner (`shownName`), a salon's speaker (`ChannelBannerAuthor.of(nickname = ...)`, a PROVEN author only), the socket trigger's salon speaker, a chat reaction's actor, the call ring's caller (`knownCallerName`) |
+| iOS extension | `NotificationService.conversationNicknameLookup` / `conversationNickname` | the MLS banner (`shownName`), the salon speaker (`channelBannerAuthor(nickname:)`) and its "X vous a mentionne" line, a chat reaction's actor |
+| iOS app alive | `canari_push.mm` `CanariConversationNicknameLookup` / `CanariConversationNickname` | the MLS banner, the salon speaker (`CanariSalonSpeaker`) and its mention line, a chat reaction's actor, the CallKit caller (`CanariCallerDisplayName(callerId, groupId)`) |
+
+What stays the profile name, and why:
+
+- **The mention tokens in a body** (`@[<id>]`): the thread's own chips (`MessageMentionChip`) name the
+  profile, and a notification says what the screen says.
+- **The Rust push scanner** (`proto_fields.rs`, `push_text.rs`) composes sentences whose subject is the
+  banner's sender line, and names nobody itself.
+- **The server's display-name copies** (`senderName`, a reaction's `title`, `actorName`) stay the
+  profile and are only a fallback the device overrides; they go with content-free push. A server never
+  reads a nickname column for a push (owner, 2026-11-14).
+- **A salon whose community this device has not placed** (the sidebar has not listed it yet) or whose
+  nickname list it has never read: a community's register is the server's and lives in memory, so it
+  reaches the copy only once read (`loadCommunityNicknames`, the first salon of it opened in a session,
+  or a live `workspace.updated`). Once mirrored it stays in the copy across launches, until the
+  sign-out.
+
+**The copy follows the account.** It names its owner: every reader uses it only when the owner is the
+account of `push_context.json`, a write for another account REPLACES it, every register stored for
+the signed-in account is restated once per session (`mirrorStoredNicknames`, `ChatBackgroundService`),
+the sign-out removes it (`forgetConversationNicknames` -> `forget_conversation_nicknames`, the owner
+checked), the account deletion removes it with the other push files
+(`remove_account_push_and_name_files`), and the factory wipe removes the App Group copy
+(`wipe_group_names`). Capped at 5000 nicknames and 2000 salons.
 
 **A block.** A blocked person cannot rename the blocker. In a community the server refuses
 (`403 USER_BLOCKED`, `isBlockedBetween`, either direction). In a group no server reads the frame and

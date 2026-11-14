@@ -9,6 +9,7 @@ pub mod bench;
 // host test run so CI pins the replacement rules without a device.
 #[cfg(any(target_os = "ios", test))]
 pub mod app_group_share;
+pub mod conversation_nicknames;
 pub mod cookies;
 pub mod display_names;
 pub mod handoff;

@@ -87,7 +87,8 @@ describe('an unreadable direct message does not repeat its sender (owner, 2026-1
   it('Android picks the line through FallbackLine, given the group name', () => {
     // The decision itself is pinned by the JVM test `FallbackLineTest`.
     expect(kotlin).toContain(
-      'buildFallbackText(appLocaleContext(this), senderName, groupName, isGroup)'
+      // `shownName`: the sender's nickname in that conversation, else the profile (2026-11-14).
+      'buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)'
     );
     expect(kotlin).toContain(
       'FallbackLine.Kind.NEW_MESSAGE -> res.getString(R.string.notif_new_message)'
@@ -99,14 +100,19 @@ describe('an unreadable direct message does not repeat its sender (owner, 2026-1
   it('iOS reads the same rule in the extension and in the app', () => {
     const nse = read('canari_NSE/NotificationService.swift');
     const app = read('Sources/canari/canari_push.mm');
-    expect(
-      nse.match(/senderName: senderName, groupName: groupName, declared: isGroup, locale:/g)
-    ).toHaveLength(2);
+    // The extension's two fallbacks: no push context (the push's name), and the decrypt's (the
+    // sender's nickname in that conversation when the phone holds one, owner 2026-11-14).
+    expect(nse).toContain(
+      'senderName: senderName, groupName: groupName, declared: isGroup, locale: nil'
+    );
+    expect(nse).toContain(
+      'senderName: shownName, groupName: groupName, declared: isGroup, locale: ctx.locale'
+    );
     expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(2);
     expect(nse).toContain('declared ?? (!groupName.isEmpty && groupName != senderName)');
     expect(nse).toContain('return localized("notif.message.new", locale: locale)');
-    expect(app).toContain('CanariBuildFallbackText(senderName, groupName, isGroup)');
-    expect(app).toContain('senderName, NO, YES, nil, isGroup);');
+    expect(app).toContain('CanariBuildFallbackText(shownName, groupName, isGroup)');
+    expect(app).toContain('shownName, NO, YES, nil, isGroup);');
     expect(app).toContain('if (declared != nil) return declared.boolValue;');
     expect(app).toContain('return CanariLocalized(@"notif.message.new");');
     for (const bundle of ['canari_NSE', 'canari_iOS']) {

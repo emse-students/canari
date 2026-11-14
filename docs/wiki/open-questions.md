@@ -462,7 +462,16 @@ waits on hardware like everything else iOS. Do not "fix" this by marking every m
 `.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
 Apple badge, and Apple reviews it.
 
-### DECISION OWED - naming the author of each line inside a salon's stacked notification
+### DECIDED (owner, 2026-11-14) - naming the author of each line inside a salon's stacked notification
+
+**Decided: the DEVICE names each line's author from the sender id - their nickname in that community,
+else their profile name from the phone's own copy - and no push carries a name** (owner, 2026-11-14:
+*"Tout pourrait etre donne par l'appareil et rien par le serveur"*). Neither shape below was taken.
+The per-line attribution has existed on the device since 2026-11-01 (`ChannelBannerAuthor` on Android,
+`channelBannerAuthor` in the iOS extension, `CanariSalonSpeaker` in `canari_push.mm`, each line its own
+Person / subtitle, from `display_names.json`, for a PROVEN author); the nickname is added by
+[chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)
+(`conversation_nicknames.json`). The text below is the question as it was asked.
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
 messages stacking one under another in a single banner. **The stacking already exists**;

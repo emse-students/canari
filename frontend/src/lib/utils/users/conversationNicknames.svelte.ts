@@ -4,6 +4,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isBlockedWith } from '$lib/users/blocks';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { normalizeNickname } from './nicknameRules';
+import { forgetNicknameMirror, noteMirroredNickname, noteMirroredSalon } from './nicknameMirror';
 
 /**
  * PER-CONVERSATION NICKNAMES ("Modifier les pseudos", owner 2026-10-14), as one dated register per
@@ -27,8 +28,12 @@ import { normalizeNickname } from './nicknameRules';
  * target, and the register has a hard cap (`MAX_NICKNAME_ENTRIES`), so nothing grows it without bound.
  *
  * A NICKNAME NEVER LEAVES ITS CONVERSATION: the register is keyed by the conversation's scope, so it
- * cannot reach the profile, another conversation, or a push (docs/wiki/frontend/modules/chat.md,
- * "Per-conversation nicknames"). A nickname STAYS when its setter leaves: nothing is keyed by them.
+ * cannot reach the profile or another conversation. It DOES name its member in that conversation's
+ * NOTIFICATIONS (owner, 2026-11-14, reversing 2026-11-08: "comme sur Messenger, tous les pseudos"),
+ * composed by the device: every change is mirrored for the native push path (`nicknameMirror.ts`,
+ * {@link mirroredNickname}), and no server ever puts one in a push (docs/wiki/frontend/modules/
+ * chat.md, "Per-conversation nicknames"). A nickname STAYS when its setter leaves: nothing is keyed
+ * by them.
  */
 
 /**
@@ -166,7 +171,10 @@ function persist(
         return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
       })
       .slice(0, map.size - MAX_NICKNAME_ENTRIES);
-    for (const [id] of doomed) map.delete(id);
+    for (const [id] of doomed) {
+      map.delete(id);
+      noteMirroredNickname(scope, id, null);
+    }
     console.warn(
       `[NICKNAME] register of ${scope.slice(0, 8)}… over ${MAX_NICKNAME_ENTRIES} entries - ${doomed.length} evicted`
     );
@@ -222,6 +230,7 @@ export function applyNickname(
   if (!nicknameSupersedes(parsed, map.get(target))) return false;
   map.set(target, parsed);
   persist(scope, map, members);
+  mirrorEntry(scope, target);
   return true;
 }
 
@@ -233,6 +242,7 @@ export function dropNickname(scope: string, userId: string): boolean {
   const map = load(scope);
   if (!map.delete(norm(userId))) return false;
   persist(scope, map);
+  noteMirroredNickname(scope, norm(userId), null);
   return true;
 }
 
@@ -258,6 +268,7 @@ export function mergeBundleNicknames(
   const map = load(scope);
   let changed = 0;
   let taken = 0;
+  const mirrored: string[] = [];
   for (const raw of incoming) {
     if (taken >= opts.members.size) break;
     const userId =
@@ -271,8 +282,10 @@ export function mergeBundleNicknames(
     if (!nicknameSupersedes(entry, map.get(userId))) continue;
     map.set(userId, entry);
     changed++;
+    mirrored.push(userId);
   }
   if (changed > 0) persist(scope, map, opts.members);
+  for (const userId of mirrored) mirrorEntry(scope, userId);
   return changed;
 }
 
@@ -310,6 +323,8 @@ export function forgetConversationNicknames(userId: string): void {
   for (const key of setterVerdicts.keys()) {
     if (key.startsWith(`${owner}|`)) setterVerdicts.delete(key);
   }
+  // And the native copy the notifications read: it outlives the account no more than this does.
+  void forgetNicknameMirror(owner);
   revision++;
 }
 
@@ -343,6 +358,7 @@ function askAboutSetter(viewer: string, setBy: string): void {
   void isBlockedWith(setBy).then(
     (blocked) => {
       setterVerdicts.set(key, blocked ? 'blocked' : 'clear');
+      remirrorViewerEntriesBy(viewer, setBy);
       if (blocked) {
         console.info(
           `[NICKNAME] a nickname naming this account was set by ${setBy.slice(0, 8)}, with whom a block stands - not shown`
@@ -351,6 +367,7 @@ function askAboutSetter(viewer: string, setBy: string): void {
     },
     (e: unknown) => {
       setterVerdicts.set(key, 'unknown');
+      remirrorViewerEntriesBy(viewer, setBy);
       console.warn(
         `[NICKNAME] could not ask whether a block stands with ${setBy.slice(0, 8)} - this account's own name is shown until the link comes back: ${String(e)}`
       );
@@ -392,9 +409,143 @@ export function nicknameHiddenByBlock(scope: string | null | undefined, userId: 
   return setterVerdicts.get(pairKey(norm(me), entry.setBy)) === 'blocked';
 }
 
+// ── Notifications: the device names members by their nickname (owner, 2026-11-14) ────────────────
+//
+// "comme sur Messenger, tous les pseudos": a notification names a member by the nickname set in THAT
+// conversation, whoever set it, lock screen included - under the SAME block rule as the screen. The
+// device composes the name, never a server: the WebView's own notifications read this register
+// through `notificationSenderName` (`displayName.ts`) with {@link notificationNicknameScope}, and the
+// native push path reads the copy mirrored here ({@link mirrorEntry}, `nicknameMirror.ts`).
+
+/** Salon id (no `channel_` prefix) -> its community's workspace id, from the sidebar's list. */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- read on demand, never drawn
+const salonCommunities = new Map<string, string>();
+
+/**
+ * The nickname a NOTIFICATION gives `userId` in `scope`, or null - {@link visibleNickname}'s rule
+ * without its reactivity: a nickname of the viewer set by somebody else is given only once its setter
+ * is known not to stand in a block with them. While that is pending or unanswerable the answer is
+ * null (the profile name, as on the screen), and the question is asked; its answer re-mirrors.
+ */
+export function mirroredNickname(scope: string, userId: string): string | null {
+  const entry = load(scope).get(norm(userId));
+  if (!entry?.nickname) return null;
+  const me = currentUserId();
+  if (!me || norm(me) !== norm(userId)) return entry.nickname;
+  const viewer = norm(me);
+  if (entry.verified && entry.setBy === viewer) return entry.nickname;
+  const verdict = setterVerdicts.get(pairKey(viewer, entry.setBy));
+  if (verdict === 'clear') return entry.nickname;
+  if (verdict === undefined) queueMicrotask(() => askAboutSetter(viewer, entry.setBy));
+  return null;
+}
+
+/** Notes `userId`'s entry in `scope` for the native copy, as a notification may show it. */
+function mirrorEntry(scope: string, userId: string): void {
+  noteMirroredNickname(scope, userId, mirroredNickname(scope, userId));
+}
+
+/** A block verdict about `setBy` changed what the viewer may see of their own entries: re-note them. */
+function remirrorViewerEntriesBy(viewer: string, setBy: string): void {
+  for (const [key, map] of registers) {
+    if (!key.startsWith(`${viewer}|`)) continue;
+    const entry = map.get(viewer);
+    if (entry?.setBy === setBy) mirrorEntry(key.slice(viewer.length + 1), viewer);
+  }
+}
+
+/**
+ * Restates every register this account keeps on the device to the native copy - once per signed-in
+ * session (`ChatBackgroundService`), so a copy written by an older build, by a previous account of
+ * this install, or never written at all is brought in line. A community's register is the server's
+ * and lives in memory only: it is mirrored as it is read, and its copy stays until the sign-out.
+ * Returns how many entries were restated.
+ */
+export function mirrorStoredNicknames(): number {
+  const owner = account();
+  if (!owner) return 0;
+  const prefix = ACCOUNT_KEY.conversationNicknames(owner, '');
+  const scopes: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) scopes.push(key.slice(prefix.length));
+    }
+  } catch (e) {
+    console.warn(`[NICKNAME] stored registers not listed for the notifications: ${String(e)}`);
+    return 0;
+  }
+  let restated = 0;
+  for (const scope of scopes) {
+    for (const userId of load(scope).keys()) {
+      mirrorEntry(scope, userId);
+      restated++;
+    }
+  }
+  console.info(
+    `[NICKNAME] ${restated} nickname(s) of ${scopes.length} conversation(s) restated for the notifications`
+  );
+  return restated;
+}
+
+/**
+ * Places every salon in its community, from the sidebar's list: what lets a salon's notification
+ * read its COMMUNITY's register - here ({@link notificationNicknameScope}) and natively (the push
+ * names the salon only). A salon no longer listed is forgotten. Run on every change of the list.
+ */
+export function noteSalonCommunities(
+  workspaces: ReadonlyArray<{ workspaceDbId?: string; channels: ReadonlyArray<{ id: string }> }>
+): void {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a local diff, never drawn
+  const next = new Map<string, string>();
+  for (const ws of workspaces) {
+    if (!ws.workspaceDbId) continue;
+    for (const ch of ws.channels) next.set(ch.id.replace(/^channel_/, ''), ws.workspaceDbId);
+  }
+  let changed = 0;
+  for (const [id, ws] of next) {
+    if (salonCommunities.get(id) === ws) continue;
+    salonCommunities.set(id, ws);
+    noteMirroredSalon(id, communityNicknameScope(ws));
+    changed++;
+  }
+  // Deleting the entry being visited is defined for a Map's iterator: no copy is needed.
+  for (const id of salonCommunities.keys()) {
+    if (next.has(id)) continue;
+    salonCommunities.delete(id);
+    noteMirroredSalon(id, null);
+    changed++;
+  }
+  if (changed > 0) console.debug(`[NICKNAME] ${changed} salon placement(s) changed`);
+}
+
+/**
+ * The scope a NOTIFICATION about `conversationKey` reads its nicknames in: a salon (`channel_<id>`,
+ * or a conversation typed `channel`) its community's, an MLS conversation its own key. Null for a
+ * salon whose community this device has not placed yet - the profile name, said at debug.
+ */
+export function notificationNicknameScope(
+  conversationKey: string,
+  conversationType?: 'direct' | 'group' | 'channel'
+): string | null {
+  if (!conversationKey) return null;
+  if (conversationType !== 'channel' && !conversationKey.startsWith('channel_')) {
+    return conversationKey;
+  }
+  const ws = salonCommunities.get(conversationKey.replace(/^channel_/, ''));
+  if (!ws) {
+    console.debug(
+      `[NICKNAME] salon ${conversationKey.slice(0, 16)} not placed in a community - its notification names the profile`
+    );
+    return null;
+  }
+  return communityNicknameScope(ws);
+}
+
 /** Test seam: forgets every register and verdict, as a fresh page would. */
 export function resetConversationNicknamesForTests(): void {
   registers.clear();
   setterVerdicts.clear();
+  salonCommunities.clear();
   revision++;
 }
