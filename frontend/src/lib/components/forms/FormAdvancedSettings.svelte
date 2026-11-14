@@ -174,7 +174,8 @@
         bind:checked={allowAnswerEdit}
         disabled={answerEditBlocker != null}
         label={m.form_answer_edit_label()}
-        hint={answerEditBlocker ?? m.form_answer_edit_hint()}
+        hint={answerEditBlocker ??
+          (optionState.takesPayment ? m.form_answer_edit_hint() : m.form_answer_edit_hint_free())}
       />
     {/if}
 

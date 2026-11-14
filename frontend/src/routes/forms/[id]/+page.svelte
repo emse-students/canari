@@ -1091,7 +1091,9 @@
         data-testid="form-edit-banner"
       >
         <p class="text-text-main text-sm font-medium">
-          {m.form_view_edit_banner({ date: formatFormOpensAt(editing.createdAt) })}
+          {form.requiresPayment
+            ? m.form_view_edit_banner({ date: formatFormOpensAt(editing.createdAt) })
+            : m.form_view_edit_banner_free({ date: formatFormOpensAt(editing.createdAt) })}
         </p>
         <Button variant="ghost" size="compact" class="shrink-0" onclick={() => stopEdit(null)}>
           {m.form_view_edit_cancel()}
@@ -1262,20 +1264,24 @@
           {#if editing}
             <span class="text-text-main text-sm font-semibold">{m.form_view_edit_answer()}</span>
           {:else if submitted}
-            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
-              ><Check size={16} /> {m.form_view_response_sent()}</span
-            >
-            <!-- One answer to this form: it is reopened from here (several: the list above). -->
-            {#if !form.allowMultipleSubmissions && editableAnswers.length > 0}
-              <Button
-                variant="link"
-                size="compact"
-                data-testid="form-edit-open"
-                onclick={() => startEdit(editableAnswers[0])}
+            <!-- ONE LINE when it fits, wraps when it does not (owner, 2026-11-14): status and short edit action share a row; the sent button already carries the check, so neither text carries an icon. -->
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span class="text-green-ok text-sm font-bold whitespace-nowrap"
+                >{m.form_view_response_sent()}</span
               >
-                <Pencil size={14} class="mr-1" />{m.form_view_edit_answer()}
-              </Button>
-            {/if}
+              <!-- One answer to this form: it is reopened from here (several: the list above). -->
+              {#if !form.allowMultipleSubmissions && editableAnswers.length > 0}
+                <Button
+                  variant="link"
+                  size="compact"
+                  class="whitespace-nowrap"
+                  data-testid="form-edit-open"
+                  onclick={() => startEdit(editableAnswers[0])}
+                >
+                  {m.form_view_edit_answer_short()}
+                </Button>
+              {/if}
+            </div>
           {:else if priceUnavailable}
             <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
           {:else if calculateTotal() > 0}
