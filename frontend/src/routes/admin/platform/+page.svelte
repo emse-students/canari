@@ -13,6 +13,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
+  import LydiaContractPanel from '$lib/components/admin/LydiaContractPanel.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     CALLS_MODES,
@@ -796,5 +797,7 @@
         {/if}
       </div>
     </form>
+
+    <LydiaContractPanel />
   {/if}
 </div>

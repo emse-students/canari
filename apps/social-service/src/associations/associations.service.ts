@@ -98,6 +98,7 @@ import {
   type HeldBusinessRole,
   type LydiaBridgeState,
 } from './lydia-account-bridge';
+import { recordEnrolledBusiness } from './lydia-contract-flux';
 import {
   approvedDelegateIds,
   collectsThrough,
@@ -1255,9 +1256,9 @@ export class AssociationsService {
 
   /** Loads one association by its URL slug and appends a memberCount. */
   /**
-   * The ids of the associations of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): type `association`,
-   * audience reaching the space, archived ones included - the carte's set plus the archived
-   * associations of the same space. Read by the public directory a showcase filters by its space.
+   * The ids of the entities of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): EVERY type (owner,
+   * 2026-11-14), audience reaching the space, archived ones included - for associations, the
+   * carte's set plus the archived ones. Read by the public directory a showcase filters by its space.
    */
   async offeredInSpace(space: PublicSpaceKey): Promise<Set<string>> {
     const rows: { id: string }[] = await this.assoRepo.query(OFFERED_BY_SPACE_KEY_SQL, [
@@ -1265,7 +1266,7 @@ export class AssociationsService {
       space.campus,
     ]);
     this.logger.debug(
-      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} association(s)`
+      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} entities`
     );
     return new Set(rows.map((r) => r.id));
   }
@@ -3095,6 +3096,34 @@ export class AssociationsService {
     return mine
       .filter((a) => (a.permissions & flag) !== 0)
       .map((a) => ({ id: a.id, name: a.name }));
+  }
+
+  /**
+   * MAY `userId` EDIT A PRICE SOMEWHERE - the one predicate the payout estimate's fee schedule is
+   * answered on (core-service `LydiaFeeScheduleController`, docs/wiki/lydia-contract-flux.md; owner,
+   * 2026-11-14: the fees are a confidential contract term, shown to those who need them). Built from
+   * the rights that guard the price editors, never a new axis:
+   * - a global admin (every editor, the Cercle top-up page included);
+   * - a BDE super-admin (`isAssociationSuperAdmin`): `mayAct` grants them MANAGE_PRODUCTS and
+   *   MANAGE_FORMS on the associations they govern;
+   * - a member holding MANAGE_PRODUCTS (the shop, the cotisation tiers) or MANAGE_FORMS (paid forms)
+   *   in an association or a list - not an institution, which collects nothing (TYPE_EXCLUDED_FLAGS).
+   * A form's creator is not one by being its creator: an association's form is edited by MANAGE_FORMS
+   * alone (`FormsService.managesForm`, owner 2026-11-14), and a personal form is offered no price
+   * (the editor asks for an association first, `FormPaymentSection`).
+   */
+  async mayEditAPrice(userId: string, isGlobalAdmin: boolean): Promise<boolean> {
+    if (isGlobalAdmin) return true;
+    if (!userId) return false;
+    const priceFlags =
+      AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_FORMS;
+    const mine = await this.listByUser(userId);
+    if (mine.some((a) => a.type !== 'institution' && (a.permissions & priceFlags) !== 0)) {
+      return true;
+    }
+    const may = await this.isAssociationSuperAdmin(userId);
+    this.logger.debug(`[PERM] may edit a price user=${userId.slice(0, 8)}: ${may}`);
+    return may;
   }
 
   /** Returns true if userId is a member of the given association (any role). */
@@ -5143,6 +5172,11 @@ ${rejectionReason}`
               WHERE id = $1`,
             [id]
           );
+          await recordEnrolledBusiness(
+            (sql, params) => manager.query(sql, params),
+            id,
+            vendorToken
+          );
           return 'pending';
         }
         if (row.active) return 'taken';
@@ -5156,6 +5190,7 @@ ${rejectionReason}`
             WHERE id = $1`,
           [id, vendorToken, dashboardUrl, sealed]
         );
+        await recordEnrolledBusiness((sql, params) => manager.query(sql, params), id, vendorToken);
         return 'active';
       }
     );

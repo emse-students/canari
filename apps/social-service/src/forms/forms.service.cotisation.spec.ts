@@ -111,7 +111,13 @@ describe('FormsService - cotisation configuration and granting', () => {
       // MANAGE_MEMBERS by default, so the tests below are about the cotisation config itself;
       // the permission gate has its own block. `mayAct` is the one predicate every check asks -
       // it folds in the platform admin and the cross-association super-admin.
-      mayAct: jest.fn(() => Promise.resolve(opts.mayGrant ?? true)),
+      // MANAGE_FORMS (creating the association's form, owner 2026-11-14) is held; the grant's
+      // MANAGE_MEMBERS is what each test chooses.
+      mayAct: jest.fn((_u: string, _a: string, flag: number) =>
+        Promise.resolve(
+          flag === AssociationPermissionFlag.MANAGE_FORMS ? true : (opts.mayGrant ?? true)
+        )
+      ),
       associationsWhereUserHasFlag: jest.fn(() => Promise.resolve([])),
       namesByIds: jest.fn(() => Promise.resolve(new Map())),
     };

@@ -995,6 +995,33 @@ task.
 The second finding of the same map - one MLS implementation per build, resolved at BUILD time - is
 shipped ([mobile](mobile.md)), and saved 13 846 B: not to be quoted as the cold start.
 
+### The phone's answer, Mi 9T, `1.6.12-alpha.2` on dev, 2026-11-14: evaluation is the largest term before the app runs
+
+Two cold starts with `launch-trace.mjs --heartbeat`, signed in, "stay signed in" on (so no prompt;
+the prompt reading is a separate entry). On an APK the JavaScript is read from the package, so the
+network term is zero by construction and what is left is what this section asked about:
+
+| clock (from `performance.timeOrigin`) | run 1 | run 2 |
+| --- | --- | --- |
+| `am start` -> `timeOrigin` (process and WebView) | 588 ms | 802 ms |
+| last of 243 JS modules delivered (resource timing, separate launch) | 786 ms | - |
+| first console line | +874 ms | +942 ms |
+| `Initialised in TAURI mode` | +1583 ms | +1572 ms |
+| first line -> `Initialised` | **709 ms** | **630 ms** |
+| `Initialising MLS` -> `MLS identity initialised` | 1241 ms | 748 ms |
+| `MLS ready` | +3409 ms | +3466 ms |
+| worst main-thread gap (heartbeat, armed at attach) | 382 ms | 350 ms |
+
+**So yes: between the delivered bytes and `Initialised`, 0.6-0.8 s of evaluation is the single
+largest term of the boot's first 1.6 s on this phone**, larger than the process start. The heartbeat
+cannot split parse from top-level run inside it - it is armed only when the devtools socket is
+attached (+1.8-2.6 s). That answer does not change the refusal above: the logged-in boot needs the
+engine chunk, so splitting it buys nothing there.
+
+**The MLS init no longer waits behind avatars** (the `v0.18.5` ten-second window): avatars are one
+`avatar-presence` request (answered +2177 / +2433 ms, 0 of 1 fetched) and the device mirror at
++3.9 s, after `MLS ready`. The window did not reproduce on a phone either.
+
 ## The restore decrypted every stored message to read a length (2026-10-12)
 
 Found by the heavy-state performance audit. `replayConversationHistory` (`utils/chat/history.ts`)

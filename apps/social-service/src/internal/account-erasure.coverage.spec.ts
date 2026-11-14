@@ -81,6 +81,9 @@ const RAW_TABLES = [
   // Migration 167's Lydia account bridges (lydia-account-bridge.ts): an association id, two
   // Business vendor tokens, a sealed Business key, readiness and counts - no account.
   'lydia_account_bridges',
+  // Migration 168's Businesses Canari's enrolment created (lydia-contract-flux.ts): a vendor token,
+  // an association id, a date - no account.
+  'lydia_enrolled_businesses',
   // Migration 157's daily push counters (engagement WP-8): the recipient's own rows.
   'engagement_push_days',
   // Migration 163's weekly campus-trend counters: the reader's own rows.

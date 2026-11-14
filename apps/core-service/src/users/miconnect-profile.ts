@@ -36,9 +36,12 @@ const logger = new Logger('MiconnectProfile');
  * Reads the profile claims into the stored shape. A claim that is absent or malformed yields the
  * EMPTY value, never the previous one: the caller replaces the columns wholesale, so a claim that
  * disappeared at the provider clears here too (WP3). A malformed ENTRY is dropped with a warning,
- * not guessed at - a value the provider should never send is the provider's defect to see.
+ * not guessed at - a value the provider should never send is the provider's defect to see. A
+ * well-formed cursus entry whose FORMATION no space names is kept and said (see below).
+ *
+ * @param who - A short label of the account for the warnings (never the full id).
  */
-export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
+export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'): MiconnectProfile {
   const campus = CAMPUSES.find((c) => c === claims.campus) ?? null;
   if (claims.campus !== undefined && campus === null) {
     logger.warn(`profile claim: unknown campus ${JSON.stringify(claims.campus)} dropped`);
@@ -49,6 +52,17 @@ export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
     for (const entry of claims.cursus as unknown[]) {
       const e = entry as Partial<CursusEntry> | null;
       if (e && typeof e.formation === 'string' && e.formation && Number.isInteger(e.promo)) {
+        // A FORMATION NO SPACE NAMES ('icm', a value the provider gained before Canari did) IS
+        // KEPT, AND SAID (owner, 2026-11-14: "L'ignorer et alerter"). Kept, because the entry is
+        // what tells a student from staff: dropping it would leave a campus and an empty cursus,
+        // which is the definition of staff - and hand the person the staff public and the whole
+        // campus agenda. Ignored, because it matches no space (`isReaderSpaceSql` is an exact
+        // containment). Said, because until now such a person had no space and nothing told why.
+        if (!FORMATIONS.some((f) => f === e.formation)) {
+          logger.warn(
+            `[UNKNOWN_FORMATION] ${who}: cursus formation ${JSON.stringify(e.formation)} matches no space - kept, opens nothing`
+          );
+        }
         cursus.push({ formation: e.formation, promo: e.promo as number });
       } else {
         logger.warn(`profile claim: malformed cursus entry ${JSON.stringify(entry)} dropped`);
