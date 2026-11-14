@@ -343,8 +343,8 @@ row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
 
 | Row | Do | PASS when | FAIL when |
 | --- | --- | --- | --- |
-| R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
-| R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
+| R1a. Swift lines in clear, the extension ([entry](#the-iphone-12-batch-6-readings-of-2026-11-14)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
+| R1b. Swift lines in clear, a plugin ([entry](#the-iphone-12-batch-6-readings-of-2026-11-14)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
 | R2. `push_context.json` follows an account switch ([entry](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
 | R3a. No more sandbox refusal ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
 | R3b. A marker from before a reboot ([entry](frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
@@ -352,6 +352,51 @@ row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
 R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
 (its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
 drain reports either a `killed` line or the `pid liveness not provable` warning.
+
+## The iPhone 12 batch 6 readings of 2026-11-14
+
+TestFlight `1.6.12-alpha.2` (About reads "Canari version 1.6.12-alpha.2"), dev estate, bench accounts
+gamma and delta, driven over WDA (`tools/ios-device`), native lines from `pymobiledevice3 syslog live`
+(processes `Canari` and `CanariNotifications`), the sender a harness Chrome. Evidence is outside the
+repository. The bench iPhone has no passcode and no SIM; Wi-Fi was turned off for one row and back on.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Status bar and home indicator under the glass chrome | **`PASS`** | The clock, signal and battery stay legible over the feed, a DM and a salon; the glass tab pill ends at 823 pt and the composer at 810 pt, above the indicator (about 833 pt on the lock screen; `safe area ... bottom 34 pt` is published) |
+| PIN gate at the largest standard text size | **`PASS`** | At XXXL (`DYNAMIC_TYPE` 0.545, held through `pymobiledevice3 developer accessibility settings set`, which reverts when the process ends) "Saisie manuelle" and "PIN oublie ?" sit under the sticky Unlock at first; one scroll of 126 pt brings them clear of it with the four dots still on screen |
+| Left-edge swipe over a sheet and over a gate | **`PASS`** | Over the Nicknames bottom sheet one swipe closed the sheet and left "Conversation info" open; over the PIN gate nothing moved. Observation: the "Conversation info" panel itself (a side panel, not a `Modal`) does not close on an edge swipe |
+| Rear lens preview | **`PASS`, dark scene** | Front and rear show the same rounded card (225-2305 px high, edge to edge) over the blurred backdrop, and the rear scene reaches the card edges. The phone lay flat, so the rear image is dim |
+| DM ending in a tall card, keyboard up (3 rounds) | **`PASS` geometry** | "+" and "Envoyer" both at y=487 pt, header at y=55 pt. The log line and the salon are not read (entry deleted, below) |
+| Sign in as a different account on a live process | **`PASS`** | gamma signed out and delta signed in without a relaunch: the PIN gate is shown, the previous key is not reused |
+| One MLS state per account, A -> B -> A -> B | **`PASS`, lines not read** | gamma, delta, gamma, delta: each sign-in meets its own PIN, then opens its own conversations and decrypts them. The `[MLS_ACCOUNT]` lines are app-log lines, not in the syslog, and a TestFlight WebView is not inspectable |
+| R1a. Extension lines in clear | **`PASS`** | `[CanariNSE] didReceive type=message`, `message shape isGroup=false`, `applyBadgeCount: badge=1`, `outcome=decrypted cause=- stage=attach peakMB=3`, every value readable, 4 of 4 pushes to the killed app |
+| R1b. Plugin lines in clear | **`PASS`** | `[CustomTabsPlugin] openCustomTab: presenting a session`, `session completed - re-dispatching the callback to the app scheme`, `callback re-dispatched`, in `Canari{Canari}`, none `<private>` |
+| R2. `push_context.json` follows an account switch | **`PASS`** | gamma -> delta in the foreground, `terminate`, DMs to delta: the lock-screen banner reads the sender and the text, and the line is `outcome=decrypted` (3 of 3) |
+| R3a. No sandbox refusal | **`PASS`** | No `kern.bootsessionuuid unreadable` from Canari in 4 runs |
+| R3b. A marker from before a reboot | **deleted, cannot be provoked** | One run lasts about 250 ms (`peakMB=3`); no power-off can be landed in it |
+| iOS no longer aborts on an accessibility-tree read | **`PASS`** | `[CanariPush] APNs token received (32 bytes) -> FIRMessaging` after `registerForRemoteNotifications`, and `became active: app delegate is the kept-alive one`, with the tree read hundreds of times in the same sitting |
+| Silent frames: hook and banner clear | **`PASS`** | `[CanariPush] remote notification hook installed on AppDelegate (chained=0)`; a DM raised a lock-screen banner while the app was backgrounded, and reading the message on the same account's web client removed the banner within 15 s with the app still in the background |
+| Reaction-failure toast | **deleted, cannot be provoked on this bench** | Wi-Fi off: the pill stays and no toast, in a DM and a salon (the reaction is held offline) |
+| Waiting share locked with the device (steps 1, 3, 4, and a cold start with the PIN gate) | **`PASS`** | Read with a temporary device passcode on the bench iPhone. Cold launch: `[CanariShare] launch sweep: 0 orphan share(s)`, no `deferred`. A Safari share to Canari waited while Canari was killed and the phone locked for over 10 s with two pushes arriving (notification cells on the lock screen, one banner with sender and text after unlocking); the next launch logged `share imported (launch)` and `a share waits (launch) before the WebView`, no `dropped`, no `unreadable`, no `513`; after the PIN gate the `Send to...` picker was offered at once. Steps 2, 5, 6, 7 are not readable on a store build or cannot be provoked (the copy-protection line is a web `[SHARE]` line, a store build exposes none; a large iCloud video mid-capture; deleted with that reason, owner directive 2026-11-14). The bench passcode could NOT be removed by the agent: turning it off asks for the Apple ID password, so the owner removes it |
+| Share in, Safari URL | **partial `PASS`** | Card, banner, tap opens the picker warm; the suggestions row lists four conversations ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) |
+| Emoji pictures, rows 1-3 on the iPhone | **`PASS`** | Seven emoji kinds all drawn as pictures, flag and family one picture each |
+| Salon banner for a session started while the phone was shut (NOTIF-20 NSE half) | **`PASS`** | iPhone 12 killed and locked, a second account sent one text in a salon the phone had never seen: the NSE logged `openSeedFrame: stored 1 seed(s)` then `handleChannelMessage: seed source=frame`; the lock screen showed one banner titled with the community and salon, the sender and the text; chat-delivery's `[PUSH_BLIND]` count over the preceding 90 minutes was 0 on dev (the dev server clock reads one hour behind local time) |
+| Trills | **`DELETED`** | Delivery proved (6 of 6 pushes arrive with the requested sound); the sound itself is not judged (owner, 2026-11-14) |
+
+**Entries deleted with their reason (owner directive of 2026-11-14).** R3b (cannot be provoked, above); the
+reaction-failure toast (offline the reaction is held, an API refused while the phone believes itself online
+needs a proxy the iPhone bench has not got; the web code is the one the Mi 9T read on 2026-10-06); the tall-card
+DM (geometry read 3 of 3; the `compensating a document scroll` line is an app-log line that a store build does
+not expose, and the salon shares the DM's `ChatArea` piece); the Firebase-slot row (the sender works for a
+TestFlight build, the O4, TAB-1 and HEAL-NEW-5 rows live on the cross-client iOS board, not here).
+
+**Delivery to a TestFlight build works on dev.** Pushes sent from dev reached the killed iPhone (banner
+and `decrypted`) 6 of 6, so the backlog row that blames a missing development-slot APNs key concerns
+the dev-signed bench build only.
+
+**Bench notes.** An edge swipe started beyond the screen's height leaves the app for the previous app;
+a WDA session left on another app answers "not running" until it is deleted; a tap on a CanaReel card
+in a DM opens the viewer.
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
@@ -2082,7 +2127,7 @@ the build it names.**
 | An attachment over 1 MiB on dev (WP-S1 #1708, #1710 on iOS) | backlog Cloudflare P1, offline section | **sent**: a 5 s gallery video in a one-member group read "Message envoyé" in ~2 s. Its size was NOT measured, and the server log read was refused to the agent, so this does not close the 1 MiB question |
 | #1604, no PIN prompt after a later sign-in | backlog | **BLOCKED** by the P3 "switching accounts on one iPhone install makes the local store unreadable", which this session met again (below) |
 | #1536 / #1548 reaction toast, send path, reply context | backlog | **BLOCKED**: no peer that the dev service account may discover |
-| NOTIF-18 (NSE on a silent frame), the iPhone salon banner, a push carrying its ciphertext once, the iOS reaction stack, mention names, check B/C/K on iOS | backlog, notification sections | **BLOCKED on the estate**: dev cannot send a push (Firebase not initialised in `canari-dev-chat-delivery-service`), and a TestFlight pre-release only talks to dev |
+| NOTIF-18 (NSE on a silent frame), the iPhone salon banner, a push carrying its ciphertext once, the iOS reaction stack, mention names, check B/C/K on iOS | backlog, notification sections | **Not read that day**: dev could not send a push then (Firebase not initialised in `canari-dev-chat-delivery-service`; superseded 2026-11-14: it sends since 2026-10-21, and a TestFlight pre-release, which talks to dev, receives them) |
 | Check U (biometric cadence, all of iOS) | check U | **BLOCKED**: needs an enrolled face |
 | The iOS launch logo (#1289): delete, RESTART, reinstall | backlog | **not taken**: a restart kills the WDA runner the session depends on. Owed in a session that can re-arm `wda-daemon.py` |
 | The window bars (status bar, home indicator) with the glass chrome | backlog, iOS window layout | **screenshots for the user's look** in `r1011/` (`17-group.png`, `19-plus.png`). Seen: the dev banner sits over the status bar on the camera screen (`09-cam.png`), dev builds only |
@@ -2174,8 +2219,8 @@ community, `Bench126`, created by gamma for this pass (gamma administrator, delt
 | "Seen by" heads do not flicker in a community | **`PASS`** | Heads sampled every 16 ms. Live exchange: every move is one step to the newest read row, never back. Three reloads of gamma's tab: delta's head is under `seen-c` from the first sample (~200 ms) and never moves in 12 s. Two cold starts of the phone into the salon: gamma's head is under `seenphone3` from its first sample and never moves in 15 s. `canari-dev-social-service-1` logged **0** `[CHANNEL_READ] mark past the newest message bounded` in the 40 min of the pass |
 | Nothing fatal in the logs | **`PASS`** | 2326 console lines over the 12 timed runs plus two full captures (a cold start, a salon session; `Runtime.enable` replays from page load): **no** `error`/`warning` entry, **no** exception, **no** `[SELECT] selection dropped`. The only `[RESTORE]` line is the normal `N conversation row(s) seeded - history follows`. Logcat: no `FATAL`, no ANR; every process death is the instrument's own kill |
 
-**Not measured, and why.** T1 (the notification shown) and a REAL notification tap: dev has no push
-(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the tap is the notification's exact `PendingIntent`
+**Not measured, and why.** T1 (the notification shown) and a REAL notification tap: dev had no push that day
+(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent; set since 2026-10-21), so the tap is the notification's exact `PendingIntent`
 fired with `am start`, as in the 1.2.5 reading. The PIN is typed by the instrument (~130 ms); a
 person adds 1.5-3 s. The landing preview under the vault path ("Rester connecte" ticked) was not
 read, since this device is on the PIN path. The first ~100 ms after a salon opens are not covered
@@ -2240,9 +2285,9 @@ stays owed until a pre-release build is distributed to the tester group.
 | Dynamic Type at the largest standard size (lot 5) | iPhone | **no effect, warm or cold** | Reglages > Accessibilite > Affichage et taille du texte > Police plus grande, slider 50 % -> 100 %: a DM drew at exactly the size it had before, and so did the PIN sheet after a cold relaunch. The WebView ignores the setting, so Dynamic Type users get the default size. Whether that is accepted or wants `-apple-system-body` is a decision, not a reading. Restored to 50 % |
 
 **What a bench phone cannot settle, and why.** Every push row (check H step 4, NOTIF-10, D2/D3 with
-a shade reply typed by hand, the sender's face on a notification, NOTIF-6b, check K and C): dev sends
-no push (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent) and the iPhone's development slot has no APNs
-key. Check X needs a real finger. The iPhone rear-lens letterbox (#1370) needs the phone held up.
+a shade reply typed by hand, the sender's face on a notification, NOTIF-6b, check K and C): dev sent
+no push that day (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent; set since 2026-10-21) and the iPhone's development slot had no APNs
+key (matters to a development-signed build only; not proven done, see the owed table). Check X needs a real finger. The iPhone rear-lens letterbox (#1370) needs the phone held up.
 Check U and the iOS launch logo need a person (a face, a restart that kills WDA). The emoji
 `naturalWidth`, the liquid glass re-read and every fix newer than `1.2.3-alpha.5` need an iPhone
 build newer than the one TestFlight serves this tester.
@@ -2254,8 +2299,8 @@ GitHub release, sha256 `156ae21e...`), on `dev.canari-emse.fr`. The phone had no
 a **fresh install and a new device**, signed in through the service-account link as `fourth`
 ("Canari Test Delta"), "Rester connecte" unticked. The peer is `canari-test-gamma` in the
 `chrome-w2` dev tab. Numbers come from CDP on the inspectable WebView and from logcat (the Rust
-lines reach logcat, the WebView console does not). Dev still sends no push
-(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the notification is its exact intent fired with
+lines reach logcat, the WebView console does not). Dev still sent no push
+(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent then; set 2026-10-21), so the notification is its exact intent fired with
 `am start`. Evidence: `<harness-dir>/a1-bench/r1013-a127/` (frames, `cons-*.ndjson`,
 `logcat-*.txt`, `inapp-log*.txt`, `notif-runs2.ndjson`).
 
@@ -2362,9 +2407,8 @@ run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `B
 3. **The call permission is not refused**: the conversation's panel, "Appels", reads "Autorises", or
    no choice was made and the level is not `none`.
 4. **Both apps OPEN, in the foreground, screen on.** The ring is the MLS `call_invite` over the chat
-   socket. A killed or backgrounded app is NOT rung (`CALLS_COMPILED = false`, no native ring; and dev
-   has no Firebase sender, so chat-delivery logs `[ring] Firebase Admin is not initialised` at every
-   ring - expected on dev, not the finding).
+   socket. A killed or backgrounded app is NOT rung (`CALLS_COMPILED = false`, no native ring; written before
+   dev had a Firebase sender, which it has since 2026-10-21 - `[ring] Firebase Admin is not initialised` on dev is now a finding).
 5. **The microphone prompt** appears on the first call on each phone: accept it.
 
 **The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
@@ -2710,7 +2754,7 @@ Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` relea
 `adb install -r` over the `1.2.7-alpha.3` build (accepted, no signature or downgrade refusal, account
 kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations only. The phone is on
 the vault path ("Rester connecte"), so no PIN gate was drawn. Evidence:
-`<harness-dir>/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
+`<harness-dir>/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev had no push then (it sends since 2026-10-21),
 so reading 5 could not be taken.
 
 | Reading | Verdict | What was seen |
@@ -2719,7 +2763,7 @@ so reading 5 could not be taken.
 | 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms: attach 552, nav 1099, **tap>rail 1134** (worst 1243), tap>salons 2244, tap>target salons 2512, **salon>pane 277**, salon>msgs 1833, switch>salons 143, switch salon>pane 202, reopen>msgs 773; long tasks 728, max gap 443 |
 | 3. Notification level, private conversation | **`PASS`** | The phone holds no group, only the DM with gamma (a bench account). Its "Infos de la discussion" panel shows Notifications with Tous / Mentions / Aucune; "Mentions" highlights, then "Tous" restores it. Persistence across a restart not read |
 | 4. Reply swipe near the right edge (#1880) | **`PASS`** | A swipe on an own bubble from x=985 of 1080 with a 70 px vertical drift arms "Repondre a Canari Test Delta" with the bubble's text in the composer. **From x=1040 the system back gesture wins** and the conversation closes: the gesture zone is the system's, not the app's |
-| 5. Group notification shows the sender | **`NOT-OBSERVED`** | No group on the phone and no push on dev |
+| 5. Group notification shows the sender | **`NOT-OBSERVED`** | No group on the phone and no push on dev that day (it sends since 2026-10-21) |
 | 6. In-app log export | **`PASS`** | "Enregistrer le journal" saves `canari-log-1.2.8-alpha.1-20261015-0130.txt` (1.8 MB, 20471 lines) to Telechargements. All **397** `[SEND] handleSendChat` lines carry `text="[N chars]"`; no quoted value outside that shape, no `eyJ` or `Bearer`. The one-word leak of the 1.2.7 reading (`text="ok"`) is not present |
 
 **Met on the way:** a tap on the profile settings icon during the page transition hit the camera badge
@@ -2733,13 +2777,13 @@ downgrade refusal, account kept), dev estate, account `fourth` ("Canari Test Del
 conversations only, vault path (no PIN gate drawn). The only delta since alpha.1 is #1889: a salon
 message over the socket honours the salon's notification level. Evidence:
 `<harness-dir>/a1-bench/r1015-a128a2/` (`runs.ndjson`, summary, frames, `log.txt`).
-Dev has no push, so what #1889 changes (a notification suppressed or kept) could not be observed.
+Dev had no push then (it sends since 2026-10-21), so what #1889 changes (a notification suppressed or kept) could not be observed.
 
 | Reading | Verdict | What was seen |
 | --- | --- | --- |
 | 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.2" and "Vous utilisez la derniere version"; the app opened on the feed on the vault path (a PIN-path unlock was not exercised) |
 | 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms (alpha.1 in brackets): attach 329 [552], nav 1092 [1099], **tap>rail 1072** [1134] (worst 1088), tap>salons 1899 [2244], tap>target salons 2276 [2512], **salon>pane 279** [277], salon>msgs 1834 [1833], switch>salons 174 [143], switch salon>pane 201 [202], reopen>msgs 676 [773]; api calls 65, long tasks 699, max gap 439. Same shape as alpha.1, within run-to-run noise |
-| 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev, so a message received over the socket under Mentions/Aucune was not produced |
+| 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev that day (it sends since 2026-10-21), so a message received over the socket under Mentions/Aucune was not produced |
 | 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`coucou`, `heldA*`, `iosA3*`, `Rendez`) found |
 
 ## The iPhone 12 readings of v1.2.8-alpha.1 (2026-10-15)
@@ -2908,7 +2952,7 @@ exports remain in Files > Sur mon iPhone.
 `fourth` ("Canari Test Delta") survived, PIN gate first. Numbers from CDP on the inspectable WebView,
 logcat and the in-app log export. **iPhone 12**: TestFlight `1.2.7 (100200702)`, account
 `canari-test-gamma`, driven over WDA; the native lines read from the device syslog
-(`pymobiledevice3 syslog live -pn Canari`). Dev still sends no push. Evidence:
+(`pymobiledevice3 syslog live -pn Canari`). Dev still sent no push then (it sends since 2026-10-21). Evidence:
 `<harness-dir>/a1-bench/r1014-a127a2/` (frames, `cons-*.ndjson`, `logcat-*.txt`,
 `inapp-log.txt`) and `.../ios-bench/r1014-a127a2/` (frames, `syslog-canari.txt`).
 
@@ -2928,7 +2972,7 @@ production) replaces the bench pre-release by itself, as on 2026-10-11.
 | #1842 orphan WebView on a navigation-mode switch | Mi 9T | **`PASS`, one P3** | Six switches (`cmd overlay enable-exclusive` threebutton/gestural): CDP lists **ONE** page, attached, after each. A salon text refused offline before the first switch ("Non confirme") came back: `[SEND] unanswered salon message 05b01dbd... of a past session restored to the composer` (`31-switch1.png`). **P3**: the composer is not kept across a relaunch, so that restored text (and any typed draft, `sheet-38-39.png`) is LOST at the next relaunch |
 | #1842 kill/relaunch, background x3, notification intent warm and killed | Mi 9T | **`PASS`** | One page each time, the salon opens from the intent. Logcat: no `FATAL`, no ANR, no destroyed-WebView warning. Four `[TAURI] Couldn't find callback id 1269519213` warnings (the SAME id) after the relaunches: a Rust callback of the first page still fires into the new one (P3 noise) |
 | #1839 redaction of the exported log | Mi 9T | **`FAIL`, P2** | The alpha.2 lines are clean: `contact="[17 chars]" text="[9 chars]"`, 0 one-word text, 0 name. **But the export still carries the alpha.1 lines** of the ring, written before the upgrade with the old redaction: 10 lines with `text="coucou"`, `text="ok"`, `text="refuse1-a127"`. Redaction runs at WRITE (`appLog.ts`), never at export, so an upgraded device keeps exporting what the older build let through until the ring rolls over |
-| #1835 blind salon banner offers no "Lu par" | Mi 9T | **NOT READ** | Dev sends no push, so no salon banner can be produced |
+| #1835 blind salon banner offers no "Lu par" | Mi 9T | **NOT READ** | Dev sent no push then (it sends since 2026-10-21), so no salon banner could be produced |
 | #1841 a join is acknowledged after its checkpoint | Mi 9T | **`PASS`** | Fresh state (`pm clear`), sign-in, PIN: each of the 3 `externalJoin succeeded` lines comes right after an `Encrypted state checkpoint persisted` |
 | #1844 the empty store opens with its digest; checkpoints per rejoined group | Mi 9T + iPhone | **`PASS`** | No member was online at the rejoin (`no member online for 3122333c - will ask when one returns`). Unlocking gamma's iPhone woke it: `[HISTORY_RECONCILE] a peer came back online`, then `[HISTORY_DIGEST] Sent for 3122333c - ids mode, 0 id(s)` as the FIRST leg (no state key), and 466 messages back in three bundles. **Checkpoints (native `manager lock held` lines): 9 for the 3 joins (3.0 per group), then 3 for the one exchange (1 + 2 drains)**; 15 in the 11 min after the sign-in, against 247 in 432 s on alpha.1. Lock held 0 ms 13 times of 15 |
 | Salon tap, community rail, long-press menu | Mi 9T | **`PASS` in part** | A salon tap opens it; the rail fills. "Marquer tout comme lu" and the typing bubble were not read (no peer driving the salon) |

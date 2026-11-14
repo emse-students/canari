@@ -458,10 +458,10 @@ describe('Mention tokens in a native banner', () => {
       /localizedFormat\("notif\.social\.mention\.title", who, locale: locale\)/
     );
     expect(objc).toMatch(
-      /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
+      /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook, senderName\);/
     );
     expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names, nil\);/);
-    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES, nil, isGroup\);/);
+    expect(objc).toMatch(/decrypted, NO,\s*shownName, NO, YES, nil, isGroup\);/);
   });
 
   it("reads a salon banner's names ONCE and says why they are missing ONCE (iOS, 2026-11-01)", () => {
@@ -470,7 +470,7 @@ describe('Mention tokens in a native banner', () => {
     // reason is said by whichever reader reads first - the speaker's UNNAMED line, or, when the
     // speaker did not read, the `display_names.json names nobody` line - never both.
     expect(objc).toMatch(
-      /CanariSalonSpeaker\(showsMessage, authorProven, shownSenderId, names,\s*channelId, &initialsName\);/
+      /CanariSalonSpeaker\(\s*showsMessage, authorProven, shownSenderId, names,\s*CanariConversationNicknameLookup\([^;]*\),\s*channelId, &initialsName\);/
     );
     expect(objc).toMatch(/NSDictionary \*book = \[names names\];/);
     expect(objc).toMatch(

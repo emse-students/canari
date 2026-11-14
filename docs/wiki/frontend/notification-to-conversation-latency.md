@@ -446,8 +446,8 @@ and the workstation's are tied by an `adb shell date` round trip (skew error ~+-
 backgrounded for 6 s (a 1.5 s park, used before, let the feed's progressive mount resume under the
 landing and polluted the reading). Killed = `force-stop`, then the PIN typed by the instrument.
 
-**DEV HAS NO PUSH, so T1 (notification shown) is not measured**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
-is absent ([dev-environment](../infrastructure/dev-environment.md)), so the tap is synthesised.
+**Dev had no push that day, so T1 (notification shown) was not measured** (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
+was absent; dev sends push since 2026-10-21, so T1 is measurable on dev, 2026-11-14, [dev-environment](../infrastructure/dev-environment.md)); the tap was synthesised.
 Two facts from the same session matter for a real tap: a FORCE-STOPPED app receives no FCM at all
 (Android's stopped state) while a recents swipe does; and the delivery service holds a push 10 s
 when the recipient's presence is alive (`scheduleDeferredPush`).
