@@ -1,12 +1,14 @@
-import { MODULE_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { ParseUUIDPipe } from '@nestjs/common';
+import { MODULE_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { APP_GUARD } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ROUTE_PARAMS_GUARD, ROUTE_PARAMS_KEY, RouteParamsGuard } from './common/route-params';
 import type { RouteParamKinds } from './common/route-params';
 
 /**
- * EVERY PATH PARAMETER OF A CONVERTED CONTROLLER IS DECLARED, AND EVERY DECLARATION NAMES A REAL
- * ONE (docs/wiki/services/social-service.md, "Path parameters are declared").
+ * EVERY PATH PARAMETER OF EVERY CONTROLLER IS DECLARED, AND EVERY DECLARATION NAMES A REAL ONE
+ * (docs/wiki/services/social-service.md, "Path parameters are declared").
  *
  * The declaration (`@RouteParams`) is what the global guard reads, so a route parameter nobody
  * declared is validated by nothing, and a declaration with a typo validates nothing while looking
@@ -26,42 +28,6 @@ interface Controller {
   declared: RouteParamKinds;
   routes: Route[];
 }
-
-/**
- * THE CONTROLLERS NOT CONVERTED YET - a list that only shrinks. A name leaves it in the pull
- * request that declares its parameters; the last test fails on a name that no longer belongs.
- */
-const PENDING = new Set([
-  'AccountBellsController',
-  'AssociationAudiencesController',
-  'BirthdaysController',
-  'BookingCalendarController',
-  'BookingSpacesController',
-  'BookingsController',
-  'CoorganisationController',
-  'FollowRequestsController',
-  'FormsController',
-  'InternalChannelReadController',
-  'InternalController',
-  'InternalFormsController',
-  'InternalInvitesController',
-  'InternalLydiaCashiersController',
-  'InternalLydiaEnrolmentController',
-  'LiveChatController',
-  'LivesController',
-  'MemberRepostsController',
-  'MinesweeperController',
-  'ModerationController',
-  'PosterController',
-  'PostsController',
-  'ProposalsController',
-  'PublicController',
-  'PublicFormsController',
-  'RefundsController',
-  'RepublicationsController',
-  'SpacePinsController',
-  'SpacesController',
-]);
 
 /** Every controller class reachable from a module, dynamic modules and forward references included. */
 function controllersOf(root: unknown, seen = new Set<unknown>()): Ctor[] {
@@ -107,6 +73,26 @@ function describeController(cls: Ctor): Controller {
   return { name: cls.name, declared: Reflect.getMetadata(ROUTE_PARAMS_KEY, cls) ?? {}, routes };
 }
 
+/**
+ * The path parameters of a class that still carry a `ParseUUIDPipe`, as `Class.handler(:name)`.
+ * Read from Nest's own argument metadata, so a pipe passed as a class or as an instance is found.
+ */
+function pipedPathParams(cls: Ctor): string[] {
+  const out: string[] = [];
+  for (const handler of Object.getOwnPropertyNames(cls.prototype)) {
+    const args: Record<string, { data?: unknown; pipes?: unknown[] }> =
+      Reflect.getMetadata(ROUTE_ARGS_METADATA, cls, handler) ?? {};
+    for (const [key, arg] of Object.entries(args)) {
+      if (!key.startsWith(`${RouteParamtypes.PARAM}:`)) continue;
+      const piped = (arg.pipes ?? []).some(
+        (x) => x === ParseUUIDPipe || x instanceof ParseUUIDPipe
+      );
+      if (piped) out.push(`${cls.name}.${handler}(:${String(arg.data)})`);
+    }
+  }
+  return out;
+}
+
 /** What is wrong with one controller's declarations; empty when nothing is. */
 function faults(c: Controller): string[] {
   const out: string[] = [];
@@ -133,7 +119,8 @@ function faults(c: Controller): string[] {
 }
 
 describe('path parameters are declared', () => {
-  const controllers = controllersOf(AppModule).map(describeController);
+  const classes = controllersOf(AppModule);
+  const controllers = classes.map(describeController);
   const withParams = controllers.filter((c) => c.routes.some((r) => r.params.length > 0));
 
   it('control: the walk finds the application, so an empty scan cannot pass', () => {
@@ -149,23 +136,24 @@ describe('path parameters are declared', () => {
     expect(ROUTE_PARAMS_GUARD).toEqual({ provide: APP_GUARD, useClass: RouteParamsGuard });
   });
 
-  it('every path parameter of a converted controller is declared, and every declaration names one', () => {
-    const converted = withParams.filter((c) => !PENDING.has(c.name));
-    expect(converted.map((c) => c.name)).toContain('AssociationsController');
-    expect(converted.flatMap(faults)).toEqual([]);
+  it('every path parameter of every controller is declared, and every declaration names one', () => {
+    expect(withParams.length).toBeGreaterThan(30);
+    expect(controllers.flatMap(faults)).toEqual([]);
   });
 
-  it('a declaration anywhere, pending or not, never names a parameter its routes do not have', () => {
-    const misnamed = controllers.flatMap(faults).filter((f) => !f.endsWith('is declared nowhere'));
-    expect(misnamed).toEqual([]);
-  });
-
-  it('the pending list only shrinks: each name is a real controller that still has an undeclared parameter', () => {
-    const stale = [...PENDING].filter((name) => {
-      const c = withParams.find((x) => x.name === name);
-      return !c || !faults(c).some((f) => f.endsWith('is declared nowhere'));
-    });
-    expect(stale).toEqual([]);
+  it('no path parameter carries a uuid pipe: the declaration is the one mechanism', () => {
+    class Piped {
+      one(_a: string, _b: string) {}
+    }
+    const args = {
+      [`${RouteParamtypes.PARAM}:0`]: { data: 'id', pipes: [ParseUUIDPipe] },
+      [`${RouteParamtypes.PARAM}:1`]: { data: 'other', pipes: [new ParseUUIDPipe()] },
+      [`${RouteParamtypes.QUERY}:2`]: { data: 'q', pipes: [ParseUUIDPipe] },
+    };
+    Reflect.defineMetadata(ROUTE_ARGS_METADATA, args, Piped, 'one');
+    // The control: the reader finds a pipe on a path parameter, in either spelling, and only there.
+    expect(pipedPathParams(Piped)).toEqual(['Piped.one(:id)', 'Piped.one(:other)']);
+    expect(classes.flatMap(pipedPathParams)).toEqual([]);
   });
 
   it('the checker itself refuses an undeclared parameter and a misnamed declaration', () => {

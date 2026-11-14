@@ -6,12 +6,12 @@ import {
   HttpCode,
   Logger,
   Param,
-  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import { ChannelService } from '../channels/channel.service';
 import { RepeatCounter } from '../common/log-repeat';
 import { assertInternalSecret } from './internal-secret.util';
+import { RouteParams } from '../common/route-params';
 
 interface ChannelReadBody {
   /** Whose read mark moves. chat-delivery has proven the caller holds this account's push secret. */
@@ -37,6 +37,7 @@ interface ChannelReadBody {
  * silent `channel_read` out so the user's OTHER devices clear their banner. Both or neither is not
  * required: the receipt is the durable fact, the fan-out a courtesy that logs its own failure.
  */
+@RouteParams({ channelId: 'uuid' })
 @Controller('internal/channels')
 export class InternalChannelReadController {
   private readonly logger = new Logger(InternalChannelReadController.name);
@@ -89,7 +90,7 @@ export class InternalChannelReadController {
   @HttpCode(200)
   async reader(
     @Headers('x-internal-secret') secret: string | undefined,
-    @Param('channelId', ParseUUIDPipe) channelId: string,
+    @Param('channelId') channelId: string,
     @Body() body: { userId?: unknown }
   ): Promise<{ reader: boolean }> {
     assertInternalSecret(secret);

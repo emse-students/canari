@@ -171,30 +171,43 @@ reveals nothing about any row, and nginx authenticates before the service is rea
 service checked the id itself); it is a `400` now, like every other route of the controller. The
 frontend's and core-service's callers pass row ids and treat any failure alike.
 
-**What holds it** - three specs, none needing a database:
+**The declaration is the ONE mechanism (2026-11-14).** No path parameter carries a `ParseUUIDPipe`
+any more: every controller of the service declares its parameters, and the per-parameter pipes the
+declaration made redundant are gone. A `ParseUUIDPipe` on a QUERY parameter stays (two exist); the
+guard reads the path only.
+
+**What holds it** - specs that need no database:
 
 - `src/route-params.coverage.spec.ts` walks `AppModule`'s own module graph and fails on a path
   parameter no declaration names, on a declaration naming a parameter its routes do not have (a typo
-  would otherwise validate nothing while looking like it does), and on `AppModule` not providing the
-  guard. Controllers not converted yet are a `PENDING` list in that file which can only shrink: a
-  name that no longer has an undeclared parameter fails the spec until it is removed.
+  would otherwise validate nothing while looking like it does), on a path parameter that carries a
+  `ParseUUIDPipe` again (two mechanisms would drift), and on `AppModule` not providing the guard. It
+  judges EVERY controller: the list of controllers not converted yet is gone.
 - `src/common/route-params.spec.ts` holds the guard alone: what it refuses, that `opaque` is never
   looked at, and that a handler's declaration wins over its class's.
 - `src/associations/associations.route-params.http.spec.ts` boots the real controller and the real
   guards over HTTP: a malformed association id is a `400` and none of the role guard's questions
   (`mayAct`, `isMember`, `isAssociationSuperAdminOf`) was asked; the same route with a uuid reaches
-  the role guard, then its handler.
+  the role guard, then its handler. `channels.route-params.http.spec.ts` and
+  `booking-calendar.controller.spec.ts` do the same for their routes. **A spec that boots a
+  controller by itself and expects the `400` provides `ROUTE_PARAMS_GUARD`**, as `AppModule` does.
 
-**Where it stands.** The inventory of 2026-11-14 counted about 146 id-like path parameters without
-validation in this service, about 120 of them in `associations.controller.ts` - the only controller
-whose guard asks the database about one - and 69 in `channels.controller.ts`; posts, forms, bookings, lives, spaces,
-proposals, refunds and the poster routes already carried a pipe on nearly all of theirs.
-`AssociationsController` is converted (thirteen names, `userId` and `slug` opaque), and so are
-`ChannelsController` and `CommunityNicknamesController` (`channelId`, `workspaceId`, `messageId` and
-`roleId` are uuid keys, read in the entities; `userId`, `slug` and an invite `token` are opaque;
-`channels.route-params.http.spec.ts`). The rest, the
-removal of the per-parameter pipes the declaration makes redundant, and the same mechanism in
-core-service and media-service are one
+**What `opaque` names, so nobody "fixes" it.** A user id (never a uuid in this service, see
+[below](#a-user-id-is-not-a-uuid-and-one-partnership-column-said-it-was)), a slug, an invite token,
+a follow `kind`, a seat `index`, and the ids of a poll and of a comment, which are keys inside a
+`jsonb` document and not rows. **Two are opaque although they name a uuid row, by decision
+(2026-11-14):** `memberId` and `postId` of `PublicController`, the anonymous surface (a member's
+avatar, a post's link preview). Their service already answers a malformed id with the same bodyless
+`404` as an unknown one, so a caller with no session learns nothing from the shape of what it sent;
+a `400` naming the parameter would tell the two apart for no reader.
+
+**Routes whose malformed id was a `500` and is a `400` since every controller declares
+(2026-11-14):** the internal channel read, the internal routes taking an association id, the
+internal form-submission route, a minesweeper score submission, a moderation report, a post's
+calendar link, and the public member list. No status changed for a well-formed request.
+
+**Where it stands.** social-service is whole: 32 controllers with a path parameter, all declared.
+core-service and media-service take the same mechanism in a pull request of their own, one
 [backlog entry](../backlog.d/p3-path-parameters-are-declared-in-every-controller.md). Query
 parameters are not covered: they are optional and typed by their DTOs.
 
