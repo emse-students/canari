@@ -8,6 +8,10 @@
  * PRODUCT stays payable by anyone holding the association page's link (`listByAssoc`, D37), as a
  * form's link is enough: the campus decides what /shop offers, not who may pay.
  *
+ * A NOMINATIVE READ GRANT OPENS BOTH (owner, 2026-11-14): a named reader - staff, with no space - is
+ * listed the products and the cards of the associations their ticked cell reaches, and may claim
+ * such a card; staff with no grant are listed nothing.
+ *
  * The unit specs stub the listing; this file is where the predicate is run. Which rows survive is
  * what is under test, so the annotation of the listing (cotisant status, tier prices) and the
  * payment routing are stubbed, as `product-tier-lock.integration.spec.ts` stubs them.
@@ -40,6 +44,10 @@ const ICM_SE = 'icm-se'.padEnd(64, '0');
 const ISMIN_GA = 'ismin-ga'.padEnd(64, '0');
 /** An ISMIN Gardanne student who is a MEMBER of the Saint-Etienne association (D21). */
 const GA_MEMBER = 'ga-member'.padEnd(64, '0');
+/** Saint-Etienne staff (a campus, an empty cursus: no space) holding a read grant on Gardanne. */
+const STAFF_NAMED = 'staff-named'.padEnd(64, '0');
+/** Saint-Etienne staff with no grant. */
+const STAFF_PLAIN = 'staff-plain'.padEnd(64, '0');
 
 /** Reaches the whole Saint-Etienne campus. */
 const SE_ASSO = '00000000-0000-4000-8000-0000000000a1';
@@ -107,9 +115,19 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
       `INSERT INTO users (id, campus, cursus) VALUES
          ($1, 'saint-etienne', '[{"formation": "ICM"}]'),
          ($2, 'gardanne', '[{"formation": "ISMIN"}]'),
-         ($3, 'gardanne', '[{"formation": "ISMIN"}]')`,
-      [ICM_SE, ISMIN_GA, GA_MEMBER]
+         ($3, 'gardanne', '[{"formation": "ISMIN"}]'),
+         ($4, 'saint-etienne', '[]'),
+         ($5, 'saint-etienne', '[]')`,
+      [ICM_SE, ISMIN_GA, GA_MEMBER, STAFF_NAMED, STAFF_PLAIN]
     );
+    // The grants table (migration 078), with the columns the predicate reads.
+    await admin.query(
+      `CREATE TABLE read_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         user_id varchar(255) NOT NULL, campus varchar(32) NOT NULL, formation varchar(16) NULL)`
+    );
+    await admin.query(`INSERT INTO read_grants (user_id, campus) VALUES ($1, 'gardanne')`, [
+      STAFF_NAMED,
+    ]);
     await admin.query(
       `INSERT INTO spaces (formation, campus) VALUES ('ICM', 'saint-etienne'), ('ISMIN', 'gardanne')`
     );
@@ -208,6 +226,11 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
       expect(ids(await products.listAllActive(GA_MEMBER))).toEqual([SE_PRODUCT, GA_PRODUCT]);
     });
 
+    it('lists a named reader the products of the cell they were granted, and staff without a grant nothing', async () => {
+      expect(ids(await products.listAllActive(STAFF_NAMED))).toEqual([GA_PRODUCT]);
+      expect(await products.listAllActive(STAFF_PLAIN)).toEqual([]);
+    });
+
     it('lets anyone holding the association page link BUY, whatever their campus (owner, 2026-10-31)', async () => {
       const prepare = (assoId: string, productId: string, userId: string) =>
         (
@@ -261,6 +284,20 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
       await expect(partnerships.claimCard(SE_CARD, GA_MEMBER)).resolves.toMatchObject({
         mode: 'text',
       });
+    });
+
+    it('lists and lets a named reader claim the cards of the granted cell only; staff without a grant get nothing', async () => {
+      expect(ids(await partnerships.listAllActive(STAFF_NAMED))).toEqual([GA_CARD]);
+      expect(ids(await partnerships.listActiveByAssoc(GA_ASSO, STAFF_NAMED))).toEqual([GA_CARD]);
+      expect(await partnerships.listActiveByAssoc(SE_ASSO, STAFF_NAMED)).toEqual([]);
+      await expect(partnerships.claimCard(GA_CARD, STAFF_NAMED)).resolves.toMatchObject({
+        mode: 'text',
+      });
+      // Their own campus is not in the grant: the card of Saint-Etienne stays not found.
+      expect((await refusal(partnerships.claimCard(SE_CARD, STAFF_NAMED))).status).toBe(404);
+
+      expect(await partnerships.listAllActive(STAFF_PLAIN)).toEqual([]);
+      expect((await refusal(partnerships.claimCard(GA_CARD, STAFF_PLAIN))).status).toBe(404);
     });
   });
 });

@@ -982,9 +982,21 @@ export function liveVisibleToViewerSql(
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true, ...opts })})`;
 }
 
-/** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */
-export function associationVisibleToViewerSql(association: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer')})`;
+/**
+ * Association `association` is visible to the viewer whose id is the placeholder `viewer`.
+ *
+ * `opts.readGrants` also counts a nominative read grant whose cell the association's rules reach.
+ * The surfaces a named reader is SHOWN pass it - the association directory, the shop and the
+ * partnerships (owner, 2026-11-14: a grant opens everything of its cell), beside the posts and the
+ * agenda, which have their own predicates. A booking space does not: it was not part of that
+ * decision.
+ */
+export function associationVisibleToViewerSql(
+  association: string,
+  viewer: string,
+  opts: Pick<ReadOpts, 'readGrants'> = {}
+): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer', opts)})`;
 }
 
 /**
