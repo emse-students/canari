@@ -35,7 +35,7 @@
  * known animation the first frame is.
  *
  * WHILE A PIECE RIDES IT IS A CONTAINING BLOCK: a transform makes an element the containing block of
- * its `position: fixed` descendants, so for the ride's ~250 ms a fixed panel inside the composer band
+ * its `position: fixed` descendants, so for the ride's ~250 ms a fixed panel inside the composer footer
  * or the thread would be placed against the piece, not the screen. The ride is cancelled - every piece
  * jumps to its place - on any pointer press, on any iOS rise and on any new Android announcement,
  * which is how a picker opens.
@@ -189,7 +189,7 @@ type Rider = { el: HTMLElement; probe: HTMLElement; edgeBefore: number; rows: bo
  * transform).
  *
  * THE BOTTOM, BECAUSE THE KEYBOARD PUSHES FROM BELOW (second review of #3556). A piece that keeps its
- * height moves its top and its bottom by the same distance - the composer band, the thread's newest
+ * height moves its top and its bottom by the same distance - the composer footer, the thread's newest
  * row - so for it the two edges ride identically. A piece that also SHRINKS does not: the comments
  * drawer's `max-height` subtracts the keyboard (60dvh, ~567 px, against a cap of ~510 on the Mi 9T),
  * so its top rises 57 px less than its bottom. Ridden by its top, its bottom stood ~57 px above the
@@ -215,7 +215,7 @@ export type KeyboardRideCapture = {
 
 /**
  * The element whose edge is a piece's position. `data-keyboard-ride="box"`: the piece itself (the
- * composer band). `data-keyboard-ride="last-row"`: its last child (the thread's newest row) - a scroll
+ * composer footer). `data-keyboard-ride="last-row"`: its last child (the thread's newest row) - a scroll
  * container's box does not move when it grows, its CONTENT does, and only by what the bottom pin
  * actually scrolled: nothing for a thread shorter than its box, the overflow for one that overflows by
  * less than the keyboard.

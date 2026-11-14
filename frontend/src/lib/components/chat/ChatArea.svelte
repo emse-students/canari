@@ -2271,11 +2271,7 @@
           </div>
         {/if}
       {/snippet}
-      <div
-        bind:this={composerBand}
-        data-keyboard-ride="box"
-        class="pointer-events-none absolute inset-x-0 bottom-0 z-20"
-      >
+      <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
         <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on
              <ChatComposer> below - a fourth, undocumented reader of a flag whose three real guards
              are named elsewhere. It had no protocol justification in either venue: a CHANNEL send

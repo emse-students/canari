@@ -224,8 +224,8 @@ reports twice.
 **The fall rides the keys** (`keyboardRide.ts`, `CanariHandKeyboardFallToPage`). Before resizing,
 the shell calls `window.canariKeyboardFall({ durationMs, curve, fromPx })` with the keyboard's own
 `UIKeyboardAnimationDurationUserInfoKey` and `UIKeyboardAnimationCurveUserInfoKey` and the overlap it
-had. The page records, for each `[data-keyboard-ride]` piece, the top of its probe: the composer band
-itself (`"box"`), the thread's last row (`"last-row"` - a scroll container's box does not move when it
+had. The page records, for each `[data-keyboard-ride]` piece, the bottom edge of its probe: the composer
+footer itself (`"box"`), the thread's last row (`"last-row"` - a scroll container's box does not move when it
 grows, its content does, and only by what the bottom pin scrolls). Then the frame is set without
 animation. On the resize the page lays itself out full height as before, and the ride is armed: a
 `ResizeObserver` created then is notified in the next rendering update after every observer created
@@ -436,10 +436,18 @@ predictive bar) no longer revealed a modal's field. The Android no-op resizes ch
 drawer is a riding piece (`data-keyboard-ride="box"`), where it used to jump 68 ms (rise) and 138 ms
 (fall) after the announcement. It rides by its BOTTOM edge, like every rider (`rideEdgeOf`, second review): its cap subtracts the
 keyboard, so it also shrinks (~567 to ~510 px on the Mi), and ridden by its top its bottom stood ~57 px
-above the keys at the rise's start. For a piece that keeps its height (the composer band, the newest
+above the keys at the rise's start. For a piece that keeps its height (the composer footer, the newest
 row) both edges ride the same distance. `.keyboard-aware-bottom` lost its 180 ms `ease` transition: the sheet's
 inline `transition: none` overrode it, and a clock of its own could only disagree with the keyboard's.
-The sheet also rides the iOS fall, through the same `canariKeyboardFall` capture as the composer band.
+The sheet also rides the iOS fall, through the same `canariKeyboardFall` capture as the composer footer.
+
+**The composer rides by its FOOTER (Mi 9T reading of 2026-11-14).** The marker sat on ChatArea's
+composer band (`absolute inset-x-0 bottom-0`, no height of its own). On the Android overlay the band never
+moves - the window keeps its height - and only the `.chat-composer-footer` inside it does (`bottom:
+var(--keyboard-layout-inset-bottom)`), so the ride measured 0 px and the composer jumped to the keys at
+the end while the thread glided. The marker is now on the footer (`ChatComposer.svelte`); on iOS the
+footer moves with its band, so that reading is unchanged, and exactly one of the two may carry it or
+the footer rides twice (`iosKeyboardRiseHandoff.test.ts`).
 
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
