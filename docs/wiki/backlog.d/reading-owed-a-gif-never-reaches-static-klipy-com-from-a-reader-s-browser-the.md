@@ -7,3 +7,5 @@ target: 1.7.0
 **The reading that closes it:** a network trace on dev across a GIF bubble, a quoted GIF, the picker and a comment attach: zero request to `static.klipy.com`; the same look on the Mi 9T and the iPhone 12; then a day of `[GIF_MEDIA]` lines (refusals by reason, cache hits)
 
 **Read 2026-11-14 on dev (`1.6.12-alpha.2`, two desktop Chrome profiles, test accounts):** the picker (thumbnails) and a received GIF bubble drew with ZERO request to `static.klipy.com` (every request went to the estate's own host). Still owed: a quoted GIF, a comment attach, the two phones, then the day of `[GIF_MEDIA]` lines.
+
+**Web half closed 2026-11-14 on dev:** a GIF sent from the picker, the same GIF QUOTED in a reply (composer preview and the reply bubble) and a GIF attached to a post COMMENT all drew with ZERO request to `static.klipy.com`; every image came from the estate's host or a local blob. **The `[GIF_MEDIA]` lines, production, 09:11-12:40 UTC (read-only):** 116 lines, 0 refusals, 87 relays cached, 25 cache hits, 4 relays over the 4 MB entry ceiling (not cached, as designed). **Left: the same look on the Mi 9T and the iPhone 12.**

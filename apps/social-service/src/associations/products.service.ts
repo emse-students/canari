@@ -141,8 +141,13 @@ import {
   mapCorePaymentError,
   lydiaReadinessRefusal,
 } from '../common/core-payment-error';
-import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
-import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
+import {
+  describeCursus,
+  dimensionsNeedProfile,
+  type CursusChoice,
+  type CursusView,
+} from '../pricing/audience';
+import { cheapestCell, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
 
 /** Delays used between Cercle webhook delivery attempts (ms). The first one is not waited. */
@@ -276,9 +281,10 @@ interface PreparedPurchase {
   provider: PaymentProviderId;
   paymentTarget: PaymentTarget;
   vendorToken: string;
-  profile: { promo: number | null; formation: string | null };
+  /** Every cursus of the buyer (D32), `NO_CURSUS` when not fetched or none. */
+  cursus: readonly CursusView[];
   /**
-   * Whether `profile` was FETCHED: only for a grid priced on promo or formation, as the product read
+   * Whether `cursus` was FETCHED: only for a grid priced on promo or formation, as the product read
    * before the lock had one. A grid that needs it under the lock while it was not fetched cannot be
    * priced without a call there (`decidePurchase` refuses `PURCHASE_PRICING_CHANGED`).
    */
@@ -739,7 +745,8 @@ export class ProductsService {
 
   /**
    * What one buyer pays for one gridded product, in cents - or `null` when the grid does not sell
-   * their combination.
+   * their combination - and the cursus that price came from: the cheapest cell over every cursus
+   * (D32), so the returned choice is what a log names.
    *
    * The refusal is the grid's own decision and must be honoured, never rounded up to `amountCents`:
    * a cell set to unavailable is an association saying this forfait is not offered to these people,
@@ -748,15 +755,11 @@ export class ProductsService {
   private resolveGridPrice(
     matrix: PriceMatrix,
     cotisationTiers: (string | null)[],
-    profile: { promo: number | null; formation: string | null }
-  ): CellValue {
-    // The profile was fetched BEFORE the buyer's tier lock (`preparePurchase`); the tiers held are
+    cursus: readonly CursusView[]
+  ): CursusChoice<CellValue> {
+    // The cursus were fetched BEFORE the buyer's tier lock (`preparePurchase`); the tiers held are
     // the ones `decidePurchase` read under it. Nothing is read here.
-    return resolveCellPrice(
-      matrix,
-      { cotisationTiers, answers: {}, promo: profile.promo, formation: profile.formation },
-      'product'
-    );
+    return cheapestCell(matrix, { cursus, cotisationTiers, answers: {} }, 'product');
   }
 
   /**
@@ -784,21 +787,20 @@ export class ProductsService {
     if (gridded.length === 0) return prices;
 
     const needProfile = gridded.some((p) => dimensionsNeedProfile(p.priceMatrix.dimensions));
-    const profile = await this.pricingFacts.profileFor(userId, needProfile);
+    const cursus = await this.pricingFacts.cursusFor(userId, needProfile);
 
     for (const product of gridded) {
       const status = statusByAssoc.get(product.associationId);
-      const facts: PricingFacts = {
-        ...profile,
-        // No status at all means no cotisation for this association; `activeTier: null` alongside
-        // `isCotisant` means the BASE tier, which is a value and not a missing one.
-        cotisationTiers: status?.isCotisant ? [status.activeTier] : [],
-        answers: {},
-      };
       const dependsOnProfile = dimensionsNeedProfile(product.priceMatrix.dimensions);
       let amountCents: number | null;
       try {
-        amountCents = resolveCellPrice(product.priceMatrix, facts, 'product');
+        amountCents = this.resolveGridPrice(
+          product.priceMatrix,
+          // No status at all means no cotisation for this association; `activeTier: null` alongside
+          // `isCotisant` means the BASE tier, which is a value and not a missing one.
+          status?.isCotisant ? [status.activeTier] : [],
+          cursus
+        ).cents;
       } catch (e) {
         // A cell missing at read time is a broken invariant, not a price. Completeness is enforced
         // at save, so this means a grid was written by something that skipped the validator - and
@@ -980,10 +982,9 @@ export class ProductsService {
     const all = await this.productRepo
       .createQueryBuilder('p')
       .where('p.isActive = true')
-      .andWhere(
-        associationVisibleToViewerSql('"p"."associationId"', ':viewerId', { readGrants: true }),
-        { viewerId: userId }
-      )
+      .andWhere(associationVisibleToViewerSql('"p"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
       .orderBy('p.associationId', 'ASC')
       .addOrderBy('p.sortOrder', 'ASC')
       .addOrderBy('p.createdAt', 'ASC')
@@ -3158,14 +3159,14 @@ export class ProductsService {
     const profileFetched = product.priceMatrix
       ? dimensionsNeedProfile(product.priceMatrix.dimensions)
       : false;
-    const profile = await this.pricingFacts.profileFor(userId, profileFetched);
+    const cursus = await this.pricingFacts.cursusFor(userId, profileFetched);
     return {
       associationId,
       productId,
       provider,
       paymentTarget,
       vendorToken,
-      profile,
+      cursus,
       profileFetched,
     };
   }
@@ -3263,21 +3264,22 @@ export class ProductsService {
       // and `memberPriceTag` decide nothing while one is set. Two mechanisms for "some people pay
       // less" would need an order between them, and an order that decides money is the priority
       // rule this whole design exists in order not to have.
-      const cell = this.resolveGridPrice(
+      const priced = this.resolveGridPrice(
         product.priceMatrix,
         facts?.heldKeys ?? [],
-        prepared.profile
+        prepared.cursus
       );
-      if (cell === null) {
+      if (priced.cents === null) {
         this.logger.log(
           `[SHOP] purchase refused by the grid: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} - ` +
-            'the association marked this combination as not sold'
+            `the association marked this combination as not sold (${describeCursus(priced)})`
         );
         throw new BadRequestException('This is not available for your situation.');
       }
-      amountCents = cell;
+      amountCents = priced.cents;
       this.logger.debug(
-        `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+        `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+          `amount=${amountCents} ${describeCursus(priced)}`
       );
     } else if (product.amountCents !== null) {
       const price = this.fixedPriceOf(product, product.amountCents, facts);
@@ -3901,17 +3903,21 @@ export class ProductsService {
     if (product.priceMatrix) {
       // A grid replaces the fixed pricing: falling back to `amountCents` here would record a price
       // the grid never quoted, and `amountCents` may not even be set.
-      const cell = this.resolveGridPrice(
+      const priced = this.resolveGridPrice(
         product.priceMatrix,
         await this.userTagService.listHeldCotisationTiers(userId, associationId),
-        await this.pricingFacts.profileFor(
+        await this.pricingFacts.cursusFor(
           userId,
           dimensionsNeedProfile(product.priceMatrix.dimensions)
         )
       );
-      return cell === null
+      this.logger.debug(
+        `[SHOP] cash sale grid quote: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+          `amount=${priced.cents ?? 'not-sold'} ${describeCursus(priced)}`
+      );
+      return priced.cents === null
         ? { kind: 'not-sold' }
-        : { kind: 'priced', amountCents: cell, preferential: false };
+        : { kind: 'priced', amountCents: priced.cents, preferential: false };
     }
     if (product.amountCents == null) return { kind: 'typed' };
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });

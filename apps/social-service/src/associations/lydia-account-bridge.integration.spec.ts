@@ -186,7 +186,7 @@ maybe(
         userTagService: new UserTagService(ds.getRepository(UserTag)),
         config: { get: () => undefined },
         httpService: { post },
-        pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+        pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
         activePaymentProvider: () => Promise.resolve('lydia'),
       }) as unknown as ProductsService;
 

@@ -102,6 +102,17 @@ watchlist at. Read by chat-delivery's `presence-audience.spec.ts`, by a test in
 and by the frontend's `presenceStore.contract.test.ts`.
 `expected: null` is a refusal: a malformed question is a 400, never an empty audience.
 
+### `cursus-pricing.cases.json`
+
+D32's one rule for a person with several cursus ([forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong)):
+each cursus prices the form WHOLE, an unavailable total loses to any price, a tie goes to the first
+cursus, and an option is closed only when every cursus closes it. Each case carries a form, the
+person's cursus, the answers, the `slices` the server serves (`/check`, the public read) and the
+`expected` total, winning slice and closed options. Read by
+`apps/social-service/src/forms/form-quote.spec.ts` (the served slices, the charged total and cursus)
+and by `frontend/src/lib/forms/fillPricing.test.ts` (what the fill page shows from those slices), so
+the page can never show a price the server would not charge.
+
 ### `payment-amount-range.json`
 
 The payable range of one checkout, in cents (Lydia's 0.50-1000 EUR, 2026-10-21). Not a case table

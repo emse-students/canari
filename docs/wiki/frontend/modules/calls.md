@@ -2707,6 +2707,13 @@ at 720p would read "bandwidth" in its first seconds and drop; a clean link climb
 three clean samples. Every rung is the same capture scaled down by the sender, so a change never
 reopens the camera and survives a switch or an off/on (the encodings belong to the sender).
 
+**An early drop to `180p15` was seen once on the phones (`1.6.7-alpha.3`)**, four seconds into a call,
+recovering within 30 s. Re-read 2026-11-14 on dev between two desktop Chromes (fake camera,
+`1.6.12-alpha.2`): the ladder started on `480p30` and climbed to `720p30` after three clean samples
+(`limit=bandwidth avail=2628kbps`), no drop, 0 decrypt failures. Not re-opened: every move is one
+`[Call] video quality` line carrying its loss, round trip, limit and estimate, so a recurrence names
+its own cause.
+
 **How it moves.** One `getStats()` every 2 s (`CALL_VIDEO_QUALITY_SAMPLE_MS`); each sample is read
 against the previous one (`videoEvidence`): the loss the peer reports for the packets sent between
 the two (`remote-inbound-rtp`), the round trip, the congestion controller's estimate

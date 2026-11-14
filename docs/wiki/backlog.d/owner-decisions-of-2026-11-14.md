@@ -7,6 +7,11 @@ répéter"*). Each line names where its detail lives.
 
 ### Order of work
 
+- **Every owed reading reaches zero before a new alpha** (*"Finis toutes les lectures en attente
+  avant d'en ajouter de nouvelles avec une alpha. Les 200 datent, donc elles sont toutes faisables ou
+  supprimables. Une fois que tu es à 0, là on peut continuer."*): each one is read (a FAIL becomes a
+  defect) or deleted with its reason, never left waiting
+  ([durable-rules](../durable-rules.md#release-and-ci---cicd)).
 - **The owed readings first, in backlog order.** *"Ordre du backlog, c'est-à-dire toutes les lectures
   d'abord."* Everything that can run in parallel runs in parallel (*"Lance tout ce qui est possible
   en parallèle"*), and the lead asks for an authorization up front where a refusal is likely.
@@ -79,6 +84,11 @@ répéter"*). Each line names where its detail lives.
 
 ### Other open questions answered
 
+- **#3526 (an erased account leaves the carte): the lead republishes every live carte ONCE, right
+  after the release that carries it** - no migration; that publish drops the accounts erased before
+  #3526 and the legacy line-only directory entries. The gesture, who can make it and how to check it:
+  [carte-vie-asso](../carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once).
+
 - **CanaReels cover every short or vertical video, from the camera AND the gallery** (owner: *"Toute
   vidéo verticale et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie"*); the feed
   CanaReel retention is already **one year** (`REEL_RETENTION_DAYS = 365`, owner 2026-11-09) - the
@@ -130,8 +140,9 @@ répéter"*). Each line names where its detail lives.
   association directory, the shop and the partnerships of the ticked cell - *"elle pourrait même
   payer le tarif cotisant si elle cotisait"*. No per-person switch. Built
   ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)):
-  a partnership card listed to a named reader is one they may claim; a booking space was not part
-  of the answer and is unchanged.
+  a partnership card listed to a named reader is one they may claim (confirmed by the owner: *"Oui,
+  comme un etudiant"*, limited stock included), and an association's booking spaces open the same
+  way (*"Ouvrir aussi"*).
 - **An unknown formation at sign-in is ignored and said** (*"L'ignorer et alerter"*), never filed
   under `Autre`: the cursus entry is kept (it is what tells a student from staff), opens no space,
   and is logged.
@@ -140,3 +151,26 @@ répéter"*). Each line names where its detail lives.
 - **The anonymous link preview of a post stays as it is** (*"Garder l'aperçu"*).
 - **Staff in the app** (agenda, shop, partnerships, directory of their campus): NOT opened by campus;
   the read grant above is the door.
+
+### Answers of the afternoon (relayed by the lead, same day)
+
+- **A reading of code not yet shipped is not owed:** *"supprime simplement du backlog, on rajoutera
+  quand ce sera nécessaire"*. Each such reading is dropped, and the reading is written again when its
+  code ships in a stable. The check is the merge commit being an ancestor of the latest stable tag.
+
+- **#3519, a returning member of an encrypted group:** *"Preuve sur l'appareil. mais il faut un truc
+  solide, robuste, et résilient"* - the device, never the server's roster, decides that a member is
+  returning; #3519 is reworked before it merges. Its consequence is accepted: *"Accepter jusqu'à
+  l'étape 8"* (cross-signing). A person whose only phone is replaced, and whose old phone another
+  member's commit removed, is reported "non prouvé" on returning alone and needs a member's Add. The
+  count of those alerts (`[UNINVITED_ENTRY]` new-person lines carrying `watched_from`) decides whether
+  step 8 comes earlier.
+- **#3518, the 18 departed seats removed (migration 051):** accepted with its costs - a departed
+  person's re-add is refused, a later erasure no longer ends the 1:1, 11 two-member conversations are
+  concerned. It ships after an alpha on dev, once the readings are at zero.
+- **The agenda's signed link:** *"Aligner le lien sur l'app"* - links already handed out keep working,
+  filtered the same way.
+- **Lydia:** the bridges are opened for the BDE and Le Cercle (*"Oui, ouvre-les"*); the BDE's started
+  enrolment is restored as pending (details in the private notes).
+- **Readings #8, #89, #127:** #8 closed with the measurement taken; #89 read with a temporary iPhone
+  passcode, removed afterwards; #127 deleted (*"Supprimer, livraison prouvée"*).

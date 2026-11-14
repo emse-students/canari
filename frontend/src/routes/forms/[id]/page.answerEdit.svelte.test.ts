@@ -51,6 +51,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
       hasSubmitted: true,
       formFull: false,
       pricing: null,
+      cursusSlices: [{ pricing: null, productGridPrices: {} }],
       hiddenItemIds: [],
       maySubmit: false,
     }),

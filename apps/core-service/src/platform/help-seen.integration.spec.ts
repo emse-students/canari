@@ -2,9 +2,9 @@
  * THE SEEN-HELP STORE AGAINST A REAL POSTGRESQL: migration 019 as it ships, the controller and the
  * service over a real repository, and the account erasure's own statement for the table.
  *
- * GATED ON `CORE_IT_DATABASE_URL`, like `account-erasure.integration.spec.ts`: CI provides no
- * database here, so the file reports as skipped rather than passing. It needs nothing of core's
- * schema - the migration creates `help_seen` in a throwaway schema, dropped at the end.
+ * GATED ON `CORE_IT_DATABASE_URL`, like `account-erasure.integration.spec.ts`: CI's step "Seen-help
+ * store against PostgreSQL" (`ci.yml`) provides the boot's database; without one the file reports
+ * as skipped rather than passing. It needs nothing of core's schema - the migration creates `help_seen` in a throwaway schema, dropped at the end.
  *
  *   CORE_IT_DATABASE_URL=postgres://user:pass@localhost:5432/auth_db bun run test -- help-seen.integration
  */

@@ -147,10 +147,9 @@ export class PartnershipsService {
     const qb = this.cardRepo
       .createQueryBuilder('c')
       .where('c.isActive = true')
-      .andWhere(
-        associationVisibleToViewerSql('"c"."associationId"', ':viewerId', { readGrants: true }),
-        { viewerId: userId }
-      )
+      .andWhere(associationVisibleToViewerSql('"c"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
       .orderBy('c.associationId', 'ASC')
       .addOrderBy('c.createdAt', 'ASC');
     if (associationId !== undefined) {
@@ -479,10 +478,7 @@ export class PartnershipsService {
     // Asked AFTER the review cohort's own refusal, which keeps its typed 403: a card whose
     // association the claimant cannot see answers exactly like a card that does not exist.
     // Read grants count, as in the listing: a card a named reader is shown is one they may claim.
-    const visible = await associationVisibleTo(this.cardRepo.manager, card.associationId, userId, {
-      readGrants: true,
-    });
-    if (!visible) {
+    if (!(await associationVisibleTo(this.cardRepo.manager, card.associationId, userId))) {
       this.logger.log(
         `[PARTNERSHIP] claim refused: card=${cardId.slice(0, 8)} - association ` +
           `${card.associationId.slice(0, 8)} is not visible to ${userId.slice(0, 8)}`

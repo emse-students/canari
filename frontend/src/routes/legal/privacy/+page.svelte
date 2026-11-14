@@ -357,7 +357,10 @@
           effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
           cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
           formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
-          supprimé avec le formulaire.
+          supprimé avec le formulaire. Quand le BDE de votre espace publie la carte de la vie
+          associative, votre nom, votre photo de profil et votre rôle dans les associations qui y
+          figurent peuvent y être affichés, visibles de tous sans compte sur le portail, jusqu'à la
+          prochaine publication ou la suppression de votre compte, qui les en retire.
         </dd>
       </div>
       <div>

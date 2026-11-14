@@ -127,8 +127,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     const pricingFacts: any = {
       build: jest.fn((input: { answers?: Record<string, string[]> }) =>
         Promise.resolve({
-          promo: null,
-          formation: null,
+          cursus: [{ promo: null, formation: null }],
           cotisationTiers: opts.heldTiers ?? [],
           answers: input.answers ?? {},
           now: new Date('2026-08-23T12:00:00Z'),

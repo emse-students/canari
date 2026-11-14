@@ -274,9 +274,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {
       build: jest.fn(() =>
-        Promise.resolve({ promo: null, formation: null, cotisationTiers: [], answers: {} })
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
       ),
-      profileFor: jest.fn(() => Promise.resolve({ promo: null, formation: null })),
+      cursusFor: jest.fn(() => Promise.resolve([{ promo: null, formation: null }])),
     };
 
     const checkouts = makeCheckoutStore(productRepo, assoRepo);
@@ -2901,7 +2905,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         priceMatrix: { dimensions: [], cells: [] } as any,
       });
       const made = buyer(gridded, [avecAlcool(), gridded], []);
-      jest.spyOn(made.service as any, 'resolveGridPrice').mockReturnValue(700);
+      jest.spyOn(made.service as any, 'resolveGridPrice').mockReturnValue({
+        view: { promo: null, formation: null },
+        index: 0,
+        of: 1,
+        quote: 700,
+        cents: 700,
+      });
       const result = await resolvePurchase(made.service, 'asso1', 'prod-grid', 'user1');
       expect(result.amountCents).toBe(700);
     });
@@ -3661,7 +3671,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       userTagService.hasActiveTag.mockResolvedValue(true);
       // The profile is fetched before the tier lock, the cotisation half under it.
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: 'ICM' });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: 'ICM' }]);
 
       const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(9000);
@@ -3684,7 +3694,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
         'PURCHASE_PRICING_CHANGED'
       );
-      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+      expect(pricingFacts.cursusFor).toHaveBeenCalledWith('user1', false);
     });
 
     it('CONTROL: a grid that needed the profile from the start is priced from it', async () => {
@@ -3693,7 +3703,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(
         product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
       );
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2025, formation: null });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2025, formation: null }]);
 
       const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(7000);
@@ -3706,7 +3716,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         made.productRepo.findOne.mockResolvedValue(
           product({ amountCents: 1000, amountCentsMember: 500, priceMatrix: promoGrid(cells) })
         );
-        made.pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
+        made.pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: null }]);
         made.productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
         made.purchaseRecordService.create.mockImplementation((x: unknown) =>
           Promise.resolve({
@@ -3744,6 +3754,27 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
     });
 
+    // D32: two cursus pay the most favourable price - the grid read through each, the cheapest cell.
+    it('charges the promo bucket of the SECOND cursus when it is the cheaper, at checkout and at the till', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
+      );
+      pricingFacts.cursusFor.mockResolvedValue([
+        { promo: 2022, formation: 'ICM' },
+        { promo: 2025, formation: 'Autre' },
+      ]);
+
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(7000);
+      await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+        kind: 'priced',
+        amountCents: 7000,
+        preferential: false,
+      });
+    });
+
     it('prices an unrecognised promo from the generated "everyone else" cell', async () => {
       const { service, productRepo, assoRepo, pricingFacts } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
@@ -3752,8 +3783,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       // A promo nobody named, and a null promo, are the same answer: nobody is ever unpriced.
       pricingFacts.build.mockResolvedValue({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: {},
       });
@@ -3773,7 +3803,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           priceMatrix: promoGrid({ b1: 7000, b2: null, _others: 12000 }),
         })
       );
-      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
+      pricingFacts.cursusFor.mockResolvedValue([{ promo: 2024, formation: null }]);
 
       await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
         BadRequestException
@@ -3806,7 +3836,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The point of the flag: a grid resting only on cotisation must not be blocked by, or wait
       // on, a service it does not need.
       expect(pricingFacts.build).not.toHaveBeenCalled();
-      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+      expect(pricingFacts.cursusFor).toHaveBeenCalledWith('user1', false);
     });
 
     it('refuses a grid that prices on a question, which only a form has', async () => {
