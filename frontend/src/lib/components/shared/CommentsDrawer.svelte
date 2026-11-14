@@ -20,6 +20,9 @@
    * THE KEYBOARD: the drawer stands on it (`keyboard-aware-bottom`) and is never taller than what the
    * keyboard leaves (`--app-viewport-height` less `--keyboard-occlusion-bottom`, the part of the window
    * the Android app's keyboard covers without resizing it), so the composer stays above the keys.
+   * It RIDES the keyboard (`data-keyboard-ride="box"`, `keyboardRide.ts`): it moves with the keys'
+   * own duration and curve, at their phase, instead of jumping to its new place a frame late (#3556,
+   * N4, Mi 9T: a jump 68 ms after the announcement on a rise, 138 ms on a fall).
    */
   import { onMount, tick, type Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
@@ -229,6 +232,7 @@
     aria-labelledby="comments-drawer-title"
     tabindex="-1"
     data-comments-drawer-sheet
+    data-keyboard-ride="box"
   >
     <div
       class="flex shrink-0 cursor-grab touch-none flex-col items-center px-2 pt-2 select-none"

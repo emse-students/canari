@@ -2229,9 +2229,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 /* A sheet anchored to the bottom of a `fixed` layer (the comments drawer): it stands on what the
    keyboard covers of the window, which is 0 wherever the WebView itself is resized. */
+/* Stands on the keyboard. No transition: a piece that must move with the keys rides them
+   (`data-keyboard-ride`, keyboardRide.ts) at their own duration, curve and phase - a clock of its
+   own could only disagree with the keyboard's (#3556, N4). */
 .keyboard-aware-bottom {
   bottom: var(--keyboard-occlusion-bottom, 0px);
-  transition: bottom 180ms ease;
 }
 
 /* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */

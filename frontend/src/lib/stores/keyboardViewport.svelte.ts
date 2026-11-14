@@ -595,17 +595,23 @@ function notifyInsetListeners(): void {
  * iOS's hand-off (`canariImeTarget` with a bare number) the opening is TWO updates - the announced
  * layout, then the WebView's real resize that spends the target - and both belong to the opening, so
  * the second is `auto` too (review of #3490, S3). An Android overlay is never spent: its opening is
- * one update. Any later update with the keyboard up is `smooth`.
+ * one update. A later update with the keyboard up is `smooth` - only when it MOVED the keyboard's
+ * inset: a `resize` that changes nothing reveals nothing. The Android WebView fires a window and a
+ * visual-viewport `resize` ~15 ms after every overlay announcement with no size changed, and each
+ * re-revealed the field (three reveals per rise, Mi 9T, #3556, N3). A field gaining focus with the
+ * keyboard already up is `handleFocusIn`'s, not this.
  */
 export function keyboardRevealOnUpdate(u: {
   isOpen: boolean;
   openedNow: boolean;
   targetSpent: boolean;
   hasFocus: boolean;
+  /** The update changed the keyboard's bottom inset. */
+  insetMoved: boolean;
 }): ScrollBehavior | null {
   if (!u.isOpen) return null;
   if (u.openedNow || u.targetSpent) return 'auto';
-  return u.hasFocus ? 'smooth' : null;
+  return u.hasFocus && u.insetMoved ? 'smooth' : null;
 }
 
 /**
@@ -723,6 +729,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       openedNow,
       targetSpent: handingOff && imeTarget === null,
       hasFocus: document.activeElement instanceof HTMLElement,
+      insetMoved,
     });
     if (reveal) scrollFocusedFieldIntoView(reveal);
 

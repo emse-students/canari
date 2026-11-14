@@ -403,6 +403,23 @@ guarded by `ModalOverlay.test.ts`), the live chat by `0.38 x (100vh - occlusion)
 `onKeyboardInsetChange` - neither viewport fires anything for an overlay keyboard (F4, F5). The unused
 `--keyboard-baseline-height` was deleted.
 
+**Read on the Mi 9T at f364f3c47 (2026-11-14, debug sideload; the numbers are on the PR).** Once
+moving, the thread and the composer follow the keys frame by frame in both directions (D1). One
+`scrollTop` write per keyboard move (D2), and no forced style or layout in the announcement's script
+(D3). Still owed: the ride starts 40-105 ms after the announcement (161 ms in the emoji picker), because
+the announcement frame recalculates the whole document's style. Any custom-property write on `:root`
+costs 17-30 ms on 1156 elements, against 0.2 ms on one leaf. That latency, and the emoji picker that
+jumps rather than rides (N2), are the stacked follow-up's.
+
+**Two fixes from that reading.** N3: the Android WebView fires a window `resize` and a visual-viewport
+`resize`, with no size changed, ~15 ms after every overlay announcement. Each one re-ran `update()`,
+which revealed the focused field again (`smooth`): three reveals per rise. A later update now reveals
+only when it moved the keyboard's inset (`keyboardRevealOnUpdate`'s `insetMoved`). N4: the comments
+drawer is a riding piece (`data-keyboard-ride="box"`), where it used to jump 68 ms (rise) and 138 ms
+(fall) after the announcement. `.keyboard-aware-bottom` lost its 180 ms `ease` transition: the sheet's
+inline `transition: none` overrode it, and a clock of its own could only disagree with the keyboard's.
+The sheet also rides the iOS fall, through the same `canariKeyboardFall` capture as the composer band.
+
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):
