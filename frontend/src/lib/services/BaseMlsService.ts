@@ -8885,6 +8885,17 @@ export abstract class BaseMlsService implements IMlsService {
     // transaction per send, against a checkpoint that costs 1.7 s on a phone. A count that does not
     // commit refuses the post (`SendCountNotDurableError`).
     await noteFrameEmitted(this.userId, groupId, epoch);
+    // THE AWAIT ABOVE IS A TASK GAP, AND THE LEAD CAN LEAVE INSIDE IT (#3321: a hidden leader hands
+    // it over, a frozen one releases it). The leader that takes it reloads the state on disk, which
+    // does not hold this frame's advance - so a frame posted from here is one the new leader may seal
+    // again at the same generation: a nonce reused at every peer. Read again AFTER the count is
+    // durable and BEFORE the post: refused, the frame never leaves, and the count only over-burns.
+    if (refusesCommitsHere()) {
+      console.warn(
+        `[SEND] ${groupId.slice(0, 8)}... frame sealed but not posted: the lead left this tab while its count was written - the leader sends it`
+      );
+      throw new FollowerTabSendError(groupId, 'lead-lost');
+    }
     // BEST-EFFORT, AND DELIBERATELY NOT AWAITED. It shortens the window; the ledger write above is
     // what CLOSES it. Awaiting here would put a checkpoint on the latency of every message - 1.7 s
     // on the phone - to buy a guarantee that is already held, so the trade is refused.

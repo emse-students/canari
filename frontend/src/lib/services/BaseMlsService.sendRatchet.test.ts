@@ -8,6 +8,23 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   scheduleOutboundMlsPersist: vi.fn(),
   noteInboundMlsFrame: vi.fn(),
 }));
+/** What a case may make happen INSIDE the send's durable count, and whether this tab still leads. */
+const tab = vi.hoisted(() => ({ leads: true, duringCount: null as null | (() => void) }));
+vi.mock('$lib/mls-client/stateAuthority', async (original) => ({
+  ...(await original<typeof import('$lib/mls-client/stateAuthority')>()),
+  refusesCommitsHere: () => !tab.leads,
+  promotedSinceLoad: () => false,
+}));
+vi.mock('$lib/mls-client/sendRatchetLedger', async (original) => {
+  const real = await original<typeof import('$lib/mls-client/sendRatchetLedger')>();
+  return {
+    ...real,
+    noteFrameEmitted: async (...args: Parameters<typeof real.noteFrameEmitted>) => {
+      await real.noteFrameEmitted(...args);
+      tab.duringCount?.();
+    },
+  };
+});
 
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
@@ -24,6 +41,7 @@ import {
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 
 /**
  * THE REPAIR THAT RUNS BEFORE ANYTHING CAN SEND, AND THE EPOCH IT RUNS IN.
@@ -197,6 +215,8 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     await closeMlsDb();
     globalThis.indexedDB = new IDBFactory();
     resetStateLedgersForTests();
+    tab.leads = true;
+    tab.duringCount = null;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -490,5 +510,32 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
 
     expect(svc.skipSendGenerations).not.toHaveBeenCalled();
     expect(await sendRatchetEntries(U)).toEqual([]);
+  });
+
+  /**
+   * THE LEAD LEAVES WHILE THE SEND'S COUNT IS WRITTEN (#3321's hand-over, a freeze). The count is an
+   * awaited IndexedDB write, so a task gap sits between the encrypt and the post, and the leader
+   * taking over reloads a state that does not hold this frame's advance. Posted anyway, the frame
+   * spends a generation the new leader will seal again. It must not leave.
+   */
+  it('does not post a frame whose lead left while its count was written', async () => {
+    const peer = new Peer();
+    const disk = freshDisk();
+    const model = new RatchetModel();
+    const first = session(model, peer, disk);
+    tab.duringCount = () => {
+      tab.leads = false;
+    };
+    const refused = await first.send().catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(FollowerTabSendError);
+    expect((refused as FollowerTabSendError).refusal).toBe('lead-lost');
+    expect(first.svc.delivery.postApplicationMessage).not.toHaveBeenCalled();
+    // The new leader, on the state on disk: its first frame spends no generation a peer consumed.
+    tab.leads = true;
+    tab.duringCount = null;
+    const leader = session(RatchetModel.restore(disk), peer, disk);
+    await leader.svc.reconcileSendRatchets();
+    await leader.send();
+    expect(peer.reused).toEqual([]);
   });
 });

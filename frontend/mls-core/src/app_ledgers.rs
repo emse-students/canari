@@ -28,6 +28,16 @@ use std::collections::HashMap;
 
 use crate::{MlsError, MlsManager};
 
+/// The most the app's ledgers may weigh in this state, in bytes: each key and value plus the five
+/// bytes of its CBOR text header. The app enforces it (`seenLedgerBounds.ts`, against
+/// `APP_LEDGERS_BYTE_BUDGET` in `stateLedgers.ts`, which `seenLedgerBounds.test.ts` holds equal to
+/// this one): every checkpoint seals and writes all of them, so their weight is a cost on every
+/// write. A state that opens over it is a broken bound, said at ERROR by `load_or_create`.
+pub const APP_LEDGERS_BYTE_BUDGET: usize = 1_048_576;
+
+/// The CBOR header of one text string, at most - the unit the budget above counts per key and value.
+const CBOR_STRING_HEADER_BYTES: usize = 5;
+
 impl MlsManager {
     /// Applies the app's staged ledger changes: a `Some` sets the key, a `None` removes it.
     ///
@@ -103,6 +113,14 @@ impl MlsManager {
         self.state_snapshot.borrow_mut().invalidate();
     }
 
+    /// What these ledgers weigh in the state, as [`APP_LEDGERS_BYTE_BUDGET`] counts it.
+    pub fn app_ledgers_bytes(&self) -> usize {
+        self.app_ledgers
+            .iter()
+            .map(|(k, v)| k.len() + v.len() + 2 * CBOR_STRING_HEADER_BYTES)
+            .sum()
+    }
+
     /// `"<keys>x<bytes>B"` for the composition line - the cost these ledgers add to every checkpoint.
     pub(crate) fn app_ledgers_weight(&self) -> String {
         let bytes: usize = self
@@ -120,6 +138,14 @@ mod tests {
 
     fn manager(tag: &str) -> MlsManager {
         MlsManager::load_or_create(&format!("{tag}-user"), "d1", None).unwrap()
+    }
+
+    #[test]
+    fn the_weight_counts_every_key_and_value_with_its_header() {
+        let mut m = manager("ledger-weight");
+        assert_eq!(m.app_ledgers_bytes(), 0);
+        m.apply_app_ledgers([("ab".to_string(), Some("cde".to_string()))]);
+        assert_eq!(m.app_ledgers_bytes(), 2 + 3 + 10);
     }
 
     #[test]

@@ -30,6 +30,7 @@ import {
   STATE_LEDGER_FORMAT,
 } from './stateLedgers';
 import { raiseEmittedCounts, stagePersisted, type SendCounts } from './sendRatchetLedger';
+import { boundSeenEntries, enforceSeenLedgerBudget } from '$lib/utils/chat/seenLedgerBounds';
 
 /** Every old `localStorage` key of `userId` this migration owns. */
 function legacyKeys(userId: string): string[] {
@@ -112,7 +113,8 @@ export async function adoptLegacyLedgers(
     stageStateLedger(
       userId,
       STATE_LEDGER.seen(groupId),
-      JSON.stringify(entries.filter((e): e is string => typeof e === 'string'))
+      // Bounded as every write is: the old copies were bounded by count, never by bytes.
+      JSON.stringify(boundSeenEntries(entries.filter((e): e is string => typeof e === 'string')))
     );
     seenLedgers++;
   }
@@ -129,6 +131,8 @@ export async function adoptLegacyLedgers(
       JSON.stringify(index.filter((g): g is string => typeof g === 'string' && held.has(g)))
     );
   }
+  // Within the byte budget before the first checkpoint carries them (`seenLedgerBounds.ts`).
+  enforceSeenLedgerBudget(userId);
   stageStateLedger(userId, STATE_LEDGER.format, STATE_LEDGER_FORMAT);
   if (keys.length === 0) return 'nothing';
   console.log(

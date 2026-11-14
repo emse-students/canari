@@ -61,7 +61,6 @@ earliest version, as a checklist.
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
-- [P2 - the seen ledgers inside the MLS state have no byte budget, and their caps allow about 43 MB per checkpoint](backlog.d/p2-the-seen-ledgers-inside-the-mls-state-have-no-byte-budget.md)
 
 **P3 - hygiene**
 

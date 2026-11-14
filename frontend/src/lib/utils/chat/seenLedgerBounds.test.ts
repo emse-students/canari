@@ -8,12 +8,17 @@ vi.mock('$lib/utils/chat/historyReconcile', () => ({
   escalateReconciliation: vi.fn().mockResolvedValue(true),
 }));
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   boundSeenEntries,
+  enforceSeenLedgerBudget,
   isFingerprintEntry,
+  MAX_BYTES_PER_LEDGER,
   MAX_FINGERPRINTS_PER_LEDGER,
   MAX_LEDGERS_PER_USER,
   MAX_ROW_KEYS_PER_LEDGER,
+  utf8Bytes,
 } from './seenLedgerBounds';
 import {
   markHistoryFrameConsumed,
@@ -21,6 +26,7 @@ import {
   stagePendingHistoryMarks,
 } from './history';
 import {
+  APP_LEDGERS_BYTE_BUDGET,
   hydrateStateLedgers,
   readStateLedger,
   resetStateLedgersForTests,
@@ -147,5 +153,115 @@ describe('ledgers per user', () => {
     }
     expect(readStateLedger('someone-else', STATE_LEDGER.seen('g'))).toBeDefined();
     expect(takeStagedStateLedgers('someone-else')).toBeUndefined();
+  });
+});
+
+describe('the byte budget of every ledger the MLS state carries', () => {
+  /** The ceiling the review of #2515 set: every checkpoint seals and writes all of it. */
+  const BUDGET = APP_LEDGERS_BYTE_BUDGET;
+  const encoder = new TextEncoder();
+  const utf8 = (s: string) => encoder.encode(s).length;
+  /** As CBOR stores the map: each key and value raw, behind a text-string header of at most 5 bytes. */
+  const cborBytes = (m: Map<string, string>) => {
+    let n = 9;
+    for (const [k, v] of m) n += utf8(k) + utf8(v) + 10;
+    return n;
+  };
+  /** A checkpoint that writes whatever is staged, removals included. */
+  const land = () => {
+    for (const [k, v] of Object.entries(takeStagedStateLedgers(USER) ?? {})) {
+      if (v === null) disk.delete(k);
+      else disk.set(k, v);
+    }
+  };
+
+  // THE LONGEST SHAPE EACH ENTRY MAY TAKE. A fingerprint is `<len36>:<hash36>`, 8 + 1 + 8. A row key
+  // is a stream id, or for an id-less row `<timestamp>:<first 64 chars of the content>` - content the
+  // SERVER hands over, so 64 control characters, which JSON escapes to six bytes each.
+  const CONTROL = String.fromCharCode(1);
+  const longFp = (n: number) =>
+    `${n.toString(36).padStart(8, 'z')}:${(n * 7919).toString(36).padStart(8, 'y')}`;
+  const longRow = (n: number) =>
+    `2026-11-15T10:00:00.000Z:${CONTROL.repeat(60)}${n.toString(36).padStart(4, '0')}`;
+  const groupId = (g: number) => `${'g'.repeat(76)}${g.toString().padStart(4, '0')}`;
+  const fullLedger = (): string[] => {
+    const entries: string[] = [];
+    for (let i = 0; i < MAX_FINGERPRINTS_PER_LEDGER; i++) entries.push(longFp(i), longRow(i));
+    return entries;
+  };
+
+  it('holds at most the budget once every ledger is full of its longest entries', () => {
+    // A state opened with every ledger but one at its caps (the value is one shared string, so the
+    // test holds it once), the send counts of as many groups, and the format key.
+    const full = JSON.stringify(fullLedger());
+    const opened: Record<string, string> = {};
+    const index: string[] = [];
+    for (let g = 0; g < MAX_LEDGERS_PER_USER - 1; g++) {
+      opened[STATE_LEDGER.seen(groupId(g))] = full;
+      index.push(groupId(g));
+    }
+    opened[STATE_LEDGER.seenIndex] = JSON.stringify(index);
+    const persistedCounts: Record<string, number> = {};
+    for (let g = 0; g < MAX_LEDGERS_PER_USER; g++) persistedCounts[`${groupId(g)}@123456`] = 99999;
+    opened[STATE_LEDGER.sendPersisted] = JSON.stringify(persistedCounts);
+    opened[STATE_LEDGER.format] = '1';
+    hydrateStateLedgers(USER, opened);
+    disk = new Map(Object.entries(opened));
+
+    // The last ledger is written by the app, to its caps.
+    const last = groupId(MAX_LEDGERS_PER_USER - 1);
+    for (const entry of fullLedger()) markHistoryFrameConsumed(USER, last, entry);
+    checkpoint();
+
+    expect(cborBytes(disk)).toBeLessThanOrEqual(BUDGET);
+    // The ledger just written is never the one dropped, and keeps its newest fingerprints.
+    const written = persisted(last) ?? [];
+    expect(written).toContain(longFp(MAX_FINGERPRINTS_PER_LEDGER - 1));
+    // What went is the least recently written, oldest first.
+    expect(persisted(groupId(0))).toBeNull();
+  });
+
+  it('cuts an over-heavy ledger by its oldest ROW KEYS first, and keeps every fingerprint', () => {
+    const bounded = boundSeenEntries(fullLedger());
+    expect(utf8(JSON.stringify(bounded))).toBeLessThanOrEqual(MAX_BYTES_PER_LEDGER);
+    expect(bounded.filter(isFingerprintEntry)).toHaveLength(MAX_FINGERPRINTS_PER_LEDGER);
+    const rows = bounded.filter((e) => !isFingerprintEntry(e));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.at(-1)).toBe(longRow(MAX_FINGERPRINTS_PER_LEDGER - 1));
+    expect(rows).not.toContain(longRow(0));
+  });
+
+  it('keeps a ledger of fingerprints alone whole: 5 000 of the longest fit the cap', () => {
+    const onlyFps = Array.from({ length: MAX_FINGERPRINTS_PER_LEDGER }, (_, i) => longFp(i));
+    expect(boundSeenEntries(onlyFps)).toEqual(onlyFps);
+  });
+
+  it('brings the ledgers an older client left within the budget, with no ledger being written', () => {
+    const full = JSON.stringify(fullLedger());
+    const opened: Record<string, string> = {};
+    const index: string[] = [];
+    for (let g = 0; g < 20; g++) {
+      opened[STATE_LEDGER.seen(groupId(g))] = full;
+      index.push(groupId(g));
+    }
+    opened[STATE_LEDGER.seenIndex] = JSON.stringify(index);
+    hydrateStateLedgers(USER, opened);
+    disk = new Map(Object.entries(opened));
+    const evicted = enforceSeenLedgerBudget(USER);
+    land();
+    expect(evicted[0]).toBe(groupId(0));
+    expect(cborBytes(disk)).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it('counts bytes as an encoder writes them', () => {
+    const samples = ['abc', 'é', '€', String.fromCodePoint(0x1f600), CONTROL];
+    samples.push(String.fromCharCode(0xd800) + 'x');
+    for (const s of samples) expect(utf8Bytes(s)).toBe(utf8(s));
+  });
+
+  it('holds the same budget as the ERROR witness of mls-core', () => {
+    const rust = readFileSync(resolve(process.cwd(), 'mls-core/src/app_ledgers.rs'), 'utf8');
+    const declared = /pub const APP_LEDGERS_BYTE_BUDGET: usize = ([0-9_]+);/.exec(rust)?.[1];
+    expect(Number(declared?.replaceAll('_', ''))).toBe(BUDGET);
   });
 });

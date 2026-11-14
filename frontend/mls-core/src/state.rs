@@ -965,6 +965,16 @@ impl MlsManager {
                 "load_or_create: state composition - {}",
                 manager.state_composition_summary()
             );
+            // THE LEDGERS' BOUND, WITNESSED WHERE THEIR WEIGHT IS READ (`app_ledgers.rs`). The app
+            // keeps them under the budget at every write; a state that opens over it means that
+            // bound is broken, and every checkpoint of this session pays for it.
+            let ledger_bytes = manager.app_ledgers_bytes();
+            if ledger_bytes > crate::app_ledgers::APP_LEDGERS_BYTE_BUDGET {
+                log::error!(
+                    "load_or_create: the app ledgers weigh {ledger_bytes}B, over their {}B budget - the seen-ledger bound is broken, and every checkpoint writes the excess",
+                    crate::app_ledgers::APP_LEDGERS_BYTE_BUDGET
+                );
+            }
 
             // THE CENSUS IS NOT PRINTED HERE, AND THAT IS THE ONE THING THIS FUNCTION USED TO DO
             // THAT NOBODY COULD MEASURE.

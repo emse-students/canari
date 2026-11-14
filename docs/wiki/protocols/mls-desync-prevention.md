@@ -836,6 +836,27 @@ a frame the device had read and accused it (`frame never read here and unreadabl
   exception, the migration, whose `raiseEmittedCounts` only RAISES them (an over-burn, free). A tab
   promoted to leader must reopen its ledgers from the state it reloads (`openStateLedgers`), never
   carry its follower copy's over it: the hand-over of #3321 reloads the promoted tab, which does.
+- **A send whose lead left during its count is not posted** (`FollowerTabSendError('lead-lost')`):
+  the awaited count is a task gap, the leader that takes over reloads a state without this frame's
+  advance, and a frame posted from there is one it may seal again at the same generation.
+- **The ledgers weigh at most 1 MB in the state, whatever the conversations**
+  (`APP_LEDGERS_BYTE_BUDGET`, review of 2026-11-15). Every checkpoint seals and writes all of them,
+  where `localStorage` wrote one group at a time, and the count caps alone allowed about 43 MB
+  (5 000 fingerprints and 5 000 row keys per group, 256 groups, and an id-less row's key embeds 64
+  characters of server content). `seenLedgerBounds.ts` enforces it in bytes, in the order of what a
+  loss costs:
+  - one ledger stops at 256 kB, cutting its oldest ROW KEYS first (a lost row key costs a re-check
+    against the fingerprints) and its oldest fingerprints only after them (a lost fingerprint can
+    re-accuse a frame, and the oldest is the least likely to be ahead of the walk's cursor);
+  - all of them stop at 1 MB less 64 kB (kept for `send-persisted` and the format key), dropping the
+    least recently WRITTEN ledger first - the quietest conversation, whose frames consumed since its
+    last walk are the fewest. Lower caps were rejected: they cut the busiest conversation on every
+    profile and still bound no bytes. The busiest measured profile (247 kB) evicts nothing;
+  - the migration from `localStorage` is bounded the same way before its first checkpoint.
+
+  `mls-core` holds the same number and says ERROR at load when a state opens over it (a broken
+  bound); `seenLedgerBounds.test.ts` fills every ledger with its longest entries (it measured 527 MB
+  before the bound) and holds the two constants equal.
 
 **The migration** (`mls-client/stateLedgerMigration.ts`): a state opened without the
 `ledger-format` key takes the old `localStorage` copies, once. The old copies are deleted only at the
@@ -860,13 +881,7 @@ value is never ahead of the state it moves into. Shim recorded in
 - Each send waits for one IndexedDB transaction before it posts. Its durability is IndexedDB's
   default (relaxed on Chromium): committed to the OS when `complete` fires, so a PROCESS kill keeps
   it; a power loss or OS crash inside the next flush is not covered, as it is not for the state.
-- **The ledgers' weight is now on every checkpoint**: the whole seen set of every group (capped at
-  5 000 fingerprints and 5 000 row keys per group, 256 groups) is serialised and sealed with the state
-  at each write, where `localStorage` wrote one group at a time. At the caps that is about 43 MB per
-  checkpoint, so the bound is a defect with a budget, not a reading:
-  [P2](../backlog.d/p2-the-seen-ledgers-inside-the-mls-state-have-no-byte-budget.md). The load-time
-  composition line prints the weight (`app ledgers <keys>x<bytes>B`). That an older build reads and
-  writes back such a state is not gated either:
+- That an older build reads and writes back a state carrying the ledgers is not gated:
   [P2](../backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md).
 - The web catch-up session stages marks before its state is installed in the live client - the same
   window the old design had, filed as

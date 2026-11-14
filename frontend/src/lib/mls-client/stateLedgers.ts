@@ -45,6 +45,17 @@ export const STATE_LEDGER = {
   sendPersisted: 'send-persisted',
 } as const;
 
+/**
+ * The most the app's ledgers may weigh inside the MLS state, in bytes as CBOR stores them (each key
+ * and value raw, plus its header). EVERY checkpoint seals and writes all of them - unlike
+ * `localStorage`, which wrote one group at a time - so this is a cost on every write, whatever the
+ * number or the size of the conversations. Enforced by `seenLedgerBounds.ts` (the seen ledgers are
+ * the only ones that grow with traffic); mirrored by `APP_LEDGERS_BYTE_BUDGET` in
+ * `mls-core/src/app_ledgers.rs`, which says ERROR at load past it, and `seenLedgerBounds.test.ts`
+ * holds the two equal.
+ */
+export const APP_LEDGERS_BYTE_BUDGET = 1024 * 1024;
+
 /** The value of {@link STATE_LEDGER.format} this build writes. */
 export const STATE_LEDGER_FORMAT = '1';
 
