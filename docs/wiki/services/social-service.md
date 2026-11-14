@@ -181,7 +181,9 @@ guard reads the path only.
 - `src/route-params.coverage.spec.ts` walks `AppModule`'s own module graph and fails on a path
   parameter no declaration names, on a declaration naming a parameter its routes do not have (a typo
   would otherwise validate nothing while looking like it does), on a path parameter that carries a
-  `ParseUUIDPipe` again (two mechanisms would drift), and on `AppModule` not providing the guard. It
+  `ParseUUIDPipe` again (two mechanisms would drift), on a name declared `uuid` in one controller
+  and `opaque` in another (the spec cannot read a column, it can read a contradiction; the two
+  decided exceptions are listed in it), and on `AppModule` not providing the guard. It
   judges EVERY controller: the list of controllers not converted yet is gone.
 - `src/common/route-params.spec.ts` holds the guard alone: what it refuses, that `opaque` is never
   looked at, and that a handler's declaration wins over its class's.
@@ -204,7 +206,11 @@ a `400` naming the parameter would tell the two apart for no reader.
 **Routes whose malformed id was a `500` and is a `400` since every controller declares
 (2026-11-14):** the internal channel read, the internal routes taking an association id, the
 internal form-submission route, a minesweeper score submission, a moderation report, a post's
-calendar link, and the public member list. No status changed for a well-formed request.
+calendar link, and the public member list. No request that worked changed status. One refusal
+moved: the guard takes any canonical 8-4-4-4-12 text where `ParseUUIDPipe` also read the version
+bits, so an id of that shape with bits the pipe refused is a `404` from the query, no longer a `400`.
+And a malformed id is answered before the per-address throttles a handler names, which no longer
+count it: the answer is a `400` built from the path alone, with no query behind it.
 
 **Where it stands.** social-service is whole: 32 controllers with a path parameter, all declared.
 core-service and media-service take the same mechanism in a pull request of their own, one

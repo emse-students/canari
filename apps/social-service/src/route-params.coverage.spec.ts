@@ -93,6 +93,38 @@ function pipedPathParams(cls: Ctor): string[] {
   return out;
 }
 
+/**
+ * THE TWO PLACES WHERE A NAME THAT IS A UUID EVERYWHERE ELSE IS DECLARED OPAQUE, by decision
+ * (2026-11-14, wiki "What `opaque` names"): the anonymous surface answers a malformed id with the
+ * same bodyless 404 as an unknown one, and its service checks the shape itself.
+ */
+const OPAQUE_BY_DECISION = new Set(['PublicController:memberId', 'PublicController:postId']);
+
+/**
+ * Names declared `uuid` by one controller and `opaque` by another, as `Class:name`, the decided
+ * exceptions aside. The spec cannot read a column type, but it can read a contradiction: a
+ * `bookingId` is not a row key in one file and free text in the next, so an `opaque` written by
+ * mistake on a name the service validates elsewhere is found here.
+ */
+function contradictions(all: Controller[]): string[] {
+  const kindsOf = (c: Controller) =>
+    Object.entries({ ...c.declared, ...Object.assign({}, ...c.routes.map((r) => r.own)) });
+  const uuidNames = new Set(
+    all.flatMap((c) =>
+      kindsOf(c)
+        .filter(([, kind]) => kind === 'uuid')
+        .map(([name]) => name)
+    )
+  );
+  return all
+    .flatMap((c) =>
+      kindsOf(c)
+        .filter(([name, kind]) => kind === 'opaque' && uuidNames.has(name))
+        .map(([name]) => `${c.name}:${name}`)
+    )
+    .filter((entry) => !OPAQUE_BY_DECISION.has(entry));
+}
+
 /** What is wrong with one controller's declarations; empty when nothing is. */
 function faults(c: Controller): string[] {
   const out: string[] = [];
@@ -154,6 +186,29 @@ describe('path parameters are declared', () => {
     // The control: the reader finds a pipe on a path parameter, in either spelling, and only there.
     expect(pipedPathParams(Piped)).toEqual(['Piped.one(:id)', 'Piped.one(:other)']);
     expect(classes.flatMap(pipedPathParams)).toEqual([]);
+  });
+
+  it('a name is a uuid everywhere or nowhere, the two decided exceptions aside', () => {
+    const c = (name: string, declared: RouteParamKinds): Controller => ({
+      name,
+      declared,
+      routes: [],
+    });
+    // The control: a contradiction is found, an exception is not reported, agreement is silent.
+    expect(
+      contradictions([
+        c('A', { bookingId: 'uuid', userId: 'opaque' }),
+        c('B', { bookingId: 'opaque', userId: 'opaque' }),
+        c('PublicController', { postId: 'opaque' }),
+        c('D', { postId: 'uuid' }),
+      ])
+    ).toEqual(['B:bookingId']);
+    expect(contradictions(controllers)).toEqual([]);
+    // And each exception still exists: a line that excuses nothing is removed.
+    const declared = new Set(
+      controllers.flatMap((x) => Object.keys(x.declared).map((n) => `${x.name}:${n}`))
+    );
+    expect([...OPAQUE_BY_DECISION].filter((entry) => !declared.has(entry))).toEqual([]);
   });
 
   it('the checker itself refuses an undeclared parameter and a misnamed declaration', () => {
