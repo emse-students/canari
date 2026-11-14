@@ -1,5 +1,6 @@
 import { coreUrl } from '$lib/utils/apiUrl';
 import { MOBILE_APP_PACKAGE } from '$lib/mobile/appSiteAssociation';
+import { parseRetention, type RetentionDays } from '$lib/legal/retention';
 import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
@@ -154,6 +155,8 @@ export type ServerVersionInfo = {
   formAnswerEdit: boolean;
   /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
   eventReach: boolean;
+  /** The retention durations in force (`retention`), `null` from a server older than the field. */
+  retention: RetentionDays | null;
 };
 
 export type AppVersionCheckResult = {
@@ -239,6 +242,12 @@ export type AppVersionCheckResult = {
    * reaches phones before production deploys. `false` for every server older than the field.
    */
   eventReach: boolean;
+  /**
+   * The retention durations the server applies to new content (`retention`, core migration 025),
+   * which the privacy policy and the live texts render; `null` until a server has said so, and for
+   * every server older than the field ({@link import('$lib/legal/retention').retentionInForce}).
+   */
+  retention: RetentionDays | null;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -331,6 +340,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     rankedFeeds?: unknown;
     formAnswerEdit?: unknown;
     eventReach?: unknown;
+    retention?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -353,6 +363,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     rankedFeeds: obj.rankedFeeds === true,
     formAnswerEdit: obj.formAnswerEdit === true,
     eventReach: obj.eventReach === true,
+    retention: parseRetention(obj.retention),
   };
 }
 
@@ -378,6 +389,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   rankedFeeds: boolean;
   formAnswerEdit: boolean;
   eventReach: boolean;
+  retention?: RetentionDays;
 } {
   return {
     version: info.version,
@@ -395,6 +407,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     rankedFeeds: info.rankedFeeds,
     formAnswerEdit: info.formAnswerEdit,
     eventReach: info.eventReach,
+    ...(info.retention ? { retention: info.retention } : {}),
   };
 }
 /**
@@ -587,6 +600,7 @@ export function buildAppVersionCheckResult(
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
     formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
     eventReach: serverInfo?.eventReach ?? false,
+    retention: serverInfo?.retention ?? null,
   };
 }
 

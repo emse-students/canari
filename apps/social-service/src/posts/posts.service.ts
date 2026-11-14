@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import { assertWithinPostAttachmentCap } from './post-attachment-cap';
+import { readRetentionDays } from '../common/retention-settings';
 import {
   memberRepostContext,
   EMPTY_MEMBER_REPOST_CONTEXT,
@@ -36,8 +37,8 @@ import {
 import {
   DAY_MS,
   REEL_EXPIRY_WARNING_DAYS,
-  REEL_RETENTION_DAYS,
   isExpiredPost,
+  reelLimits,
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
@@ -1184,6 +1185,15 @@ export class PostsService {
   }
 
   /**
+   * `GET /api/posts/reel-limits`: the CanaReels numbers, the lifetime as the admin setting holds it
+   * NOW (`platform_config.retention_reel_days`) - the one a reel published next is stamped with.
+   */
+  async reelLimitsInForce(): Promise<ReturnType<typeof reelLimits>> {
+    const { reelDays } = await readRetentionDays(this.postRepo.manager, this.logger);
+    return reelLimits(reelDays);
+  }
+
+  /**
    * Refuses a post `viewerId` may not open, by its id - THE SAME GATE AS `getById`
    * (`assertOpenable`, which is `readPostOpenVerdict`), so a reaction, a comment, a comment like or
    * the comment page is refused on every post the read refuses: outside the audience, a block
@@ -1279,8 +1289,13 @@ export class PostsService {
     let reelMediaIds: string[] = [];
     if (data.kind === 'reel') {
       reelMediaIds = postMediaIds({ media: data.media });
+      // The lifetime IN FORCE NOW, stamped once (owner, 2026-11-14): a duration an admin lowers
+      // later applies to reels published after it, never to this one. Read before the claim, so an
+      // unreadable setting refuses the publish before the blob changes class.
+      const { reelDays } = await readRetentionDays(this.postRepo.manager, this.logger);
       await this.claimReelBlob(authorId, reelMediaIds);
-      data.expiresAt = new Date(Date.now() + REEL_RETENTION_DAYS * DAY_MS);
+      data.expiresAt = new Date(Date.now() + reelDays * DAY_MS);
+      this.logger.debug(`createPost: reel by ${authorId} expires in ${reelDays} days`);
     } else {
       data.kind = 'post';
       delete data.durationMs;

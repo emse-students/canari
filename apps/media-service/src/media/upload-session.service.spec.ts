@@ -91,7 +91,7 @@ function rig(existingDir?: string, sharedMedia?: InstanceType<typeof MediaServic
   if (!sharedMedia) {
     const m = media as unknown as Record<string, unknown>;
     m.meta = { items: Object.create(null) };
-    m.logger = { log: () => {}, warn: () => {}, error: () => {} };
+    m.logger = { log: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
     m.persistMetadata = () => Promise.resolve();
   }
   const storage = {

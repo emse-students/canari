@@ -199,6 +199,3 @@ export const LIVE_STRIKE_WINDOW_DAYS = 90;
  * fails the day one of them drifts.
  */
 export const LIVE_REPLAY_MIN_MS = 30_000;
-
-/** How many days a replay is kept after its live's end: the server's `LIVE_REPLAY_RETENTION_DAYS`, said in the texts. */
-export const LIVE_REPLAY_RETENTION_DAYS = 3;

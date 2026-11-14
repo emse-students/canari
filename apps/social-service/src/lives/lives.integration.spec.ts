@@ -68,6 +68,20 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '091_lives.sql'), 'utf8');
+/** Core's retention durations (its migration 025): the replay's lifetime is read from them. */
+const CORE_RETENTION = readFileSync(
+  join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'core-service',
+    'src',
+    'migrations',
+    '025_platform_config_retention.sql'
+  ),
+  'utf8'
+);
 const ANNOUNCED_AT = readFileSync(
   join(__dirname, '..', 'migrations', '094_live_announced_at.sql'),
   'utf8'
@@ -432,6 +446,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       `CREATE TABLE platform_config (id int PRIMARY KEY,
          live_replays_mode varchar(16) NOT NULL DEFAULT 'off')`
     );
+    await q(CORE_RETENTION);
+    await q(CORE_RETENTION);
     await q(`INSERT INTO platform_config (id) VALUES (1)`);
     // The posts columns a replay is written with and read through (`publishReplay`, the post rule
     // `readPostOpenVerdict` asks), and the three tables that rule reads beside the live's.
@@ -710,7 +726,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
 
   describe('live replays: a finished live kept three days as a post (WP-R2, docs/wiki/live-replays.md)', () => {
     const MOD = '9'.repeat(64);
-    const replayOn = () => q(`UPDATE platform_config SET live_replays_mode = 'on'`);
+    const replayOn = () =>
+      q(`UPDATE platform_config SET live_replays_mode = 'on', retention_live_replay_days = 3`);
     const replays = async (liveId: string) =>
       (await q(
         `SELECT p.id, p."authorId", p."durationMs", p."allowReposts", p."studentsOnly",
@@ -782,6 +799,20 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(sweeper.sweepOnce()).resolves.toMatchObject({ deleted: 0, replays: 0 });
       await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
       expect(await replays(live.id)).toHaveLength(1);
+    });
+
+    it('stamps the lifetime IN FORCE at the end, and a later change moves no replay (owner, 2026-11-14)', async () => {
+      await q(`UPDATE platform_config SET retention_live_replay_days = 5`);
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      await q(`UPDATE platform_config SET retention_live_replay_days = 1`);
+      expect(
+        await q(
+          `SELECT p."expiresAt" = l."endedAt" + interval '5 days' AS "fiveDays"
+             FROM posts p JOIN lives l ON l.id = p."liveId" WHERE p."liveId" = $1`,
+          [live.id]
+        )
+      ).toEqual([{ fiveDays: true }]);
     });
 
     it('a replay deleted is never published again: replayPostedAt answers for ever, and the live is purged', async () => {

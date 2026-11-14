@@ -50,6 +50,10 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off' as const,
       groupCallsMode: 'off' as const,
       callRelay: 'none' as const,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -68,6 +72,10 @@ describe('PlatformService', () => {
       liveReplaysMode: 'off' as const,
       groupCallsMode: 'off' as const,
       callRelay: 'none' as const,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -90,6 +98,10 @@ describe('PlatformService', () => {
       callRelay: 'none',
       lydiaContractAnniversary: null,
       lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     });
 
     await service.ensureDefaults();
@@ -170,6 +182,10 @@ describe('PlatformService', () => {
       callRelay: 'none',
       lydiaContractAnniversary: null,
       lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -226,6 +242,10 @@ describe('PlatformService', () => {
         callRelay: 'none',
         lydiaContractAnniversary: null,
         lydiaContract: null,
+        retentionReelDays: 365,
+        retentionLiveReplayDays: 3,
+        retentionChatReelDays: 30,
+        retentionIdleMediaDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -304,6 +324,10 @@ describe('PlatformService', () => {
         callRelay: 'none',
         lydiaContractAnniversary: null,
         lydiaContract: null,
+        retentionReelDays: 365,
+        retentionLiveReplayDays: 3,
+        retentionChatReelDays: 30,
+        retentionIdleMediaDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -367,6 +391,10 @@ describe('PlatformService', () => {
       callRelay: 'none',
       lydiaContractAnniversary: null,
       lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -394,6 +422,10 @@ describe('PlatformService', () => {
       callRelay: 'none',
       lydiaContractAnniversary: null,
       lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleMediaDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -518,6 +550,31 @@ describe('PlatformService', () => {
       'callRelay none -> call-service by=aaaaaaaa'
     );
     warn.mockRestore();
+  });
+
+  it('updateConfig moves a retention duration, logs it at warn with the actor, and touches nothing else', async () => {
+    rowWithMin('0.13.0');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await service.updateConfig({ retentionReelDays: 180 }, ADMIN);
+
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { retentionReelDays: 180 });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'retentionReelDays 365 -> 180 days by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('getConfig publishes every retention duration the row holds', async () => {
+    const row = rowWithMin('0.13.0');
+    row.retentionChatReelDays = 14;
+    const config = await service.getConfig();
+    expect(config).toMatchObject({
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 14,
+      retentionIdleMediaDays: 90,
+    });
   });
 
   it('updateConfig leaves the lives mode alone when the update does not name it', async () => {

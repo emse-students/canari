@@ -20,6 +20,7 @@ import {
   type PushMode,
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
+import { RETENTION_SETTINGS, type RetentionDays } from './retention';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
 import { describeHttpError } from '../common/http-error-log';
@@ -41,7 +42,7 @@ export type PlatformConfigPublic = {
   liveReplaysMode: LiveReplaysMode;
   groupCallsMode: GroupCallsMode;
   callRelay: CallRelay;
-};
+} & RetentionDays;
 
 /**
  * Typed codes in the body of the platform-admin refusals, so the admin screen maps a refusal by
@@ -78,7 +79,15 @@ const DEFAULT_ROW: PlatformConfig = {
   callRelay: 'none',
   lydiaContractAnniversary: null,
   lydiaContract: null,
+  ...retentionDefaults(),
 };
+
+/** Every retention setting at the value its column is created with (migration 025). */
+function retentionDefaults(): RetentionDays {
+  return Object.fromEntries(
+    RETENTION_SETTINGS.map((setting) => [setting.key, setting.defaultDays])
+  ) as RetentionDays;
+}
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
 @Injectable()
@@ -263,6 +272,17 @@ export class PlatformService implements OnModuleInit {
       }
       changes.callRelay = dto.callRelay;
     }
+    for (const setting of RETENTION_SETTINGS) {
+      const wanted = dto[setting.key];
+      if (wanted === undefined) continue;
+      // How long members' content is kept turns on it - a duration the register and the privacy
+      // policy state - so who moved it, and when, is a warn line. It applies to content created from
+      // now on: each service stamps the expiry of a new item from the value in force.
+      if (wanted !== row[setting.key]) {
+        this.logger.warn(`${setting.key} ${row[setting.key]} -> ${wanted} days by=${by}`);
+      }
+      changes[setting.key] = wanted;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -278,7 +298,7 @@ export class PlatformService implements OnModuleInit {
     this.configInFlight = null;
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay} retention=${RETENTION_SETTINGS.map((setting) => `${setting.key}:${saved[setting.key]}`).join(',')}`
     );
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
@@ -373,5 +393,9 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     liveReplaysMode: row.liveReplaysMode,
     groupCallsMode: row.groupCallsMode,
     callRelay: row.callRelay,
+    retentionReelDays: row.retentionReelDays,
+    retentionLiveReplayDays: row.retentionLiveReplayDays,
+    retentionChatReelDays: row.retentionChatReelDays,
+    retentionIdleMediaDays: row.retentionIdleMediaDays,
   };
 }

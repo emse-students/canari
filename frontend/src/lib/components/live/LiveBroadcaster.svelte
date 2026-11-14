@@ -53,7 +53,9 @@
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { shareLiveLink } from '$lib/live/shareLive';
   import { replayFollows, replaysAvailable } from '$lib/live/replayAvailability';
-  import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
+  import { serverLiveReplaysMode, serverRetention } from '$lib/stores/appVersionCheck.svelte';
+  import { retentionInForce } from '$lib/legal/retention';
+  import { durationLabel } from '$lib/legal/retentionLabel';
   import { grabPosterFrame } from '$lib/live/livePoster';
   import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
   import Button from '$lib/components/ui/Button.svelte';
@@ -161,16 +163,27 @@
     return onAir;
   }
 
+  /**
+   * How long a replay stays visible, as the server applies it to a replay published now (the admin
+   * setting, `GET /api/version`'s `retention.liveReplayDays`) - never a number this build carries.
+   */
+  function replayDaysLabel(): string {
+    return durationLabel(retentionInForce(serverRetention()).days.liveReplayDays);
+  }
+
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
     console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
     // The promise of a replay is made only to a live long enough to leave one (`replayFollows`).
     const keepsReplay = replayFollows(serverLiveReplaysMode(), broadcast.elapsedMs());
-    const ok = await showConfirm(keepsReplay ? m.live_end_confirm_replay() : m.live_end_confirm(), {
-      danger: true,
-      confirmLabel: m.live_end_confirm_button(),
-      cancelLabel: m.live_end_keep(),
-    });
+    const ok = await showConfirm(
+      keepsReplay ? m.live_end_confirm_replay({ days: replayDaysLabel() }) : m.live_end_confirm(),
+      {
+        danger: true,
+        confirmLabel: m.live_end_confirm_button(),
+        cancelLabel: m.live_end_keep(),
+      }
+    );
     if (!ok) {
       console.debug('[LIVE-SCREEN] end declined - still on air');
       return;
@@ -343,12 +356,12 @@
 
   /**
    * What the broadcaster's own end says: "Rien n'en est gardé" is true only without a replay - with
-   * one (a live of at least 30 s while replays are on) it says the replay is visible for 3 days. The
+   * one (a live of at least 30 s while replays are on) it says how long the replay is visible. The
    * length is the last second the screen counted on air.
    */
   function endedByBroadcasterText(): string {
     return replayFollows(serverLiveReplaysMode(), elapsedMs)
-      ? m.live_ended_broadcaster_replay()
+      ? m.live_ended_broadcaster_replay({ days: replayDaysLabel() })
       : m.live_ended_broadcaster();
   }
 
@@ -664,8 +677,8 @@
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
           {#if replaysAvailable(serverLiveReplaysMode())}
             {associationId
-              ? m.live_rule_audience_association_replay()
-              : m.live_rule_audience_member_replay()}
+              ? m.live_rule_audience_association_replay({ days: replayDaysLabel() })
+              : m.live_rule_audience_member_replay({ days: replayDaysLabel() })}
           {:else}
             {associationId ? m.live_rule_audience_association() : m.live_rule_audience_member()}
           {/if}

@@ -1,6 +1,30 @@
 <script lang="ts">
   import LegalDocument from '$lib/components/legal/LegalDocument.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { onMount } from 'svelte';
+  import { refreshAppVersionCheck, serverRetention } from '$lib/stores/appVersionCheck.svelte';
+  import { retentionInForce } from '$lib/legal/retention';
+  import { durationLabel } from '$lib/legal/retentionLabel';
+
+  /**
+   * THE DURATIONS AN ADMIN SETS ARE RENDERED FROM THE SAME SOURCE THE SERVICES READ (owner,
+   * 2026-11-14): `GET /api/version`'s `retention`, from `platform_config` - never a number typed in
+   * this text, so the policy and the code cannot disagree. The page has no prerendered or
+   * server-rendered body (`ssr = false` in the root layout), so it shows the live answer, else this
+   * session's cached one, else - offline with no answer ever read here - the values each setting is
+   * created with, and says so above the table (docs/wiki/retention-settings.md).
+   */
+  const retention = $derived(retentionInForce(serverRetention()));
+
+  onMount(() => {
+    void refreshAppVersionCheck().then(() => {
+      if (serverRetention() === null) {
+        console.warn(
+          '[privacy] the retention durations could not be read from the server - the defaults are shown, and the page says so'
+        );
+      }
+    });
+  });
 
   /**
    * The document's own sections, in order. Numbered here because the DOCUMENT numbers
@@ -30,7 +54,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="13/11/2026"
+  updated="14/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -169,13 +193,14 @@
           donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
           serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
           feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
-          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
-          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
-          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
-          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
-          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
-          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
-          lecture.
+          réactions. Lorsque les rediffusions sont activées sur Canari, un direct d'au moins 30
+          secondes reste visible en rediffusion pendant la durée indiquée en section 6, par le même
+          public ; sinon, un direct n'est pas enregistré. Avant votre premier direct, vous acceptez
+          les règles de publication : la version acceptée et sa date sont conservées. Pour limiter
+          les abus, le serveur garde aussi l'heure de chacun de vos démarrages pendant une heure.
+          Les journaux techniques notent les débuts et fins de direct, les coupures et les retraits
+          de spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
         </dd>
       </div>
       <div>
@@ -785,6 +810,10 @@
   <!-- 6 -->
   <section id="retention">
     <h2>6. Durées de conservation</h2>
+    <p>{m.legal_privacy_retention_settings_note()}</p>
+    {#if retention.source === 'defaults'}
+      <p role="status"><strong>{m.legal_privacy_retention_defaults_notice()}</strong></p>
+    {/if}
     <div class="legal-table-wrap">
       <table class="legal-table">
         <thead>
@@ -843,14 +872,25 @@
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
             <td>
-              90 jours sans consultation ; CanaReels de conversation : 30 jours. Les fichiers
-              envoyés avant octobre 2026, ou par une version de l'application antérieure, sont pour
-              l'instant conservés sans limite
+              {durationLabel(retention.days.idleMediaDays)} sans consultation ; CanaReels de conversation
+              : {durationLabel(retention.days.chatReelDays)} après l'envoi. Les fichiers envoyés avant
+              octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
+              sans limite
             </td>
           </tr>
           <tr>
             <td>Publications, commentaires, médias des publications</td>
-            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : un an</td>
+            <td>
+              Jusqu'à leur suppression ou celle du compte ; CanaReels du fil :
+              {durationLabel(retention.days.reelDays)} après leur publication
+            </td>
+          </tr>
+          <tr>
+            <td>Rediffusion d'un direct (lorsque les rediffusions sont activées)</td>
+            <td>
+              {durationLabel(retention.days.liveReplayDays)} après la fin du direct, puis supprimée avec
+              sa vidéo ; ou avant, à sa suppression
+            </td>
           </tr>
           <tr>
             <td>Démineur : parties classées, scores, exclusions du classement</td>

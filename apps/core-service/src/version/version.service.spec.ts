@@ -23,6 +23,10 @@ describe('VersionService', () => {
       liveReplaysMode: 'on',
       groupCallsMode: 'mesh',
       callRelay: 'none',
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 14,
+      retentionIdleMediaDays: 90,
     }),
   } as unknown as PlatformService;
 
@@ -54,6 +58,17 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.liveReplays).toEqual({ mode: 'on' });
+  });
+
+  it('publishes the retention durations in force, which the privacy policy renders', async () => {
+    const out = await service.getVersion();
+
+    expect(out.retention).toEqual({
+      reelDays: 365,
+      liveReplayDays: 3,
+      chatReelDays: 14,
+      idleMediaDays: 90,
+    });
   });
 
   it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
