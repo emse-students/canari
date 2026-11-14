@@ -348,8 +348,9 @@ export class CreatePostDto {
   @Type(() => PostMediaDto)
   images?: PostMediaDto[];
 
-  @IsString()
+  /** The form the post carries: a uuid or nothing, refused with a 400 otherwise (as on update). */
   @IsOptional()
+  @IsUUID()
   attachedFormId?: string;
 
   @IsArray()
