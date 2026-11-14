@@ -15,6 +15,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { MediaService } from './media.service';
 import {
   MediaRetentionHolder,
+  RetentionBootstrap,
   fetchMediaRetention,
   mediaRetention,
   type MediaRetentionDays,
@@ -145,7 +146,6 @@ describe('a duration that cannot be read refuses the upload', () => {
 });
 
 describe('fetchMediaRetention - the relay read, failing closed', () => {
-  const logger = { warn: jest.fn() } as never;
   const realFetch = global.fetch;
   afterEach(() => {
     global.fetch = realFetch;
@@ -158,7 +158,7 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
 
   it('reads the two durations social-service relays', async () => {
     relayAnswers(200, { chatReelDays: 14, idleFileDays: 60, reelDays: 365 });
-    await expect(fetchMediaRetention(logger)).resolves.toEqual({
+    await expect(fetchMediaRetention()).resolves.toEqual({
       chatReelDays: 14,
       idleFileDays: 60,
     });
@@ -166,19 +166,21 @@ describe('fetchMediaRetention - the relay read, failing closed', () => {
 
   it('answers 503 on a refusal or an unreachable relay', async () => {
     relayAnswers(500, {});
-    await expect(fetchMediaRetention(logger)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(fetchMediaRetention()).rejects.toBeInstanceOf(ServiceUnavailableException);
     global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
-    await expect(fetchMediaRetention(logger)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const refused = fetchMediaRetention();
+    await expect(refused).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(refused).rejects.toThrow(/ECONNREFUSED/);
   });
 
   it.each([0, 1.5, '30', null])('THROWS on an unusable value %p, never a default', async (bad) => {
     relayAnswers(200, { chatReelDays: bad, idleFileDays: 90 });
-    await expect(fetchMediaRetention(logger)).rejects.toThrow(/chatReelDays/);
+    await expect(fetchMediaRetention()).rejects.toThrow(/chatReelDays/);
   });
 });
 
 describe('MediaRetentionHolder - the durations held in memory', () => {
-  const logs = () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn() });
+  const logs = () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() });
   const values = (chatReelDays: number, idleFileDays: number): MediaRetentionDays => ({
     chatReelDays,
     idleFileDays,
@@ -191,7 +193,7 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
 
     expect(() => holder.require()).toThrow(ServiceUnavailableException);
     expect(() => holder.require()).toThrow(ServiceUnavailableException);
-    await holder.refresh('notice');
+    await holder.refresh('demand');
     expect(read).toHaveBeenCalledTimes(1);
     expect(holder.require()).toEqual(values(30, 90));
   });
@@ -212,6 +214,132 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('values read 120 s ago'));
   });
 
+  it('logs an outage once when it starts and once when it ends - a refused upload is a debug line', async () => {
+    let now = 1_000_000;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockResolvedValue(values(30, 90));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger, () => now);
+
+    await holder.refresh('boot');
+    for (let upload = 0; upload < 2; upload++) {
+      expect(() => holder.require()).toThrow(ServiceUnavailableException);
+      await holder.refresh('demand');
+    }
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('upload refused'));
+
+    now += 45_000;
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    await holder.refresh('demand');
+    expect(holder.require()).toEqual(values(30, 90));
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('readable again (demand) after 45 s: 3 upload(s) refused meanwhile')
+    );
+  });
+
+  it('a notice never joins a read already running: it gets a fresh one, and the new values', async () => {
+    const answers: Array<(v: MediaRetentionDays) => void> = [];
+    const read = jest.fn(() => new Promise<MediaRetentionDays>((r) => answers.push(r)));
+    const holder = new MediaRetentionHolder(read, logs());
+
+    // A demand read is running; it asked social-service BEFORE the admin's update committed.
+    const demand = holder.refresh('demand');
+    const notice = holder.refresh('notice');
+    const second = holder.refresh('notice');
+    expect(read).toHaveBeenCalledTimes(1);
+    answers[0](values(30, 90));
+    await demand;
+    await Promise.resolve();
+    // The notices' read starts only now, after the running one - and both notices share it.
+    expect(read).toHaveBeenCalledTimes(2);
+    answers[1](values(7, 90));
+    await expect(notice).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(holder.require()).toEqual(values(7, 90));
+  });
+
+  it('one read at a time: a demand arriving as the running read hands over joins, never starts a second', async () => {
+    let running = 0;
+    let most = 0;
+    const answers: Array<(v: MediaRetentionDays) => void> = [];
+    const read = jest.fn(
+      () =>
+        new Promise<MediaRetentionDays>((resolve) => {
+          running += 1;
+          most = Math.max(most, running);
+          answers.push((v) => {
+            running -= 1;
+            resolve(v);
+          });
+        })
+    );
+    const holder = new MediaRetentionHolder(read, logs());
+
+    void holder.refresh('demand');
+    const notice = holder.refresh('notice');
+    answers[0](values(30, 90));
+    // Every microtask of the hand-over, a demand: none may start a read of its own.
+    for (let i = 0; i < 6; i++) {
+      void holder.refresh('demand');
+      await Promise.resolve();
+    }
+    expect(read).toHaveBeenCalledTimes(2);
+    answers[1](values(7, 90));
+    await expect(notice).resolves.toBe(true);
+    expect(most).toBe(1);
+    expect(holder.require()).toEqual(values(7, 90));
+  });
+
+  it('a read that rejects still hands over: the queued notice is never left pending', async () => {
+    const answers: Array<{ ok: (v: MediaRetentionDays) => void; ko: (e: unknown) => void }> = [];
+    const read = jest.fn(
+      () => new Promise<MediaRetentionDays>((ok, ko) => answers.push({ ok, ko }))
+    );
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger);
+    // Make the FIRST read's own handling reject, as a defect would.
+    const readOnce = jest
+      .spyOn(holder as unknown as { readOnce: () => Promise<boolean> }, 'readOnce')
+      .mockImplementationOnce(() => Promise.reject(new Error('defect')));
+
+    const first = holder.refresh('demand');
+    const notice = holder.refresh('notice');
+    await expect(first).resolves.toBe(false);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('REJECTED'));
+    readOnce.mockRestore();
+    await Promise.resolve();
+    answers[0].ok(values(7, 90));
+    await expect(notice).resolves.toBe(true);
+  });
+
+  it('a refusal before any read is not counted into a later outage', async () => {
+    let now = 1_000_000;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockResolvedValueOnce(values(30, 90))
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service unreachable'))
+      .mockResolvedValue(values(30, 90));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger, () => now);
+
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    await holder.refresh('demand');
+
+    await holder.refresh('notice'); // fails: an outage opens, with values held
+    now += 10_000;
+    await holder.refresh('notice'); // succeeds: it closes
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('after 10 s: 0 upload(s) refused meanwhile')
+    );
+  });
+
   it('applies a changed value from the notice on', async () => {
     const read = jest
       .fn<Promise<MediaRetentionDays>, []>()
@@ -224,12 +352,12 @@ describe('MediaRetentionHolder - the durations held in memory', () => {
     expect(holder.require().chatReelDays).toBe(7);
   });
 
-  it('shares one read between notices that arrive while it runs', async () => {
+  it('shares one read between the uploads that ask for one while it runs', async () => {
     let resolve!: (v: MediaRetentionDays) => void;
     const read = jest.fn(() => new Promise<MediaRetentionDays>((r) => (resolve = r)));
     const holder = new MediaRetentionHolder(read, logs());
-    const a = holder.refresh('notice');
-    const b = holder.refresh('notice');
+    const a = holder.refresh('demand');
+    const b = holder.refresh('demand');
     resolve(values(30, 90));
     await Promise.all([a, b]);
     expect(read).toHaveBeenCalledTimes(1);
@@ -276,5 +404,23 @@ describe('an upload reads the HELD durations, never the network', () => {
     const id = await service.upload(Buffer.alloc(10), 'alice', 'chat-reel');
     const hold = items[id].holds?.chat;
     expect(hold!.dueAt - hold!.heldAt).toBe(3 * DAY);
+  });
+});
+
+describe('RetentionBootstrap - the boot read is awaited before the routes listen', () => {
+  it('resolves only once the boot read has settled, so an upload never meets a read still running', async () => {
+    let settle!: (ok: boolean) => void;
+    const refresh = jest
+      .spyOn(mediaRetention, 'refresh')
+      .mockImplementation(() => new Promise<boolean>((r) => (settle = r)));
+    let done = false;
+    const boot = new RetentionBootstrap().onApplicationBootstrap().then(() => (done = true));
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledWith('boot');
+    expect(done).toBe(false);
+    settle(false);
+    await boot;
+    expect(done).toBe(true);
+    refresh.mockRestore();
   });
 });
