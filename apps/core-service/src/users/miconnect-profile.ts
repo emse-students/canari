@@ -48,8 +48,14 @@ export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
   if (Array.isArray(claims.cursus)) {
     for (const entry of claims.cursus as unknown[]) {
       const e = entry as Partial<CursusEntry> | null;
-      if (e && typeof e.formation === 'string' && e.formation && Number.isInteger(e.promo)) {
-        cursus.push({ formation: e.formation, promo: e.promo as number });
+      const formation = e ? FORMATIONS.find((f) => f === e.formation) : undefined;
+      if (e && typeof e.formation === 'string' && !formation && Number.isInteger(e.promo)) {
+        // A formation no space names ('Master', 'icm') would leave a person with a cursus that
+        // matches NO space: neither a student of one nor staff, and silently so. Dropped like an
+        // unknown campus or post, and said - the provider's list is the one to correct.
+        logger.warn(`profile claim: unknown formation ${JSON.stringify(e.formation)} dropped`);
+      } else if (e && formation && Number.isInteger(e.promo)) {
+        cursus.push({ formation, promo: e.promo as number });
       } else {
         logger.warn(`profile claim: malformed cursus entry ${JSON.stringify(entry)} dropped`);
       }

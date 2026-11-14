@@ -273,6 +273,16 @@ export class UsersService implements OnModuleInit {
       if (lastName && user.lastName !== lastName) changes.lastName = lastName;
       if (!sameProfile(user)) {
         this.logger.debug(`OIDC profile changed for ${id}: campus=${profile.campus}`);
+        // Every audience decision reads these two columns: a sign-in that takes away the campus,
+        // or the whole cursus, takes away every space. It is the provider's answer and it is
+        // applied (WP3) - but it accuses, since a mapping that stopped emitting looks the same.
+        const lostCampus = !!user.campus && !profile.campus;
+        const lostCursus = (user.cursus ?? []).length > 0 && profile.cursus.length === 0;
+        if (lostCampus || lostCursus) {
+          this.logger.warn(
+            `[OIDC_PROFILE_SHRANK] ${id.slice(0, 8)} lost ${[lostCampus && 'its campus', lostCursus && 'its whole cursus'].filter(Boolean).join(' and ')} at sign-in: no space reaches it any more`
+          );
+        }
         Object.assign(changes, profile, { promo, formation });
       }
       if (Object.keys(changes).length > 0) {
