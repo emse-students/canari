@@ -38,6 +38,9 @@ use crate::commands::at_rest_key::{
 use crate::commands::background_flush::{begin_background_flush, end_background_flush};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
+use crate::commands::conversation_nicknames::{
+    forget_conversation_nicknames, store_conversation_nicknames,
+};
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
@@ -1832,6 +1835,8 @@ pub fn run() {
             notifier_message_natif,
             store_avatar_mirror,
             store_display_names,
+            store_conversation_nicknames,
+            forget_conversation_nicknames,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store

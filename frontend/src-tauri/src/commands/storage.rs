@@ -1028,14 +1028,21 @@ fn wipe_native_app_data(
     wiped
 }
 
-/// Removes the App Group copy of `display_names.json`. A factory wipe forgets every account, so
-/// unlike the account deletion it is owner-agnostic. Only that file: the other App Group copies
+/// Removes the App Group copies of `display_names.json` and `conversation_nicknames.json`. A factory
+/// wipe forgets every account, so unlike the account deletion it is owner-agnostic. Only those two
+/// files: the other App Group copies
 /// (`push_context.json`, the extension's caches) are not this wipe's today, see the backlog.
 #[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
 pub(crate) fn wipe_group_names(group: &std::path::Path) -> Result<(), String> {
     let (mut removed, mut failures) = (0usize, 0usize);
     remove_entry(
         &group.join(crate::commands::display_names::DISPLAY_NAMES_FILE),
+        &mut removed,
+        &mut failures,
+    );
+    // The nicknames copy is the same kind of mirror, read by the same extension.
+    remove_entry(
+        &group.join(crate::commands::conversation_nicknames::CONVERSATION_NICKNAMES_FILE),
         &mut removed,
         &mut failures,
     );
@@ -2085,10 +2092,18 @@ mod tests {
             br#"{"userId":"someone","names":{}}"#,
         )
         .unwrap();
+        std::fs::write(
+            group.join(crate::commands::conversation_nicknames::CONVERSATION_NICKNAMES_FILE),
+            br#"{"userId":"someone","scopes":{}}"#,
+        )
+        .unwrap();
         std::fs::write(group.join("push_context.json"), b"{}").unwrap();
         wipe_group_names(&group).unwrap();
         assert!(!group
             .join(crate::commands::display_names::DISPLAY_NAMES_FILE)
+            .exists());
+        assert!(!group
+            .join(crate::commands::conversation_nicknames::CONVERSATION_NICKNAMES_FILE)
             .exists());
         assert!(group.join("push_context.json").exists());
         // Nothing to remove is a success, not a failure.

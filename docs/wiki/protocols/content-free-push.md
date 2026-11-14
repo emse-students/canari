@@ -340,7 +340,10 @@ causes, and the wake touches them differently:
 - **The author is unnamed** ("Quelqu'un" subtitle: a v1 session that proves no author, or
   `display_names.json` naming nobody for a proven author) - unchanged, unless the open question Q5
   below is taken: the fetched answer may carry the author's display name, used ONLY when the open
-  proved that same `senderId`.
+  proved that same `senderId`. **Owner, 2026-11-14: every notification name is composed by the
+  device, and none rides a push** - a proven author is named by their nickname in the community
+  (`conversation_nicknames.json`), else by `display_names.json`
+  ([chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
 
 So the wake can only REMOVE a blind-banner cause; whatever the investigation finds for the other two
 stays its own fix. The blind-banner counter must keep its `missing` reasons under wake mode (a

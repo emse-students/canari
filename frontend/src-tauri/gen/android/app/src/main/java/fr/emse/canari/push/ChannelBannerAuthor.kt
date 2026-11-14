@@ -14,8 +14,10 @@ package fr.emse.canari.push
  * there. Only the speaker of the NEW line varies, and each kind of speaker carries its own
  * [Author.personKey], so MessagingStyle never merges two of them under one name.
  *
- * The name comes from the PHONE'S OWN copy (`display_names.json`, written by the WebView for every
- * name it resolved - WP-MENTION-NAME), never from the push: a salon push carries `senderId` alone,
+ * The name comes from the PHONE'S OWN copy - the author's nickname in the salon's community first
+ * (`conversation_nicknames.json`, [ConversationNicknames], owner 2026-11-14), else the profile name
+ * (`display_names.json`, written by the WebView for every name it resolved - WP-MENTION-NAME) -
+ * never from the push: a salon push carries `senderId` alone,
  * and no name may ride a payload Google or Apple carries (`push-payloads-carry-nothing`).
  *
  * THREE ANSWERS:
@@ -81,13 +83,23 @@ object ChannelBannerAuthor {
      * @param authorProven  the native open's `authorProven`: true only under a v2 session.
      * @param authorId      [ChannelBannerAttribution.Attribution.authorId] - the push's `senderId`
      *   once opened, null on a blind banner or a push that named nobody.
+     * @param nickname      the author's nickname in this salon's community, from the phone's copy
+     *   ([ConversationNicknames]); it wins over the profile name, and only for a PROVEN author - a
+     *   nickname is still a name, so a v1 session's server-claimed author gets none (owner, 2026-11-14).
      * @param book          the phone's names, read only when an author must be named.
      */
-    fun of(showsMessage: Boolean, authorProven: Boolean, authorId: String?, book: () -> NameBook): Author {
+    fun of(
+        showsMessage: Boolean,
+        authorProven: Boolean,
+        authorId: String?,
+        nickname: (String) -> String? = { null },
+        book: () -> NameBook,
+    ): Author {
         if (!showsMessage) return Author.Unproven
         val id = authorId?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
             ?: return Author.Unnamed(id = "", reason = "no-sender-id")
         if (!authorProven) return Author.Unnamed(id, "v1-session")
+        nickname(id)?.trim()?.takeIf { it.isNotEmpty() }?.let { return Author.Named(id, it) }
         return when (val read = book()) {
             is NameBook.Unusable -> Author.Unnamed(id, read.reason)
             is NameBook.Held -> read.nameOf(id)?.trim()?.takeIf { it.isNotEmpty() }

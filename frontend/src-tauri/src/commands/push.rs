@@ -2962,8 +2962,9 @@ pub(crate) fn delete_user_push_files(
     remove_account_push_and_name_files(&data_dir, None, &user_id)
 }
 
-/// The body of [`delete_user_push_files`]: the mirrored names (`display_names.json`, in the data
-/// directory and in `group`, the iOS App Group), then [`remove_user_push_files`].
+/// The body of [`delete_user_push_files`]: the mirrored names (`display_names.json`) and nicknames
+/// (`conversation_nicknames.json`), in the data directory and in `group`, the iOS App Group, then
+/// [`remove_user_push_files`].
 ///
 /// The names carry their own owner, so they are removed on THEIR proof, not the context's. A
 /// failure there is LOGGED AND CARRIED, never a `?`: an early return would leave
@@ -2978,6 +2979,15 @@ pub(crate) fn remove_account_push_and_name_files(
     for dir in std::iter::once(data_dir).chain(group) {
         if let Err(e) = crate::commands::display_names::remove_display_names_of(dir, user_id) {
             log::error!("[DEL-LOCAL] names copy not removed, the other push files still are: {e}");
+            names_error.get_or_insert(e);
+        }
+        // The nicknames copy carries its owner the same way, and goes on the same proof.
+        if let Err(e) =
+            crate::commands::conversation_nicknames::remove_conversation_nicknames_of(dir, user_id)
+        {
+            log::error!(
+                "[DEL-LOCAL] nicknames copy not removed, the other push files still are: {e}"
+            );
             names_error.get_or_insert(e);
         }
     }
@@ -4132,14 +4142,26 @@ mod delete_user_push_files_tests {
         let dir = dir_with("names_ok", Some(r#"{"userId":"a","deviceId":"d"}"#));
         let group = dir.join("group");
         let names = std::collections::HashMap::from([("1".repeat(64), "Alice".to_string())]);
+        use crate::commands::conversation_nicknames::{
+            merge_conversation_nicknames, NicknameChange, CONVERSATION_NICKNAMES_FILE,
+        };
         merge_display_names(&dir, "a", &names, &[]).unwrap();
         merge_display_names(&group, "a", &names, &[]).unwrap();
+        let nick = [NicknameChange {
+            scope: "g".into(),
+            member_id: "1".repeat(64),
+            nickname: Some("Lili".into()),
+        }];
+        merge_conversation_nicknames(&dir, "a", &nick, &[]).unwrap();
+        merge_conversation_nicknames(&group, "a", &nick, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
             5
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());
+        assert!(!dir.join(CONVERSATION_NICKNAMES_FILE).exists());
+        assert!(!group.join(CONVERSATION_NICKNAMES_FILE).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -16,7 +16,7 @@ import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 import { noteAbsentUser } from './absentUsers';
 import { noteDeletedAccount, noteResolvedName } from './nameMirror';
 import { forgetPeerName, notePeerName, readPeerName } from './peerNameDirectory';
-import { visibleNickname } from './conversationNicknames.svelte';
+import { notificationNicknameScope, visibleNickname } from './conversationNicknames.svelte';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
@@ -230,9 +230,10 @@ export function getUserFirstNameSync(userId: string, fallback: string, scope?: s
  *
  * **`scope` IS THE CONVERSATION THE NAME IS DRAWN IN, AND THE ONLY DOOR A NICKNAME HAS.** A nickname
  * set in a DM, a group or a community ("Modifier les pseudos") overrides the profile name THERE and
- * nowhere else (`conversationNicknames.svelte.ts`): a caller drawing inside a conversation passes its
- * scope; a caller drawing anywhere else - a profile, a picker, a notification, a stored notice -
- * passes none and gets the profile name. No call site reads a nickname itself.
+ * nowhere else (`conversationNicknames.svelte.ts`): a caller drawing inside a conversation - or a
+ * NOTIFICATION about it (owner, 2026-11-14) - passes its scope; a caller drawing anywhere else - a
+ * profile, a picker, a stored notice - passes none and gets the profile name. No call site reads a
+ * nickname itself.
  */
 export function getUserDisplayNameSync(userId: string, fallback?: string, scope?: string): string {
   const nickname = visibleNickname(scope, userId);
@@ -281,14 +282,23 @@ export function getUserDisplayNameSync(userId: string, fallback?: string, scope?
  * group, so it is never a key - which makes it the right fallback for a DM and a HONEST one for a
  * group, where the banner names the group anyway and the alternative is a handle. `name` is only
  * reached where the conversation is not a DM, the one shape in which it cannot be `me::peer`.
+ *
+ * THE SENDER'S NICKNAME IN THAT CONVERSATION WINS (owner, 2026-11-14: *"comme sur Messenger, tous
+ * les pseudos"*, reversing the 2026-11-08 rule that kept nicknames out of every notification).
+ * `conversationKey` is what the notification is about; its scope ({@link notificationNicknameScope}:
+ * the group itself, or a salon's community) is handed to the one resolver, so the screen and the
+ * notification apply the same block rule. The native push path applies it to the copy
+ * `nicknameMirror.ts` keeps (`libs/contracts/notification-nickname.cases.json`).
  */
 export function notificationSenderName(
   senderId: string,
+  conversationKey: string,
   convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
 ): string {
   const fallback =
     convo.contactName?.trim() || (convo.conversationType === 'direct' ? '' : convo.name?.trim());
-  return getUserDisplayNameSync(senderId, fallback);
+  const scope = notificationNicknameScope(conversationKey, convo.conversationType) ?? undefined;
+  return getUserDisplayNameSync(senderId, fallback, scope);
 }
 
 /**
@@ -303,8 +313,18 @@ export function notificationSenderName(
  */
 export async function resolveNotificationSenderName(
   senderId: string,
+  conversationKey: string,
   convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
 ): Promise<string> {
+  // A nickname in that conversation names the sender without any profile lookup.
+  const scope = notificationNicknameScope(conversationKey, convo.conversationType);
+  const nickname = visibleNickname(scope, senderId);
+  if (nickname) {
+    console.debug(
+      `[NOTIF] sender ${senderId.slice(0, 8)} named by their nickname in this conversation`
+    );
+    return nickname;
+  }
   if (peekUserDisplayName(senderId) === null) {
     await resolveUserDisplayName(senderId);
   }
@@ -317,7 +337,7 @@ export async function resolveNotificationSenderName(
     );
     return m.user_unknown_label();
   }
-  return notificationSenderName(senderId, convo);
+  return notificationSenderName(senderId, conversationKey, convo);
 }
 
 /**

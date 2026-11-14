@@ -1,0 +1,59 @@
+{
+  "$comment": [
+    "THE NAME A NOTIFICATION GIVES A MEMBER OF A CONVERSATION, WRITTEN ONCE AND ASSERTED ON EVERY PLATFORM.",
+    "",
+    "Owner, 2026-11-14: 'comme sur Messenger, tous les pseudos' - a notification names a member by the",
+    "nickname set in THAT conversation, whoever set it, lock screen included; and 'Tout pourrait etre",
+    "donne par l'appareil et rien par le serveur' - the DEVICE composes every name, no push carries one.",
+    "",
+    "The device's copy is `conversation_nicknames.json` (written by Rust `store_conversation_nicknames`",
+    "from what the WebView holds, `nicknameMirror.ts`): `userId` is its owner; `scopes` maps a nickname",
+    "scope (an MLS group id, or `community:<workspace id>` for a community) to {member id: nickname};",
+    "`channels` maps a salon id (no `channel_` prefix) to its community's scope. Only nicknames the owner",
+    "may SEE are written (a nickname of the owner set by somebody in a block with them, or whose block",
+    "status is unknown, is not), so a reader applies no block rule of its own.",
+    "",
+    "Readers: the client's `notificationNickname` (conversationNicknames.svelte.ts, against its own",
+    "register), Android `ConversationNicknames` (android-tests `ConversationNicknamesTest`), the iOS",
+    "extension's `ConversationNicknames` and `canari_push.mm`'s `CanariConversationNickname`, and Rust's",
+    "`lookup_conversation_nickname` (the writer's own test). See docs/wiki/frontend/modules/chat.md,",
+    "'Per-conversation nicknames'.",
+    "",
+    "Case fields: `me` the signed-in account; `kind` `group` (an MLS conversation, `conversation` is its",
+    "group id) or `salon` (`conversation` is a salon id, with or without its `channel_` prefix);",
+    "`member` the person named; `expected` the nickname, or null for 'no nickname - use the name the",
+    "platform already had' (the profile name from the phone's own copy)."
+  ],
+  "book": {
+    "userId": "1111111111111111111111111111111111111111111111111111111111111111",
+    "scopes": {
+      "grp-dm-1": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "Lili",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "  Bobby  ",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": ""
+      },
+      "community:ws-1": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "La Présidente"
+      }
+    },
+    "channels": {
+      "chan-1": "community:ws-1",
+      "chan-2": "community:ws-2"
+    }
+  },
+  "cases": [
+    { "name": "a group's nickname names its member", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-dm-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": "Lili" },
+    { "name": "the member id is read in any case", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-dm-1", "member": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "expected": "Lili" },
+    { "name": "a nickname is trimmed", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-dm-1", "member": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "expected": "Bobby" },
+    { "name": "an empty nickname is none", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-dm-1", "member": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "expected": null },
+    { "name": "a member nobody named keeps the profile name", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-dm-1", "member": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "expected": null },
+    { "name": "a nickname never leaves its conversation", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "grp-other", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null },
+    { "name": "a salon reads its community's register", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "salon", "conversation": "chan-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": "La Présidente" },
+    { "name": "a salon id may carry its conversation prefix", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "salon", "conversation": "channel_chan-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": "La Présidente" },
+    { "name": "a salon of a community with no register names nobody", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "salon", "conversation": "chan-2", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null },
+    { "name": "a salon the device cannot place names nobody", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "salon", "conversation": "chan-unknown", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null },
+    { "name": "a group id is never read as a salon", "me": "1111111111111111111111111111111111111111111111111111111111111111", "kind": "group", "conversation": "chan-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null },
+    { "name": "another account's copy is never read", "me": "2222222222222222222222222222222222222222222222222222222222222222", "kind": "group", "conversation": "grp-dm-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null },
+    { "name": "no signed-in account names nobody", "me": null, "kind": "group", "conversation": "grp-dm-1", "member": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected": null }
+  ]
+}

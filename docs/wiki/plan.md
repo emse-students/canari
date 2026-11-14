@@ -179,6 +179,7 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [WebKit opens each participant's frames with that participant's key in a group call](backlog.d/reading-owed-webkit-receiver-transforms-per-peer-in-a-group-call.md)
 - [ ] [a device with no push token now says so](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [a notification names a member by their nickname in that conversation](backlog.d/reading-owed-nicknames-in-notifications.md)
 - [ ] [the auto-merge ceiling refuses a major](backlog.d/reading-owed-the-auto-merge-ceiling-refuses-a-major.md)
 - [ ] [the CORRUPT-2 rig row on a build since `v1.3.0`](backlog.d/p1-a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user.md)
 - [ ] [the KeyPackage minting loop on a handset across background and resume](backlog.d/p1-the-minting-loop-has-never-been-observed-on-the-handset-and-a-blob-s-size.md)

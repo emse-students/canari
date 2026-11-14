@@ -25,8 +25,9 @@ import {
 import { applyNickname, resetConversationNicknamesForTests } from './conversationNicknames.svelte';
 
 /**
- * THE RESOLVER IS THE ONE DOOR A NICKNAME HAS. With the conversation's scope it overrides the
- * profile name; without one - a profile, a picker, and above all a NOTIFICATION - it does not exist.
+ * THE RESOLVER IS THE ONE DOOR A NICKNAME HAS. With the conversation's scope - the conversation on
+ * screen, or the one a notification is about - it overrides the profile name; without one (a
+ * profile, a picker) it does not exist.
  */
 describe('a nickname enters the name resolver through its scope only', () => {
   beforeEach(() => {
@@ -47,9 +48,10 @@ describe('a nickname enters the name resolver through its scope only', () => {
     expect(getUserFirstNameSync('bob', 'bob')).toBe('Bob');
   });
 
-  it('never reaches a notification - the push path names the profile', () => {
-    expect(
-      notificationSenderName('bob', { name: 'g1', contactName: '', conversationType: 'group' })
-    ).toBe('Bob Martin');
+  // Owner, 2026-11-14 ("comme sur Messenger, tous les pseudos"), reversing 2026-11-08.
+  it('names the sender of a notification about ITS conversation, and of no other', () => {
+    const group = { name: 'g1', contactName: '', conversationType: 'group' as const };
+    expect(notificationSenderName('bob', 'g1', group)).toBe('Capitaine');
+    expect(notificationSenderName('bob', 'g2', group)).toBe('Bob Martin');
   });
 });
