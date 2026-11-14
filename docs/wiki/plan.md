@@ -136,6 +136,7 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [WebKit opens each participant's frames with that participant's key in a group call](backlog.d/reading-owed-webkit-receiver-transforms-per-peer-in-a-group-call.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
+- [ ] [one live notification per post, on both phones](backlog.d/reading-owed-one-live-notification-per-post-on-both-phones.md)
 - [ ] [WP-REGRANT-2, a re-granted member's seed by distribution, never by repair](backlog.d/reading-owed-wp-regrant-2-a-re-granted-member-s-re-join.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)

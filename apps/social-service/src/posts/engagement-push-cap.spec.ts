@@ -7,7 +7,12 @@ import {
   PUSH_KEY_MIN_CLIENT,
   PUSH_ONLY_NOTIFICATION_TYPES,
 } from '../push/notification-client-floor';
-import { CAPPED_PUSH_TYPES, ENGAGEMENT_DAILY_PUSH_CAP, PUSH_BUDGET } from './engagement-push-cap';
+import {
+  CAPPED_PUSH_TYPES,
+  ENGAGEMENT_DAILY_PUSH_CAP,
+  ONE_PER_POST_TYPES,
+  PUSH_BUDGET,
+} from './engagement-push-cap';
 
 /**
  * THE CAPPED TYPES AND THEIR CATEGORY (engagement WP-8, decisions 6 and 11 as amended 2026-11-10). The cap reads a
@@ -44,22 +49,27 @@ describe('CAPPED_PUSH_TYPES', () => {
     expect(CAPPED_PUSH_TYPES.get('campus_trend')?.category).toBe('suggestions');
   });
 
-  it('counts the owner list of 2026-11-10, at 3 a day', () => {
+  it('counts the DISCOVERIES only (owner, 2026-11-10, narrowed 2026-11-14), at 3 a day', () => {
     expect([...CAPPED_PUSH_TYPES.keys()].sort()).toEqual([
       'booking_open',
       'campus_trend',
-      'comment',
       'event_open',
       'followed_post',
       'friend_comment',
       'friend_reaction',
       'member_repost',
-      'reaction',
     ]);
     expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(3);
   });
 
+  it('collapses comments and reactions on your own post, one per post, never counted (owner, 2026-11-14)', () => {
+    expect([...ONE_PER_POST_TYPES].sort()).toEqual(['comment', 'reaction']);
+    for (const type of ONE_PER_POST_TYPES) expect(CAPPED_PUSH_TYPES.has(type)).toBe(false);
+  });
+
   it.each([
+    'comment',
+    'reaction',
     'birthday',
     'association_post',
     'association_repost',
@@ -99,7 +109,7 @@ describe('PUSH_BUDGET', () => {
     );
     expect(split).toEqual([]);
     expect(CAPPED_PUSH_TYPES.get('campus_trend')?.floor).toBe('1.6.10');
-    expect(CAPPED_PUSH_TYPES.get('reaction')?.floor).toBeNull();
+    expect(CAPPED_PUSH_TYPES.get('followed_post')?.floor).toBeNull();
   });
 
   it('names at least one content key for every counted type', () => {

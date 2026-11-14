@@ -2323,9 +2323,11 @@ group summary, avatar/initials fallback, and sender-name subtitles inside group 
     `@"canari_messages"` when empty), mirroring the NSE. Social/form notifications keep their own
     threads (`canari_social`/`canari_forms`).
 
-**Reactions to a post** (2026-10-08): both platforms group them per POST. Android keeps one
-notification per post updated in place; iOS files them under the APNs thread `post_reaction_<postId>`
-(`buildInternalApnsRequest`). Detail and what iOS still lacks: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
+**Comments and reactions on your own post** (2026-11-14): ONE notification per post on both
+platforms, decided by the server ([one per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)). The push carries `collapseId`
+(`post_activity_<postId>`) and `quiet`; `buildInternalApnsRequest` sets the `apns-collapse-id`
+header and the `thread-id` from it, and a quiet one gets `interruption-level: passive` and no sound.
+Client detail: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
 
 **Group summary**
 

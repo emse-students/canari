@@ -57,11 +57,25 @@ describe('PostNotificationsService.createNotifications', () => {
         query: (sql: string, params?: unknown[]) =>
           Promise.resolve(
             sql.includes('engagement_push_days')
-              ? (params![0] as string[]).map((userId) => ({ userId }))
+              ? (params![0] as string[]).map((userId) => ({
+                  userId,
+                  off: false,
+                  noDevice: false,
+                  claimed: true,
+                  pushedToday: 1,
+                }))
               : sql.includes('unnest($1::varchar[]) r')
                 ? (params![0] as string[]).map((r) => ({ r }))
                 : [{ displayName: 'Claire' }]
           ),
+        // The read writes take the reader's lock in a transaction (`markReadUnderLock`).
+        transaction: (work: (tx: { query: (sql: string, p?: unknown[]) => unknown }) => unknown) =>
+          work({
+            query: (sql: string, params?: unknown[]) => {
+              updates.push({ sql, params });
+              return Promise.resolve([]);
+            },
+          }),
       },
     };
     const push = {
@@ -312,10 +326,14 @@ describe('PostNotificationsService.createNotifications', () => {
   it('marks only the current user notifications for the opened post as read', async () => {
     await service().markPostRead('reader', 'post-1');
 
+    // Under the reader's lock (the per-post claim reads this state), then ONE update of that post.
     expect(updates).toEqual([
+      { sql: expect.stringContaining('pg_advisory_xact_lock'), params: ['reader'] },
       {
-        criteria: { recipientId: 'reader', postId: 'post-1' },
-        values: { read: true },
+        sql: expect.stringMatching(
+          /UPDATE post_notifications SET read = true[\s\S]*"postId" = \$2/
+        ),
+        params: ['reader', 'post-1'],
       },
     ]);
   });
@@ -398,9 +416,9 @@ describe('PostNotificationsService.createNotifications', () => {
       expect(pushes.map((p) => p.userId)).toEqual(['a']);
     });
 
-    it('never asks a bell about a mention, a reply or a comment', async () => {
+    it('never asks a bell about a mention or a reply', async () => {
       levels.set('a', 'none');
-      for (const type of ['mention', 'reply', 'comment'] as const) {
+      for (const type of ['mention', 'reply'] as const) {
         await service().createNotifications({
           postId: 'p1',
           actorId: 'author',
@@ -412,7 +430,7 @@ describe('PostNotificationsService.createNotifications', () => {
       }
       await flush();
       expect(bellAsks).toEqual([]);
-      expect(pushes.map((p) => p.userId)).toEqual(['a', 'a', 'a']);
+      expect(pushes.map((p) => p.userId)).toEqual(['a', 'a']);
     });
   });
   /**
