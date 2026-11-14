@@ -726,6 +726,9 @@ class MainActivity : TauriActivity() {
     }
 
     /**
+     * A BACK PRESS AT THE ROOT SENDS THE APP TO THE BACKGROUND, IT NEVER FINISHES IT (owner, 2026-11-14;
+     * the call-specific case below predates it and is kept: it logs why a call must never be torn down).
+     *
      * A BACK PRESS AT THE ROOT DURING A CALL SENDS THE APP BACK, IT NEVER FINISHES IT.
      *
      * Wry's callback calls this once the WebView has no history left. Since Android 12 the platform
@@ -752,8 +755,13 @@ class MainActivity : TauriActivity() {
             moveTaskToBack(true)
             return
         }
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
+        // BACK AT A ROOT TAB WITH NO HISTORY GOES TO THE BACKGROUND, LIKE MESSENGER (owner, 2026-11-14).
+        // `super.onBackPressed()` finishes the activity, and tao's Android event loop then ends with
+        // `std::process::exit`, so the next launch was a cold start (read on the Mi 9T, 2026-11-14,
+        // docs/wiki/backlog.d/root-back-exits-the-process-through-tao.md). Moving the task back keeps the
+        // process and the WebView warm on every API level; the system still ends them under memory pressure.
+        Log.i("MainActivity", "Back at the root with no history on API ${Build.VERSION.SDK_INT} - moving the task to the background")
+        moveTaskToBack(true)
     }
 
     /** The link the next `onResume` opens, set by `onNewIntent` and taken by that resume. */
