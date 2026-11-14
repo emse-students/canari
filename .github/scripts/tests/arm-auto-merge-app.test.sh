@@ -510,19 +510,27 @@ if grep -qE '^ +types: \[[a-z_, ]*auto_merge_enabled\]' "$wf"; then
 else
   fail "B32 arm-auto-merge.yml does not listen to auto_merge_enabled"
 fi
-# THE ARMING NAMES THE HEAD THE GUARD JUDGED: without `--match-head-commit`, a push between the guard
-# and the merge step would be armed on a file list read of another head. Every `--auto` arming in
-# the file must carry it, and the step that arms an ordinary pull request must be given HEAD_SHA.
+# THE ARMING NAMES THE HEAD THE GUARD JUDGED, AND IT CAN ONLY ARM: the mutation carries
+# `expectedHeadOid` bound to HEAD_SHA, so a push between the guard and the merge step is refused
+# instead of being armed on a file list read of another head. And NO `gh pr merge --auto` is left
+# anywhere in the file: that command merges by itself when the pull request looks mergeable to it.
 # shellcheck disable=SC2016 # the dollar signs are the workflow's own shell text, matched literally
 {
-  arm_lines="$(grep -E '^ +(if )?gh pr merge "\$PR" --auto ' "$wf")"
+  auto_lines="$(grep -nE 'gh pr merge .*[^-]--auto( |$)' "$wf" | grep -vE '^[0-9]+: *#' || true)"
   merge_step="$(awk '/^      - name: /{ step = $0 } step ~ /Ask GitHub to merge it/' "$wf")"
-  if [ -n "$arm_lines" ] && ! grep -vqF -- '--match-head-commit "$HEAD_SHA"' <<<"$arm_lines" &&
-    grep -qE '^          HEAD_SHA: \$\{\{ github.event.pull_request.head.sha \}\}$' <<<"$merge_step" &&
-    grep -qF 'gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"' <<<"$merge_step"; then
-    pass "B32 every arming names the head the guard judged (--match-head-commit), the ordinary one included"
+  if [ -z "$auto_lines" ]; then
+    pass "B32 no gh pr merge --auto is left: nothing in the file lets gh choose between arming and merging"
   else
-    fail "B32 an arming does not pin the judged head with --match-head-commit" "$arm_lines"
+    fail "B32 a gh pr merge --auto call is back - gh merges by itself when the pull request looks mergeable to it" "$auto_lines"
+  fi
+  if grep -qE '^          HEAD_SHA: \$\{\{ github.event.pull_request.head.sha \}\}$' <<<"$merge_step" &&
+    grep -qE '^          PR_NODE_ID: \$\{\{ github.event.pull_request.node_id \}\}$' <<<"$merge_step" &&
+    grep -qF 'enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $oid})' <<<"$merge_step" &&
+    grep -qF 'gh api graphql -f id="$PR_NODE_ID" -f oid="$HEAD_SHA" -f query=' <<<"$merge_step" &&
+    grep -qE '^          if arm_only; then$' <<<"$merge_step"; then
+    pass "B32 the arming is the mutation, squash, on the pull request and the head the guard judged (expectedHeadOid)"
+  else
+    fail "B32 the arming is not the enablePullRequestAutoMerge mutation pinned on the judged head"
   fi
 }
 
@@ -555,9 +563,16 @@ nth() { # <kind> <list>
   printf '%s' "${words[$n]}"
 }
 case "$1 ${2:-}" in
+  "api graphql")
+    # The only mutation the step may send; anything else through GraphQL is a failure of the test.
+    case "$*" in
+      *enablePullRequestAutoMerge*) [ "$(nth auto "${FAKE_AUTO:-refused}")" = armed ] || { echo 'gh: a refusal whose prose decides nothing' >&2; exit 1; } ;;
+      *) echo "UNEXPECTED graphql call" >&2; exit 97 ;;
+    esac ;;
   "pr merge")
     case " $* " in
-      *" --auto "*) [ "$(nth auto "${FAKE_AUTO:-refused}")" = armed ] || { echo 'GraphQL: a refusal whose prose decides nothing' >&2; exit 1; } ;;
+      # `gh pr merge --auto` would merge by itself here, as the real one does on a mergeable pull request.
+      *" --auto "*) echo 'GH_CHOSE_TO_MERGE' >>"$FAKE_GH_LOG" ;;
       *) [ "$(nth now "${FAKE_NOW:-merged}")" = merged ] || { echo 'GraphQL: a refusal whose prose decides nothing' >&2; exit 1; } ;;
     esac ;;
   "pr view") case " $* " in
@@ -579,8 +594,10 @@ GREEN="$(check_run 7 'CI passed' github-actions "$M2" success | runs)"
 merge_case() { # <state> <check runs json> -> $out, $st
   : >"$work/gh.log"
   rm -rf "$work/fake" && mkdir "$work/fake"
-  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" BASE_REF=main FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_DIR="$work/fake" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
+  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 PR_NODE_ID=NODE5 HEAD_SHA="$M2" BASE_REF=main FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_DIR="$work/fake" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
   st=$?
+  # Every call of every case, kept: B36 reads it whole.
+  cat "$work/gh.log" >>"$work/gh.all"
 }
 merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
 # A refusal is the step's own VERDICT, not any way of ending red: a crash before the gate (a read
@@ -621,7 +638,7 @@ refused "B33 a check run whose name only resembles CI passed does not merge"
 # green and unarmed. The step reads the tip of the base before and after each attempt; the fake's
 # refusal carries the same prose every time, so nothing here can be decided by reading it.
 NONE='{"check_runs": []}'
-armings() { grep -c -- ' --auto ' "$work/gh.log" || true; }
+armings() { grep -c -- 'enablePullRequestAutoMerge' "$work/gh.log" || true; }
 merges_now() { grep -cxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log" || true; }
 says() { grep -qF -- "$1" <<<"$out"; }
 
@@ -692,6 +709,34 @@ if [ "$st" != 0 ] && says "newest CI passed on $M2 reads 'absent'"; then
   pass "B35 the failure of a mergeable pull request without a green CI passed names that reading"
 else
   fail "B35 the failure does not name the CI passed reading" "$out"
+fi
+
+# ── B36: the step never lets gh choose between arming and merging ────────────────────────────────
+# Over every case above and these, no `gh pr merge --auto` was sent; the arming is the mutation, on
+# the pull request's node id and the judged head; and a merge is only ever the explicit one.
+FAKE_AUTO=armed merge_case BLOCKED "$NONE"
+if [ "$st" = 0 ] && [ "$(armings)" = 1 ] && [ "$(merges_now)" = 0 ] &&
+  grep -qF -- "api graphql -f id=NODE5 -f oid=$M2 -f query=" "$work/gh.log"; then
+  pass "B36 a pull request that is not mergeable yet is armed by the mutation, on its node id and judged head, and nothing is merged"
+else
+  fail "B36 the arming is not the mutation on the node id and the judged head" "$(cat "$work/gh.log")"
+fi
+FAKE_AUTO=armed merge_case CLEAN "$GREEN"
+if [ "$st" = 0 ] && [ "$(armings)" = 1 ] && [ "$(merges_now)" = 0 ]; then
+  pass "B36 when GitHub accepts the arming, the step merges nothing itself, even CLEAN and green"
+else
+  fail "B36 the step merged after an accepted arming" "$out"
+fi
+merge_case CLEAN "$GREEN"
+if [ "$st" = 0 ] && [ "$(armings)" = 1 ] && [ "$(merges_now)" = 1 ]; then
+  pass "B36 an arming GitHub refuses on a CLEAN, green pull request is followed by ONE explicit merge on the judged head"
+else
+  fail "B36 the refused arming of a mergeable pull request was not followed by exactly one explicit merge" "$out"
+fi
+if grep -rqF 'GH_CHOSE_TO_MERGE' "$work/gh.all"; then
+  fail "B36 a gh pr merge --auto was sent in one of the cases - gh would have chosen to merge by itself"
+else
+  pass "B36 across every case of the merge step, no gh pr merge --auto was ever sent"
 fi
 
 # ── B34: ONE arming implementation - the guard step never arms or merges by itself ───────────────

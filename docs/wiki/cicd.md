@@ -93,6 +93,26 @@ green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal tex
 does not close**: right after a base moves GitHub reads the merge state `UNKNOWN` for a moment, and a
 refusal met there with the base standing still fails once, naming `UNKNOWN`.
 
+**THE ARMING IS GITHUB'S MUTATION, NEVER `gh pr merge --auto`: THE STEP CAN ARM, OR MERGE BEHIND ITS
+OWN READS, AND NOTHING ELSE DECIDES (2026-11-14, Canari first).** `gh pr merge --auto` reads the merge
+state itself and, when the pull request looks mergeable to it, sends `mergePullRequest` instead of
+arming - the refusal measured on #3519 was signed `(mergePullRequest)` although the step had only
+asked to arm. With an App that bypasses the ruleset, that merge was judged by `gh`'s reading alone,
+beside the strict reads described above. The step now sends
+[`enablePullRequestAutoMerge`](https://docs.github.com/en/graphql/reference/pulls) through
+`gh api graphql`, with `mergeMethod: SQUASH` (the documented default is MERGE) and `expectedHeadOid`
+set to the head the guard judged. That mutation arms or refuses. When it refuses, the step reads the
+state as data, as before, and the ONLY merge it ever makes is the explicit
+`gh pr merge --squash --match-head-commit` behind `mergeStateStatus` and its own `CI passed` read.
+**What the documentation does not say**: what the mutation answers on a pull request that is already
+mergeable. That it refuses is a measurement (#3202, "unstable status"), not a documented fact, and
+the step does not depend on the wording: any refusal leads to the same reads.
+`arm-auto-merge-app.test.sh` B32 fails if a `gh pr merge --auto` comes back, and B36 that across
+every case of the step none was sent, that an accepted arming merges nothing, and that a refused one
+on a clean, green pull request is followed by exactly one explicit merge. **Sky, MiGallery and
+Portail-etu still call `gh pr merge --auto`**: the line is a declared `# canari-only:shared`
+difference until each takes this same step, in its own pull request.
+
 **THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
 REQUEST** (user: _"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
 dependabot"_). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
@@ -384,8 +404,8 @@ or the file is reverted. That is the design: the yes is asked where it can no lo
   request number, so it describes whatever the head was at that read**: the head is read after it,
   and the run arms only while that head is still the event's own commit. A head that moved means a
   newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
-  owner's file). And the arming itself names that commit (`gh pr merge --auto --match-head-commit`,
-  as the Dependabot path always did), so a push between the guard and the arming call makes GitHub
+  owner's file). And the arming itself names that commit (`expectedHeadOid` on the
+  `enablePullRequestAutoMerge` mutation; `--match-head-commit` on the explicit merge), so a push between the guard and the arming call makes GitHub
   refuse it: that run fails, and the run the push raised judges the new head.
 - **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
   its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads

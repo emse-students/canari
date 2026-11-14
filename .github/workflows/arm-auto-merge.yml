@@ -17,7 +17,7 @@
 # `pull_request_target` IS SAFE HERE FOR ONE SPECIFIC REASON: THIS JOB NEVER CHECKS OUT THE PULL
 # REQUEST. The whole danger of that trigger is running untrusted code with the base repository's
 # secrets; there is no `actions/checkout` below, nothing is built and nothing is executed from the
-# branch. The only call made is `gh pr merge --auto`. **Do not add a checkout to this file.** If
+# branch. The only calls made are to GitHub's API, through `gh`. **Do not add a checkout to this file.** If
 # something ever needs the pull request's tree, it belongs in `ci.yml`, which runs on
 # `pull_request` and is untrusted by design.
 #
@@ -401,11 +401,34 @@ jobs:
           # canari-only:begin
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
           # canari-only:end
         run: |
           set -euo pipefail
 
           # canari-only:begin
+          # THE ARMING IS GITHUB'S OWN MUTATION, AND NEVER `gh pr merge --auto` (2026-11-14). `gh`
+          # reads the merge state ITSELF and, when the pull request looks mergeable to it, sends
+          # `mergePullRequest` instead of arming (measured on #3519, run 43605328429: the refusal
+          # of an `--auto` call was signed `(mergePullRequest)`). The App bypasses the ruleset, so
+          # that merge was judged by `gh`'s reading and by nothing else. `enablePullRequestAutoMerge`
+          # arms or refuses and can do nothing more; the only merge this step makes is the explicit
+          # one below, behind this step's own reads. Fields, as documented at
+          # https://docs.github.com/en/graphql/reference/pulls (input
+          # `EnablePullRequestAutoMergeInput`): `pullRequestId`, `mergeMethod` ("If omitted,
+          # defaults to MERGE", so SQUASH is said), `expectedHeadOid` ("The expected head OID of
+          # the pull request") - the head the guard judged. THE DOCUMENTATION DOES NOT SAY what the
+          # mutation answers on a pull request that is already mergeable; that it refuses is a
+          # MEASUREMENT (#3202, run 42700845061, "unstable status"), read below as data.
+          arm_only() {
+            # shellcheck disable=SC2016 # the dollar signs are GraphQL variables, bound by -f
+            gh api graphql -f id="$PR_NODE_ID" -f oid="$HEAD_SHA" -f query='
+              mutation($id: ID!, $oid: GitObjectID!) {
+                enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $oid}) {
+                  pullRequest { number }
+                }
+              }' >/dev/null
+          }
           # ONE ATTEMPT IS A FUNCTION, BECAUSE A BASE THAT MOVES UNDER IT IS A REASON TO ASK AGAIN
           # (measured on #3519, run 43605328429: `main` took a merge while this step ran, GitHub
           # answered the merge "Base branch was modified", and a ready, green pull request was left
@@ -428,11 +451,11 @@ jobs:
           # `allow_auto_merge` before any of this works at all - both are repository settings, both
           # are invisible in this tree, and both are inventoried in `infrastructure/MIGRATION.md`
           # section 3bis alongside the ruleset.
-          # Canari arms ONLY the head the guard above judged (`--match-head-commit`, verification of
+          # Canari arms ONLY the head the guard above judged (`expectedHeadOid`, verification of
           # #2873): a push between the two steps makes GitHub refuse, this run fails loudly below,
           # and the run that push raised judges the new head and arms it.
           # canari-only:shared if gh pr merge "$PR" --auto --squash --repo "$REPO"; then
-          if gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
+          if arm_only; then
             echo "Auto-merge armed. GitHub will squash-merge #$PR as soon as CI passed goes green."
             exit 0
           fi
