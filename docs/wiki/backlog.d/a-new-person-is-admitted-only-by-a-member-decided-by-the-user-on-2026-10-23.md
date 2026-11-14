@@ -1,4 +1,4 @@
-## Reading owed - the uninvited-entry count on production and a waiting-seat ring on dev
+## Reading owed - a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)
 
 target: 1.7.0
 
@@ -50,3 +50,5 @@ what it survives and what it cannot prove are in
 member's signed vouch designed there is built only if that count is a population), and the
 waiting-seat ring on dev.
 ring on dev.
+
+**Triage 2026-11-14 - left: the waiting-seat ring on dev only, about 20 min, web seats (a link joiner held outside by `awaitingAdmission`, a call rung in the group, the waiting seat excluded from it).** The `[UNINVITED_ENTRY] kind=new-person` count with `watched_from` is DELETED as a reading: it reads #3519, which is NOT in `v1.6.12` (owner, 2026-11-14: a reading of unshipped code is deleted), and a production count is not a reading anyway - it is a population measurement that the classification fix makes meaningful only after it ships. What replaces it is a standing rule, not a sitting: the first `[UNINVITED_ENTRY]` line production writes after the stable carrying #3519 is read against its `watched_from=`, as the line arrives, and a population of them files a P2 then.

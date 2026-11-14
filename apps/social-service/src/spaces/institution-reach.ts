@@ -4,7 +4,7 @@ import { ruleReachesSpaceSql } from './rule-sql';
 /**
  * THE REACH AN INSTITUTION CHOOSES FOR EACH POST AND EACH CALENDAR EVENT, ITS WRITE SIDE (owner,
  * 2026-11-10 for posts, 2026-11-13 for events; docs/wiki/backlog.d/institution-post-reach.md and
- * institution-event-reach.md, amending D19 for institutions only).
+ * profiles-and-access.md (an institution's reach per calendar event), amending D19 for institutions only).
  *
  * An institution's post or event names the SPACES it targets, among the spaces of the institution's
  * own audience (never wider: the server refuses anything else), and the PUBLIC in them - everyone,

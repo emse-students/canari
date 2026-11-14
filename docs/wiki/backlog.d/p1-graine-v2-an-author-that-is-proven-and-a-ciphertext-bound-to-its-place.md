@@ -30,3 +30,5 @@ channel ever gets an older-page load.
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
+
+**Triage 2026-11-14 - left: the rig re-run only (GRAINE-AUTH-1..3, -6, -7 on the local estate, about 20 min).** The third row, the native v1-seed refusal lines, is DELETED: the only path that reaches them is a v1 frame from a build below the `1.2.7` floor, no admitted client writes one, and the server refuses to connect an older build, so it cannot be staged on this bench; the refusals stay covered by the Kotlin JVM tests and the NSE text pins.
