@@ -13,3 +13,14 @@ its legacy entry closed on 2026-11-11 ([mls-protocol](../protocols/mls-protocol.
 production once the build serves both stores; of the four review findings, the removed member's surviving leaf closed with ADM-3, the relay routes with #2870, the joiner's second device with no device row with the account-seat flag (`UserGroupRow.awaitingAdmission`, 2026-11-01), and the waiting-seat exclusion of calls owes one ring on dev (below). The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
 see [mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
 [backlog.d](p1-the-admission-rule-fix-forward.md).
+
+**Counted on production 2026-11-14 (15.5 hours after the `v1.6.11` deploy): ONE
+`[UNINVITED_ENTRY] kind=new-person`, and it names no new person.** A web member reported it in a
+33-member conversation; the entrant has held a roster seat (`member`, not awaiting) since
+2026-09-16, and the commit it names is that member's own new web device joining by external commit
+(three days before the report, the reporter catching up). A member's device is added with no ask
+since 2026-10-31, so the entry was allowed; the reporter called it a new person because the person
+had no leaf in its tree before that commit. **The report's `kind` does not separate a returning
+member with no leaf from a new person**, so the count cannot be read as a breach count until it
+does: the classification is owed before this count can close the entry (it should come from the
+roster the server holds, not from the reporter's tree).

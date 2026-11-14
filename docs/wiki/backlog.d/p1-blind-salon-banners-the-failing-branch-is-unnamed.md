@@ -42,3 +42,10 @@ cycles add a commit each. (3) The iPhone as the receiver: the same two runs with
 The frames a newcomer received sealed before its own join (the other half of the 2026-11-04 report,
 `past-epoch-application` right after an external join) are withheld by chat-delivery since
 2026-11-04 ([chat-delivery](../services/chat-delivery.md#who-a-frame-is-queued-for-and-who-owns-the-gateways-routing-set)).
+
+**Step (1) read on production 2026-11-14** (15.5 hours after the `v1.6.11` deploy, a day was not
+readable - [logging](../infrastructure/logging.md#reading-an-archive)): 6 `[PUSH_BLIND]` lines, 3
+accounts, ONE salon, all within 15 minutes; every one `missing=seed refused=none` (5 iOS
+`held=false`, 1 Android `held=true`). `refused=none` means no open ran: the seed was not there to
+open, so the failing branch is the seed's absence, not a refusal by the open. Steps (2) and (3) stay
+owed.

@@ -1181,7 +1181,7 @@ mint's own server-side narration (`Refresh refused: no canari_refresh cookie`, `
 each row** - `[MEMBERSHIP_ACTIVE] REFUSED group=315b8a1d... reason=no_key_package`, on the community
 distribution group, 27 s before activation on row 2 and 55 s before it on row 12. Timestamps and the
 correlation with the stale-distribution-group rejoin are in
-[backlog](backlog.d/p2-a-new-device-s-join-of-a-community-s-key-group-reaches-the-commit-gate.md);
+[campaign-measured-defects](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09);
 neither was acted on here, both leave these rows' subject.
 
 **EVERY ROW HERE IS A TIMELINE, NOT A SNAPSHOT** (user, 2026-08-27: *"Est-ce-que tout finit bien par

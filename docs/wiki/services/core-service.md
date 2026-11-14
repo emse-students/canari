@@ -372,7 +372,7 @@ round trip and no MiGallery traffic, and HTTP/3 multiplexing measured 17-37 ms e
 | --- | --- |
 | browser HTTP cache | stores, revalidates each use (`fetch` in `userAvatarCache.ts` sets no cache mode and keeps no lifetime of its own; no service worker exists) |
 | nginx (`infrastructure/local/Dockerfile.frontend`) | no avatar rule; passes the headers |
-| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **OWED: one `curl -sI` pair on the next deploy** to confirm a changed photo answers `REVALIDATED`/`EXPIRED` and not a `HIT` with a growing `Age`, since the avatar Cache Rule cannot be read by our tokens |
+| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **read 2026-11-14**: through the old name (the only one still behind Cloudflare) a face answers `MISS` then `REVALIDATED`, never a `HIT` with an `Age`, so the avatar Cache Rule does not override the origin; `canari.emse.fr` is served by the school host with no Cloudflare in front (no `cf-cache-status` at all) |
 | Android/iOS notification disk copies | unchanged: their own 24 h age check, no conditional request |
 | `chat-delivery` `/api/mls/push/avatar/:id` | unchanged: `max-age=3600`, native readers only |
 

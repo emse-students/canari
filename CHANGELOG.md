@@ -4355,7 +4355,7 @@ A commit, foreground or background, is bound to its authenticated committer and 
 device, must come from a member (or, for an external commit, a person on the roster), and must name
 its own group and base epoch; its fan-out skips only devices new to the group. A conversation's
 Welcome reaches only a device of someone on its roster, and never ends a kick. A device id belongs
-to one account ([backlog](docs/wiki/backlog.d/p1-wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service.md)).
+to one account ([backlog](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 
 ### Changed - chat-delivery: a key group's external join is asked of social-service
 
@@ -4363,7 +4363,7 @@ An external commit into a community's key group, and a Welcome addressed to a ke
 accepted only for a person social-service entitles to that workspace or channel; when social-service
 does not answer, the commit is refused with `503` and retried, never accepted
 ([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live),
-[backlog](docs/wiki/backlog.d/p1-wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service.md)).
+[backlog](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 
 ### Changed - chat-delivery: reporting a device `active` promotes an existing seat only
 

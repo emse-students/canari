@@ -62,6 +62,13 @@ The stamp is the moment the deploy STARTED replacing the estate; the archive hol
 it. Lines carry `docker logs --timestamps`. The live container's log is read with `docker logs` as
 before.
 
+**Seen 2026-11-14 on both estates**: the `v1.6.11` deploy logged `archive-logs: 13 container logs
+kept in .../deploy-log-archive/<prod>/20261113T165852Z (0 unreadable)`, the `v1.6.12-alpha.2` one
+12 for dev, each dropping its oldest archive; every Canari container of both projects runs with
+`max-size: 10m`, `max-file: 3`. The archive belongs to the runner account: the operator's own
+account cannot list it (permission denied), so a reading older than a container's live log
+needs that account.
+
 ## Rules
 
 - A service added to a compose file must carry `logging: *logging`; the self-test derives the service
