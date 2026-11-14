@@ -1,0 +1,51 @@
+## P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step
+
+Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, the current stable (no keyboard
+or thread-anchor change on `main` since), with the owner's go. The five most recent DMs, each opened
+from the list, the composer tapped, the keyboard put away with Back, the DM left. Screen-recorded and
+read frame by frame: every bubble's box located by colour against the background, its movement
+between frames compared with the others' (a rigid move is every bubble by the same amount). The
+instrument and the motion half are in [the motion study](keyboard-motion-like-android-messages.md).
+The store build logs nothing from the page and no DevTools socket is open, so **no cause below is
+read from the code's own lines; each is a symptom with its frames**.
+
+**Where it goes right.** In a long text DM every visible bubble moves by the same 866-868 px
+(physical) on the rise and comes back exactly on the close: the thread moves rigidly, and nothing
+reflows. Opening a DM from the list draws its last rows in place, with no frame of movement after
+the first one (DMs 1, 2, 3 and 5).
+
+### 1. P2 - a DM whose tail holds photos and a video still lands on OLDER messages when the keyboard opens
+
+DM 4: a long DM whose last rows include a photo, a video and a screenshot. Opened, its last row in
+place; the photo near the end stays a blurred placeholder for ~3 s. The composer is tapped: the
+photo loads in the frame the keyboard starts (coincidence or trigger, not separated), the keyboard
+rises, and **~50 ms after it settles the thread jumps to older messages** (the video, another photo,
+a long message), the scroll-down arrow up. Closing the keyboard leaves the reader there.
+
+That is the defect of [a reader at the bottom is anchored to the bottom](../frontend/modules/chat.md#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30),
+reported on `1.5.1` on this same phone, fixed by `threadGrowthResponse` and **owed "one reading of
+the built change on an Android phone, a DM with a portrait photo near its end"**. This is that
+reading, and it FAILS on `1.6.12`. The fix's mechanism (the `svh` shrink of `--media-max-height`)
+may not be the one at work here: a photo LOADING during the rise is a second growth that the 214 px
+analysis did not have. **Next: the Mi 9T on a dev build, CDP attached, a DM ending in a portrait
+photo not yet cached, the `[ChatArea]` and `threadGrowthResponse` answers read through the rise.**
+
+### 2. P2 - a short DM closing its keyboard shows a history spinner and jumps twice
+
+DM 3: ~6 rows, shorter than the screen. On the close, mid-animation, a loading spinner appears at
+the top (older history asked for, in a DM whose first day is already shown), the thread drops ~80 px
+for it, then jumps up ~130 px when it goes, and the composer is missing for one frame. Four
+movements for one Back. The likely trigger is the scroller growing back, which brings the top
+sentinel into view, but that is not read from the code.
+
+### 3. P3 - the composer steps 12 CSS px down one frame before every close
+
+In every DM, one frame after Back and before the keyboard moves, the composer moves 30-32 physical
+px (12 CSS px at 2.625) down: the footer's resting `0.75rem` changing as the keyboard state flips,
+ahead of the layout. Small, and seen in all five.
+
+### 4. Context, not a defect - short DMs sit at the top
+
+DMs 2 and 3 draw their few rows from the top, with an empty band above the composer, so the keyboard
+rise moves nothing but the composer. Messenger bottom-aligns a short thread. Whether Canari should
+is a layout question for the owner, not part of the motion work.
