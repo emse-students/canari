@@ -812,6 +812,7 @@ Chat and reactions (WP-L6) and moderation (WP-L8, WP-L8b) were built after this 
 | `lib/live/liveRecorder.ts` | `MediaRecorder` with `LIVE_RECORDER_MIME`, 2.0 Mb/s, 2 s timeslice and keyframe interval; no second container (an engine that cannot record that exact type cannot broadcast, said before Start). |
 | `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (lens asked as the reel camera does: exact on a phone and on a switch, ideal on a desktop's first capture, `utils/cameraFacing.ts`), the Screen Wake Lock (every request carries a ticket, so a lock answered after a release or a newer hold is given straight back: hold -> release -> hold never leaks one), the Battery API reading. |
 | `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
+| `lib/live/liveStudio.svelte.ts` and its parts | A desktop live's scenes: the composed stream the recorder records instead of the camera's ([scenes](#scenes-on-a-desktop-live-owner-2026-11-14)). |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
 **The entry.** The post composer's chip row carries "En direct" when `livesAvailable(serverLivesMode())`
@@ -1236,60 +1237,167 @@ exactness, what happens when Redis does not answer) is
 
 ## Broadcasting the screen on a desktop browser (2026-10-31, owner)
 
-Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+Built 2026-10-31 as a choice made in the preview (camera OR screen, fixed once on air); **replaced on
+2026-11-14 by the scenes below**, which keep its decisions and change three of them. What stands:
 
-- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
-  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
-  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
-  `LiveBroadcast.chooseSource`, preview only.
-- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
-  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
-  `start()`.
-- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
-- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
-  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
-  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
-  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
-  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
-  stops both sources and closes the context.
-- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
-  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
-  recorder takes the display's video track like a camera's, and the viewer's string is the same.
-- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
-  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
-  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
-  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
-  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
-- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
-  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
-  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
-  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
-- **Review fixes (2026-10-31)**:
-  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
-    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
-  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
-    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
-    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
-    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
-    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
-  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
-    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
-  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
-    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
-    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
-    Retry message promises "go back to the camera" only in the preview, where the source buttons are
-    enabled; on air or away it says the share stopped and nothing else.
-  - **The source buttons are locked while the picker is open** (`choosingSource`).
-  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
-    windows included.
-- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
-  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
-  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
-  until the bump, so it is refused. There is no override and none is to be added: set `version` in
-  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
-  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
-- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
-  switch-camera button is hidden while the source is the screen.
+- **Where**: desktop only - `liveScenesAvailable()` (`liveDevice.ts`): `getDisplayMedia` and an
+  `AudioContext` present, a mouse as the primary pointer (`isCoarsePointerDevice`), and **never in the
+  Tauri shell** (`isTauriRuntime()`: its webviews have no reliable picker, and a desktop window has a
+  mouse, so the pointer test alone would offer it).
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so the picker is opened
+  from the scene button's handler (`LiveStudio.selectScene`), never from an effect or a timer.
+- **Audio, settled**: the microphone is kept (a live has a voice); `getDisplayMedia({ audio: true })`
+  only ASKS, the picker offers tab or system sound where the browser has it (Chrome and Edge; not
+  Firefox or Safari for the screen) and the member decides.
+- **Size and rate**: ideal 1280x720 at 30 fps is asked of the share; since 2026-11-14 what the share
+  answers no longer reaches the recorder (below).
+- **Privacy sentence** under the scenes: viewers see everything shared, notifications and other
+  windows included.
+- **Testing lives locally**: the server refuses a lives request whose `X-Canari-Client-Version` is
+  below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the package version
+  (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`). There is no override
+  and none is to be added: set `version` locally (never committed), or use a build cut after the bump.
+
+**What the scenes changed**, each for a reason the owner gave: the source can change ON AIR (the
+2026-10-31 rule fixed it at Start); the share stopped from the browser's bar no longer ENDS the live
+but turns to "Je reviens" (the reason it ended - never put the member's face where they chose to show
+something else - is kept: it does not fall back to the camera either); and the recorder records a
+composed canvas instead of the share's own track.
+
+## Scenes on a desktop live (owner, 2026-11-14)
+
+The owner: *"j'aimerais bien pouvoir changer mes parametres de live en cours de live (passer de face
+cam a partage d'ecran, mettre ma camera sur le live en meme temps que le partage d'ecran, pouvoir la
+deplacer etc). Inspire toi de ce que permet de faire OBS (en beaucoup plus simple)"*. His answers:
+ready-made SCENES switched in one click on air, not free layers; the camera overlay DRAGGED and
+SNAPPED to a corner, three sizes, round or rectangle; desktop first (a phone's screen is
+[its own entry](../../backlog.d/broadcast-a-phone-screen-in-a-live.md)); the microphone and the camera
+switched off without ending; a "Je reviens" scene showing nothing by mistake. And from his reading of
+`1.6.12-alpha.2` the same day: a window RESIZED while shared turned the viewer's picture into smeared
+streaks for the rest of the live, and the preview, cropped, hid what was cut (*"pour éviter les angles
+morts"*).
+
+| File | What it holds |
+| --- | --- |
+| `lib/live/liveScenes.ts` | PURE: the five scenes, the fixed frame, each scene's layout, `containRect` / `coverCrop`, the overlay's box, `snapCorner`, the arrow keys, the preview mapping, and the scene state machine (`planSceneChange`, `sceneAfterScreenEnded`). |
+| `lib/live/liveCompositor.ts` | The canvas: draws the scene on every clock tick and pushes one frame (`captureStream(0)` + `requestFrame`). |
+| `lib/live/liveFrameClock.ts`, `workers/liveFrameClock.worker.ts` | The clock: a dedicated worker's `setInterval`, posting `tick` 30 times a second. |
+| `lib/live/liveAudioMixer.svelte.ts` | The sound: microphone and share mixed in one `AudioContext` into ONE track, a gain per input. |
+| `lib/live/liveStudio.svelte.ts` | The state: sources, scene, overlay, mutes, and the ONE stream recorded. |
+| `components/live/LiveSceneBar.svelte`, `LiveOverlayHandle.svelte` | The scene bar (sheet and on air) and the overlay's drag handle. |
+
+**One stream for the whole live.** `LiveStudio.stream` is the compositor's canvas track and the mixer's
+track, made when the screen opens and never replaced; the recorder records it from Start to End.
+Switching a scene, moving the overlay, muting the microphone, switching the camera off, granting the
+screen, re-opening a lost microphone or a camera: each changes what is DRAWN or HEARD on those two
+tracks, never the tracks, so the recorder never restarts and the viewer path is untouched -
+`LIVE_RECORDER_MIME`, the seal, the segments are as before, and an old viewer plays it. What the
+viewers see, what a replay keeps and what the member's preview shows are the same frames.
+
+**The frame never changes size - the invariant the owner's reading asked for.** The canvas is sized
+ONCE, at `STUDIO_FRAME` (1280x720), in the compositor's constructor and never written again. Every
+source is fitted INTO its box: the screen always `contain` (the whole of it, black bars around), the
+camera `contain` alone and `cover` (cropped) in a box of another shape (the overlay, the side column).
+A window resized mid-share re-fits inside the same box; the recorder - and every viewer's decoder -
+sees 1280x720 from the first frame to the last. Tested (`liveCompositor.test.ts`: a share resized
+three times, canvas written twice in its life) and read in Chrome (below). The streaks were the
+share's own track recorded directly: its size changed mid-recording. No keyframe change was added -
+with the size fixed there is nothing for one to repair, and every segment already starts on its own
+keyframe ([every segment is self-contained](#every-segment-is-self-contained)).
+
+**The preview is the composed picture**, drawn `object-fit: contain` and never mirrored: the member
+sees the black bars, the overlay where the viewers see it, and the camera as the viewers see it
+(unmirrored, as OBS shows it). A phone keeps its mirrored, cropped camera preview.
+
+**The scenes** (`LiveScene`): `camera`, `screen`, `screen-camera` (the screen whole, the camera as an
+overlay), `side-by-side` (the screen in the left 70 %, the camera cropped in the right 30 %), `pause`
+("Je reviens tout de suite" on a dark card, nothing of either source). A camera switched off or not
+open draws its "Caméra coupée" card in its box - a scene never shows a source the member did not put
+in it.
+
+**The scene state machine** (`planSceneChange`): the scene shown -> nothing; a scene showing the
+screen while none is held -> ASK for one (the picker, from that click), switch only once granted, a
+dismissed picker changes nothing; anything else -> switch at once. **The screen, once granted, is kept
+for the live** and every later scene reuses it - switching never re-opens the picker. The share's own
+sound is heard only in a scene showing the screen.
+
+**The share stopped from the browser's bar (or the shared window closed) - DECIDED 2026-11-14: the
+live goes on, in `pause`.** A scene showing the screen becomes "Je reviens" and the bar says so; any
+other scene stays; the screen is let go, and the next screen scene asks again (a click). Not the end
+(2026-10-31's rule): the owner now wants to switch freely, and an end throws away the live for a
+click on the browser's bar. Not the camera: the 2026-10-31 reason stands - the member's face where
+they had chosen to show something else is a surprise nobody agreed to.
+
+**The overlay** (`OverlaySettings`): a corner, a size (22 %, 30 %, 40 % of the frame's height),
+round (a square clipped to its circle) or a 16:9 rectangle. The handle over the preview is DRAGGED;
+only its release reaches the picture, snapped to the corner of the dropped box's centre
+(`snapCorner`), so viewers see a jump, never a drag. The arrow keys move it corner to corner, and
+Enter or Space - the handle being a button - to the next corner clockwise (`cornerAfterKey`, named in
+its `aria-keyshortcuts`). The five scene radios are ONE tab stop (the chosen scene) the arrows, Home
+and End walk (`rovingTarget`, `ui/rovingFocus.ts`, the keys `SegmentedControl` answers); the arrows
+move focus only and Enter or Space chooses, since passing over a screen scene must not open the
+picker or change what viewers see.
+
+**The two switches**: the microphone muted is its gain at 0 in the mixer, the camera off is its card
+- neither stops a recorded track. The camera's lens stays open while off (the light may stay on in
+Chrome; read in the owed reading); the microphone is a capture of its own (`openLiveMicrophone`), the
+camera opens its lens alone (`openLiveCamera(..., false)`), so a desktop with no webcam goes live on
+its screen: Start waits for the microphone, not the camera.
+
+**The sound must run, or nothing is recorded - MEASURED.** Chrome 157 on Windows (2026-11-14): a
+`MediaRecorder` on the live's MP4 with the audio of a SUSPENDED context wrote NO chunk at all - not a
+silent live, no live. A context starts only inside a click (Safari) or after one (Chrome's autoplay
+rule), so every click of the live screen calls `wakeAudio()` (a `resume()` read, never awaited: one
+outside a gesture can stay pending for ever), Start first of all, synchronously. A live whose sound is
+still not running when it goes on air is `away` with its own sentence (`awayProblem = 'audio'`) and the
+Retry - a click - wakes it and starts the recorder on the same live. **A sound that STOPS on air is the
+same `away`** (review of #3508): the context's `statechange` reaches the broadcast
+(`LiveStudio.onAudioChange`), which pauses the recorder at once rather than staying "on air" with
+nothing written until the server ends the live by absence; the red "Le son du live n'a pas démarré"
+button and the Retry both wake it, and the state coming back to `running` - whoever caused it - starts
+a new recorder on the same live through `reacquire`. The STATE is the trigger, so the return never
+depends on whether the click's `resume()` settled before or after the check.
+
+**A hidden tab keeps drawing - MEASURED, the risk this page named.** A member sharing their screen
+spends the live in another tab or window, and the page's own timers die there. Chrome 157, Windows
+workstation, a real tab hidden through the DevTools protocol (`Target.activateTarget` on another tab),
+2026-11-14:
+
+| Hidden | Page `setInterval` (asked 30/s) | `requestAnimationFrame` | Worker `setInterval` (30/s) | Detached `<video>` fresh frames | Recorder output |
+| --- | --- | --- | --- | --- | --- |
+| 90 s | 1 per second | 0 | 30 per second | ~30 per second | steady, ~1.6 Mb/s |
+| 7 min (past Chrome's 5-minute intensive throttling) | ~1 per second | 0 | 28-33 per second, every minute | ~30 per second | steady, ~1.5 Mb/s |
+
+So the clock is a DEDICATED WORKER's timer (`liveFrameClock.worker.ts`, imported `?worker`, checked
+by `workerScope.test.ts` like the others), each tick a message to the page (a message is not a timer
+and is not throttled), each tick one draw and one pushed frame. The source `<video>` elements are
+DETACHED (never in the document) and keep delivering fresh frames hidden. `MediaStreamTrackProcessor`
+was not needed, and would have been a Chromium-only path beside Safari's. Then the REAL compositor
+(`liveCompositor.ts`, bundled as is) ran in Chrome 157 with a fake camera and a canvas standing in for
+the share, RESIZED every 5 s through 1920x1080, 801x977, 3440x1440, 1280x720 and 640x1136, hidden
+60 s: 30 ticks a second throughout, the track at 1280x720 at every chunk, and the 76.6 s recording
+played back as ONE 1280x720 video. Screenshots of `screen-camera`, `side-by-side` and `pause` matched
+the layouts. Not measured: Edge, Safari, a real `getDisplayMedia` share hidden (only the owner's
+reading can drive the picker).
+
+**The drawing cost**: one tick measured 2.5-8 ms on this workstation (a desktop, the higher figure
+including a pixel read-back the compositor does not do) - NOT a modest laptop, which the bench does
+not have. The compositor logs its own average every 900 frames (`[LIVE-STUDIO] drew N frames, X ms each
+on average`), the line the owed reading reads on the member's machine.
+
+**A phone (no studio)** records its camera directly, as before, and gained three things the same
+day: the microphone and the camera switched off by DISABLING their tracks (`track.enabled = false`: the
+recorder writes silence and black frames, nothing stops; the broadcaster sees "Caméra coupée" over the
+preview), and the lens flipped ON AIR - the recorder is paused, the lens flipped, a NEW recorder starts
+on the SAME live, the path a return from the background takes ([background](#background-a-lens-taken-and-the-same-live)),
+so the viewers see a short gap; a lens that does not open brings back the one that was on air (nothing
+new shown), and failing that the screen is `away` with the camera's fault. The preview's double tap
+flips only before the live: on air a stray tap would cut a gap. Whether a disabled track gives black
+frames and silence in the Android WebView's and WKWebView's recorders is a phone reading, owed with
+the others.
+
+**Owed - the owner's real-browser reading**, one entry:
+[reading-owed-broadcasting-the-screen-in-a-live-from-a-desktop-browser](../../backlog.d/reading-owed-broadcasting-the-screen-in-a-live-from-a-desktop-browser.md).
 
 ## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
 
