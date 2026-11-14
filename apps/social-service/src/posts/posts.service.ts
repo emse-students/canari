@@ -2507,9 +2507,10 @@ export class PostsService {
    * post links a neutral event; this join is the read's own statement of the same rule.
    *
    * ONLY A PUBLISHED POST (audience audit, 2026-11-14): a post scheduled for later is not served,
-   * its author included - an event card is a public surface, and the by-id gate hides an
-   * unpublished post's very existence (`readPostOpenVerdict`, term 4). Without the term, every
-   * reader of the association read a scheduled post here before its hour.
+   * its author included - the rule of every LIST (the feeds, the search), which an event's card
+   * is. Only the by-id gate exempts the author (`readPostOpenVerdict`, term 4), and the author
+   * reads a scheduled post there and in "my scheduled posts". Without the term, every reader of
+   * the association read a scheduled post here before its hour.
    */
   async findPostLinkedToCalendarEvent(
     eventId: string,

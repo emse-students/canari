@@ -425,7 +425,16 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     } finally {
       await q(`UPDATE posts SET "scheduledAt" = NULL WHERE id = $1`, [P]);
     }
-    expect((await whoOf((r) => linked(r)())).length).toBeGreaterThan(0);
+    expect(await whoOf((r) => linked(r)())).toEqual([
+      'st',
+      'rp',
+      'sg',
+      'mb',
+      'off',
+      'sf',
+      'nr',
+      'fo',
+    ]);
   });
 
   it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(

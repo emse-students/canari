@@ -22,8 +22,9 @@ through its event's card). What is left, each a defect to fix or a decision alre
 - **Staff in the app.** A staff account (a campus, an empty cursus) has no space: the in-app agenda
   shows it memberships and read grants only, while the signed subscription gives its whole campus
   (`campusWideReaderCampus` is called by the signature alone); the shop, the partnerships and the
-  association directory are empty for it. Being built with "Personnel par campus"
-  ([owner, 2026-11-14](owner-decisions-of-2026-11-14.md)).
+  association directory are empty for it. NOT opened by campus (owner, 2026-11-14): the door is a
+  nominative read grant, which is to open the directory, the shop and the partnerships of its cell
+  beside the posts and the agenda ([decisions](owner-decisions-of-2026-11-14.md)) - to build.
 - **The campus and formation admin (G5, WP-D1b)** is not built. Adding a formation or a campus today
   means changing together: `SPACE_FORMATIONS` / `SPACE_CAMPUSES`, the CHECK constraints of
   migrations 071 and 078, `FORMATIONS` / `CAMPUSES` in core-service and the frontend, the enrolment
@@ -34,20 +35,20 @@ through its event's card). What is left, each a defect to fix or a decision alre
 - **An unknown formation is accepted at sign-in** (`parseProfileClaims`: any non-empty string, so
   `Master` or `icm`), while the admin edit is strict. The person then holds a cursus that matches
   no space: neither a student of a space nor staff, and nothing is logged. An absent claim clears
-  campus and cursus with a debug line only.
+  campus and cursus with a debug line only. Its own pull request keeps the entry (it is what tells a
+  student from staff), logs it, and logs a profile that loses its spaces at WARN; delete this line
+  when it merges.
 - **A stored formation criterion can match nobody**: a form's `formation.values` accepts any string,
   so one saved with the legacy `Master` refuses every submitter.
 - **A default audience may be "everyone" on an association**: `smallestRules` collapses "all ten
   spaces" to the (NULL, NULL) rule, which `setAudiences` refuses for the same type - latent, no BDE
-  governs ten spaces. `setAudiences` also judges its bound on a read taken outside its transaction.
+  governs ten spaces.
 - **Decision 3 (one campus per association or list) is half enforced** (P5 of the reform): two
   whole-campus rules pass.
 - **`/admin/spaces` offers "everyone" to associations and lists** and shows a generic error where
   the server answers a typed refusal.
-- **Device copies outlive a withdrawal until the next server answer**: the sealed feed copy has no
-  lifetime of its own, and the bell's copy keeps a snippet of a post since withdrawn
-  ([local-first-ui](../frontend/local-first-ui.md)). Safe across an account switch.
-- **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it).
+- **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it): the
+  platform admin alone sees it.
 - **A follower's own unfollow and a profile correction do not drop the feed cache** (30 s).
 
 ### Closed by the owner, 2026-11-14
