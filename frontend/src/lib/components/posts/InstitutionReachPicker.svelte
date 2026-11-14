@@ -178,8 +178,11 @@
     }
     const name = associationName;
     if (reach.public === 'students') return m.post_reach_hint_students({ name });
-    if (reach.public === 'staff') return m.post_reach_hint_staff({ name });
-    return m.post_reach_hint_all({ name });
+    // Staff by campus is decided for posts only (owner, 2026-11-14): an event keeps the old reach.
+    if (reach.public === 'staff') {
+      return event ? m.event_reach_hint_staff({ name }) : m.post_reach_hint_staff({ name });
+    }
+    return event ? m.event_reach_hint_all({ name }) : m.post_reach_hint_all({ name });
   });
   const complete = $derived(reach.spaces.length > 0 && reach.public !== null);
   const untouched = $derived(reach.spaces.length === 0 && reach.public === null);
