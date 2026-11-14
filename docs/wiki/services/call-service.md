@@ -273,7 +273,13 @@ throughout, so no clear frame ever crosses it. The SFU mode needed three things 
   peer's connection and renegotiates each peer that lost one - so a late joiner is never offered a
   dead track, and a rejoin leaves ONE track set per user under its stream id (tests
   `a_departed_publishers_tracks_leave_the_room_and_every_subscriber`,
-  `a_rejoin_leaves_one_set_of_tracks_per_user`).
+  `a_rejoin_leaves_one_set_of_tracks_per_user`). The two cannot overlap: a departure removes the
+  peer from `room.peers` BEFORE its drop takes the tracks lock, and `on_track` registers AND forwards
+  a track under one hold of that lock, only while its publisher is seated (`publish_if_present`) -
+  so a track arriving after its publisher left is refused, and one being forwarded when it leaves is
+  dropped once the forward is done, never re-added after it (tests
+  `a_track_arriving_after_its_publisher_left_is_never_registered`,
+  `a_departure_during_a_forward_drops_the_track_once_the_forward_is_done`).
 - **A renegotiation never collides with a negotiation in flight.** One owed while the peer's
   connection is not `stable` (its own offer being answered) is recorded in `renegotiate_pending` and
   offered when that negotiation returns to `stable` (`renegotiate_if_owed`, after the answer to the

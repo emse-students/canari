@@ -1854,17 +1854,25 @@ async fn handle_signal(
                         let media_ssrc = remote_track.ssrc();
                         let last_pli = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
 
-                        {
-                            let mut room_tracks = room_clone.tracks.lock().await;
-                            room_tracks.push(PublishedTrack {
+                        // Registered and forwarded under ONE hold of the tracks lock, which
+                        // `drop_publisher_tracks` takes too: a publisher that left is refused here,
+                        // and one that leaves meanwhile has its track dropped after the forward,
+                        // never before it - so no dead m-line outlives a departure.
+                        let Some(room_tracks) = publish_if_present(
+                            &room_clone,
+                            PublishedTrack {
                                 publisher: peer_id_clone.clone(),
                                 local: local_track.clone(),
                                 publisher_pc: pc_weak.clone(),
                                 media_ssrc,
                                 is_video,
                                 last_pli: last_pli.clone(),
-                            });
-                        }
+                            },
+                        )
+                        .await
+                        else {
+                            return;
+                        };
 
                         let local_track_clone = local_track.clone();
 
@@ -1934,6 +1942,7 @@ async fn handle_signal(
 
                             schedule_renegotiate(room_clone.clone(), other_pid.clone());
                         }
+                        drop(room_tracks);
                     })
                 },
             ));
@@ -3323,6 +3332,29 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
     }
 }
 
+/// Registers a track `on_track` received, ONLY while its publisher still holds its seat, and
+/// answers the held tracks lock so the caller forwards it to the other peers before releasing it.
+///
+/// Every departure removes the peer from `room.peers` BEFORE [`drop_publisher_tracks`] takes this
+/// same lock, so the two cannot overlap: a publisher already gone is refused here (`None`, logged),
+/// and one leaving while this hold lasts has its track dropped once the forward is done.
+async fn publish_if_present(
+    room: &Room,
+    track: PublishedTrack,
+) -> Option<tokio::sync::MutexGuard<'_, Vec<PublishedTrack>>> {
+    let mut tracks = room.tracks.lock().await;
+    if !room.peers.contains_key(&track.publisher) {
+        info!(
+            "[call] track {} of {} dropped: its publisher left before it was registered",
+            track.local.id(),
+            track.publisher
+        );
+        return None;
+    }
+    tracks.push(track);
+    Some(tracks)
+}
+
 /// Removes every track `publisher` published from the room, and from every other peer's
 /// connection, then renegotiates each peer that lost one. Called when a publisher leaves or is
 /// evicted: without it a late joiner is offered m-lines of dead tracks, and a rejoining user ends
@@ -3477,24 +3509,10 @@ mod tests {
     /// `publisher` publishes one audio track, forwarded to every other seated peer, as `on_track`
     /// does. Answers the forwarded track's id.
     async fn publish(room: &Arc<Room>, publisher: &str) -> String {
-        let local = Arc::new(TrackLocalStaticRTP::new(
-            webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
-                mime_type: "audio/opus".into(),
-                clock_rate: 48000,
-                channels: 2,
-                ..Default::default()
-            },
-            format!("track-{}-{}", publisher, Uuid::new_v4()),
-            forwarded_stream_id(publisher),
-        ));
-        room.tracks.lock().await.push(PublishedTrack {
-            publisher: publisher.to_string(),
-            local: local.clone(),
-            publisher_pc: std::sync::Weak::new(),
-            media_ssrc: 1,
-            is_video: false,
-            last_pli: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
-        });
+        let local = local_audio(publisher);
+        let held = publish_if_present(room, audio_track(publisher, &local))
+            .await
+            .expect("the publisher is seated");
         let others: Vec<Arc<PeerContext>> = room
             .peers
             .iter()
@@ -3507,7 +3525,34 @@ mod tests {
                 .await
                 .unwrap();
         }
+        drop(held);
         local.id().to_string()
+    }
+
+    /// An audio track named for `publisher`, built as `on_track` builds it.
+    fn local_audio(publisher: &str) -> Arc<TrackLocalStaticRTP> {
+        Arc::new(TrackLocalStaticRTP::new(
+            webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
+                mime_type: "audio/opus".into(),
+                clock_rate: 48000,
+                channels: 2,
+                ..Default::default()
+            },
+            format!("track-{}-{}", publisher, Uuid::new_v4()),
+            forwarded_stream_id(publisher),
+        ))
+    }
+
+    /// The room's record of `local`, published by `publisher`.
+    fn audio_track(publisher: &str, local: &Arc<TrackLocalStaticRTP>) -> PublishedTrack {
+        PublishedTrack {
+            publisher: publisher.to_string(),
+            local: local.clone(),
+            publisher_pc: std::sync::Weak::new(),
+            media_ssrc: 1,
+            is_video: false,
+            last_pli: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        }
     }
 
     /// The forwarded track ids a peer's connection still SENDS.
@@ -3548,6 +3593,53 @@ mod tests {
             .map(|t| t.local.id().to_string())
             .collect();
         assert_eq!(live, vec![bob_track]);
+    }
+
+    #[tokio::test]
+    async fn a_track_arriving_after_its_publisher_left_is_never_registered() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let _bob = seat(&room, "bob:b1").await;
+
+        // Alice leaves, and her departure's drop runs, before her in-flight `on_track` registers.
+        room.peers.remove("alice:a1");
+        drop_publisher_tracks(&room, "alice:a1").await;
+        let late = local_audio("alice:a1");
+        assert!(publish_if_present(&room, audio_track("alice:a1", &late))
+            .await
+            .is_none());
+
+        assert!(forwarded_track_publishers(&room).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_departure_during_a_forward_drops_the_track_once_the_forward_is_done() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let bob = seat(&room, "bob:b1").await;
+
+        // Alice's `on_track` holds the lock: registered, forwarding to bob.
+        let local = local_audio("alice:a1");
+        let held = publish_if_present(&room, audio_track("alice:a1", &local))
+            .await
+            .expect("alice is seated");
+        bob.add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .unwrap();
+
+        // She leaves meanwhile: her drop WAITS for the forward rather than racing it.
+        room.peers.remove("alice:a1");
+        let dropping = {
+            let room = room.clone();
+            tokio::spawn(async move { drop_publisher_tracks(&room, "alice:a1").await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!dropping.is_finished());
+
+        drop(held);
+        dropping.await.unwrap();
+        assert!(forwarded_track_publishers(&room).await.is_empty());
+        assert!(sent_track_ids(&bob).await.is_empty());
     }
 
     #[tokio::test]
