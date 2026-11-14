@@ -153,6 +153,7 @@ earliest version, as a checklist.
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [a salon's settings are offered only to who may change them](backlog.d/reading-owed-a-salon-s-settings-are-offered-only-to-who-may-change-them.md)
 - [ ] [IndexedDB message pages by index](backlog.d/reading-owed-indexeddb-message-pages-by-index.md)
+- [ ] [Minesweeper generator 2 on a real phone, in the app (2026-11-14)](backlog.d/reading-owed-minesweeper-generator-2-on-a-real-phone.md)
 - [ ] [a notification names a member by their nickname in that conversation](backlog.d/reading-owed-nicknames-in-notifications.md)
 - [ ] [the audiences chantier (#1582, #1584, #1606, #1608)](backlog.d/reading-owed-the-audiences-chantier-1582-1584-1606-1608.md)
 - [ ] [the auto-merge ceiling refuses a major](backlog.d/reading-owed-the-auto-merge-ceiling-refuses-a-major.md)
@@ -244,6 +245,7 @@ earliest version, as a checklist.
 - [P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)](backlog.d/p3-android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android.md)
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
+- [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
 
 ## 1.9.0
 
