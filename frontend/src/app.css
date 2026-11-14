@@ -1795,6 +1795,14 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   overscroll-behavior: contain;
 }
 
+/* A THREAD SHORTER THAN ITS PANE SITS AT THE BOTTOM, against the composer, as in Messenger and
+   Messages (owner, 2026-11-14). The first child takes the free space ABOVE it; once the thread
+   overflows there is no free space and the margin is zero, so a long thread's top stays reachable -
+   which `justify-content: flex-end` would break (it overflows upward, past scrollTop 0). */
+.chat-messages-scroll > :first-child {
+  margin-top: auto;
+}
+
 @media (min-width: 768px) {
   .chat-messages-scroll {
     padding-bottom: calc(var(--chat-composer-height, 6.5rem));

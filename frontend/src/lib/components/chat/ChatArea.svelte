@@ -594,7 +594,7 @@
       // In the SAME flush as the reveal, so the floor never rises between the two.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch);
+      void widenEntryWindow(epoch).then(() => armShortThreadFill(epoch));
     });
   }
 
@@ -759,8 +759,124 @@
       // widen after it has finished.
       entryWidening = true;
       entering = false;
-      void widenEntryWindow(epoch);
+      void widenEntryWindow(epoch).then(() => armShortThreadFill(epoch));
     });
+  }
+
+  /**
+   * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY, NOT AT THE NEXT STRAY SCROLL (owner's
+   * Pixel 6a, 1.6.12, 2026-11-14: a six-row DM showed the older-history spinner in the middle of a
+   * keyboard CLOSE, and the thread jumped twice). Such a pane cannot be scrolled, so `measureScroll`'s
+   * trigger was reached only by whatever scroll event came first - a box changing under the keyboard.
+   *
+   * DRIVEN BY STATE, NOT BY ONE PASS (review of #3545): once the entry has widened, the effect below
+   * asks for one more older page each time the state it reads moves - a load ending, a store page read
+   * (even one that adds no group), the window stepping, the peer's answer returning `scrollbackState`
+   * to `idle` - while the pane is still short and a source can still bring something. It ends because
+   * nothing moves any more, never on a count or a clock. The fill is SILENT: neither the spinner nor
+   * the scrollback banners show for it (`olderAskedBy`, chat.md).
+   */
+  let shortFillEpoch = $state<number | null>(null);
+  let shortFillInFlight = $state(false);
+  /** Whether the load the thread is showing was asked by the reader, or by the silent entry fill. */
+  let olderAskedBy = $state<'reader' | 'fill'>('reader');
+  /** Store pages read in this conversation: every page moves this, whatever it brought. */
+  let storePagesRead = $state(0);
+  /** The pane's laid-out height, from its `ResizeObserver`: a pane that gains its box re-arms the fill. */
+  let paneHeight = $state(0);
+  /**
+   * The entry whose fill stopped on a FACT that no later state change can undo: the store threw, or
+   * answered "more" without moving its cursor. Without it, either one re-asked at once, forever.
+   */
+  let shortFillStoppedEpoch: number | null = null;
+
+  /** Where the store's pages stand, as this view can see it: the rows held and the oldest one. */
+  function storeCursor(): string {
+    const messages = chatView?.conversation.messages ?? [];
+    return `${messages.length}:${messages[0]?.id ?? ''}`;
+  }
+
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    paneHeight = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      paneHeight = el.clientHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
+  function armShortThreadFill(epoch: number) {
+    if (epoch !== entryEpoch) return;
+    shortFillEpoch = epoch;
+  }
+
+  $effect(() => {
+    const armed = shortFillEpoch;
+    // Every value whose change can make one more page worth asking for.
+    void [
+      paneHeight,
+      shortFillInFlight,
+      isLoadingOlder,
+      scrollbackState,
+      storePagesRead,
+      renderWindow.start,
+      messageGroups.length,
+      hasMoreInDb,
+    ];
+    if (armed === null) return;
+    untrack(() => continueShortThreadFill(armed));
+  });
+
+  function continueShortThreadFill(epoch: number) {
+    if (epoch !== entryEpoch || !chatContainer || shortFillInFlight) return;
+    if (shortFillStoppedEpoch === epoch) return;
+    // A load already running - the reader's or the fill's - is waited for: its end re-runs this.
+    if (isLoadingOlder || scrollbackState === 'asking') return;
+    // A pane with no box measures as "short" whatever it holds: never page the store on it. Its
+    // `ResizeObserver` (`paneHeight`) re-runs this when it gains one.
+    if (chatContainer.clientHeight === 0) {
+      Log.d(
+        'chat.entry',
+        'short thread: the pane has no height yet - nothing measured, nothing asked'
+      );
+      return;
+    }
+    if (chatContainer.scrollHeight > chatContainer.clientHeight) return;
+    const fromStore = renderWindow.start === 0 && !!onLoadOlderMessages && hasMoreInDb;
+    const canBring =
+      renderWindow.start > 0 ||
+      fromStore ||
+      (!!onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle');
+    if (!canBring) return;
+    Log.d('chat.entry', `short thread: asking for older history (window ${renderWindow.start})`);
+    const cursorBefore = storeCursor();
+    shortFillInFlight = true;
+    void loadOlderGroups('fill')
+      .then(
+        () => {
+          if (epoch !== entryEpoch) return;
+          if (fromStore && hasMoreInDb && storeCursor() === cursorBefore) {
+            Log.w(
+              'chat.entry',
+              'short thread: the store answered "more" without moving its cursor - the fill stops for this entry'
+            );
+            shortFillStoppedEpoch = epoch;
+          }
+        },
+        (e: unknown) => {
+          if (epoch !== entryEpoch) return;
+          Log.w(
+            'chat.entry',
+            `short thread: the older-history load threw (${e instanceof Error ? e.name : typeof e}) - the fill stops for this entry`
+          );
+          shortFillStoppedEpoch = epoch;
+        }
+      )
+      .finally(() => {
+        if (epoch === entryEpoch) shortFillInFlight = false;
+      });
   }
 
   /**
@@ -870,7 +986,12 @@
     lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
-    if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
+    // A pane its thread does not fill cannot be scrolled by the reader: a scroll event there is a box
+    // changing (the keyboard), and its past is the silent entry fill's to bring.
+    if (
+      chatContainer.scrollTop < OLDER_TRIGGER_PX &&
+      chatContainer.scrollHeight > chatContainer.clientHeight
+    ) {
       void loadOlderGroups();
     }
   }
@@ -1141,7 +1262,9 @@
   /** Hold the message list invisible during entry, but never hide the skeleton placeholder. */
   let hideDuringEntry = $derived(entering && !showSkeleton);
 
-  async function loadOlderGroups() {
+  async function loadOlderGroups(by: 'reader' | 'fill' = 'reader') {
+    // A reader reaching the top owns whatever load is running from then on: its spinner shows.
+    if (by === 'reader' || !isLoadingOlder) olderAskedBy = by;
     // Paginate from where the window ACTUALLY is, never from the stored index: after the list has
     // been replaced by a shorter page the two differ, and stepping back from the stale one would
     // walk a window that is already past the end.
@@ -1152,21 +1275,21 @@
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
       const token = ++olderLoadToken;
       isLoadingOlder = true;
+      // THE READER'S PLACE ACROSS THIS PREPEND IS THE GROWTH OBSERVER'S ROW ANCHOR, as for the window
+      // step above - never a `scrollTop` captured before the await (2026-11-14). That write restored
+      // the pane as it stood BEFORE the store answered: a keyboard rising meanwhile, and the thread
+      // taken to its end for it, were undone, and the reader landed a keyboard height up, on older
+      // messages (`threadGrowthObserver.test.ts`, "an older page prepended").
       try {
-        const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
-        const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
         if (token !== olderLoadToken) {
-          Log.d('ChatArea', 'older-history load retired by a conversation switch - no restore');
+          Log.d('ChatArea', 'older-history load retired by a conversation switch');
           return;
         }
         if (!hasMore) hasMoreInDb = false;
-        // New messages were prepended - restore scroll position so the
-        // viewport doesn't jump back to the top.
+        storePagesRead++;
+        // The prepend is rendered while `isLoadingOlder` still holds the observer to `keep-row`.
         await tick();
-        if (chatContainer && token === olderLoadToken) {
-          chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
-        }
       } finally {
         if (token === olderLoadToken) isLoadingOlder = false;
       }
@@ -1177,18 +1300,26 @@
     // for it. Once per conversation-visit: a scroll gesture fires this handler repeatedly, and the
     // answer arrives as an ordinary bundle rather than as a return value.
     if (onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle') {
+      // The answer belongs to the conversation that asked: a switch during the ask resets the state
+      // for the next one, and this call must not write over it (review of #3545).
+      const askedIn = entryEpoch;
       scrollbackState = 'asking';
       scrollbackAskedAt = oldestHeldAt;
       // `unavailable` IS one of the answers this call returns deliberately, so mapping a throw
       // onto it makes a failed ask and a declined one the same value at every reader. The state
       // still collapses - the UI has one thing to say either way - but the log keeps them apart,
       // which is all a reader gets when someone reports that history stopped here.
-      scrollbackState = (await onRequestOlderFromPeers().catch((e: unknown) => {
+      const answer = (await onRequestOlderFromPeers().catch((e: unknown) => {
         console.warn(
           `[ChatArea] peer scrollback request threw for ${chatView?.conversation.id.slice(0, 8) ?? 'no-conversation'}… - reported as unavailable: ${String(e).slice(0, 200)}`
         );
         return 'unavailable';
       })) as Exclude<ScrollbackState, 'asking'>;
+      if (askedIn !== entryEpoch) {
+        Log.d('ChatArea', `peer scrollback answer (${answer}) retired by a conversation switch`);
+        return;
+      }
+      scrollbackState = answer;
     }
   }
 
@@ -1477,6 +1608,10 @@
         entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
+        shortFillEpoch = null;
+        shortFillStoppedEpoch = null;
+        shortFillInFlight = false;
+        olderAskedBy = 'reader';
         entryReportOwed = true;
         if (entryAnchor.kind === 'restore') {
           isNearBottom = false;
@@ -2068,7 +2203,9 @@
             when that ask is running and when nobody could answer it. Silence on success: the
             messages simply appear.
           -->
-          {#if scrollbackState === 'asking'}
+          {#if olderAskedBy === 'fill'}
+            <!-- The entry fill is silent (review of #3545): no spinner, no banner. -->
+          {:else if scrollbackState === 'asking'}
             <div
               class="text-muted-foreground flex items-center justify-center gap-2 py-2 text-xs"
               role="status"
@@ -2099,7 +2236,7 @@
           {/if}
           <ChatMessageGroups
             {visibleMessageGroups}
-            {isLoadingOlder}
+            isLoadingOlder={isLoadingOlder && olderAskedBy === 'reader'}
             {messageReactions}
             {currentUserId}
             readWatermarks={conversation?.readWatermarks}
