@@ -1,6 +1,7 @@
 import { Controller, Get, Param, UseGuards, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { RouteParams } from '../common/route-params';
 
 /** A parrainage relative as exposed by Sky, keyed by Authentik sub. */
 interface SkyEntourageMember {
@@ -25,6 +26,7 @@ interface SkyEntourage {
  * Sky uses the shared SKY_API_KEY. Never throws: a Sky hiccup yields an empty
  * tree rather than breaking the profile.
  */
+@RouteParams({ sub: 'opaque' })
 @Controller('users')
 @UseGuards(NginxAuthGuard)
 export class SkyEntourageController {
