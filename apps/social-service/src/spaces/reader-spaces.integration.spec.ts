@@ -25,8 +25,10 @@ import {
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  campusWideReaderCampus,
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
+  isCampusStaffSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
@@ -300,6 +302,21 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(icm).toEqual([{ formation: 'ICM', campus: 'saint-etienne' }]);
   });
 
+  it('isCampusStaffSql and campusWideReaderCampus agree for every reader (the staff-by-campus door)', async () => {
+    for (const [id, u] of Object.entries(USERS)) {
+      const { rows } = await client.query(
+        `SELECT ${isCampusStaffSql('u')} AS staff FROM users u WHERE u.id = $1`,
+        [id]
+      );
+      const pure = campusWideReaderCampus({ id, campus: u.campus, cursus: u.cursus }) !== null;
+      expect({ id, staff: rows[0].staff }).toEqual({ id, staff: pure });
+    }
+    // A cursus that is not an array is no staff, in both.
+    expect(campusWideReaderCampus({ campus: 'saint-etienne', cursus: { formation: 'ICM' } })).toBe(
+      null
+    );
+  });
+
   it('the gate admits an admin, a reader with a space, a member and an accepted follower - and nobody else', async () => {
     const admitted: string[] = [];
     for (const id of [...EVERYONE, 'nobody-at-all']) {
@@ -514,7 +531,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label)).toEqual(expected);
   });
 
-  it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
+  // The directory also counts read grants since 2026-11-14 (read-grants.integration.spec.ts).
+  it('the plain predicate (D37, a booking space): rules or membership, an admin as anyone', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {
       const { rows } = await client.query(

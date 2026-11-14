@@ -133,6 +133,10 @@
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import {
+    mirrorStoredNicknames,
+    noteSalonCommunities,
+  } from '$lib/utils/users/conversationNicknames.svelte';
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -454,6 +458,19 @@
   });
   $effect(() => {
     if (globalSession.isLoggedIn) keyReadRefused = false;
+  });
+  // A NOTIFICATION NAMES A MEMBER BY THEIR NICKNAME IN THAT CONVERSATION (owner, 2026-11-14), and
+  // the native push path reads it from the device's copy (`nicknameMirror.ts`): every register this
+  // account stores is restated once per signed-in account, and every salon is placed in its
+  // community whenever the list changes (a salon push names the salon, never its community).
+  $effect(() => {
+    const accountId = globalSession.userId;
+    if (!globalSession.isLoggedIn || !accountId) return;
+    untrack(() => mirrorStoredNicknames());
+  });
+  $effect(() => {
+    if (!globalSession.isLoggedIn) return;
+    noteSalonCommunities(globalChannels.channelWorkspaces);
   });
   let pinLoading = $state(false);
   /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */

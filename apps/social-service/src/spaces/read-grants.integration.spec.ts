@@ -10,7 +10,9 @@
  *    they saw before;
  *  - a grant NEVER notifies: the announcement recipients and the republication's newly reached
  *    readers are computed without it;
- *  - the directory and the anonymous agenda selection are NOT widened;
+ *  - the association directory, the shop and the partnerships follow the grant (owner,
+ *    2026-11-14: a grant opens everything of its cell); a booking space and the anonymous agenda
+ *    selection are NOT widened;
  *  - a revocation takes effect on the next read.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason;
@@ -389,13 +391,37 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     expect(newly.rows.map((r) => r.id as string)).toEqual(['isminGa']);
   });
 
-  it('the directory and the anonymous selection are not widened by a grant', async () => {
+  it('the directory, the shop and the partnerships list the entities of the ticked cells (owner, 2026-11-14)', async () => {
+    const directory: Record<string, string[]> = {
+      grantGa: ['A2', 'ME Gardanne', 'School'],
+      grantIcmSe: ['A1', 'School'],
+      // The cell holds a real space no association addresses: the institution for everyone only.
+      grantNone: ['School'],
+      grantBoth: ['A1', 'A2', 'ME Gardanne', 'School'],
+      // A reader with no grant gains nothing: staff with a campus and no cursus have no space.
+      outsider: [],
+    };
+    for (const [id, expected] of Object.entries(directory)) {
+      const { rows } = await client.query(
+        `SELECT a.name FROM associations a
+          WHERE ${associationVisibleToViewerSql('a.id', '$1', { readGrants: true })} ORDER BY a.name`,
+        [id]
+      );
+      expect({ id, directory: rows.map((r) => r.name as string) }).toEqual({
+        id,
+        directory: expected,
+      });
+    }
+  });
+
+  it('a booking space and the anonymous selection are not widened by a grant', async () => {
+    // The plain predicate (a booking space's) counts no grant.
     for (const id of GRANTEES) {
       const { rows } = await client.query(
         `SELECT a.name FROM associations a WHERE ${associationVisibleToViewerSql('a.id', '$1')}`,
         [id]
       );
-      expect({ id, directory: rows }).toEqual({ id, directory: [] });
+      expect({ id, bookable: rows }).toEqual({ id, bookable: [] });
     }
     // The anonymous agenda per selection has no reader at all, so no grant can enter it.
     expect(eventReachesSpaceMatchingSql('e', { campus: '$1', formation: null })).not.toContain(

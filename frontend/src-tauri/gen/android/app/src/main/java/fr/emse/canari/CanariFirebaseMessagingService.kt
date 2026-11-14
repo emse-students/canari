@@ -42,6 +42,7 @@ import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
+import fr.emse.canari.push.ConversationNicknames
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
@@ -1198,6 +1199,66 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /**
+         * Parses `conversation_nicknames.json` - the nicknames this account may see, per conversation,
+         * written by the WebView (`nicknameMirror.ts`, Rust `store_conversation_nicknames`) - or null
+         * when there is none (absent, unreadable: said under [label]). The owner check is the pure
+         * rule's ([ConversationNicknames.of]), so a foreign file is parsed and then never answers.
+         */
+        internal fun readConversationNicknames(context: Context, label: String): ConversationNicknames.Book? {
+            val file = File(MlsContextLoader.tauriDataDir(context), "conversation_nicknames.json")
+            if (!file.exists()) {
+                Log.d(TAG, "$label no conversation_nicknames.json yet - profile names only")
+                return null
+            }
+            return try {
+                val root = JSONObject(file.readText())
+                val scopes = HashMap<String, Map<String, String>>()
+                root.optJSONObject("scopes")?.let { all ->
+                    for (scope in all.keys()) {
+                        val members = all.optJSONObject(scope) ?: continue
+                        scopes[scope] = members.keys().asSequence()
+                            .mapNotNull { id -> members.optString(id).takeIf { it.isNotBlank() }?.let { id to it } }
+                            .toMap()
+                    }
+                }
+                val channels = HashMap<String, String>()
+                root.optJSONObject("channels")?.let { all ->
+                    for (id in all.keys()) all.optString(id).takeIf { it.isNotBlank() }?.let { channels[id] = it }
+                }
+                ConversationNicknames.Book(root.optString("userId").lowercase(), scopes, channels)
+            } catch (e: Exception) {
+                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.message}")
+                null
+            }
+        }
+
+        /**
+         * THE ONE DOOR A NICKNAME HAS INTO A NATIVE NOTIFICATION (owner, 2026-11-14): a lookup of the
+         * nickname a member carries in ONE conversation - [conversation] a group id, or a salon id when
+         * [salon] - for the account [me]. The file is read once, at the first lookup; each answer is
+         * logged under [label] (named or not, never the name). Null means "no nickname": the caller
+         * keeps the name it already had.
+         */
+        internal fun nicknameLookup(
+            context: Context,
+            me: String?,
+            salon: Boolean,
+            conversation: String,
+            label: String,
+        ): (String) -> String? {
+            val book by lazy { readConversationNicknames(context, label) }
+            return { memberId ->
+                if (memberId.isBlank() || conversation.isBlank()) {
+                    null
+                } else {
+                    ConversationNicknames.of(book, me, salon, conversation, memberId).also {
+                        Log.d(TAG, "$label nickname in conversation=${it != null} member=${memberId.take(8)}")
+                    }
+                }
+            }
+        }
+
         /** [read] as the pure salon-author rule takes it. */
         internal fun nameBookOf(read: DisplayNamesRead): ChannelBannerAuthor.NameBook =
             read.names?.let { names -> ChannelBannerAuthor.NameBook.Held { id -> names.optString(id).takeIf { it.isNotBlank() } } }
@@ -1233,11 +1294,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * then reads "Appel Canari" / "Canari call", the iPhone's word for the same case
          * (`CanariCallerDisplayName`), and shows no photo either.
          */
-        private fun knownCallerName(context: Context, callerId: String): String? {
+        private fun knownCallerName(context: Context, callerId: String, groupId: String): String? {
             val me = MlsContextLoader.loadUserId(context)?.lowercase()
-            val name = callerId.lowercase().takeIf { it.isNotEmpty() }
-                ?.let { loadDisplayNames(context, me, "[CALL_NAME]")?.optString(it) }
-                ?.takeIf { it.isNotBlank() }
+            // Their nickname in the call's conversation first (owner, 2026-11-14), as the call screen
+            // in the app names them.
+            val name = callerId.lowercase().takeIf { it.isNotEmpty() }?.let { id ->
+                nicknameLookup(context, me, salon = false, conversation = groupId, label = "[CALL_NAME]")(id)
+                    ?: loadDisplayNames(context, me, "[CALL_NAME]")?.optString(id)
+            }?.takeIf { it.isNotBlank() }
             Log.d(TAG, "[CALL_NAME] caller named=${name != null}")
             return name
         }
@@ -1297,7 +1361,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CanariApplication.ensureChannels(context, manager)
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
-            val name = knownCallerName(context, callerId)
+            val name = knownCallerName(context, callerId, groupId)
             val title = name ?: res.getString(R.string.notif_call_unknown_caller)
             val body = res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call)
             // A caller this phone never named is not shown by face either (decision 6): the photo
@@ -2217,7 +2281,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // the same speaker, or nobody, with the same Person key and the same face rule.
                     val salonAuthor = if (groupId.startsWith("channel_")) {
                         val me = MlsContextLoader.loadPushContext(context)?.userId?.lowercase()
-                        ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId) {
+                        ChannelBannerAuthor.of(
+                            showsMessage = true,
+                            authorProven = authorProven,
+                            authorId = senderId,
+                            nickname = nicknameLookup(context, me, salon = true, conversation = groupId, label = "[SALON_AUTHOR]"),
+                        ) {
                             nameBookOf(readDisplayNames(context, me))
                         }
                     } else null
@@ -3762,6 +3831,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        // THE NAME THE BANNER GIVES THE SENDER: their nickname in THIS conversation, from the phone's
+        // copy (owner, 2026-11-14), else the push's profile name. The cache row keeps the profile
+        // name - the app resolves its own labels, scope and all.
+        val shownName = nicknameLookup(this, myUserId, salon = false, conversation = groupId, label = "[NOTIF_NAME]")(senderId)
+            ?: senderName
         val body: String = decrypted?.text?.let {
             renderMentions(it, myUserId, appLocaleContext(this))
         }
@@ -3777,7 +3851,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                     enqueueRefusedFrameWorker()
                 }
-                buildFallbackText(appLocaleContext(this), senderName, groupName, isGroup)
+                buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
                     .also { Log.w(TAG, "Fallback notification: $it") }
             }
 
@@ -3801,7 +3875,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
-        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(shownName)
         // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
         // attach it inline. null for text/video/audio -> plain text notification.
         val media = decrypted?.let { fetchAndDecryptMedia(it) }
@@ -3821,7 +3895,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
             } else {
                 val stamp = showMessageNotification(
-                    senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                    shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
                     channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
                     namesEachSender = true,
                     // The payload's own discriminator: an unnamed group is still a group.
@@ -6035,7 +6109,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""
         val actorId = data["senderId"] ?: ""
-        val actorName = data["title"] ?: getString(R.string.app_name)
+        // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
+        val actorName = nicknameLookup(
+            this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
+        )(actorId) ?: data["title"] ?: getString(R.string.app_name)
 
         if (groupId.isEmpty()) {
             // Without it there is no conversation to attach to and no stable id to reuse, so the
@@ -6598,7 +6675,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
         // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
         // banner named nobody and drew the SALON's letter as a face (owner, `v1.6.0`).
-        val author = ChannelBannerAuthor.of(showsMessage, authorProven, attribution.authorId) {
+        // Their nickname in the salon's community first (owner, 2026-11-14), for a proven author only.
+        val author = ChannelBannerAuthor.of(
+            showsMessage,
+            authorProven,
+            attribution.authorId,
+            nickname = nicknameLookup(this, myUserId, salon = true, conversation = channelId, label = "[SALON_AUTHOR]"),
+        ) {
             nameBookOf(namesRead.value)
         }
         logUnnamedSalonAuthor(author, channelId)

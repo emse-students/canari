@@ -970,9 +970,9 @@ export class ProductsService {
   /**
    * Returns the active products of every association visible to `userId` (login required, listed
    * on /shop), each annotated for `userId` (`annotateForViewer`). Visible is the directory's
-   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, or its rules
-   * reach one of the reader's spaces): a product of another campus is no more listed than its
-   * association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
+   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, its rules
+   * reach one of the reader's spaces, or a nominative read grant of the reader reaches it - owner,
+   * 2026-11-14): a product of another campus is no more listed than its association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
    * (`listByAssoc`, D37) lists it to anyone holding the link, and `preparePurchase` asks no
    * campus - as a form's link is enough to answer it.
    */
@@ -980,9 +980,10 @@ export class ProductsService {
     const all = await this.productRepo
       .createQueryBuilder('p')
       .where('p.isActive = true')
-      .andWhere(associationVisibleToViewerSql('"p"."associationId"', ':viewerId'), {
-        viewerId: userId,
-      })
+      .andWhere(
+        associationVisibleToViewerSql('"p"."associationId"', ':viewerId', { readGrants: true }),
+        { viewerId: userId }
+      )
       .orderBy('p.associationId', 'ASC')
       .addOrderBy('p.sortOrder', 'ASC')
       .addOrderBy('p.createdAt', 'ASC')

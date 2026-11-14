@@ -708,7 +708,8 @@ export async function listAssociations(
 
 /**
  * THE READER'S DIRECTORY (D37): the associations whose audience reaches one of the reader's spaces,
- * plus the ones they belong to. Only the two directory pages (`/associations`, `/lists`) read it -
+ * plus the ones they belong to, plus the ones a nominative read grant of theirs reaches. Only the
+ * three directory pages (`/associations`, `/lists`, `/institutions`) read it -
  * a hidden association is not listed there, and its page stays reachable by its link.
  */
 export async function listAssociationDirectory(
