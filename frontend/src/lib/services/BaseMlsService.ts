@@ -94,6 +94,7 @@ import {
   verdictAdmits,
   type DeviceEvent,
   type DevicePin,
+  type MembershipEvidence,
   type KeyPackageVerdict,
 } from '$lib/mls-client/deviceTrust';
 import {
@@ -8150,6 +8151,11 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<DevicePin | null>;
   /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
   protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+  /** Reads what this device can prove of a membership from the MLS layer - see {@link membershipEvidence}. */
+  protected abstract membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence>;
 
   /**
    * What THIS DEVICE has seen of `userId:deviceId`'s signature key in a signed tree it merged or
@@ -8194,6 +8200,25 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async removalEpochs(groupId: string, userId: string): Promise<number[]> {
     return this.removalEpochsNative(groupId, userId);
+  }
+
+  /**
+   * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted (a Welcome or GroupInfo it joined by, a
+   * commit it merged, a tree it held at load, a departure it recorded), and the first epoch its
+   * record of the group covers (`mls-core/src/member_sightings.rs`).
+   *
+   * WHY: whether a user entering by their own commit is a member coming back must not be the
+   * delivery service's word - a server that lets an outsider in can seat them on the roster it
+   * serves (owner, 2026-11-14: the proof is on the device). Per USER, so any device of a member is
+   * that member; kept in the sealed state, so it follows the account through restarts, the native
+   * background engine and an account switch.
+   *
+   * `firstSeenEpoch: null` IS "NOT SEEN", never "never a member": a device that joined after the
+   * user's every leaf left holds no sighting of them.
+   */
+  async membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence> {
+    return this.membershipEvidenceNative(groupId, userId);
   }
 
   /**

@@ -1,5 +1,5 @@
 import { canonicalIdentity } from './leafIdentity';
-import type { DeviceEvent } from './deviceTrust';
+import type { DeviceEvent, MembershipEvidence } from './deviceTrust';
 
 /**
  * A NEW PERSON WHO ENTERED A CONVERSATION BY THEIR OWN COMMIT ({@link entersUninvited}), as the
@@ -20,14 +20,13 @@ import type { DeviceEvent } from './deviceTrust';
  * nobody wanted (`noteUninvitedEntries` in `deviceNotices.svelte.ts` decides it):
  *
  * - `returning`: a MEMBER coming back - a member who lost every leaf and rejoined, or added their
- *   own new device by external join, which the external join exists for. This device saw the same
- *   USER leave the tree at an earlier epoch (`IMlsService.removalEpochs`), or, when it saw no
- *   departure, the server's roster seats the user as an admitted member (owner, 2026-11-14): the
- *   server accepts an external commit only from an admitted seat holder, so that seat was held before
- *   the entry. Decided from the roster, never from this device's tree alone.
+ *   own new device by external join, which the external join exists for. PROVEN ON THIS DEVICE
+ *   (owner, 2026-11-14): it saw the same USER hold a leaf of a tree of this group it accepted, at an
+ *   epoch before the entry (`IMlsService.membershipEvidence`). Never the server's word.
  * - `direct-peer`: the other person of a 1:1 conversation - the conversation IS the two of them.
- * - `new-person`: none of these - absent from the roster or still awaiting a member - written in the
- *   conversation, since a member must be told about it.
+ * - `new-person`: NOT PROVEN a member by this device - written in the conversation, since a member
+ *   must be told about it. Reported with `watchedFromEpoch`, so a device that was not there yet when
+ *   a member left is counted apart from one that watched the whole time.
  * - `unvouched-device`: a device of a user ALREADY in the tree, seen for the first time, that
  *   admitted itself (`entersAsUnvouchedDevice`). No member added it - a further device of a member is
  *   a member's Add after a member's tap, and an honest device never joins itself on a seat no commit
@@ -45,6 +44,13 @@ export interface UninvitedEntryReport {
   epoch: number;
   /** Which key entered (`DeviceEvent.keyFingerprint`). */
   keyFingerprint: string;
+  /**
+   * For `returning` and `new-person`: the first epoch this device's record of the group covers
+   * (`MembershipEvidence.watchedFromEpoch`), `null` when it holds none. The evidence separating a
+   * device that was not there yet from one that watched and never saw the entrant; absent for the
+   * kinds the device decides without it.
+   */
+  watchedFromEpoch?: number | null;
 }
 
 /** Sends a report somewhere a human reads it. Wired once by the MLS service. */
@@ -72,17 +78,22 @@ export function resetReportedUninvitedEntries(): void {
  * Called only for a CONVERSATION: in a community or salon key group an external commit is how every
  * member enters, and the caller does not ask.
  */
-export function reportUninvitedEntry(event: DeviceEvent, kind: UninvitedEntryKind): void {
+export function reportUninvitedEntry(
+  event: DeviceEvent,
+  kind: UninvitedEntryKind,
+  evidence?: MembershipEvidence
+): void {
   const report: UninvitedEntryReport = {
     kind,
     groupId: event.groupId,
     entrant: canonicalIdentity(event.identity) ?? event.identity,
     epoch: event.epoch,
     keyFingerprint: event.keyFingerprint,
+    ...(evidence ? { watchedFromEpoch: evidence.watchedFromEpoch } : {}),
   };
   if (kind === 'new-person') {
     console.error(
-      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} - a user absent from the tree admitted themselves; no member added them`
+      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} watched_from=${evidence?.watchedFromEpoch ?? 'none'} - a user absent from the tree admitted themselves, and this device never saw them a member here before`
     );
   } else if (kind === 'unvouched-device') {
     console.error(

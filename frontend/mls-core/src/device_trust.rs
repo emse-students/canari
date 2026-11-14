@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
 use crate::admission::AdmissionPolicy;
+use crate::member_sightings::{MemberSighting, MemberSightings, MembershipEvidence};
 use crate::members::credential_identity;
 
 /// The most device events kept while nobody takes them. An event is a few hundred bytes of
@@ -326,6 +327,9 @@ pub struct DeviceTrust {
     departures: VecDeque<Departure>,
     /// Whether this process already said the departure record is full.
     departures_full_reported: bool,
+    /// Who this device saw hold a leaf of each conversation's tree, and from which epoch
+    /// ([`crate::member_sightings`]). Persisted.
+    sightings: MemberSightings,
     /// Groups the load did NOT seed because a commit was staged in them. In memory only: the next
     /// load decides again. Seeded at the first commit merged on their tree
     /// ([`Self::observe_merged_commit`]), or when their staged commit is cleared.
@@ -457,6 +461,7 @@ impl DeviceTrust {
         pruned: Vec<String>,
         events: Vec<DeviceEvent>,
         departures: Vec<Departure>,
+        sightings: Vec<MemberSighting>,
     ) -> Self {
         // EVERY PIN THIS CODE WRITES IS KEYED CANONICALLY ([`Self::insert_pin`]), and no released
         // build wrote pins before that. A record under any other key is therefore not a pin of this
@@ -500,8 +505,105 @@ impl DeviceTrust {
             full_reported: false,
             departures: departures.into_iter().collect(),
             departures_full_reported: false,
+            sightings: MemberSightings::from_persisted(sightings),
             unseeded: Default::default(),
         }
+    }
+
+    /// The member sightings, as they are persisted ([`crate::member_sightings`]).
+    pub(crate) fn persisted_sightings(&self) -> Vec<MemberSighting> {
+        self.sightings.persisted()
+    }
+
+    /// Records every user of `leaves`, a tree of `group_id` this device accepted at `epoch`, as seen
+    /// there - unless the group is a key group (`door` is `Open`), which records none
+    /// ([`crate::member_sightings`]).
+    ///
+    /// @returns whether anything was written.
+    pub(crate) fn record_sightings(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        leaves: &[LeafKey],
+        door: Option<AdmissionPolicy>,
+    ) -> bool {
+        if door == Some(AdmissionPolicy::Open) {
+            return false;
+        }
+        self.sightings.record_tree(group_id, epoch, leaves)
+    }
+
+    /// Forgets the sightings of `group_id`: the tree it held is gone (`why`).
+    ///
+    /// @returns whether anything was dropped.
+    pub(crate) fn forget_sightings(&mut self, group_id: &str, why: &str) -> bool {
+        self.sightings.forget_group(group_id, why)
+    }
+
+    /// Records a tree this device HELD AT LOAD. The first time a group is recorded (a state written
+    /// before the sightings existed), the departures already recorded for it are folded in as
+    /// sightings at `epoch - 1` - the evidence the classifier read before - and from then on the
+    /// sightings alone are read ([`Self::membership_evidence`]).
+    ///
+    /// @returns whether anything was written.
+    pub(crate) fn record_sightings_at_load(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        leaves: &[LeafKey],
+        door: Option<AdmissionPolicy>,
+    ) -> bool {
+        if door == Some(AdmissionPolicy::Open) {
+            return false;
+        }
+        let mut wrote = false;
+        if !self.sightings.holds_group(group_id) {
+            let folded: Vec<LeafKey> = self
+                .departures
+                .iter()
+                .filter(|d| d.group_id == group_id)
+                .map(|d| (0u32, d.user_id.clone(), Vec::new()))
+                .collect();
+            for (_, user, _) in &folded {
+                let at = self
+                    .departures
+                    .iter()
+                    .filter(|d| d.group_id == group_id && &d.user_id == user)
+                    .map(|d| d.epoch.saturating_sub(1))
+                    .min()
+                    .unwrap_or(epoch);
+                wrote |= self
+                    .sightings
+                    .record_tree(group_id, at, &[(0, user.clone(), Vec::new())]);
+            }
+            if !folded.is_empty() {
+                log::info!(
+                    "[SIGHTINGS] {}: {} departure record(s) folded in at the first load that records sightings",
+                    group_id.get(..8).unwrap_or(group_id),
+                    folded.len()
+                );
+            }
+        }
+        wrote | self.sightings.record_tree(group_id, epoch, leaves)
+    }
+
+    /// Drops the sightings of groups not in `held_groups`, only past the threshold
+    /// ([`crate::member_sightings::SIGHTINGS_PRUNE_THRESHOLD`]).
+    pub(crate) fn prune_sightings(
+        &mut self,
+        held_groups: &std::collections::HashSet<&str>,
+    ) -> usize {
+        self.sightings.prune(held_groups)
+    }
+
+    /// What this device can prove about `user_id` in `group_id`, from what it saw itself in the
+    /// lineage it holds: the first epoch it saw the user hold a leaf there, and the first epoch its
+    /// record of the group covers ([`crate::member_sightings`]). Every departure merged in that
+    /// lineage was a sighting first (the tree the removing commit was built on is recorded), so the
+    /// sightings alone answer; departures from before the record are folded in once, at load
+    /// ([`Self::record_sightings_at_load`]). Never asks anybody.
+    pub fn membership_evidence(&self, group_id: &str, user_id: &str) -> MembershipEvidence {
+        self.sightings.evidence(group_id, user_id)
     }
 
     /// Records that the load did not seed `group_id` (a commit was staged in it).
@@ -887,8 +989,9 @@ impl DeviceTrust {
     }
 
     /// Records a tree this device has just JOINED (a Welcome, an external commit): pins the
-    /// identities seen for the first time, and records an event for every leaf whose identity is
-    /// pinned under another key.
+    /// identities seen for the first time, records an event for every leaf whose identity is pinned
+    /// under another key, and records every user as seen in the group at `epoch` unless `door` is
+    /// `Open` ([`crate::member_sightings`]).
     ///
     /// @returns whether anything was written.
     pub(crate) fn observe_joined_tree(
@@ -897,10 +1000,15 @@ impl DeviceTrust {
         epoch: u64,
         leaves: &[LeafKey],
         own_identity: &str,
+        door: Option<AdmissionPolicy>,
     ) -> bool {
         // Joining pins the whole tree below, which is everything a later seed would do.
         self.unseeded.remove(group_id);
-        let mut wrote = false;
+        // A JOINED TREE STARTS A NEW LINEAGE: what an earlier copy of the group recorded is not
+        // evidence here ([`crate::member_sightings`]). Every user of this tree was a member of it at
+        // this epoch.
+        let mut wrote = self.forget_sightings(group_id, "a fresh tree was joined");
+        wrote |= self.record_sightings(group_id, epoch, leaves, door);
         for (_, identity, key) in leaves {
             let (trust, pinned) = self.observe(identity, key);
             wrote |= pinned;
@@ -941,7 +1049,10 @@ impl DeviceTrust {
     /// over PAIRS, not indexes, and a pinned pair is not news: a leaf that moved index, or a device
     /// removed and re-added under its pinned key (a heal), is the same device and says nothing.
     ///
-    /// `door` is the group's admission policy ([`crate::admission`]). It decides nothing here - the
+    /// Both trees are recorded as member sightings ([`crate::member_sightings`]) unless `door` is
+    /// `Open` (a key group).
+    ///
+    /// `door` is the group's admission policy ([`crate::admission`]). It decides no event - the
     /// event is recorded whatever it says - and only names the door a device's entry by its own
     /// commit came through, in its info line.
     ///
@@ -967,6 +1078,10 @@ impl DeviceTrust {
             );
             wrote |= self.seed_from_tree(before);
         }
+        // Both trees are ones this device accepted: the one the commit was built on (epoch - 1) -
+        // which also covers a group whose record started with this build - and the one it produced.
+        wrote |= self.record_sightings(group_id, epoch.saturating_sub(1), before, door);
+        wrote |= self.record_sightings(group_id, epoch, after, door);
         wrote |= self.record_departures(group_id, epoch, before, after);
         // The committer signed this commit with the key its leaf carries: a proof it holds that key.
         if let Some(committer) = added_by
@@ -1322,12 +1437,106 @@ mod tests {
         // A never-pruned first sight is anchored; the flag survives persistence.
         t.observe("new:d", b"k");
         assert!(t.pin_naming("new:d").unwrap().anchored);
-        let again =
-            DeviceTrust::from_persisted(t.persisted_pins(), t.persisted_pruned(), vec![], vec![]);
+        let again = DeviceTrust::from_persisted(
+            t.persisted_pins(),
+            t.persisted_pruned(),
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(!again.pin_naming("u5:d").unwrap().anchored);
         assert!(
             again.pruned.contains(&"u6:d".to_string()),
             "the pruned identities persist"
+        );
+    }
+
+    #[test]
+    fn membership_evidence_reads_the_sightings_and_a_departure_recorded_before_them() {
+        let leaf = |id: &str| (0u32, id.to_string(), b"k".to_vec());
+        // A state written before sightings existed: one departure of bob at epoch 4, nothing else.
+        let departed = Departure {
+            group_id: "g".into(),
+            user_id: "bob".into(),
+            epoch: 4,
+            device_id: Some("d1".into()),
+            user_left: true,
+        };
+        let mut t = DeviceTrust::from_persisted(vec![], vec![], vec![], vec![departed], vec![]);
+        assert_eq!(
+            t.membership_evidence("g", "bob").first_seen_epoch,
+            None,
+            "a departure alone is read only once folded in at load"
+        );
+        t.record_sightings_at_load("g", 6, &[leaf("alice:d")], None);
+        let e = t.membership_evidence("g", "BOB");
+        assert_eq!(
+            e.first_seen_epoch,
+            Some(3),
+            "in the tree the removing commit was built on"
+        );
+        assert_eq!(e.watched_from_epoch, Some(3));
+        assert_eq!(t.membership_evidence("g", "carol").first_seen_epoch, None);
+        assert_eq!(
+            t.membership_evidence("g", "alice").first_seen_epoch,
+            Some(6)
+        );
+
+        // A commit merged since: both trees are recorded, the one it was built on at epoch - 1.
+        let own = ("alice:d", b"k".as_slice());
+        t.observe_merged_commit(
+            "g",
+            8,
+            &[leaf("alice:d")],
+            &[leaf("alice:d"), leaf("carol:d")],
+            Some("alice:d"),
+            own,
+            None,
+        );
+        assert_eq!(
+            t.membership_evidence("g", "alice").first_seen_epoch,
+            Some(6)
+        );
+        assert_eq!(
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
+        );
+        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, Some(3));
+
+        // A key group's commit records no sighting.
+        t.observe_merged_commit(
+            "kg",
+            2,
+            &[leaf("alice:d")],
+            &[leaf("alice:d"), leaf("carol:d")],
+            Some("alice:d"),
+            own,
+            Some(AdmissionPolicy::Open),
+        );
+        assert_eq!(
+            t.membership_evidence("kg", "alice").watched_from_epoch,
+            None
+        );
+
+        // A freshly joined tree of the same group starts a new lineage: nothing carries over.
+        t.observe_joined_tree("g", 20, &[leaf("alice:d")], "alice:d", None);
+        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, None);
+        assert_eq!(
+            t.membership_evidence("g", "alice").first_seen_epoch,
+            Some(20)
+        );
+
+        // Persisted with the rest.
+        let again = DeviceTrust::from_persisted(
+            vec![],
+            vec![],
+            vec![],
+            t.persisted_departures(),
+            t.persisted_sightings(),
+        );
+        assert_eq!(
+            again.membership_evidence("g", "carol"),
+            t.membership_evidence("g", "carol")
         );
     }
 

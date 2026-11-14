@@ -11,6 +11,7 @@ import {
   isNewToItsOwner,
   type DeviceEvent,
   type KeyFirstSight,
+  type MembershipEvidence,
 } from '$lib/mls-client/deviceTrust';
 import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
@@ -84,13 +85,6 @@ export interface OwnDeviceNotice {
  */
 export type KeyAge = KeyFirstSight | { kind: 'unanswered' };
 
-/**
- * What the server's roster says of an entrant, as an ANSWER: seated and admitted, not (absent, or
- * awaiting a member), or `refused` - the roster is refused to this account because it holds no seat
- * in the group, so the conversation is no longer one it speaks in. Only no answer at all is a throw.
- */
-export type RosterSeat = 'admitted' | 'not-admitted' | 'refused';
-
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
   /** The account whose MLS state handed the events over - fixed when the consumer was registered. */
@@ -109,18 +103,12 @@ export interface DeviceNoticeContext {
     }
   >;
   /**
-   * The epochs at which this device saw `userId` leave the group's tree (`IMlsService.removalEpochs`)
-   * - a self-admitted entry after one is a member coming back, not a new person.
+   * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`
+   * (`IMlsService.membershipEvidence`): the first epoch it saw the user hold a leaf of a tree it
+   * accepted, or recorded them leaving it - a self-admitted entry after such a sighting is a member
+   * coming back. Never the server's word.
    */
-  removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
-  /**
-   * Whether the server's roster of `groupId` seats `userId` as an ADMITTED member (`admitted`: on
-   * the roster, not awaiting a member's answer) or not (`not-admitted`), or refuses this account the
-   * roster (`refused`: it holds no seat there) - read from the same `POST /api/mls/group-rosters` the
-   * stray sweep reads (`rosterSeatOf`). Throws when the server did not answer for the group, so
-   * nothing is guessed.
-   */
-  rosterSeat: (groupId: string, userId: string) => Promise<RosterSeat>;
+  membershipEvidence: (groupId: string, userId: string) => Promise<MembershipEvidence>;
   /**
    * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
    * commitAcceptedAt`, the commit log's `createdAt`), as a {@link ServerInstant}; throws when the
@@ -879,7 +867,7 @@ async function noteUninvitedEntries(
         continue;
       }
       if (decided.kind !== 'new-person' && decided.kind !== 'unvouched-device') {
-        reportUninvitedEntry(event, decided.kind);
+        reportUninvitedEntry(event, decided.kind, decided.evidence);
         continue;
       }
       // THE TIME FIRST, THEN THE ACCUSATION. The report logs at ERROR, and an entry that stays owed
@@ -892,7 +880,7 @@ async function noteUninvitedEntries(
         owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
         continue;
       }
-      reportUninvitedEntry(event, decided.kind);
+      reportUninvitedEntry(event, decided.kind, decided.evidence);
       if (dating !== 'settled') {
         await writeUninvitedLine(event, decided.kind, messageId, dating, ctx);
       }
@@ -913,32 +901,29 @@ type NoticeConversation =
  * Whether an entry no member made is said, and as what ({@link UninvitedEntryKind}).
  *
  * A LEGITIMATE REJOIN IS NOT WRITTEN: the other person of a 1:1 conversation (`direct-peer`), or a
- * MEMBER coming back (`returning`). Both are reported with their kind, so the count still says how
- * often they happen. Anything else is a `new-person` and is written.
+ * member coming back whom THIS DEVICE PROVES was a member (`returning`). Both are reported with their
+ * kind, so the count still says how often they happen. Anything else is a `new-person` and is
+ * written.
  *
- * `returning` IS DECIDED BY THE SERVER'S ROSTER, NOT BY THIS DEVICE'S TREE (owner, 2026-11-14). The
- * tree only knows the departures THIS device saw (`removalEpochs`): a member whose every leaf left
- * before this device joined, or while it was away - a member adding their own new device after
- * losing the old ones - had no leaf here and no departure seen, and was reported as a `new-person`
- * (the one production line of 2026-11-14: a seat held for two months). The roster knows who holds a
- * seat. The server accepts an external commit into a conversation ONLY from someone holding an
- * admitted seat (`assertCommitterMayCommit`: a seat, not awaiting a member), so an admitted seat on
- * the roster read now was held BEFORE the entering commit - or was written by a member's later Add,
- * a member's admission either way. So: a departure this device saw is enough, with no request; else
- * one roster read (`rosterSeat`), made only for a self-admitted entrant with no leaf here, which is
- * rare; an admitted seat is `returning`. A person absent from the roster, or still awaiting a
- * member, is a `new-person`: either the server accepted what its own gate refuses, or the person was
- * removed since - and a member's removal is a commit this device then sees as a later departure.
+ * `returning` IS PROVEN ON THIS DEVICE, NEVER TAKEN FROM THE SERVER (owner, 2026-11-14: the proof is
+ * on the device). The proof is `membershipEvidence`: the first epoch at which this device saw the
+ * entrant's USER hold a leaf of a tree of this group that it accepted itself - a Welcome or GroupInfo
+ * it joined by (signed by a member's leaf), a commit it merged (signed by a member), a tree it held
+ * at a load. Kept per user in the sealed MLS state, so any device of the member, a reinstall
+ * included, is the member, and SCOPED TO THE LINEAGE this device holds: a forget or a fresh join of
+ * the group starts an empty record, so a sighting from another copy of the group (one the server
+ * may have fabricated) never carries over. A sighting BEFORE the entering epoch is `returning`.
  *
- * A departure or roster read that fails throws: the entry stays owed to the next delivery rather
- * than being guessed either way. A roster REFUSED to this account is an answer, not a failure: it
- * holds no seat in the group, and the entry is settled as `not-a-conversation`.
+ * NO SIGHTING BEFORE THE ENTRY IS `new-person`: NOT PROVEN, and said so - written in the
+ * conversation, logged at ERROR, reported with `watchedFromEpoch` (where this device's record of the
+ * group starts), so the count separates "this device was not there yet when the person left" from
+ * "it watched and never saw them". There is NO FALLBACK to the delivery service's roster: a server
+ * that let an outsider in can seat them on the roster it serves, and a verdict it could flip is the
+ * one this line exists to keep from it. The failure direction is an accusation of a member the
+ * device could not vouch for (noise, measured), never a silent pass.
  *
- * WHAT IT TRUSTS. `returning` from the roster is the delivery service's word. Against an HONEST
- * server whose gate has a defect, the line still fires (the roster does not seat the entrant).
- * Against a server that lies - accepts an outsider's external commit AND seats them on the roster it
- * serves - it does NOT: the decision that used to rest on this device's own tree now rests on the
- * party the line watches. Stated in mls-protocol.md ("Who admits a new person").
+ * A read of the evidence that fails throws: the entry stays owed to the next delivery rather than
+ * being guessed either way.
  *
  * `not-self-admitted`: the event is no longer an entry no member made ({@link isSelfAdmittedEntry}).
  * The predicate is enforced HERE, where the decision is acted on, because an entry retried from the
@@ -953,7 +938,7 @@ async function decideUninvitedEntry(
   | 'owed'
   | 'not-a-conversation'
   | 'not-self-admitted'
-  | { kind: UninvitedEntryKind; convo: NoticeConversation }
+  | { kind: UninvitedEntryKind; convo: NoticeConversation; evidence?: MembershipEvidence }
 > {
   if (!isSelfAdmittedEntry(event)) return 'not-self-admitted';
   // A key group, when this session already knows it as one: every member enters it this way.
@@ -976,18 +961,19 @@ async function decideUninvitedEntry(
   if (type === 'direct' && convo.directPeerId && canonicalUserId(convo.directPeerId) === userId) {
     return { kind: 'direct-peer', convo };
   }
-  const departures = await ctx.removalEpochs(event.groupId, userId);
-  if (departures.some((epoch) => epoch < event.epoch)) return { kind: 'returning', convo };
-  const seat = await ctx.rosterSeat(event.groupId, userId);
-  console.info(
-    `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): no departure seen here, roster seat ${seat}`
+  const evidence = await ctx.membershipEvidence(event.groupId, userId);
+  if (evidence.firstSeenEpoch !== null && evidence.firstSeenEpoch < event.epoch) {
+    console.info(
+      `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): a member - this device saw them at epoch ${evidence.firstSeenEpoch}`
+    );
+    return { kind: 'returning', convo, evidence };
+  }
+  // NOT PROVEN, and no fallback. What accuses is the report (`reportUninvitedEntry`, ERROR), which
+  // carries where this device's record starts; this line says why the device could not vouch.
+  console.warn(
+    `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): NOT PROVEN a member on this device - first seen ${evidence.firstSeenEpoch ?? 'never'}, record from epoch ${evidence.watchedFromEpoch ?? 'none'}`
   );
-  // A refusal is the server's ANSWER that this account holds no seat here any more: the
-  // conversation is not one it speaks in, so the entry is settled, never owed - kept owed, it was
-  // asked again, and refused again, at every drain for as long as the device kept the row.
-  if (seat === 'refused') return 'not-a-conversation';
-  if (seat === 'admitted') return { kind: 'returning', convo };
-  return { kind: 'new-person', convo };
+  return { kind: 'new-person', convo, evidence };
 }
 
 /** Writes the uninvited-entry line, dated by the commit that let the entrant in. */

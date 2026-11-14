@@ -439,8 +439,14 @@ impl MlsManager {
         if self.pending_external_joins.remove(group_id) {
             // OUR EXTERNAL JOIN, ACCEPTED: its tree is pinned now, as a Welcome's is - joining a
             // tree is first sight of its members, never "a device was added".
-            self.device_trust
-                .observe_joined_tree(group_id, epoch, &leaves_after, &own_identity);
+            let door = self.admission.get(group_id).copied();
+            self.device_trust.observe_joined_tree(
+                group_id,
+                epoch,
+                &leaves_after,
+                &own_identity,
+                door,
+            );
         } else if before.is_some() {
             // Only a commit that WAS pending is one we signed: a merge with nothing pending
             // proves nothing, so it reaffirms no pin, ours included.

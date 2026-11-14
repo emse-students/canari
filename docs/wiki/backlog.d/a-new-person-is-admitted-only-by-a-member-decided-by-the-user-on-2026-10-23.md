@@ -34,16 +34,17 @@ was that member's own new web device, so a MEMBER's new device with no leaf in t
 was reported as `new-person`. After the `1.6.12` deploy (09:11 UTC) production has 0
 `[UNINVITED_ENTRY]` lines in its live log, dev 0.
 
-**Owner's decision, 2026-11-14: *"Oui, corriger"* - classify from the server's roster. Built:**
-`decideUninvitedEntry` (`deviceNotices.svelte.ts`) keeps a departure this device saw as `returning`
-with no request; otherwise it asks `rosterSeatOf` (`deviceNoticeWiring.ts`) - ONE
-`POST /api/mls/group-rosters` for that group, the read the stray sweep already makes (no roster is
-held between passes, so there was none to reuse) - and an ADMITTED seat (on the roster, not awaiting a
-member) is `returning`, never `new-person`: the server accepts an external commit into a conversation
-only from an admitted seat holder (`assertCommitterMayCommit`), so the seat was held before the
-commit. Asked only for a self-admitted entrant with no leaf in the reporter's tree and no departure
-seen - never per commit. An unanswered or refused roster keeps the entry owed. The production line of
-2026-11-14 is the test that failed on the old code (`deviceNotices.svelte.test.ts`). The mechanism is
-in [mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). **Left: the
-`[UNINVITED_ENTRY] kind=new-person` count once this build serves both stores**, and the waiting-seat
+**Owner's decisions, 2026-11-14: *"Oui, corriger"*, then, after the review of #3519 named the
+roster's trust trade-off, *"Preuve sur l'appareil"* - the DEVICE decides. Built on #3519:** every
+tree a device accepts records, per group and per user, the first epoch it saw the user hold a leaf
+(`mls-core/src/member_sightings.rs`, sealed state), and `decideUninvitedEntry` calls an entrant
+`returning` only when that record shows them before the entering epoch; anything else is a NOT
+PROVEN `new-person`, with no fallback to the roster. The report carries `watchedFromEpoch`
+(`watched_from=` on the server line) and the server prints one line per (entry, kind). The mechanism,
+what it survives and what it cannot prove are in
+[mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). **Left: the
+`[UNINVITED_ENTRY] kind=new-person` count once this build serves both stores, read with
+`watched_from` against the entrant's last departure** (a device not there yet is the known gap; the
+member's signed vouch designed there is built only if that count is a population), and the
+waiting-seat ring on dev.
 ring on dev.

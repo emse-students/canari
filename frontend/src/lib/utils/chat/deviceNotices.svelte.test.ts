@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
+import type { DeviceEvent, MembershipEvidence } from '$lib/mls-client/deviceTrust';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import {
@@ -17,7 +17,6 @@ import {
   pendingDeviceNotices,
   type DeviceNoticeContext,
   type KeyAge,
-  type RosterSeat,
 } from './deviceNotices.svelte';
 import {
   MAX_HISTORY_WITHHELD,
@@ -114,10 +113,12 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
       if (!tree) throw new Error(`group ${g} not held`);
       return tree;
     }),
-    // By default this device saw nobody leave any tree.
-    removalEpochs: vi.fn(async (): Promise<number[]> => []),
-    // By default the server's roster names nobody as an admitted member.
-    rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'not-admitted'),
+    // By default this device never saw the entrant in any tree, and its record of the group starts
+    // at epoch 1.
+    membershipEvidence: vi.fn(async (): Promise<MembershipEvidence> => ({
+      firstSeenEpoch: null,
+      watchedFromEpoch: 1,
+    })),
     // The commit log's instant for every commit: the admitting commit was accepted six minutes ago.
     commitAcceptedAt: vi.fn(async (): Promise<ServerInstant> => ({ kind: 'at', at: COMMIT_AT })),
     addMessageToChat,
@@ -581,6 +582,7 @@ describe('deliverDeviceEvents - an entry no member made', () => {
       entrant: 'mallory:dev1',
       epoch: 5,
       keyFingerprint: '00ff',
+      watchedFromEpoch: 1,
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('UNINVITED ENTRY'));
     error.mockRestore();
@@ -630,107 +632,71 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     error.mockRestore();
   });
 
-  it('writes nothing for a member this device saw leave, and reports a `returning` entry', async () => {
-    const error = quiet();
-    const { ctx, addMessageToChat } = makeCtx({
-      removalEpochs: vi.fn(async (_g: string, u: string) => (u === 'mallory' ? [3] : [])),
-    });
-    await deliverDeviceEvents([intruder()], ctx);
-
-    expect(addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
-    expect(error).not.toHaveBeenCalled();
-    error.mockRestore();
-  });
-
-  it('a departure AFTER the entering epoch is not a return', async () => {
-    const error = quiet();
-    const { ctx, addMessageToChat } = makeCtx({ removalEpochs: vi.fn(async () => [7]) });
-    await deliverDeviceEvents([intruder()], ctx);
-
-    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
-    error.mockRestore();
-  });
-
   // THE ONE PRODUCTION LINE OF 2026-11-14: a member who held a seat for two months, their own new
-  // device joining by external commit, no leaf of theirs in this device's tree and no departure seen
-  // here. The server's roster decides it (owner, 2026-11-14), not this device's tree.
-  it("reads a member's own new device as `returning` from the server's roster, and writes nothing", async () => {
+  // device joining by external commit, no leaf of theirs in this device's tree and no departure
+  // merged here. The proof is THIS DEVICE's own sighting of the member (owner, 2026-11-14).
+  it("reads a member's new device as `returning` from this device's own sighting, and writes nothing", async () => {
     const error = quiet();
-    const rosterSeat = vi.fn(async (): Promise<RosterSeat> => 'admitted');
-    const { ctx, addMessageToChat } = makeCtx({ rosterSeat });
+    const membershipEvidence = vi.fn(async (): Promise<MembershipEvidence> => ({
+      firstSeenEpoch: 2,
+      watchedFromEpoch: 1,
+    }));
+    const { ctx, addMessageToChat } = makeCtx({ membershipEvidence });
     await deliverDeviceEvents([intruder()], ctx);
 
-    expect(rosterSeat).toHaveBeenCalledWith('group-1', 'mallory');
+    expect(membershipEvidence).toHaveBeenCalledWith('group-1', 'mallory');
     expect(addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
-    expect(error).not.toHaveBeenCalled();
-    error.mockRestore();
-  });
-
-  it('a person the roster does not admit is a new person', async () => {
-    const error = quiet();
-    const { ctx, addMessageToChat } = makeCtx();
-    await deliverDeviceEvents([intruder()], ctx);
-
-    expect(ctx.rosterSeat).toHaveBeenCalledWith('group-1', 'mallory');
-    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
-    error.mockRestore();
-  });
-
-  it('asks no roster when this device saw the departure', async () => {
-    const { ctx } = makeCtx({ removalEpochs: vi.fn(async () => [3]) });
-    await deliverDeviceEvents([intruder()], ctx);
-
-    expect(ctx.rosterSeat).not.toHaveBeenCalled();
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
-  });
-
-  it('keeps the entry owed when the roster is not answered, rather than guessing', async () => {
-    const error = quiet();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const first = makeCtx({
-      rosterSeat: vi.fn(async (): Promise<RosterSeat> => {
-        throw new Error('roster of group-1... not answered');
-      }),
-    });
-    await deliverDeviceEvents([intruder()], first.ctx);
-    expect(first.addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('owed to the next delivery'),
-      expect.any(Error)
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'returning', watchedFromEpoch: 1 })
     );
-
-    const second = makeCtx({
-      rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'admitted'),
-    });
-    await deliverDeviceEvents([], second.ctx);
-    expect(second.addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
-    warn.mockRestore();
   });
 
-  it('settles the entry when the roster is refused to this account, and never asks again', async () => {
+  it('a sighting AT or AFTER the entering epoch proves nothing: not proven, written and accusing', async () => {
+    // Epoch 5 is the entering commit's own tree: the entrant seen only there is seen BECAUSE of it.
+    for (const firstSeenEpoch of [5, 7]) {
+      reporter.mockClear();
+      resetReportedUninvitedEntries();
+      const error = quiet();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { ctx, addMessageToChat } = makeCtx({
+        membershipEvidence: vi.fn(async (): Promise<MembershipEvidence> => ({
+          firstSeenEpoch,
+          watchedFromEpoch: 1,
+        })),
+      });
+      await deliverDeviceEvents([intruder()], ctx);
+
+      expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+      expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('UNINVITED ENTRY'));
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  // THE OWNER'S RULE (2026-11-14): whatever the delivery service would say, the device decides. The
+  // context offers no roster at all; the wiring test pins that the service's roster is never read.
+  it('a device with no sighting of the entrant reports a NOT PROVEN `new-person`, with where its record starts', async () => {
     const error = quiet();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const first = makeCtx({ rosterSeat: vi.fn(async (): Promise<RosterSeat> => 'refused') });
-    await deliverDeviceEvents([intruder()], first.ctx);
-    expect(first.addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).not.toHaveBeenCalled();
-    expect(warn).not.toHaveBeenCalled();
+    const { ctx, addMessageToChat } = makeCtx({
+      membershipEvidence: vi.fn(async (): Promise<MembershipEvidence> => ({
+        firstSeenEpoch: null,
+        watchedFromEpoch: 4,
+      })),
+    });
+    await deliverDeviceEvents([intruder()], ctx);
 
-    // The next delivery has nothing owed: no second roster read, nothing written or reported.
-    const second = makeCtx();
-    await deliverDeviceEvents([], second.ctx);
-    expect(second.ctx.rosterSeat).not.toHaveBeenCalled();
-    expect(second.addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'new-person', watchedFromEpoch: 4 })
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('NOT PROVEN a member on this device')
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('watched_from=4'));
     error.mockRestore();
     warn.mockRestore();
   });
@@ -758,12 +724,12 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     error.mockRestore();
   });
 
-  it('keeps the entry owed when the departures cannot be read, rather than guessing', async () => {
+  it('keeps the entry owed when the evidence cannot be read, rather than guessing', async () => {
     const error = quiet();
     // Kept for the next delivery, nothing lost: a warning, not an accusation.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const first = makeCtx({
-      removalEpochs: vi.fn(async () => {
+      membershipEvidence: vi.fn(async (): Promise<MembershipEvidence> => {
         throw new Error('state locked');
       }),
     });
@@ -776,7 +742,12 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     );
     expect(error).not.toHaveBeenCalled();
 
-    const second = makeCtx({ removalEpochs: vi.fn(async () => [2]) });
+    const second = makeCtx({
+      membershipEvidence: vi.fn(async (): Promise<MembershipEvidence> => ({
+        firstSeenEpoch: 2,
+        watchedFromEpoch: 1,
+      })),
+    });
     await deliverDeviceEvents([], second.ctx);
     expect(second.addMessageToChat).not.toHaveBeenCalled();
     expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));

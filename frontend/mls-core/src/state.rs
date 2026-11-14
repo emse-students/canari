@@ -58,6 +58,12 @@ pub struct PersistedState {
     /// Identities whose pin was pruned: a later pin for one is unanchored (`crate::device_trust`).
     #[serde(default)]
     pub device_pins_pruned: Vec<String>,
+    /// Who this device saw hold a leaf of each conversation's tree, and from which epoch
+    /// (`crate::member_sightings`). `#[serde(default)]`: a state written before it loads with none,
+    /// and the trees it holds are recorded at that load. A build that predates the field drops it on
+    /// its next write; the held trees are recorded again at the next upgrade, the departures kept.
+    #[serde(default)]
+    pub member_sightings: Vec<crate::member_sightings::MemberSighting>,
     /// Groups joined by an external commit not yet merged: their tree came from a GroupInfo the
     /// server served, and is pinned only at the merge - across a restart too.
     #[serde(default)]
@@ -98,6 +104,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
     pub(crate) device_departures: &'a [crate::device_trust::Departure],
     pub(crate) device_pins_pruned: &'a [String],
+    pub(crate) member_sightings: &'a [crate::member_sightings::MemberSighting],
     pub(crate) pending_external_joins: &'a [String],
     pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
     pub(crate) admission: &'a HashMap<String, crate::admission::AdmissionPolicy>,
@@ -798,6 +805,7 @@ impl MlsManager {
                 state.device_pins_pruned,
                 state.device_events,
                 state.device_departures,
+                state.member_sightings,
             );
             let pending_external_joins: std::collections::HashSet<String> =
                 state.pending_external_joins.into_iter().collect();
@@ -824,9 +832,19 @@ impl MlsManager {
                     device_trust.mark_unseeded(group_id);
                     continue;
                 }
-                if device_trust.seed_from_tree(&crate::device_trust::leaf_keys(group)) {
+                let leaves = crate::device_trust::leaf_keys(group);
+                if device_trust.seed_from_tree(&leaves) {
                     seeded += 1;
                 }
+                // A held tree is one this device accepted: its users were members at its epoch.
+                // Idempotent - a user seen earlier keeps the earlier epoch. A key group records none.
+                let door = state.admission.get(group_id).copied();
+                device_trust.record_sightings_at_load(
+                    group_id,
+                    group.epoch().as_u64(),
+                    &leaves,
+                    door,
+                );
             }
             if seeded > 0 {
                 log::info!(
@@ -846,6 +864,7 @@ impl MlsManager {
                 let held_groups: std::collections::HashSet<&str> =
                     groups.keys().map(String::as_str).collect();
                 device_trust.prune_departures(&held_groups);
+                device_trust.prune_sightings(&held_groups);
             }
 
             let mut manager = Self {
@@ -1055,6 +1074,7 @@ impl MlsManager {
         let device_events = self.device_trust.persisted_events();
         let device_departures = self.device_trust.persisted_departures();
         let device_pins_pruned = self.device_trust.persisted_pruned();
+        let member_sightings = self.device_trust.persisted_sightings();
         let mut pending_external_joins: Vec<String> =
             self.pending_external_joins.iter().cloned().collect();
         pending_external_joins.sort();
@@ -1069,6 +1089,7 @@ impl MlsManager {
             device_events: &device_events,
             device_departures: &device_departures,
             device_pins_pruned: &device_pins_pruned,
+            member_sightings: &member_sightings,
             pending_external_joins: &pending_external_joins,
             graine_runs: &self.graine_runs,
             admission: &self.admission,

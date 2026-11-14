@@ -2,17 +2,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
+import type { Conversation } from '$lib/types';
+import {
+  resetReportedUninvitedEntries,
+  setUninvitedEntryReporter,
+} from '$lib/mls-client/uninvitedEntry';
 import {
   dropAlertsOfRevokedDevices,
   keyAgeOf,
   ownEnrolledAtOf,
-  rosterSeatOf,
   unregisterDeviceNotices,
   registerDeviceNotices,
 } from './deviceNoticeWiring';
 import { SvelteMap } from 'svelte/reactivity';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { pendingDeviceNotices } from './deviceNotices.svelte';
+
+// Writing a line resolves display names, which would ask the server.
+vi.mock('$lib/utils/users/displayName', () => ({
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 
 /** The key [1, 2, 3] and its fingerprint (`mls-core/tests/fixtures/key_fingerprints.json`). */
 const KEY = new Uint8Array([1, 2, 3]);
@@ -140,45 +150,72 @@ describe('dropAlertsOfRevokedDevices - asked of the signed-in account', () => {
   });
 });
 
-describe('rosterSeatOf - whether the server seats an entrant as an admitted member', () => {
-  const answering = (batch: {
-    rosters?: [string, string[]][];
-    refused?: string[];
-    awaiting?: [string, string[]][];
-  }) => {
+// THE OWNER'S RULE (2026-11-14): the DEVICE decides whether an entrant is a member coming back. A
+// delivery service that seats the entrant on the roster it serves - as a server that let an outsider
+// in would - changes nothing: the roster is never read, and with no sighting on this device the entry
+// is a NOT PROVEN `new-person`, written and reported.
+describe('registerDeviceNotices - an uninvited entry is decided on the device, never by the roster', () => {
+  it('the roster seats the entrant, the device holds no evidence: `new-person`, roster never read', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reporter = vi.fn(async () => {});
+    resetReportedUninvitedEntries();
+    setUninvitedEntryReporter(reporter);
+    let consume: ((events: DeviceEvent[]) => Promise<unknown>) | null = null;
     const getGroupRosters = vi.fn(async () => ({
-      rosters: new Map(batch.rosters ?? []),
-      refused: new Set(batch.refused ?? []),
+      rosters: new Map([['group-1', ['alice', 'mallory']]]),
+      refused: new Set<string>(),
       revoked: new Map<string, string[]>(),
-      awaiting: new Map(batch.awaiting ?? []),
+      awaiting: new Map<string, string[]>(),
     }));
-    return { mls: { getGroupRosters } as unknown as IMlsService, getGroupRosters };
-  };
-
-  it('is admitted when the roster names the person, whatever the case, in ONE read of that group', async () => {
-    const { mls, getGroupRosters } = answering({ rosters: [['g1', ['Alice', 'bob']]] });
-    await expect(rosterSeatOf(mls, 'g1', 'alice')).resolves.toBe('admitted');
-    expect(getGroupRosters).toHaveBeenCalledTimes(1);
-    expect(getGroupRosters).toHaveBeenCalledWith(['g1']);
-  });
-
-  it('is not admitted when the person is absent, or still awaits a member', async () => {
-    const absent = answering({ rosters: [['g1', ['bob']]] });
-    await expect(rosterSeatOf(absent.mls, 'g1', 'alice')).resolves.toBe('not-admitted');
-    const waiting = answering({
-      rosters: [['g1', ['alice', 'bob']]],
-      awaiting: [['g1', ['alice']]],
+    const membershipEvidence = vi.fn(async () => ({ firstSeenEpoch: null, watchedFromEpoch: 3 }));
+    const mls = {
+      setDeviceEventConsumer: vi.fn((c: typeof consume) => {
+        consume = c;
+      }),
+      listUserDevices: vi.fn(async () => []),
+      fetchDeviceSignatureKeys: vi.fn(async () => ({ kind: 'unanswered', detail: 'x' })),
+      isDistributionGroup: () => false,
+      getLocalGroups: () => ['group-1'],
+      heldGroupsKnown: () => true,
+      getGroupMemberIdentities: vi.fn(async () => ['alice:phone-a', 'mallory:dev1']),
+      commitAcceptedAt: vi.fn(async () => ({ kind: 'at', at: 1_000 })),
+      getGroupRosters,
+      membershipEvidence,
+    } as unknown as IMlsService;
+    const addMessageToChat = vi.fn();
+    registerDeviceNotices(mls, {
+      getUserId: () => 'alice',
+      getMyDeviceId: () => 'phone-a',
+      conversations: new SvelteMap([
+        ['group-1', { conversationType: 'group', messages: [] } as unknown as Conversation],
+      ]),
+      storedConversation: vi.fn(async () => null),
+      addMessageToChat,
     });
-    await expect(rosterSeatOf(waiting.mls, 'g1', 'alice')).resolves.toBe('not-admitted');
-  });
 
-  it('throws when the group was not answered - never guessed', async () => {
-    await expect(rosterSeatOf(answering({}).mls, 'g1', 'alice')).rejects.toThrow('not answered');
-  });
+    await consume!([
+      {
+        groupId: 'group-1',
+        epoch: 5,
+        identity: 'mallory:dev1',
+        keyFingerprint: '00ff',
+        trust: 'first-sight',
+        addedBy: 'mallory:dev1',
+        memberAlreadyPresent: false,
+      },
+    ]);
 
-  it('answers `refused` when the roster is refused to this account - an answer, not a failure', async () => {
-    await expect(rosterSeatOf(answering({ refused: ['g1'] }).mls, 'g1', 'alice')).resolves.toBe(
-      'refused'
+    expect(membershipEvidence).toHaveBeenCalledWith('group-1', 'mallory');
+    expect(getGroupRosters).not.toHaveBeenCalled();
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'new-person', watchedFromEpoch: 3 })
     );
+    expect(addMessageToChat).toHaveBeenCalled();
+    unregisterDeviceNotices();
+    setUninvitedEntryReporter(null);
+    localStorage.clear();
+    error.mockRestore();
+    warn.mockRestore();
   });
 });

@@ -203,6 +203,19 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
 
 Either one failing keeps the switch `off` and reopens this section.
 
+### DECISION OWED - does a member's removal cancel the device proof that they were a member? (2026-11-14)
+
+An entry by a user's own commit is `returning` when the reporting device saw that user hold a leaf
+of the group earlier in the lineage it holds (`member_sightings.rs`,
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)). A person KICKED by
+another member who re-enters alone is therefore `returning` and nothing is written. The device can
+tell a removal by another member's commit from a self-removal (the `Departure` record and the
+commit's sender), but a stray-device sweep also removes leaves through another member's commit, so
+cancelling the sighting on any removal would accuse every member whose revoked device was swept.
+**Not reversible to guess** (it decides who is accused in a conversation), so it waits for the owner.
+The test that would settle it: a removal carrying its reason in the commit's authenticated data
+(kick vs sweep), read by the departure record.
+
 ### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
 
 The OIDC callback (`auth.controller.ts`, `oidcCallback`) makes two calls to the identity provider,
