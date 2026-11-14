@@ -56,9 +56,11 @@ earliest version, as a checklist.
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
+- [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
+- [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 
 **P3 - hygiene**
 
@@ -215,6 +217,7 @@ earliest version, as a checklist.
 - [P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)](backlog.d/p3-android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android.md)
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
+- [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
 - [P3 - Path parameters are declared in every controller, not only the associations one (2026-11-14)](backlog.d/p3-path-parameters-are-declared-in-every-controller.md)
 

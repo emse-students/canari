@@ -1067,13 +1067,13 @@
          native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
       <div
-        class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        class="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-[1fr_auto_1fr] items-start bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
         style={sideSafePadding('0.5rem')}
         data-reel-top-scrim
       >
         <button
           type="button"
-          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto col-start-1 justify-self-start rounded-full outline-none focus-visible:ring-2"
           aria-label={m.reels_viewer_close()}
           title={m.reels_viewer_close()}
           onclick={() => overlay.dismissFromUi()}
@@ -1084,7 +1084,10 @@
           <!-- "Pour toi" / "Récents" (owner, 2026-11-10; restyled 2026-11-11 as TikTok and Instagram
              draw it): bare white tabs on the video, the selected one brighter and underlined, a
              text shadow keeping both readable on a bright reel. The empty box after it balances the X. -->
-          <div class="pointer-events-auto {orderChoice.busy ? 'opacity-70' : ''}" data-reel-order>
+          <div
+            class="pointer-events-auto col-start-2 {orderChoice.busy ? 'opacity-70' : ''}"
+            data-reel-order
+          >
             <SegmentedControl
               items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
               value={orderChoice.value}
@@ -1095,14 +1098,14 @@
               class="w-56"
             />
           </div>
-          {#if !showRotate}
-            <span class="w-11 shrink-0" aria-hidden="true"></span>
-          {/if}
         {/if}
         {#if showRotate}
-          <!-- Over a landscape video only: landscape past the rotation lock, and back. It takes the
-             place of the empty box that balances the X, so the order tabs stay centred. -->
-          <div class="pointer-events-auto ml-auto shrink-0" data-reel-rotate>
+          <!-- Over a landscape video only: landscape past the rotation lock, and back. The bar is a
+             THREE-COLUMN GRID (`1fr auto 1fr`): the X is the first column, the order tabs the
+             middle one and this button the last, so the tabs are centred on the screen whether or
+             not the button exists - a flex row balanced by a spacer moved them by the difference
+             of the two widths (owner, iPhone, 2026-11-14). -->
+          <div class="pointer-events-auto col-start-3 justify-self-end" data-reel-rotate>
             <RotateButton onrotate={rotateLandscapeVideo} />
           </div>
         {/if}
