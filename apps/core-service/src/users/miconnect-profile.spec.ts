@@ -43,4 +43,17 @@ describe('parseProfileClaims', () => {
     });
     expect(p).toEqual({ miconnectUuid: null, campus: null, cursus: [], posts: [] });
   });
+
+  it('drops a formation no space names, keeping the known entries (audience audit, 2026-11-14)', () => {
+    // 'Master' and 'icm' match no space: kept, they made a person with a cursus and no space.
+    const p = parseProfileClaims({
+      campus: 'saint-etienne',
+      cursus: [
+        { formation: 'Master', promo: 2024 },
+        { formation: 'icm', promo: 2023 },
+        { formation: 'PDIS', promo: 2025 },
+      ],
+    });
+    expect(p.cursus).toEqual([{ formation: 'PDIS', promo: 2025 }]);
+  });
 });
