@@ -107,6 +107,13 @@ export interface DeviceNoticeContext {
    */
   removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
   /**
+   * Whether the server's roster of `groupId` seats `userId` as an ADMITTED member (`admitted`: on
+   * the roster, not awaiting a member's answer) or not (`not-admitted`) - read from the same
+   * `POST /api/mls/group-rosters` the stray sweep reads (`rosterSeatOf`). Throws when the server did
+   * not answer for the group, so nothing is guessed.
+   */
+  rosterSeat: (groupId: string, userId: string) => Promise<'admitted' | 'not-admitted'>;
+  /**
    * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
    * commitAcceptedAt`, the commit log's `createdAt`), as a {@link ServerInstant}; throws when the
    * server gave no answer. A line is dated by the commit that admitted the device, never by when
@@ -898,13 +905,25 @@ type NoticeConversation =
  * Whether an entry no member made is said, and as what ({@link UninvitedEntryKind}).
  *
  * A LEGITIMATE REJOIN IS NOT WRITTEN: the other person of a 1:1 conversation (`direct-peer`), or a
- * user this device SAW leave the tree before the entering epoch (`returning`, from the departures the
- * MLS layer recorded - `removalEpochs`). Both are reported with their kind, so the count still says
- * how often they happen. Anything else is a `new-person` and is written. A departure this device
- * never saw cannot be known here, so a returning member reads as `new-person` on such a device.
+ * MEMBER coming back (`returning`). Both are reported with their kind, so the count still says how
+ * often they happen. Anything else is a `new-person` and is written.
  *
- * A departure read that fails throws: the entry stays owed to the next delivery rather than being
- * guessed either way.
+ * `returning` IS DECIDED BY THE SERVER'S ROSTER, NOT BY THIS DEVICE'S TREE (owner, 2026-11-14). The
+ * tree only knows the departures THIS device saw (`removalEpochs`): a member whose every leaf left
+ * before this device joined, or while it was away - a member adding their own new device after
+ * losing the old ones - had no leaf here and no departure seen, and was reported as a `new-person`
+ * (the one production line of 2026-11-14: a seat held for two months). The roster knows who holds a
+ * seat. The server accepts an external commit into a conversation ONLY from someone holding an
+ * admitted seat (`assertCommitterMayCommit`: a seat, not awaiting a member), so an admitted seat on
+ * the roster read now was held BEFORE the entering commit - or was written by a member's later Add,
+ * a member's admission either way. So: a departure this device saw is enough, with no request; else
+ * one roster read (`rosterSeat`), made only for a self-admitted entrant with no leaf here, which is
+ * rare; an admitted seat is `returning`. A person absent from the roster, or still awaiting a
+ * member, is a `new-person`: either the server accepted what its own gate refuses, or the person was
+ * removed since - and a member's removal is a commit this device then sees as a later departure.
+ *
+ * A departure or roster read that fails throws: the entry stays owed to the next delivery rather
+ * than being guessed either way.
  *
  * `not-self-admitted`: the event is no longer an entry no member made ({@link isSelfAdmittedEntry}).
  * The predicate is enforced HERE, where the decision is acted on, because an entry retried from the
@@ -944,6 +963,11 @@ async function decideUninvitedEntry(
   }
   const departures = await ctx.removalEpochs(event.groupId, userId);
   if (departures.some((epoch) => epoch < event.epoch)) return { kind: 'returning', convo };
+  const seat = await ctx.rosterSeat(event.groupId, userId);
+  console.info(
+    `[DEVICE_NOTICE] self-admitted entry of ${userId.slice(0, 8)}... in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}): no departure seen here, roster seat ${seat}`
+  );
+  if (seat === 'admitted') return { kind: 'returning', convo };
   return { kind: 'new-person', convo };
 }
 

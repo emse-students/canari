@@ -1538,11 +1538,26 @@ and the dev build's `canari_admission_frozen` localStorage key is removed at ses
 (`setupMessageHandler`), so a dev device stops logging the verdict on legitimate joins.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
-(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
-epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
-otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
-the entry owed rather than guessing. A device that never saw the departure still reads a returning
-member as `new-person`. The server takes the report from a member of the group only (403
+(`UninvitedEntryKind`): `direct-peer` for the other person of a 1:1 conversation; `returning` for a
+member coming back; `new-person` otherwise - and only `new-person` is written and logged at ERROR.
+
+**`returning` is decided by the server's roster, not by the reporter's tree** (owner, 2026-11-14,
+`decideUninvitedEntry` in `deviceNotices.svelte.ts`). It used to be "this device saw the same user
+leave the tree at an earlier epoch" (`removalEpochs`) and nothing else, so a device that never saw the
+departure - it joined after it, or was away - read a returning member as `new-person`: the one
+production line of 2026-11-14 was a member holding a seat for two months whose own new web device
+joined by external commit. Now a departure this device saw still decides it with no request, and
+otherwise ONE `POST /api/mls/group-rosters` for that group (`rosterSeatOf`, the read the stray sweep
+makes) answers whether the entrant holds an ADMITTED seat (on the roster, not awaiting a member).
+The server accepts an external commit into a conversation only from an admitted seat holder
+(`assertCommitterMayCommit`), so an admitted seat read after the entry was held before the entering
+commit, or written by a member's later Add - a member's admission either way: `returning`. Absent
+from the roster or awaiting a member: `new-person` - the server accepted what its gate refuses, or a
+member removed the person since. The read is asked only for a self-admitted entrant with no leaf in
+this device's tree and no departure seen, which is rare, and never per commit. A departure or roster
+read that fails, or a roster refused to this account, keeps the entry owed rather than guessing.
+
+The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
 
@@ -1567,10 +1582,12 @@ WHERE NOT m."awaitingAdmission"
                     AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
 ```
 
-**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
-and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
-the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
-line after the floor is the rule failing. The list stays in the private operations notes with the
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY]` line whose `group` and entrant user
+(the `entrant` up to its `:`) are a pair of that list is this population entering the way it always
+could - not a bypass of the rule - and is counted apart. Since the roster classifier (2026-11-14)
+such a seat is an ADMITTED one, so its entry is reported `kind=returning`, not `new-person`: the pair
+list is matched against `returning` lines too. Every `new-person` line after the floor is the rule
+failing. The list stays in the private operations notes with the
 deploy date; only this query and the rule live here.
 
 **Counted on production, 2026-11-14, read-only: no awaiting seat at all** (0 `dm_group_members` rows
