@@ -313,6 +313,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     // Payments are DISABLED by default, so a paid submit stops right after its transaction
     // committed: those tests are about what the transaction wrote, not about the checkout.
     const associationsService: any = {
+      namesByIds: jest.fn(async () => new Map()),
       assertPaymentsReady: jest.fn(async () => undefined),
       collectsNow: jest.fn(async () => true),
       getPaymentAccountId: jest.fn(async () => 'vendor'),

@@ -1090,6 +1090,11 @@ export class FormsService {
     return this.withAssociationNames(merged);
   }
 
+  /** The display names of the associations these forms name, by association id. */
+  private associationNamesOf(forms: Pick<Form, 'associationId'>[]) {
+    return this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean));
+  }
+
   /**
    * Attaches `associationName` to every form that names an association, and
    * `hasUnpublishedChanges` - whether an unpublished revision holds edits (migration 146): the list
@@ -1097,7 +1102,7 @@ export class FormsService {
    */
   private async withAssociationNames(forms: Form[]) {
     const [names, changed] = await Promise.all([
-      this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean)),
+      this.associationNamesOf(forms),
       formsWithUnpublishedChanges(
         this.formRepo.manager,
         forms.map((f) => f.id)
@@ -1140,7 +1145,10 @@ export class FormsService {
         cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
       });
     const paymentsPaused = await this.paymentsPaused(form);
-    return { ...form, submissionCount, cotisationDisabled, paymentsPaused };
+    // The name too (the SAME lookup as the list): a link-preview card says "Ouvert · <association>".
+    const names = await this.associationNamesOf([form]);
+    const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
+    return { ...form, submissionCount, cotisationDisabled, paymentsPaused, associationName };
   }
 
   /**
