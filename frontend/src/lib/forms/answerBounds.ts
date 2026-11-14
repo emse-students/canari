@@ -53,6 +53,8 @@ export const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
 export const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
 /** No answer of the reader's under this id. */
 export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
+/** A manager deleted an answer whose payment was received: refund or cancel it instead. */
+export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
@@ -101,6 +103,8 @@ export function formCodeMessage(code: string | null): string | null {
     case FORM_ANSWER_NOT_EDITABLE:
     case FORM_ANSWER_NOT_FOUND:
       return m.form_refusal_answer_not_editable();
+    case FORM_ANSWER_PAID:
+      return m.form_refusal_answer_paid();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

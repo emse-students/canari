@@ -51,6 +51,11 @@ else
   count=$(printf '%s\n' "$payment_columns" | wc -l | tr -d ' ')
   ok "derived $count payment column(s) from the entity declarations"
   for col in $payment_columns; do
+    # A property mapped to a column of another name (`@Column({ name: 'snake_case' })`, core's
+    # platform_config) is stripped under THAT name, unquoted in the SQL: the decorator right above
+    # the declaration names it.
+    column_name=$({ grep -rhE -B1 "^[[:space:]]+${col}[?!]?[[:space:]]*:" --include='*.entity.ts' apps 2>/dev/null |
+      grep -oE "name: '[a-z0-9_]+'" | tail -1 | sed -E "s/name: '([a-z0-9_]+)'/\1/"; } || true)
     # Matched as a FIXED string on the exact bytes the file contains: the column names appear
     # escaped inside double-quoted shell strings, so it really holds `\"stripeCustomerId\"`.
     # Restricting to the lines that CALL the guarded function is what stops the comment block above
@@ -62,6 +67,8 @@ else
     # shellcheck disable=SC2016
     if grep '"\$sql"' "$STRIPS" | grep -F "\\\"$col\\\"" >/dev/null; then
       ok "$col is stripped"
+    elif [ -n "$column_name" ] && grep '"\$sql"' "$STRIPS" | grep -E "SET ([a-z_]+ = NULL, )*$column_name = NULL" >/dev/null; then
+      ok "$col is stripped (as $column_name)"
     else
       fail "$col is declared by an entity and NOT stripped by the local copy - a live identifier would reach a developer's laptop"
     fi

@@ -46,7 +46,9 @@ vi.mock('$lib/forms/api', async (orig) => ({
   saveFormDraft: api.saveFormDraft,
   publishFormDraft: api.publishFormDraft,
 }));
-const assos = vi.hoisted(() => ({ list: [] as { id: string; name: string; type?: string }[] }));
+const assos = vi.hoisted(() => ({
+  list: [] as { id: string; name: string; type?: string; permissions?: number }[],
+}));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listMyAssociations: async () => assos.list,
@@ -282,8 +284,9 @@ const lastSavedAssociation = () =>
 // then; the picker used to shut from that moment. A later choice now rides in the revision, and the
 // publication moves the draft (`FormsService.associationAfterEdit`).
 describe('the association of a draft being built', () => {
-  const BDE = { id: 'a1', name: 'BDE', type: 'association' };
-  const BDS = { id: 'a2', name: 'BDS', type: 'association' };
+  // The builder manages both associations' forms (MANAGE_FORMS = 16, owner 2026-11-14).
+  const BDE = { id: 'a1', name: 'BDE', type: 'association', permissions: 16 };
+  const BDS = { id: 'a2', name: 'BDS', type: 'association', permissions: 16 };
 
   async function openBuilder() {
     route.page.url = new URL('https://canari.test/forms/create?association=a1');

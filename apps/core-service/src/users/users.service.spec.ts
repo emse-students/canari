@@ -369,14 +369,13 @@ describe('UsersService.directory campus and post filters', () => {
     }
     qb.getCount = jest.fn().mockResolvedValue(0);
     qb.getMany = jest.fn().mockResolvedValue([]);
-    const blocks = {
-      invisibleUserIdsFor: jest.fn().mockResolvedValue(hidden),
-    } as unknown as UserBlocksService;
+    const invisibleUserIdsFor = jest.fn().mockResolvedValue(hidden);
+    const blocks = { invisibleUserIdsFor } as unknown as UserBlocksService;
     const userRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(qb),
     } as unknown as Repository<User>;
     const service = new UsersService(userRepository, {} as DataSource, blocks);
-    return { service, where, orders, blocks };
+    return { service, where, orders, invisibleUserIdsFor };
   }
 
   it('accepts a campus alone as a filter and applies it', async () => {
@@ -392,9 +391,9 @@ describe('UsersService.directory campus and post filters', () => {
   });
 
   it('hides accounts blocked in either direction, as the New chat search does', async () => {
-    const { service, where, blocks } = makeService(['blocked-1', 'blocker-2']);
+    const { service, where, invisibleUserIdsFor } = makeService(['blocked-1', 'blocker-2']);
     await service.directory({ campus: 'gardanne' }, 'me');
-    expect(blocks.invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(invisibleUserIdsFor).toHaveBeenCalledWith('me');
     expect(where).toContainEqual([
       'user.id NOT IN (:...blockedIds)',
       { blockedIds: ['blocked-1', 'blocker-2'] },
@@ -402,9 +401,9 @@ describe('UsersService.directory campus and post filters', () => {
   });
 
   it('adds no block clause when the reader has no block either way', async () => {
-    const { service, where, blocks } = makeService([]);
+    const { service, where, invisibleUserIdsFor } = makeService([]);
     await service.directory({ campus: 'gardanne' }, 'me');
-    expect(blocks.invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(invisibleUserIdsFor).toHaveBeenCalledWith('me');
     expect(where.some(([sql]) => sql.includes('blockedIds'))).toBe(false);
   });
 
