@@ -481,15 +481,14 @@ export interface ListPostsOptions {
   withReplays?: boolean;
 }
 
-export interface ScheduledPost {
-  id: string;
-  markdown: string;
-  scheduledAt: string;
-  createdAt: string;
-}
-
-export async function getMyScheduledPosts(): Promise<ScheduledPost[]> {
-  return request<ScheduledPost[]>('/api/posts/my-scheduled');
+/**
+ * The future-scheduled posts the caller may EDIT - their own and an association's they speak for -
+ * as whole feed cards, soonest first. The strip at the top of `/posts` draws them until they are due
+ * (docs/wiki/frontend/modules/posts.md, "Scheduled posts"). Replaces `GET /api/posts/my-scheduled`
+ * (docs/wiki/legacy-compatibility.md).
+ */
+export async function getScheduledPostsToEdit(): Promise<PostEntity[]> {
+  return request<PostEntity[]>('/api/posts/scheduled-to-edit');
 }
 
 export interface CreatePostPayload {

@@ -1,5 +1,7 @@
 ## P2 - `GET /api/posts/notifications` takes 1.1-3.6 s on every call (13.8 s and 12.8 s on one account), and the bell polls it every 60 s (1.6.8 logs, 2026-11-09)
 
+target: 1.10.0
+
 Client: `PostNotificationBell.svelte` (~L34) polls through `lib/posts/api.ts` (~L872). Server:
 `PostNotificationsService.getNotifications` then `bellPageQuery`
 (`apps/social-service/src/posts/post-notifications.service.ts`, ~L804-845).

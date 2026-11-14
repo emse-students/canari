@@ -1,5 +1,7 @@
 ## P2 - the repository holds GitHub's maximum of 100 secrets, so the next one is refused
 
+target: 1.10.0
+
 Measured 2026-11-11: `gh api repos/emse-students/canari/actions/secrets` reads `total_count: 100`,
 and GitHub answers a further `gh secret set` with a bare HTTP 400. The handoff's reader token
 (`MICONNECT_READER_TOKEN`) was therefore set as a secret of the `production` ENVIRONMENT: the only

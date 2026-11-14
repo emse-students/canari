@@ -60,5 +60,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'SeatEviction.userId': { action: 'delete' },
   'JoinAskPush.userId': { action: 'delete' },
   'RevokedDeviceGroup.userId': { action: 'delete' },
+  'SentFrameReceipt.senderId': { action: 'delete' },
+  // The same rows: the erasure deletes every receipt the account's devices wrote, by its sender id.
+  'SentFrameReceipt.senderDeviceId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
 };

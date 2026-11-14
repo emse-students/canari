@@ -4,6 +4,11 @@ import { join } from 'path';
 import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import * as delegation from './payment-delegation.util';
 import {
+  LYDIA_BRIDGE_LOG_TAG,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
+} from './lydia-account-bridge';
+import {
   AssociationsService,
   LYDIA_ACCOUNT_ALREADY_LINKED,
   LYDIA_BUSINESS_CHANGED,
@@ -62,6 +67,8 @@ function makeReadiness(
   const saved: Array<Record<string, unknown>> = [];
   const manager = {
     query: jest.fn(async (sql: string, params: unknown[]) => {
+      // No bridge here (lydia-account-bridge.ts): its own spec covers the switch on PostgreSQL.
+      if (sql.includes('FROM lydia_account_bridges')) return [];
       if (sql.includes('FOR UPDATE')) {
         if (!row) return [];
         const one = {
@@ -375,7 +382,7 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
         path: 'shop',
         id: 'c',
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(logs.error.join('|')).toContain('FAILED - the holder still reads ready');
   });
 });
@@ -406,9 +413,26 @@ describe('markLydiaReady owes no release after the commit', () => {
 });
 
 describe('AssociationsService - the enrolment-in-flight marker', () => {
-  function makeClaim(state: { exists: boolean; linked: string | null; startedAt: Date | null }) {
+  /** `pending`: a bridge whose historical account collects holds `linked` as its ENROLLED one. */
+  function makeClaim(state: {
+    exists: boolean;
+    linked: string | null;
+    startedAt: Date | null;
+    pending?: boolean;
+  }) {
     const assoRepo = {
       query: jest.fn(async (sql: string) => {
+        if (sql.includes('AS managed, b.state')) {
+          return state.exists
+            ? [
+                {
+                  managed: state.linked,
+                  state: state.pending ? 'historical' : null,
+                  startedAt: state.startedAt,
+                },
+              ]
+            : [];
+        }
         if (sql.includes('"lydiaEnrolmentStartedAt" = now()')) {
           const free = state.exists && !state.linked && !state.startedAt;
           if (free) state.startedAt = new Date();
@@ -454,6 +478,17 @@ describe('AssociationsService - the enrolment-in-flight marker', () => {
       makeClaim({ exists: false, linked: null, startedAt: null }).claimLydiaEnrolment(HOLDER)
     ).rejects.toBeInstanceOf(NotFoundException);
   });
+
+  it('a bridge whose enrolled Business waits for Lydia is the typed PENDING_VALIDATION, nothing claimed', async () => {
+    const logs = captureLogs();
+    const state = { exists: true, linked: VENDOR, startedAt: null, pending: true };
+    await expect(makeClaim(state).claimLydiaEnrolment(HOLDER)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_BUSINESS_PENDING_VALIDATION },
+    });
+    expect(state.startedAt).toBeNull();
+    expect(logs.warn.join('|')).toContain(LYDIA_BRIDGE_LOG_TAG);
+  });
 });
 
 /**
@@ -496,7 +531,7 @@ function makeResponsableService(
         r.vendorToken === vendor
     );
   const query = jest.fn(async (sql: string, params: unknown[]): Promise<unknown> => {
-    if (sql.includes('FROM associations WHERE id = $1 FOR UPDATE')) {
+    if (sql.includes('WHERE a.id = $1 FOR UPDATE OF a')) {
       return [{ vendorToken: asso.linked, startedAt: asso.startedAt, claimToken: asso.token }];
     }
     if (sql.includes('"lydiaResponsableStartedAt" = now(), "lydiaCashierClaimToken" = $2')) {
@@ -1131,6 +1166,8 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierClaimLost: LYDIA_CASHIER_CLAIM_LOST,
       cashierNumberChanged: LYDIA_CASHIER_NUMBER_CHANGED,
       cashierConfirmedRequired: LYDIA_CASHIER_CONFIRMED_REQUIRED,
+      businessPendingValidation: LYDIA_BUSINESS_PENDING_VALIDATION,
+      businessHoldsPayments: LYDIA_BUSINESS_HOLDS_PAYMENTS,
     }).toEqual({
       responsableAlreadySet: contract.social.responsableAlreadySet,
       responsablePhoneLocked: contract.social.responsablePhoneLocked,
@@ -1140,6 +1177,8 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierClaimLost: contract.social.cashierClaimLost,
       cashierNumberChanged: contract.social.cashierNumberChanged,
       cashierConfirmedRequired: contract.social.cashierConfirmedRequired,
+      businessPendingValidation: contract.social.businessPendingValidation,
+      businessHoldsPayments: contract.social.businessHoldsPayments,
     });
   });
 });

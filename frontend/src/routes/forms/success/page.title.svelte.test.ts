@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { pageTitle } from '$lib/seo/pageTitle.svelte';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
 const answer = vi.hoisted(() => ({ confirm: vi.fn() }));
 
@@ -45,6 +46,22 @@ describe('the payment return title', () => {
     expect(document.body.textContent).toContain(m.form_success_not_found_heading());
     expect(pageTitle.current).toBe(m.form_success_not_found_heading());
   });
+
+  it.each([401, 403])(
+    'never says "introuvable" to a browser that may not read the answer (%i): it sends to the app',
+    async (status) => {
+      vi.spyOn(console, 'info').mockImplementation(() => {});
+      answer.confirm.mockRejectedValue(new ApiRefusalError(status, null, 'refused'));
+      await render();
+      expect(document.body.textContent).toContain(m.form_payment_handed_heading());
+      expect(document.body.textContent).not.toContain(m.form_success_not_found_heading());
+      const open = [...document.querySelectorAll('a')].find(
+        (a) => a.textContent?.trim() === m.form_payment_open_canari()
+      )!;
+      expect(open.getAttribute('href')).toBe('fr.emse.canari://payment/success?submission_id=s1');
+      expect(pageTitle.current).toBe(m.form_payment_handed_heading());
+    }
+  );
 
   it('follows a confirmed payment', async () => {
     answer.confirm.mockResolvedValue({ formId: 'f1', paymentStatus: 'paid' });

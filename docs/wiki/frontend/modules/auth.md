@@ -1255,7 +1255,7 @@ the process session, the one end that clears an orphan). **Native, verified by
 compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
 [device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
 is owed after a pre-release and before a stable
-([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
+([backlog](../../plan.md#readings-owed)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
@@ -1317,7 +1317,7 @@ now, not before. What the exits do with it:
   account's. That residue - sealed under the install key and never read as anybody's - drains
   only by the per-channel bound (20 sessions), the remaining account's own wipe once it is alone,
   or a factory wipe; nothing is built unless a measurement shows it lasting, one reading owed
-  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else));
+  ([the readings owed](../../plan.md#readings-owed));
 - **a community leaving the device and the retention sweep** drop it in the channel or sessions they
   name, as they did before the label: the worst it costs another account is the generic banner it
   had then.

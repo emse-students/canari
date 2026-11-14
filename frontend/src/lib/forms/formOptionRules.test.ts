@@ -27,6 +27,7 @@ const OFF: FormOptionState = {
   grantsCotisation: false,
   restrictsAudience: false,
   hasFileQuestion: false,
+  allowsAnswerEdit: false,
 };
 const OPTIONS = Object.keys(OFF) as FormOption[];
 
@@ -42,6 +43,8 @@ const EXPECTED: Record<string, FormOptionConflict> = {
   'isPublic+restrictsAudience': 'FORM_PUBLIC_AUDIENCE',
   'isPublic+grantsCotisation': 'FORM_PUBLIC_COTISATION_GRANT',
   'isPublic+hasFileQuestion': 'FORM_PUBLIC_FILE',
+  // Owner, 2026-11-13: an anonymous answer names nobody who could reopen it.
+  'anonymous+allowsAnswerEdit': 'FORM_ANONYMOUS_ANSWER_EDIT',
 };
 
 /** The expected code of a pair, in either order - or undefined when the two may coexist. */

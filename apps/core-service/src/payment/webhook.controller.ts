@@ -343,6 +343,14 @@ export class PaymentWebhookController {
    * APPLIED, or that names the Business of an enrolment answered but not linked yet, answers 503
    * to ask for a retry - whether Lydia retries a 503 is UNMEASURED. Bounded and rate-limited like the request callback (multer limits here, nginx zone
    * `lydia_callback` at the edge).
+   *
+   * THE BRIDGE (owner, 2026-11-13; social-service `lydia-account-bridge.ts`): a VALIDATED naming
+   * the PENDING Business of an association whose historical account collects SWITCHES the
+   * association to it (social answers `switched`); one naming an ACTIVE Business is the readiness
+   * above; one naming nothing is the WARN above. A forged one costs nothing: the first real
+   * `request/do` on an unvalidated Business answers error 5 before any request exists, social
+   * switches back and re-issues that payment on the historical account. A `BUSINESS_UNVALIDATED`
+   * for a pending Business changes nothing either; its WARN line names its role.
    */
   @Post('lydia-business-webhook')
   @HttpCode(200)
@@ -402,15 +410,21 @@ export class PaymentWebhookController {
         );
         return { received: true };
       }
-      this.logger.log(
+      const line =
         `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) applied: ${applied.outcome ?? 'unknown'}` +
-          `${applied.associationId ? ` for association ${applied.associationId}` : ''}`
-      );
+        `${applied.associationId ? ` for association ${applied.associationId}` : ''}`;
+      if (applied.outcome === 'switched') {
+        // The historical account stopped collecting: a decision a person reads in the log.
+        this.logger.warn(`${line} - the association now collects on its enrolled Business`);
+      } else {
+        this.logger.log(line);
+      }
       return { received: true };
     }
     const holder = await this.associationOfVendorToken(vendorToken);
     const named = holder
-      ? `association ${holder.associationId} (marked ready here: ${holder.onboardingComplete ? 'yes' : 'no'})`
+      ? `association ${holder.associationId} (its ${holder.role ?? 'active'} Business; marked ready ` +
+        `here: ${holder.onboardingComplete ? 'yes' : 'no'})`
       : 'no association of ours';
     this.logger.warn(
       `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned) for ${named} - Lydia turns daily ` +
@@ -424,20 +438,28 @@ export class PaymentWebhookController {
    * null when none does, when two do, or when the read fails - which is logged and never turns into
    * a decision, since the webhook decides nothing.
    */
-  private async associationOfVendorToken(
-    vendorToken: string
-  ): Promise<{ associationId: string; onboardingComplete: boolean } | null> {
+  private async associationOfVendorToken(vendorToken: string): Promise<{
+    associationId: string;
+    onboardingComplete: boolean;
+    /** `active`, or a bridge's `pending` / `retired` Business; null from an older social-service. */
+    role: string | null;
+  } | null> {
     try {
       const { data } = await axios.post<{
         associationId?: string | null;
         onboardingComplete?: boolean | null;
+        role?: string | null;
       }>(
         internalLydiaBusinessOfVendorTokenUrl(),
         { vendorToken },
         { ...internalSocialRequestConfig(), timeout: 10_000 }
       );
       if (typeof data?.associationId !== 'string') return null;
-      return { associationId: data.associationId, onboardingComplete: !!data.onboardingComplete };
+      return {
+        associationId: data.associationId,
+        onboardingComplete: !!data.onboardingComplete,
+        role: typeof data.role === 'string' ? data.role : null,
+      };
     } catch (err: unknown) {
       this.logger.warn(
         '[LYDIA-BUSINESS-WEBHOOK] could not read which association holds the vendor token',

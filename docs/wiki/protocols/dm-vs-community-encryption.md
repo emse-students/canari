@@ -130,7 +130,7 @@ community messages cost the server about a thousandth of what their keys cost it
 
 ## Where each system can improve
 
-Every item is in [backlog](../backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21),
+Every item is in [backlog](../backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md),
 and this page carries the reasoning.
 
 ### Communities

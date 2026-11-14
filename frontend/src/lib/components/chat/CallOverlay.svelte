@@ -28,6 +28,7 @@
   import type { CallService, CallParticipant } from '$lib/services/CallService';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
+  import CallGroupTile from '$lib/components/chat/CallGroupTile.svelte';
   import {
     AudioLines,
     AudioLinesOff,
@@ -120,7 +121,12 @@
    * a second (313 "no Media Session API" lines in 46 s of a video ring, 2026-10-31). A string that
    * did not change notifies nobody.
    */
-  let peerTitle = $derived(primary?.displayName || m.call_label());
+  /** A group call past its ring draws one tile per participant (WP-GC2) instead of one peer. */
+  let showsGroupGrid = $derived(call.isGroupCall && call.callState !== 'incoming');
+  /** A group call's title names the caller only while it rings; then it is the group's call. */
+  let peerTitle = $derived(
+    showsGroupGrid ? m.call_group_label() : primary?.displayName || m.call_label()
+  );
   let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
   // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
@@ -140,8 +146,12 @@
     }
     return null;
   });
-  /** Any remote stream: the one the audio sink plays (the same object whatever the video does). */
+  /**
+   * Any remote stream: the one the audio sink plays (the same object whatever the video does). A
+   * GROUP call plays every participant's voice through this one sink, from one mixed stream.
+   */
   let remoteAudioStream = $derived.by(() => {
+    if (call.isGroupCall) return call.remoteAudioMix;
     for (const [, stream] of call.remoteStreams) return stream;
     return call.remoteStream;
   });
@@ -156,8 +166,15 @@
    * rule the top bar's thumbnail follows too.
    */
   let remotePictureShown = $derived(!!remoteVideoStream && remoteFrame);
+  /** A group call's participant sending a picture (their tile shows it). */
+  let groupPictureShown = $derived(
+    call.isGroupCall &&
+      call.groupTiles.some(
+        (t) => !!t.stream?.getVideoTracks().some((v) => v.readyState === 'live' && !v.muted)
+      )
+  );
   /** Either picture on screen makes this a video call for the OS and for the screen lock. */
-  let videoShowing = $derived(cameraOn || remotePictureShown);
+  let videoShowing = $derived(cameraOn || remotePictureShown || groupPictureShown);
 
   // -- The one audio output of the call ------------------------------------------------------
   let remoteAudioSink: HTMLAudioElement | undefined = $state();
@@ -702,7 +719,8 @@
         muted
         data-testid="call-self-view"
         data-mirrored={call.cameraFacing === 'user'}
-        class="{call.cameraFacing === 'user' ? '-scale-x-100' : ''} {remotePictureShown
+        class="{call.cameraFacing === 'user' ? '-scale-x-100' : ''} {remotePictureShown ||
+        showsGroupGrid
           ? 'absolute right-4 bottom-36 z-10 h-40 w-28 rounded-2xl shadow-xl ring-1 ring-white/20 landscape:bottom-28 landscape:h-28 landscape:w-40'
           : 'absolute inset-0 h-full w-full'} object-cover"
       ></video>
@@ -797,7 +815,23 @@
         ? 'justify-start pt-2 drop-shadow-md'
         : 'justify-center'}"
     >
-      {#if !videoShowing}
+      {#if showsGroupGrid}
+        <!-- One tile per other participant (WP-GC2): two side by side, three or four in a grid. -->
+        <div
+          class="grid min-h-0 w-full max-w-3xl flex-1 gap-2 {call.groupTiles.length > 1
+            ? 'grid-cols-2'
+            : 'grid-cols-1'}"
+          data-testid="call-group-grid"
+        >
+          {#each call.groupTiles as tile (tile.userId)}
+            <CallGroupTile {tile} scope={nicknameScope} />
+          {:else}
+            <p class="self-center text-white/75" data-testid="call-group-waiting">
+              {m.call_group_waiting()}
+            </p>
+          {/each}
+        </div>
+      {:else if !videoShowing}
         <div class="relative {isIncoming ? 'size-36 md:size-48' : 'size-32 md:size-44'}">
           {#if isIncoming || call.kind === 'ringing'}
             <!-- The ring: two soft yellow halos breathing out of the photo, half a beat apart, while
@@ -829,7 +863,9 @@
         </div>
       {/if}
       <div class="flex max-w-full flex-col items-center gap-1">
-        {#if primary}
+        {#if showsGroupGrid}
+          <p class="text-lg font-bold">{m.call_group_label()}</p>
+        {:else if primary}
           <UserName
             userId={primary.userId}
             fallback={primary.displayName}
@@ -848,10 +884,14 @@
           >
             {#if ringHasVideo}
               <Video size={16} class="shrink-0" />
-              <span>{m.chat_video_call_label()}</span>
+              <span
+                >{call.isGroupCall ? m.call_group_video_label() : m.chat_video_call_label()}</span
+              >
             {:else}
               <Phone size={16} class="shrink-0" />
-              <span>{m.call_audio_only_label()}</span>
+              <span
+                >{call.isGroupCall ? m.call_group_audio_label() : m.call_audio_only_label()}</span
+              >
             {/if}
           </p>
         {:else}
@@ -948,7 +988,8 @@
           {/if}
           <!-- The switch gates turning the camera ON, never OFF: the mode can drop to audio mid-call,
                and a control that vanished then would leave a running camera nobody can stop. -->
-          {#if callVideoAvailable(serverCallsMode()) || !call.isVideoOff}
+          <!-- An AUDIO group call has no camera at all: its seats were counted for voices (WP-GC2). -->
+          {#if (callVideoAvailable(serverCallsMode()) && !(call.isGroupCall && !callService.hasVideo)) || !call.isVideoOff}
             {#snippet videoIcon()}
               {#if call.isVideoOff}<VideoOff size={26} />{:else}<Video size={26} />{/if}
             {/snippet}

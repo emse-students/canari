@@ -92,6 +92,9 @@ impl MlsManager {
     /// set before a join; `forget_group` removes it. Logged, because a policy change is the one
     /// thing that decides whether an entry is refused.
     pub fn set_admission_policy(&mut self, group_id: &str, policy: AdmissionPolicy) {
+        // An `Open` group records no further member sighting (`crate::member_sightings`), and what
+        // it recorded before is KEPT: the classification follows what the server says of the group,
+        // so dropping evidence on it would let the server erase what this device saw.
         let previous = self.admission.insert(group_id.to_string(), policy);
         if previous != Some(policy) {
             // The state is cached between saves and rebuilt only when dirty: without this a policy

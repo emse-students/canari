@@ -61,6 +61,9 @@ const UNINVITED_ENTRY_KINDS: readonly string[] = [
   'unvouched-device',
 ];
 
+/** The kinds a device decides from its own record of the group, so their line prints `watched_from`. */
+const EVIDENCED_UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning'];
+
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
 export class MessagingController {
@@ -318,15 +321,20 @@ export class MessagingController {
    *
    * A MEASUREMENT, exactly as `mls/sender-mismatch`: such an entry is either a user who lost every
    * leaf rejoining by themselves, or one nobody wanted. The reporting device says what it can tell
-   * (`kind`, an allowlist): `returning` - it saw this user's leaves leave this tree before;
+   * (`kind`, an allowlist): `returning` - the device PROVES, from trees it accepted itself, that
+   * this user held a leaf of this group before (never this service's word, owner 2026-11-14);
    * `direct-peer` - the 1:1 conversation's own other person, whom opening it already chose;
-   * `new-person` - neither. The line carries it so the classes are counted apart. It stores nothing;
-   * the WARN line and its date are the count.
+   * `new-person` - NOT PROVEN a member by that device. The line carries it so the classes are
+   * counted apart, and `watched_from` - the first epoch the device's record of the group covers - so
+   * a `new-person` from a device that was not there yet when a member left is told apart from one
+   * that watched the whole time. It stores nothing; the WARN line and its date are the count.
    *
-   * ONE LINE PER ENTRY, NOT PER REPORTER: every member device sees the same commit and reports it,
-   * so the count is deduplicated on (group, entrant, epoch) - an entry is one commit, and a later
-   * entry of the same device is another. In memory and bounded: a restart may print an entry once
-   * more, never lose one. The first reporter's `kind` is the one printed.
+   * ONE LINE PER ENTRY AND KIND, NOT PER REPORTER: every member device sees the same commit and
+   * reports it, so the count is deduplicated on (group, entrant, epoch, kind) - an entry is one
+   * commit, and a later entry of the same device is another. Each device decides from what IT saw,
+   * so two members may disagree - one proving a return, one that cannot - and both lines are
+   * printed: the disagreement measures what devices lack. In memory and bounded: a restart may
+   * print an entry once more, never lose one.
    *
    * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
    * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
@@ -343,6 +351,7 @@ export class MessagingController {
       epoch?: unknown;
       keyFingerprint?: unknown;
       kind?: unknown;
+      watchedFromEpoch?: unknown;
     }
   ): Promise<{ recorded: true }> {
     const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
@@ -374,10 +383,21 @@ export class MessagingController {
         : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
           ? (body.kind as string)
           : 'invalid';
-    const entry = `${group}\0${entrant}\0${epoch}`;
+    // `none` is the device's own answer (it holds no record of the group); `unstated` is a build
+    // that does not send it; `-` is a kind the device decides without its record.
+    const watchedFrom = !EVIDENCED_UNINVITED_ENTRY_KINDS.includes(kind)
+      ? '-'
+      : body.watchedFromEpoch === null
+        ? 'none'
+        : sanitizeLogValue(
+            typeof body.watchedFromEpoch === 'number' && Number.isSafeInteger(body.watchedFromEpoch)
+              ? String(body.watchedFromEpoch)
+              : body.watchedFromEpoch
+          );
+    const entry = `${group}\0${entrant}\0${epoch}\0${kind}`;
     if (this.reportedUninvitedEntries.has(entry)) {
       this.logger.debug(
-        `[UNINVITED_ENTRY] repeat reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
+        `[UNINVITED_ENTRY] repeat kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
       );
       return { recorded: true };
     }
@@ -388,7 +408,7 @@ export class MessagingController {
     this.reportedUninvitedEntries.add(entry);
     this.logger.warn(
       `[UNINVITED_ENTRY] kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
-        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)}`
+        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)} watched_from=${watchedFrom}`
     );
     return { recorded: true };
   }

@@ -2132,7 +2132,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       | 'removed'
       | 'expired'
       | 'take-lost'
-      | 'over-budget',
+      | 'over-budget'
+      | 'over-daily-limit',
     /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
     notice?: string,
     /** The take's verdict tells the member once for all its sends (`failTakeSends`): none here. */
@@ -2182,7 +2183,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     repairHeld.delete(entry.id);
     // THE ROW GOES, SO ITS SESSION GOES: nothing will resume it. A refusal for good (`too-large`,
     // `refused`) was already released by the uploader that met it.
-    if (cause === 'too-large' || cause === 'refused' || cause === 'over-budget')
+    if (
+      cause === 'too-large' ||
+      cause === 'refused' ||
+      cause === 'over-budget' ||
+      cause === 'over-daily-limit'
+    )
       openSessions.delete(entry.id);
     else releaseSessionOf(entry.id, entry.media?.upload?.uploadId, cause);
     if (entry.kind !== 'control') {
@@ -2192,7 +2198,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         cause === 'unpreparable' ||
         cause === 'expired' ||
         cause === 'take-lost' ||
-        cause === 'over-budget'
+        cause === 'over-budget' ||
+        cause === 'over-daily-limit'
       ) {
         // THE PERMANENT FAILURES THAT ARE ABOUT THE OBJECT, NOT THE GROUP: nothing about the
         // conversation changed, so no banner and no eviction - only a line in the thread that tells
@@ -2206,9 +2213,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
                 ? m.outbox_reel_take_lost()
                 : cause === 'over-budget'
                   ? m.outbox_reel_over_budget()
-                  : cause === 'unpreparable' && notice
-                    ? notice
-                    : m.outbox_upload_refused();
+                  : cause === 'over-daily-limit'
+                    ? m.upload_over_daily_limit()
+                    : cause === 'unpreparable' && notice
+                      ? notice
+                      : m.outbox_upload_refused();
         await deps
           .addMessageToChat?.('system', line, entry.conversationId, { isSystem: true })
           .catch((e: unknown) =>
@@ -4187,7 +4196,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failTakeSends(
     take: OutboxEntry,
     queue: OutboxEntry[],
-    cause: 'too-large' | 'refused' | 'unpreparable' | 'over-budget',
+    cause: 'too-large' | 'refused' | 'unpreparable' | 'over-budget' | 'over-daily-limit',
     detail: string,
     notice?: string
   ): Promise<void> {

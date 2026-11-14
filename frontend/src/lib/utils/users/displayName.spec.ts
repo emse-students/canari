@@ -128,27 +128,27 @@ describe('notificationSenderName', () => {
 
   it('prefers the resolved name over any fallback, which is the ordinary case', () => {
     seedUserDisplayName('sender-1', 'Camille Durand');
-    expect(notificationSenderName('sender-1', DM)).toBe('Camille Durand');
+    expect(notificationSenderName('sender-1', 'conv-1', DM)).toBe('Camille Durand');
   });
 
   it('never titles a DM with the `me::peer` key, which is the defect', () => {
     // The peer IS the sender of an inbound DM, so `contactName` is not a guess about who wrote it.
-    expect(notificationSenderName('unknown-sender', DM)).toBe('Camille');
-    expect(notificationSenderName('unknown-sender', DM)).not.toContain('::');
+    expect(notificationSenderName('unknown-sender', 'conv-1', DM)).toBe('Camille');
+    expect(notificationSenderName('unknown-sender', 'conv-1', DM)).not.toContain('::');
   });
 
   it('falls back to the group name for a group, where the alternative is a handle', () => {
-    expect(notificationSenderName('unknown-sender', GROUP)).toBe('Les Rootz');
+    expect(notificationSenderName('unknown-sender', 'conv-1', GROUP)).toBe('Les Rootz');
   });
 
   it('reaches `name` only where it cannot be a key - a group with no contactName', () => {
-    expect(notificationSenderName('unknown-sender', { ...GROUP, contactName: '' })).toBe(
+    expect(notificationSenderName('unknown-sender', 'conv-1', { ...GROUP, contactName: '' })).toBe(
       'les-rootz'
     );
   });
 
   it('says it does not know rather than showing a key, for a DM with nothing else', () => {
-    expect(notificationSenderName('unknown-sender', { ...DM, contactName: '' })).toBe(
+    expect(notificationSenderName('unknown-sender', 'conv-1', { ...DM, contactName: '' })).toBe(
       'Utilisateur inconnu'
     );
   });
@@ -170,16 +170,22 @@ describe('resolveNotificationSenderName', () => {
       lastName: 'NOM',
     } as never);
     const mod = await import('./displayName');
-    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe('Prenom NOM');
+    expect(await mod.resolveNotificationSenderName('cold-sender', 'conv-1', GROUP)).toBe(
+      'Prenom NOM'
+    );
   });
 
   it('one member whose lookup keeps failing is never titled with the group name, and is accused', async () => {
     vi.mocked(userStore.fetchUserProfile).mockRejectedValue(new Error('offline'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const mod = await import('./displayName');
-    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe(UNKNOWN_LABEL);
+    expect(await mod.resolveNotificationSenderName('cold-sender', 'conv-1', GROUP)).toBe(
+      UNKNOWN_LABEL
+    );
     // second message: backoff suppresses the fetch, the answer must not flip to the title
-    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe(UNKNOWN_LABEL);
+    expect(await mod.resolveNotificationSenderName('cold-sender', 'conv-1', GROUP)).toBe(
+      UNKNOWN_LABEL
+    );
     expect(warn.mock.calls.some((c) => String(c[0]).includes('[NOTIF] No display name'))).toBe(
       true
     );

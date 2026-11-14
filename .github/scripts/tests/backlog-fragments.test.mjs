@@ -20,6 +20,10 @@
  *      to pass this test is the conflict this test exists to remove.
  *   3. `backlog-closed.test.mjs` reads the fragments too, so a shipped entry cannot hide in one.
  *
+ * SINCE 2026-11-13 `backlog.md` HOLDS NO ENTRY: every one moved to a fragment with its `target:`
+ * line (`backlog-plan.test.mjs`), and the frozen list keeps the one heading left, the table of what
+ * is owed to the user.
+ *
  * Usage: bun .github/scripts/tests/backlog-fragments.test.mjs [repo root]
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';

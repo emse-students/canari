@@ -2,6 +2,9 @@
 import { APP_PLACES, MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import {
   GESTURE_LOCK_PX,
+  bindSwipeNavTouchListeners,
+  DND_DRAGGED_ELEMENT_ID,
+  standDownForDndDrag,
   MOBILE_SWIPE_PLACES,
   classifySwipeRelease,
   isSwipeNavArmed,
@@ -213,5 +216,55 @@ describe('MOBILE_SWIPE_PLACES', () => {
       ...MOBILE_NAV_PLACES.map((p) => p.id),
     ]);
     expect(APP_PLACES.some((p) => p.id === 'camera' || p.href === '/camera')).toBe(false);
+  });
+});
+
+describe('bindSwipeNavTouchListeners', () => {
+  it('hears a touchstart whose target stops propagation (a svelte-dnd-action row)', () => {
+    const shell = document.createElement('div');
+    const row = document.createElement('button');
+    shell.appendChild(row);
+    document.body.appendChild(shell);
+    row.addEventListener('touchstart', (e) => e.stopPropagation());
+    const onStart = vi.fn();
+    const onMove = vi.fn();
+    const unbind = bindSwipeNavTouchListeners(shell, onStart, onMove);
+
+    row.dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }));
+    row.dispatchEvent(new Event('touchmove', { bubbles: true, cancelable: true }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onMove).toHaveBeenCalledTimes(1);
+
+    unbind();
+    row.dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    shell.remove();
+  });
+});
+
+describe('standDownForDndDrag - a swipe never outlives a reorder', () => {
+  const horizontal = {
+    startX: 10,
+    startY: 10,
+    startedAt: 0,
+    phase: 'horizontal' as const,
+    dragPx: 120,
+  };
+
+  it('a drag in flight (the dnd library dragged clone) ends the swipe: it cannot navigate', () => {
+    const clone = document.createElement('div');
+    clone.id = DND_DRAGGED_ELEMENT_ID;
+    document.body.appendChild(clone);
+    try {
+      const next = standDownForDndDrag(horizontal);
+      expect(next.phase).toBe('ignored');
+    } finally {
+      clone.remove();
+    }
+  });
+
+  it('with no drag started, the same gesture is untouched and a plain swipe navigates', () => {
+    expect(standDownForDndDrag(horizontal)).toBe(horizontal);
+    expect(classifySwipeRelease(180, 4, 'horizontal', 120)).toBe('prev');
   });
 });

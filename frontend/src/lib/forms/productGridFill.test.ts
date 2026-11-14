@@ -104,11 +104,10 @@ describe('the order across every grid', () => {
 
     const state = fillPriceState({
       basePrice: 0,
-      pricing: null,
+      slices: [{ pricing: null, productGridPrices: prices }],
       items,
       visibleItems: items,
       selections,
-      productGridPrices: prices,
     });
     expect(state.gridCents).toBe(11900);
     expect(state.total).toBe(11900);
@@ -117,11 +116,10 @@ describe('the order across every grid', () => {
   it('adds the grids to the base price and the supplements, as the server does', () => {
     const state = fillPriceState({
       basePrice: 500,
-      pricing: null,
+      slices: [{ pricing: null, productGridPrices: prices }],
       items,
       visibleItems: items,
       selections: { q_hoodie: { 'noir:l': 1 }, q_jacket: {} },
-      productGridPrices: prices,
     });
     expect(state.total).toBe(3300);
   });
@@ -179,6 +177,8 @@ describe('productGridRefusalMessage', () => {
     ]) {
       expect(productGridRefusalMessage(code)).toBe(m.form_refusal_grid_changed());
     }
+    // The empty ORDER is no refusal of a current estate (owner, 2026-11-13), but an estate older than
+    // each grid's switch still says it, so its words stay ([LEGACY]).
     expect(productGridRefusalMessage('PRODUCT_GRID_EMPTY')).toBe(m.form_refusal_grid_empty());
     expect(productGridRefusalMessage('FORM_FULL')).toBeNull();
     expect(productGridRefusalMessage(null)).toBeNull();

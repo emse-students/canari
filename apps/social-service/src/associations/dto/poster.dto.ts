@@ -26,10 +26,9 @@ export class CreatePosterProjectDto {
   @IsUUID()
   spaceId: string;
 
-  /** Opaque layout document (bubbles / doodles / texts / theme / background). */
-  @IsObject()
-  @IsOptional()
-  layout?: Record<string, unknown>;
+  // No `layout`: no client sends one at creation (the editor saves its first layout through the
+  // update, which keeps only current members in a bureau), and a create that stored one would be a
+  // second, unfiltered door for an account id. The global pipe's `whitelist` strips it if sent.
 }
 
 /**

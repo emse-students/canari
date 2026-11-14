@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
-  import { Camera, SlidersHorizontal } from '@lucide/svelte';
-  import Button from '$lib/components/ui/Button.svelte';
+  import { Camera } from '@lucide/svelte';
   import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
@@ -34,10 +32,8 @@
 {#if profile}
   <!--
     THE SAME HEADER AS SOMEONE ELSE'S PROFILE (`ProfileHeader`), with the own profile's actions. The
-    settings link was a corner icon pinned absolutely at the top right, with `sm:pr-12` reserved
-    on the name so it never ran under it - the very arrangement that drew the action row over a
-    wrapped name on the other profile. It is now a button of the action row, which drops below the
-    identity when there is no room beside it. The centred stacked column on a phone is the owner's
+    settings link was a corner icon, then a button of the action row; it is now the LAST ROW of
+    the list below (owner, 2026-11-14), so the header carries no action. The centred stacked column on a phone is the owner's
     (2026-09-14: *"tu pourrais centrer la photo, la formation et le nom"*).
   -->
   <ProfileHeader userId={profile.id} name={displayFallbackName}>
@@ -58,12 +54,6 @@
     {#snippet details()}
       <ProfileSummaryLine userId={profile!.id} {profile} self />
       <ProfileMinesweeperBadge userId={profile!.id} />
-    {/snippet}
-    {#snippet actions()}
-      <Button variant="secondary" href={resolve('/settings')} class="min-h-11 flex-1 sm:flex-none">
-        <SlidersHorizontal size={16} class="shrink-0" aria-hidden="true" />
-        <span class="whitespace-nowrap">{m.settings_page_title()}</span>
-      </Button>
     {/snippet}
   </ProfileHeader>
 

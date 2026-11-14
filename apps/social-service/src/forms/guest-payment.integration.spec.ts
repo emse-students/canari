@@ -128,6 +128,7 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       getPaymentAccountId: async () => 'vendor',
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
+      noteLydiaRequestIssued: async () => undefined,
     };
     service = new FormsService(
       ds.getRepository(Form),
@@ -137,7 +138,13 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       associationsService,
       { grantCotisant: jest.fn() } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
-      { build: async () => ({ answers: {} }) } as any,
+      {
+        build: async () => ({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        }),
+      } as any,
       ds.getRepository(FormRespondent),
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.

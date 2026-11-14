@@ -25,8 +25,10 @@ import {
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  campusWideReaderCampus,
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
+  isCampusStaffSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
@@ -195,7 +197,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
-        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
+        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "reachPublic" varchar(16), "reachSpaces" jsonb);
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         event_id uuid NOT NULL, association_id uuid NOT NULL);
     `);
@@ -297,6 +300,21 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // And the answer is what D16 says, not merely the same in both.
     const icm = (await client.query(READER_SPACES_SQL, ['icmSe'])).rows;
     expect(icm).toEqual([{ formation: 'ICM', campus: 'saint-etienne' }]);
+  });
+
+  it('isCampusStaffSql and campusWideReaderCampus agree for every reader (the staff-by-campus door)', async () => {
+    for (const [id, u] of Object.entries(USERS)) {
+      const { rows } = await client.query(
+        `SELECT ${isCampusStaffSql('u')} AS staff FROM users u WHERE u.id = $1`,
+        [id]
+      );
+      const pure = campusWideReaderCampus({ id, campus: u.campus, cursus: u.cursus }) !== null;
+      expect({ id, staff: rows[0].staff }).toEqual({ id, staff: pure });
+    }
+    // A cursus that is not an array is no staff, in both.
+    expect(campusWideReaderCampus({ campus: 'saint-etienne', cursus: { formation: 'ICM' } })).toBe(
+      null
+    );
   });
 
   it('the gate admits an admin, a reader with a space, a member and an accepted follower - and nobody else', async () => {
@@ -513,6 +531,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label)).toEqual(expected);
   });
 
+  // Nobody here holds a read grant; what a grant adds is read-grants.integration.spec.ts's subject.
   it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {

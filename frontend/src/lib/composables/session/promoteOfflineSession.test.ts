@@ -1,5 +1,6 @@
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { sessionPushAuth } from '$lib/services/sessionPushAuth';
 
 const getToken = vi.hoisted(() => vi.fn());
 const initializeConnection = vi.hoisted(() => vi.fn());
@@ -99,9 +100,10 @@ describe('promoteOfflineSession', () => {
     expect(flushOutbox).toHaveBeenCalledTimes(1);
     // Nothing here reconciles history: `initializeConnection` ends with a reconciliation pass over
     // every local group, so a promotion that re-opens the socket has already asked.
+    // The token source, never the token: each registration attempt reads the current one.
     expect(startPushService).toHaveBeenCalledWith(
       'https://example.test',
-      'fresh-token',
+      sessionPushAuth,
       'device-1'
     );
     // A promotion is the first moment an offline session can name its own device, so the binding

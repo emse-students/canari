@@ -1,5 +1,7 @@
 ## P3 - the carte de la vie asso: a complete redesign of the editor, the canvas and the model (owner, 2026-11-08)
 
+target: 1.10.0
+
 The owner wants the carte redesigned as a whole - not only its display: the editor, the canvas and
 the data model - LATER, after the per-space change (one map per space, per-map zones, per-association
 switches, the one-line action bar) that shipped with migration 147

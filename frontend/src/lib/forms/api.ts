@@ -89,6 +89,11 @@ export interface AudienceCondition {
 }
 
 export interface CreateFormPayload {
+  /**
+   * `true` from this editor, which draws each priced grid's "Obligatoire" switch: the `required`
+   * it sends on a grid is the manager's choice (`GRID_REQUIRED_SWITCH`). Never stored.
+   */
+  gridRequiredSwitch?: boolean;
   title: string;
   description?: string;
   basePrice: number;
@@ -107,6 +112,11 @@ export interface CreateFormPayload {
   paymentMethods?: string[];
   /** Allow the same user to submit multiple times (e.g. product orders). */
   allowMultipleSubmissions?: boolean;
+  /**
+   * A respondent with an account may change their own answer while the form is open, the questions
+   * that touch the price excepted (migration 166). Refused beside `anonymous`.
+   */
+  allowAnswerEdit?: boolean;
   /**
    * Answers are stored without their author, address or exact time. Free forms only and fixed at
    * creation: the edit screen never sends it and shows it read-only.
@@ -181,7 +191,8 @@ export interface Form extends CreateFormPayload {
   createdAt: string;
   updatedAt: string;
   /**
-   * Display name of the linked association, resolved server-side for the list.
+   * Display name of the linked association, resolved server-side for the list AND the single read
+   * (`GET /forms/:id`, which the link-preview card draws its "Ouvert · <association>" from).
    *
    * The list covers forms reachable through MANAGE_FORMS as well as one's own, so a row has to say
    * whose form it is - and it says it by NAME. Null for a personal form, and also for a form whose
@@ -190,6 +201,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** When a manager closed the form (`GET /forms/:id`); absent or null while it takes answers. */
+  closedAt?: string | null;
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
@@ -500,14 +513,29 @@ export interface PricingView {
   ignoredModifierQuestionIds: string[];
 }
 
+/**
+ * The page's pricing through ONE of the person's cursus (D32): its grid row and its grid prices.
+ * `/check` and the public read serve one per distinct cursus, and the page shows the cheapest
+ * (`fillPriceState`).
+ */
+export interface CursusSlice {
+  pricing: PricingView | null;
+  productGridPrices: ProductGridPrices;
+}
+
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
   /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
   submissionId?: string;
   formFull: boolean;
-  /** Null when the form has one price for everybody. */
+  /**
+   * [LEGACY] The FIRST cursus slice alone, read only from a server older than D32
+   * (`cursusSlicesOf`). Null when the form has one price for everybody.
+   */
   pricing: PricingView | null;
+  /** Every distinct cursus slice (D32). Absent from a server older than it. */
+  cursusSlices?: CursusSlice[];
   /** Questions hidden from this submitter by a profile criterion, answers aside. */
   hiddenItemIds: string[];
   /** False when a `submitCondition` excludes them. */
@@ -545,6 +573,8 @@ export interface Submission {
   /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
   lines?: ProductGridLine[] | null;
   createdAt: string;
+  /** When the respondent last changed the answer (migration 166); null if never. */
+  editedAt?: string | null;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
   /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
@@ -645,6 +675,8 @@ export interface ExportLabels {
   email: string;
   /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
   guest: string;
+  /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
+  edited: string;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
@@ -686,6 +718,7 @@ export function exportLabels(): ExportLabels {
     fileDeleted: m.form_answer_file_deleted(),
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
+    edited: m.form_export_col_edited(),
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),
@@ -848,6 +881,46 @@ export async function cancelPendingSubmission(
   return res.json();
 }
 
+/** One of the caller's own answers they may still change, as `GET :id/my-answers` serves it. */
+export interface EditableAnswer {
+  id: string;
+  formId: string;
+  answers: Record<string, unknown>;
+  totalPaid: number;
+  paymentStatus: string;
+  createdAt: string;
+  editedAt?: string | null;
+  /** The questions that touch the price: drawn read-only, never sent changed. */
+  lockedItemIds: string[];
+}
+
+/**
+ * The caller's answers to this form they may still change - empty when the form does not allow it,
+ * is anonymous or is closed. Newest first; one on a single-answer form.
+ */
+export async function getMyEditableAnswers(formId: string): Promise<EditableAnswer[]> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/my-answers`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch your answers');
+  return res.json();
+}
+
+/**
+ * Changes the caller's own answer in place. Refusals carry a `code` (`FORM_ANSWER_LOCKED`, ...),
+ * worded by `formSubmitRefusalMessage`; nothing about payment is sent or changed.
+ */
+export async function editFormAnswer(
+  formId: string,
+  submissionId: string,
+  answers: Record<string, unknown>
+): Promise<{ submissionId: string; editedAt: string | null }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/answers`,
+    { method: 'PUT', body: JSON.stringify({ answers }) }
+  );
+  if (!res.ok) throw await refusal(res, 'Answer change failed');
+  return res.json();
+}
+
 export async function submitForm(
   id: string,
   payload: {
@@ -893,7 +966,10 @@ export type PublicForm = Pick<
   /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
   guestFields: GuestIdentityField[];
   formFull: boolean;
+  /** [LEGACY] the one slice, read only from a server older than D32 (`cursusSlicesOf`). */
   pricing: PricingView | null;
+  /** A guest's slices - one, a guest having no cursus. Absent from a server older than D32. */
+  cursusSlices?: CursusSlice[];
   /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
   productGridPrices?: ProductGridPrices;
 };

@@ -74,3 +74,37 @@ describe('InstitutionReachPicker - options it cannot draw', () => {
     expect(warn.mock.calls.some((c) => String(c[0]).includes('[INSTITUTION_REACH]'))).toBe(true);
   });
 });
+
+/**
+ * THE SAME BLOCK FOR AN EVENT (owner, 2026-11-13, "the same picker block"): the event form passes
+ * its own options route and `subject="event"`; only the source and the missing-choice line differ.
+ */
+describe('InstitutionReachPicker - for an event', () => {
+  it('reads its options from the loader it is given, and names the deposit in its hint', async () => {
+    const loadOptions = vi.fn((_id: string) =>
+      Promise.resolve({ spaces: [{ formation: 'ICM', campus: 'saint-etienne' }] })
+    );
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(InstitutionReachPicker, {
+        target,
+        props: {
+          reach: emptyReachDraft(),
+          associationId: 'inst-1',
+          associationName: 'Mines',
+          subject: 'event',
+          loadOptions,
+        },
+      })
+    );
+    await settle();
+
+    expect(loadOptions).toHaveBeenCalledWith('inst-1');
+    expect(getInstitutionReachOptions).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reach-space="ICM|saint-etienne"]')).not.toBeNull();
+    expect(target.querySelector('[data-reach-hint]')!.textContent).toContain(
+      m.event_reach_missing_both()
+    );
+  });
+});

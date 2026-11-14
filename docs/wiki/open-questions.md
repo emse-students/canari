@@ -25,7 +25,7 @@ measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner'
 to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
 generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
 (core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
-`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
 **The switch is flipped by the lead on dev, then production, only after [the readings
 below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
 the protocol, and is deleted when those readings are read and the switch is on in production.
@@ -202,6 +202,14 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
    and every notification shown matches a message in the conversation.
 
 Either one failing keeps the switch `off` and reopens this section.
+
+### DECIDED 2026-11-14 - a member's removal by another member cancels the device proof
+
+Owner, 2026-11-14: *"Retiré = non prouvé"*. A commit by ANOTHER user that removes every leaf of a
+user cancels that user's sighting (`member_sightings.rs`), so an entry of theirs afterwards with no
+member's Add is NOT proven; a commit by the user's own device removing their own leaves cancels
+nothing. Built on #3519, with real-MLS tests both ways
+([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
 
 ### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
 
@@ -462,7 +470,16 @@ waits on hardware like everything else iOS. Do not "fix" this by marking every m
 `.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
 Apple badge, and Apple reviews it.
 
-### DECISION OWED - naming the author of each line inside a salon's stacked notification
+### DECIDED (owner, 2026-11-14) - naming the author of each line inside a salon's stacked notification
+
+**Decided: the DEVICE names each line's author from the sender id - their nickname in that community,
+else their profile name from the phone's own copy - and no push carries a name** (owner, 2026-11-14:
+*"Tout pourrait etre donne par l'appareil et rien par le serveur"*). Neither shape below was taken.
+The per-line attribution has existed on the device since 2026-11-01 (`ChannelBannerAuthor` on Android,
+`channelBannerAuthor` in the iOS extension, `CanariSalonSpeaker` in `canari_push.mm`, each line its own
+Person / subtitle, from `display_names.json`, for a PROVEN author); the nickname is added by
+[chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)
+(`conversation_nicknames.json`). The text below is the question as it was asked.
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
 messages stacking one under another in a single banner. **The stacking already exists**;
@@ -576,6 +593,22 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
+## A group call holds one device per user (decided 2026-11-13, reversible)
+
+*The question (review of #3489): group-call media keys are per USER (`deriveSenderKey`,
+`<callId>|<userId>`), so two devices of one person in the same group call would seal under one key
+- one nonce space, and no receiver could tell the two apart.*
+
+**Recommended and taken (reversible): one device per user in a group call - the second device's
+join REPLACES the first.** call-service already evicts a seated user's sibling device in p2p mode
+(`PeerLeft` to the replaced one, a new `PeerReady` to the others), so the server half holds today;
+the group client treats the replaced device as gone. The alternative - keys per DEVICE
+(`<callId>|<userId>|<deviceId>`) - changes the derivation and every receiver's key map, and buys a
+case (one person, two devices, one call) nobody asked for. Recorded in
+[calls](frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13); the check that it holds end
+to end is [a backlog entry](backlog.d/group-calls-one-device-per-user.md). Reopen only if two devices
+of one user in one group call becomes a wanted case.
+
 ## Which account a SECOND phone would carry, the day one is attached again
 
 **Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
@@ -646,7 +679,28 @@ earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the own
 question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
 is written until the owner answers. Live replays are not part of the question: they are 3 days.
 
-## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
+## DECIDED 2026-11-14 by the owner ("Oui, par campus") - an institution's Personnel public reaches every staff account of its campuses
+
+**The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" POST
+of an institution also opens to every staff account (a campus, no cursus) whose campus is the campus
+of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
+in `postVisibleToUserSql`, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
+
+**Not decided, so not built - the agenda.** The owner's answer is for POSTS. An institution's
+calendar event with "Personnel" still reaches only the staff who already have a door
+(`eventVisibleToUserSql` unchanged), although the question below said one answer would settle both:
+whether the same door opens on events waits for the owner.
+
+**Not decided either - the institution as a whole.** The door is per ITEM: it needs a chosen
+public. The association-level readers that the audiences audit of 2026-11-14 found with the same
+dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
+(`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
+and its posts and events with no reach (legacy) - ask whether the reader sees the ASSOCIATION, and
+carry no public. Opening an institution to every staff account of a campus its rules reach would
+widen all of them at once; it was not taken by default. (The signed agenda subscription link already
+gives staff their whole campus, `campusWideReaderCampus`: a selection, not a reader predicate.)
+
+The question as it was asked:
 
 Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
 ([profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)): the public "Personnel" means "only staff (no
@@ -663,3 +717,7 @@ which would let the School address its staff in the app without naming each one?
 reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
 institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
 account with no membership, grant or follow.
+
+**The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
+has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
+so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.

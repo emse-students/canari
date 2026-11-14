@@ -36,6 +36,8 @@ const ROW_SELECTOR = '[id^="msg-"]';
 const THREAD = 61;
 
 let rowPx = 36;
+/** The pane's height: `PANE_PX`, or 0 for a pane that is not laid out yet. */
+let panePx = PANE_PX;
 const mounted: (() => void)[] = [];
 const restore: (() => void)[] = [];
 
@@ -49,7 +51,9 @@ function modelGeometry() {
   Object.defineProperty(proto, 'scrollHeight', {
     configurable: true,
     get(this: HTMLElement) {
-      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, PANE_PX);
+      // A pane that is not laid out (display:none) reports 0 for both, as a browser does.
+      if (panePx === 0) return 0;
+      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, panePx);
     },
   });
   // Rows are stacked from the top of the scroller, `rowPx` each: what the fill measures.
@@ -65,7 +69,7 @@ function modelGeometry() {
       return { top, bottom: top + rowPx, left: 0, right: 0, width: 0, height: rowPx, x: 0, y: top };
     },
   });
-  Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => PANE_PX });
+  Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => panePx });
   restore.push(() => {
     delete (proto as unknown as Record<string, unknown>).scrollHeight;
     delete (proto as unknown as Record<string, unknown>).clientHeight;
@@ -117,11 +121,15 @@ function mountArea(count: number) {
 }
 
 /** The same mount with a conversation the test can switch, as the parent page does. */
-function mountSwitchable(count: number, onLoadOlderMessages?: () => Promise<boolean>) {
+function mountSwitchable(
+  count: number,
+  onLoadOlderMessages?: () => Promise<boolean>,
+  conversation: Conversation = conversationOf(count, 'g1')
+) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const props = $state({
-    conversation: conversationOf(count, 'g1'),
+    conversation,
     messageText: '',
     onMessageChange: () => {},
     bindDraftWriter: () => () => {},
@@ -175,6 +183,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   mounted.splice(0).forEach((f) => f());
+  panePx = PANE_PX;
   restore.splice(0).forEach((f) => f());
   vi.restoreAllMocks();
 });
@@ -379,5 +388,214 @@ describe('ChatArea entry window (F6)', () => {
     answer(true);
     await settleEntry();
     expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+  });
+});
+
+/**
+ * A THREAD SHORTER THAN ITS PANE ASKS FOR ITS PAST AT ENTRY (owner's Pixel 6a, 2026-11-14): such a
+ * pane cannot be scrolled, so the older-history load used to wait for the first stray scroll event -
+ * a keyboard close - and its spinner and its prepend landed in the middle of that motion.
+ */
+describe('ChatArea short thread fill', () => {
+  /** The newest `held` rows of one 35-row thread: what the store has handed over so far. */
+  const FULL = conversationOf(35);
+  const newest = (held: number): Conversation => ({
+    ...FULL,
+    messages: FULL.messages.slice(FULL.messages.length - held),
+  });
+
+  it('a short thread with an exhausted store asks it once at entry, with no scroll at all', async () => {
+    rowPx = 36; // 5 rows = 180 px in a 700 px pane.
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(5, load);
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps asking while the pane is short, and stops once it overflows', async () => {
+    rowPx = 36; // 20 rows (720 px) are the first count past the 700 px pane.
+    modelGeometry();
+    let held = 5;
+    const ref: { props?: { conversation: Conversation } } = {};
+    // The store's answer is prepended, as the parent page does: the same newest rows, older above.
+    const load = vi.fn(async () => {
+      held += 10;
+      ref.props!.conversation = newest(held);
+      return true;
+    });
+    ref.props = mountSwitchable(5, load, newest(5)).props;
+    await settleEntry();
+    await settleEntry();
+    // 5 -> 15 (540 px, still short) -> 25 (900 px): two asks, and none once the pane overflows.
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(held).toBe(25);
+  });
+
+  it('a pane with no height yet pages nothing, whatever the store holds (review of #3545)', async () => {
+    rowPx = 36;
+    panePx = 0; // display:none, a collapsed panel: every pane measures as "short".
+    modelGeometry();
+    const load = vi.fn(async () => true); // an endless store
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('a store answering "more" without moving its cursor stops the fill: one ask, one warn', async () => {
+    // Every stored row is shown, so a page that moved the store's cursor moves the rows; one that did
+    // not would be asked again at once, forever (review of #3545).
+    rowPx = 36;
+    modelGeometry();
+    const load = vi.fn(async () => true);
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('a store that throws is asked once, not in a loop', async () => {
+    rowPx = 36;
+    modelGeometry();
+    const load = vi.fn(async (): Promise<boolean> => {
+      throw new TypeError('store gone');
+    });
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pane that gains its height later is filled then', async () => {
+    // The pane's own ResizeObserver re-arms the fill: driven by hand, as happy-dom lays nothing out.
+    const callbacks: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          callbacks.push(cb);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+    restore.push(() => vi.unstubAllGlobals());
+    rowPx = 36;
+    panePx = 0;
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(5, load);
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
+    panePx = PANE_PX;
+    for (const cb of callbacks) cb();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("a switch during the fill's peer ask: the answer is not written into the next conversation", async () => {
+    rowPx = 36;
+    modelGeometry();
+    const answers: ((v: 'no-peer') => void)[] = [];
+    const ask = vi.fn(() => new Promise<'no-peer'>((resolve) => answers.push(resolve)));
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const props = $state({
+      conversation: conversationOf(5, 'g1'),
+      messageText: '',
+      onMessageChange: () => {},
+      bindDraftWriter: () => () => {},
+      onSend: () => {},
+      onInviteMembers: () => {},
+      onLoadOlderMessages: async () => false,
+      onRequestOlderFromPeers: ask,
+    });
+    const app = mount(ChatArea, { target, props });
+    mounted.push(() => {
+      void unmount(app);
+      target.remove();
+    });
+    flushSync();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(1);
+    props.conversation = conversationOf(5, 'g2');
+    flushSync();
+    // g1's answer lands before g2's own fill has asked: written into g2, it would read "nobody
+    // answers" and g2 would never ask.
+    answers[0]('no-peer');
+    await settleEntry();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(2);
+  });
+
+  it('the fill is silent: its peer ask shows no spinner and no banner', async () => {
+    rowPx = 36;
+    modelGeometry();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const ask = vi.fn(() => new Promise<'no-peer'>(() => {}));
+    const app = mount(ChatArea, {
+      target,
+      props: {
+        conversation: conversationOf(5),
+        messageText: '',
+        onMessageChange: () => {},
+        bindDraftWriter: () => () => {},
+        onSend: () => {},
+        onInviteMembers: () => {},
+        onLoadOlderMessages: async () => false,
+        onRequestOlderFromPeers: ask,
+      },
+    });
+    mounted.push(() => {
+      void unmount(app);
+      target.remove();
+    });
+    flushSync();
+    await settleEntry();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(1);
+    // The scrollback banner of an ask in flight is the one `aria-busy` status in the thread.
+    expect(target.querySelector('.chat-messages-scroll [aria-busy="true"]')).toBeNull();
+  });
+
+  it('a pane the thread already overflows asks nothing at entry', async () => {
+    rowPx = 48; // 25 rows = 1200 px.
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(25, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE STORE'S PAGE NEVER WRITES A `scrollTop` CAPTURED BEFORE ITS AWAIT (review of #3545, P2-1). The
+ * reader's place across the prepend is the growth observer's row anchor; a `prevTop + delta` written
+ * after the await undid whatever moved the pane meanwhile - a keyboard, the reader's own fling.
+ */
+describe('ChatArea older-history page', () => {
+  it('leaves scrollTop as the pane holds it when the store answers', async () => {
+    rowPx = 48; // 25 rows = 1200 px in a 700 px pane: scrollable, the window whole.
+    modelGeometry();
+    let answer: (more: boolean) => void = () => {};
+    const load = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const { target } = mountSwitchable(25, load);
+    await settleEntry();
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    scroller.scrollTop = 10;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(load).toHaveBeenCalledTimes(1);
+    // Mid-await the pane moves: the keyboard took the thread elsewhere.
+    scroller.scrollTop = 400;
+    answer(true);
+    await settleEntry();
+    expect(scroller.scrollTop).toBe(400);
   });
 });

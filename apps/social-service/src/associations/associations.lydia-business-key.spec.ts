@@ -1,6 +1,7 @@
-import { Logger, Module, ParseUUIDPipe, type INestApplication } from '@nestjs/common';
-import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
-import { NestFactory } from '@nestjs/core';
+import { Logger, Module, type INestApplication } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { NestFactory, Reflector } from '@nestjs/core';
+import { routeParamKindsOf } from '../common/route-params';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { SECRET_BOX_ENV } from '../common/secret-box';
@@ -35,6 +36,7 @@ type Row = {
 /** The association table as the raw SQL of `setLydiaAccountId` & co. reads and writes it. */
 function makeService(rows: Row[]) {
   const table = rows.map((r) => ({ ...r }));
+  const enrolled: Array<{ vendorToken: string; associationId: string }> = [];
   const byId = (id: string) => table.find((r) => r.id === id);
   const assoRepo = {
     findOne: jest.fn(async ({ where }: { where: { id: string } }) => {
@@ -53,6 +55,25 @@ function makeService(rows: Row[]) {
         row.sealed = params[3];
         return [[{ id: row.id }], 1];
       }
+      if (sql.includes('INSERT INTO lydia_enrolled_businesses')) {
+        // The ledger of Businesses Canari's enrolment created (migration 168), in the link's transaction.
+        enrolled.push({ vendorToken: params[0], associationId: params[1] });
+        return [];
+      }
+      if (sql.includes('FOR UPDATE OF a')) {
+        // The link's lock: no bridge here (lydia-account-bridge.ts), so the active Business alone.
+        const row = byId(params[0]);
+        return row ? [{ active: row.lydiaAccountId, state: null, enrolled: null }] : [];
+      }
+      if (sql.includes('h."vendorToken" = $1')) {
+        // HELD_BUSINESSES_SQL with no bridge row: every active Business, role `active`.
+        return table
+          .filter(
+            (r) =>
+              r.lydiaAccountId === params[0] && (!sql.includes('h.sealed IS NOT NULL') || r.sealed)
+          )
+          .map((r) => ({ id: r.id, sealed: r.sealed, ready: r.complete === true, role: 'active' }));
+      }
       if (sql.startsWith('SELECT id, "lydiaOnboardingComplete" AS complete')) {
         return table
           .filter((r) => r.lydiaAccountId === params[0])
@@ -62,7 +83,7 @@ function makeService(rows: Row[]) {
         byId(params[0])!.sealed = null;
         return [];
       }
-      if (sql.startsWith('SELECT ("lydiaBusinessKeyCiphertext" IS NOT NULL)')) {
+      if (sql.includes('IS NOT NULL) AS "set"')) {
         const row = byId(params[0]);
         return row ? [{ set: row.sealed !== null }] : [];
       }
@@ -74,12 +95,16 @@ function makeService(rows: Row[]) {
       throw new Error(`unexpected SQL: ${sql}`);
     }),
   };
+  // The link runs in ONE transaction holding the association row's lock; the fake does not roll back.
+  Object.assign(assoRepo, {
+    manager: { transaction: async (fn: (m: unknown) => unknown) => fn({ query: assoRepo.query }) },
+  });
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
     assoRepo,
     logger: new Logger('AssociationsService'),
     redis: { deleteByPattern: jest.fn(async () => 0) },
   }) as unknown as AssociationsService;
-  return { service, table };
+  return { service, table, enrolled };
 }
 
 /** Every string any logger received during `run`, to prove the key never reached one. */
@@ -172,10 +197,15 @@ describe('AssociationsService.setLydiaAccountId - only an association holds a Bu
 
 describe('AssociationsService.setLydiaAccountId - the key captured at business/create', () => {
   it('links the Business and stores its key encrypted, opening for core, never logged', async () => {
-    const { service, table } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    const { service, table, enrolled } = makeService([
+      { id: ASSO_A, lydiaAccountId: null, sealed: null },
+    ]);
     const logs = await loggedDuring(() =>
       service.setLydiaAccountId(ASSO_A, 'vendor-a', 'https://lydia.example/d', KEY_A)
     );
+    // The link records the Business as one Canari's enrolment created (migration 168): the fact the
+    // platform's Lydia flux counter reads.
+    expect(enrolled).toEqual([{ vendorToken: 'vendor-a', associationId: ASSO_A }]);
     expect(table[0]).toMatchObject({
       lydiaAccountId: 'vendor-a',
       dashboardUrl: 'https://lydia.example/d',
@@ -246,6 +276,7 @@ describe('AssociationsService.lydiaBusinessOfVendorToken - a read for the unsign
     await expect(service.lydiaBusinessOfVendorToken('vendor-a')).resolves.toEqual({
       associationId: ASSO_A,
       onboardingComplete: true,
+      role: 'active',
     });
     await expect(service.lydiaBusinessOfVendorToken('vendor-nobody')).resolves.toBeNull();
     await expect(service.lydiaBusinessOfVendorToken('')).resolves.toBeNull();
@@ -282,18 +313,15 @@ describe('AssociationsController - the retired paste route and the status route'
   }
 
   it.each(['retiredLydiaBusinessKeyPaste', 'lydiaBusinessKeyStatus'] as const)(
-    '%s is behind the sign-in guard and parses :id as a UUID',
+    '%s is behind the sign-in guard and declares :id as a uuid',
     (handler) => {
       const guards = Reflect.getMetadata(
         GUARDS_METADATA,
         AssociationsController.prototype[handler]
       ) as unknown[];
       expect(guards).toContain(NginxAuthGuard);
-      const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, AssociationsController, handler) as
-        | Record<string, { data?: unknown; pipes?: unknown[] }>
-        | undefined;
-      const id = Object.values(meta ?? {}).find((arg) => arg.data === 'id');
-      expect(id?.pipes).toContain(ParseUUIDPipe);
+      const fn = Reflect.get(AssociationsController.prototype, handler) as object;
+      expect(routeParamKindsOf(new Reflector(), AssociationsController, fn).id).toBe('uuid');
     }
   );
 
@@ -423,7 +451,11 @@ describe('POST /api/internal/associations/lydia-callback-key - core-service only
     const hit = await lookup(INTERNAL);
     expect(hit.status).toBe(200);
     const text = await hit.text();
-    expect(JSON.parse(text)).toEqual({ associationId: ASSO_A, onboardingComplete: false });
+    expect(JSON.parse(text)).toEqual({
+      associationId: ASSO_A,
+      onboardingComplete: false,
+      role: 'active',
+    });
     expect(text).not.toContain(KEY_A);
   });
 });

@@ -208,9 +208,15 @@ interface FormPayload {
   imageUrl?: string | null;
 }
 
+/**
+ * A shared form's card. The SSR request carries no identity, so it reads the PUBLIC route
+ * (`/api/public/forms/:id`, an allowlist that answers public forms and 404 for the others): the
+ * member route answered 401 every time and every shared link showed the generic card. A form that
+ * is not public stays generic, which is the "public showcase only" rule (anonymous-surface.md).
+ */
 async function formSeo(formId: string): Promise<Partial<SeoMeta> | null> {
   const form = await fetchJsonOrThrow<FormPayload>(
-    `${SOCIAL_URL()}/api/forms/${encodeURIComponent(formId)}`
+    `${SOCIAL_URL()}/api/public/forms/${encodeURIComponent(formId)}`
   );
   if (!form?.title?.trim()) return null;
 

@@ -19,6 +19,7 @@ import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { ensureRestoreKey } from '$lib/services/restoreCredential';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
+import { sessionPushAuth } from '$lib/services/sessionPushAuth';
 import { initializeConnection, getIsTabLeader } from '$lib/utils/chat/connection';
 import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import { flushOutbox, applyOutboxPendingStatuses } from '$lib/utils/chat/outbox';
@@ -115,7 +116,7 @@ async function runPromotion(
   // 2. Push registration, skipped at login. The FCM/APNs token may have rotated while the device
   //    was away, so this re-registers rather than merely retries.
   if (isTauriRuntime()) {
-    void startPushService(ctx.getHistoryBaseUrl(), token, ctx.getMyDeviceId())
+    void startPushService(ctx.getHistoryBaseUrl(), sessionPushAuth, ctx.getMyDeviceId())
       .then(() => cb.log('[PROMOTE] Push token registered.'))
       .catch((e) => cb.log(`[PROMOTE] Push registration failed (non-blocking): ${String(e)}`));
   }

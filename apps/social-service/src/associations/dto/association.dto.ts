@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -358,6 +359,15 @@ export class CreateAssociationCalendarEventDto {
   presentation?: AssociationCalendarEventPresentation;
 
   /**
+   * An institution's reach (owner, 2026-11-13): `{ spaces: [{formation, campus}], public }`,
+   * MANDATORY on an institution's event and refused on any other - judged, with its typed codes, by
+   * `resolveInstitutionReachWrite`, the posts' own decision.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
+
+  /**
    * Associations ASKED to co-organise this event (D39): each gets a `coorganise` proposal and
    * co-organises only once its publishers accept it. The array bound (10) is only a transport
    * sanity limit: THE CAP IS `MAX_CO_ORGANISERS`, enforced by the service so the refusal is a typed
@@ -412,6 +422,15 @@ export class UpdateAssociationCalendarEventDto {
   @ArrayMaxSize(10)
   @IsUUID('all', { each: true })
   coOwnerIds?: string[];
+
+  /**
+   * An institution's reach, changed after filing or validation, both ways (owner, 2026-11-13): the
+   * organiser side only. Absent leaves the stored reach alone; present replaces it, judged as at the
+   * filing. The event does not go back to validation, and nobody is told again.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
 
   /** Changes how the event is presented; the organiser side only. Omit to leave it unchanged. */
   @IsOptional()

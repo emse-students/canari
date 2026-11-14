@@ -55,8 +55,9 @@ export const LIVE_REPLAY_MAX_MS = 3 * 60 * 60 * 1000;
  */
 export const LIVE_REPLAY_MIN_MS = 30_000;
 
-/** How long a replay is kept after its live's END (owner, 2026-11-07): written once into `posts."expiresAt"`. */
-export const LIVE_REPLAY_RETENTION_DAYS = 3;
+// How long a replay is kept after its live's END is no constant since 2026-11-14: the admin setting
+// `platform_config.retention_live_replay_days` (3 days by default, core migration 025), read at the
+// replay's publication and written once into `posts."expiresAt"` (`common/retention-settings.ts`).
 
 /** How many segments one page of `GET /api/lives/:id/replay` lists; the client asks `from=nextFrom`. */
 export const LIVE_REPLAY_PAGE = 200;

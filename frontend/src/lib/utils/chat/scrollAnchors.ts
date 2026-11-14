@@ -54,7 +54,7 @@ export function peekConversationAnchor(conversationId: string): ConversationAnch
  */
 export function dropAnchorsExcept(conversationId: string): number {
   let dropped = 0;
-  for (const id of [...conversationAnchors.keys()]) {
+  for (const id of conversationAnchors.keys()) {
     if (id === conversationId) continue;
     conversationAnchors.delete(id);
     dropped++;

@@ -436,6 +436,17 @@ The tab (`tap>salons`) is unchanged within noise: 556/619, 1765/1719 and 1851/19
 expected, because F4 only touches the salon pane. In the airplane condition, one run of three timed
 out at `tap>target salons` in both builds, so the airplane medians cover 2 runs.
 
+**The one unexplained FAIL in 44 (a refused salon row still drawn), closed 2026-11-14.** Its two
+candidates are both answered: a drawn row left by two overlapping loads is fixed by #2245 (its test
+fails on the old code; 35 instrumented runs never had the tampered row in the drawn copy), and a live
+row verified on arrival and kept by the merge's window rule is this section's design. Every path a
+salon message reaches memory by was read on 2026-10-22: the live frame (`openChannelMessage`), the
+history page, search and reconnect (`decodeChannelMessageRow`), reactions and edits are checked
+before they are shown; the stored-page draw is withdrawn by the next merged page (#2245); the own
+echo, the tab sync from the leader and a v1 session's rows are the documented exceptions. A
+recurrence carries its evidence: GRAINE-AUTH's trail keeps the load lines and every line naming the
+tampered row.
+
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
 What the measurements say is already within reach, and what stands between it and 200 ms:
@@ -898,9 +909,11 @@ still deliverable in that step.
   phone seed. A few ms of desktop gesture do not pay for that.
 - **The thread observer's reads are where the layout is paid, not extra layouts.** Removing them
   hands the same layout to the fill's measure. Its `MutationObserver` judgement outside an entry
-  must stay synchronous anyway: a prepend (`loadOlderGroups`, a widen step) restores `scrollTop` by
-  absolute assignment after its own `await tick()` in the same task, so a judgement deferred to the
-  layout step always runs after that restore and adds the prepend's height a second time.
+  must stay synchronous anyway: a widen step restores `scrollTop` by absolute assignment after its
+  own `await tick()` in the same task, so a judgement deferred to the layout step always runs after
+  that restore and adds the prepend's height a second time. (`loadOlderGroups` made the same write
+  for the store's page until 2026-11-14; it now leaves the prepend to the observer's row anchor -
+  [chat](modules/chat.md#a-short-thread-sits-at-the-bottom-and-asks-for-its-past-at-entry-2026-11-14).)
 
 **Where the mount's time is, then:** the template pass (Svelte creating the rows, `MessageBubble`
 and `MessageTextBody` first), and the style recalculations that each write of a measured value

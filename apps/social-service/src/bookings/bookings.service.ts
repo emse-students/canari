@@ -17,7 +17,7 @@ import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
-import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
+import { matchesCondition, needsProfile, NO_CURSUS, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
   normaliseCondition,
@@ -70,6 +70,7 @@ import {
 import type { CreateBlockDto, CreateBookingDto, EditBookingDto } from './dto/booking.dto';
 import { localDate } from './zoned-time';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
+import { spaceContact } from './booking-contact';
 
 /** Who is asking: the account nginx authenticated, and whether it is a global admin. */
 export interface Actor {
@@ -286,8 +287,8 @@ export class BookingsService {
   /**
    * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
    * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
-   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
-   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs
+   * reaches it (owner, 2026-11-14) - the directory's predicate, the one `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
    * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
    * manager - the owner of a personal space - never reaches here (`assertMayUse`).
    *
@@ -357,9 +358,16 @@ export class BookingsService {
     const hiddenItemIds = items.some((i) => normaliseCondition(i))
       ? profileHiddenItemIds(items, await this.factsFor(space, actor.userId))
       : [];
+    const contact = await spaceContact(
+      (sql, params) => this.spaces.manager.query(sql, params),
+      space,
+      actor.userId
+    );
     return {
       id: space.id,
       hiddenItemIds,
+      // Who to write to about the room, or null (the screen then shows nobody).
+      contact,
       associationId: space.associationId,
       name: space.name,
       description: space.description,
@@ -533,7 +541,8 @@ export class BookingsService {
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
    * - an association space only while its association is not ARCHIVED, and only when that
    *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
-   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   predicate: a member of it, D21, its rules reach one of their spaces, or a nominative read
+   *   grant of theirs reaches it - owner, 2026-10-31 and 2026-11-14);
    *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
    *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
@@ -589,8 +598,8 @@ export class BookingsService {
       (s) => s.associationId !== null && !managed.has(s.associationId) && s.audience
     );
     const needProfile = judged.some((s) => needsProfile(s.audience));
-    const [profile, tiers] = await Promise.all([
-      this.pricingFacts.profileFor(actor.userId, needProfile).catch((e: unknown) => {
+    const [cursus, tiers] = await Promise.all([
+      this.pricingFacts.cursusFor(actor.userId, needProfile).catch((e: unknown) => {
         this.logger.error(
           `[BOOKINGS] listedSpaces: profile unavailable, the spaces whose audience needs it are ` +
             `left out of this answer: ${e instanceof Error ? e.message : String(e)}`
@@ -605,10 +614,10 @@ export class BookingsService {
     ]);
     const open = rows.filter((s) => {
       if (!judged.includes(s)) return true;
-      if (needsProfile(s.audience) && profile === null) return false;
+      if (needsProfile(s.audience) && cursus === null) return false;
       return matchesCondition(s.audience!, {
-        promo: profile?.promo ?? null,
-        formation: profile?.formation ?? null,
+        // Every cursus (D32): a space open to either of a person's cursus is open to them.
+        cursus: cursus ?? NO_CURSUS,
         cotisationTiers: tiers.get(s.associationId as string) ?? [],
         answers: {},
       });
@@ -708,7 +717,9 @@ export class BookingsService {
     }
     if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
     return bookingIcs({
-      bookingId,
+      // The row's own id, never the request's spelling of it: what is written into the file comes
+      // from the database, and an id asked for in upper case yields the same calendar entry.
+      bookingId: booking.id,
       spaceId: space.id,
       spaceName: space.name,
       resourceName: resource.name,

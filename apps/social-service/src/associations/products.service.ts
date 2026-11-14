@@ -31,6 +31,7 @@ import {
   ASSOCIATION_ARCHIVED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
+  PaymentRoutingChangedException,
   productCheckoutLookup,
   PURCHASE_PRICING_CHANGED,
   PURCHASE_ALREADY_CLOSED,
@@ -129,6 +130,7 @@ import {
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { paymentsNotReady } from './lydia-readiness';
+import { LYDIA_BRIDGE_LOG_TAG } from './lydia-account-bridge';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -140,8 +142,13 @@ import {
   mapCorePaymentError,
   lydiaReadinessRefusal,
 } from '../common/core-payment-error';
-import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
-import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
+import {
+  describeCursus,
+  dimensionsNeedProfile,
+  type CursusChoice,
+  type CursusView,
+} from '../pricing/audience';
+import { cheapestCell, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
 
 /** Delays used between Cercle webhook delivery attempts (ms). The first one is not waited. */
@@ -275,9 +282,10 @@ interface PreparedPurchase {
   provider: PaymentProviderId;
   paymentTarget: PaymentTarget;
   vendorToken: string;
-  profile: { promo: number | null; formation: string | null };
+  /** Every cursus of the buyer (D32), `NO_CURSUS` when not fetched or none. */
+  cursus: readonly CursusView[];
   /**
-   * Whether `profile` was FETCHED: only for a grid priced on promo or formation, as the product read
+   * Whether `cursus` was FETCHED: only for a grid priced on promo or formation, as the product read
    * before the lock had one. A grid that needs it under the lock while it was not fetched cannot be
    * priced without a call there (`decidePurchase` refuses `PURCHASE_PRICING_CHANGED`).
    */
@@ -289,6 +297,14 @@ interface PreparedPurchase {
  * `PaymentTarget` the request is built from (provider, account, receiving association, readiness,
  * delegation), so one that changed in a field nobody listed is never taken for the same.
  */
+/** What opening a boutique checkout answers the buyer's page. */
+export interface CheckoutOpened {
+  checkoutUrl: string;
+  amountCents: number;
+  currency: string;
+  checkoutId: string;
+}
+
 function sameRouting(a: PaymentTarget, b: PaymentTarget): boolean {
   return (
     a.provider === b.provider &&
@@ -669,15 +685,21 @@ export class ProductsService {
   /**
    * The payment target of `asso` under a provider ALREADY fetched: reads the delegation parent by
    * id and calls nothing, so it may run under a lock (`decidePurchase`, with that transaction's
-   * `manager`, so the read uses the lock holder's connection).
+   * `manager`, so the read uses the lock holder's connection). `lockParent` (inside a transaction
+   * only) SHARE-locks the parent row: a readiness change or a bridge switch of the receiver, which
+   * locks it FOR UPDATE, then orders against the purchase's decision (lydia-account-bridge.ts).
    */
   private async routeWith(
     asso: Association,
     provider: PaymentProviderId,
-    manager: EntityManager = this.assoRepo.manager
+    manager: EntityManager = this.assoRepo.manager,
+    lockParent = false
   ): Promise<PaymentTarget> {
     const parent = isDelegating(asso)
-      ? await manager.findOne(Association, { where: { id: asso.paymentParentAssociationId } })
+      ? await manager.findOne(Association, {
+          where: { id: asso.paymentParentAssociationId },
+          ...(lockParent ? { lock: { mode: 'pessimistic_read' as const } } : {}),
+        })
       : null;
     return resolvePaymentTarget(asso, parent, provider);
   }
@@ -724,7 +746,8 @@ export class ProductsService {
 
   /**
    * What one buyer pays for one gridded product, in cents - or `null` when the grid does not sell
-   * their combination.
+   * their combination - and the cursus that price came from: the cheapest cell over every cursus
+   * (D32), so the returned choice is what a log names.
    *
    * The refusal is the grid's own decision and must be honoured, never rounded up to `amountCents`:
    * a cell set to unavailable is an association saying this forfait is not offered to these people,
@@ -733,15 +756,11 @@ export class ProductsService {
   private resolveGridPrice(
     matrix: PriceMatrix,
     cotisationTiers: (string | null)[],
-    profile: { promo: number | null; formation: string | null }
-  ): CellValue {
-    // The profile was fetched BEFORE the buyer's tier lock (`preparePurchase`); the tiers held are
+    cursus: readonly CursusView[]
+  ): CursusChoice<CellValue> {
+    // The cursus were fetched BEFORE the buyer's tier lock (`preparePurchase`); the tiers held are
     // the ones `decidePurchase` read under it. Nothing is read here.
-    return resolveCellPrice(
-      matrix,
-      { cotisationTiers, answers: {}, promo: profile.promo, formation: profile.formation },
-      'product'
-    );
+    return cheapestCell(matrix, { cursus, cotisationTiers, answers: {} }, 'product');
   }
 
   /**
@@ -769,21 +788,20 @@ export class ProductsService {
     if (gridded.length === 0) return prices;
 
     const needProfile = gridded.some((p) => dimensionsNeedProfile(p.priceMatrix.dimensions));
-    const profile = await this.pricingFacts.profileFor(userId, needProfile);
+    const cursus = await this.pricingFacts.cursusFor(userId, needProfile);
 
     for (const product of gridded) {
       const status = statusByAssoc.get(product.associationId);
-      const facts: PricingFacts = {
-        ...profile,
-        // No status at all means no cotisation for this association; `activeTier: null` alongside
-        // `isCotisant` means the BASE tier, which is a value and not a missing one.
-        cotisationTiers: status?.isCotisant ? [status.activeTier] : [],
-        answers: {},
-      };
       const dependsOnProfile = dimensionsNeedProfile(product.priceMatrix.dimensions);
       let amountCents: number | null;
       try {
-        amountCents = resolveCellPrice(product.priceMatrix, facts, 'product');
+        amountCents = this.resolveGridPrice(
+          product.priceMatrix,
+          // No status at all means no cotisation for this association; `activeTier: null` alongside
+          // `isCotisant` means the BASE tier, which is a value and not a missing one.
+          status?.isCotisant ? [status.activeTier] : [],
+          cursus
+        ).cents;
       } catch (e) {
         // A cell missing at read time is a broken invariant, not a price. Completeness is enforced
         // at save, so this means a grid was written by something that skipped the validator - and
@@ -955,9 +973,9 @@ export class ProductsService {
   /**
    * Returns the active products of every association visible to `userId` (login required, listed
    * on /shop), each annotated for `userId` (`annotateForViewer`). Visible is the directory's
-   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, or its rules
-   * reach one of the reader's spaces): a product of another campus is no more listed than its
-   * association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
+   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, its rules
+   * reach one of the reader's spaces, or a nominative read grant of the reader reaches it - owner,
+   * 2026-11-14): a product of another campus is no more listed than its association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
    * (`listByAssoc`, D37) lists it to anyone holding the link, and `preparePurchase` asks no
    * campus - as a form's link is enough to answer it.
    */
@@ -2231,7 +2249,37 @@ export class ProductsService {
     customAmountCents?: number,
     callbackUrls?: { successUrl?: string; cancelUrl?: string },
     payerEmail?: string
-  ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+  ): Promise<CheckoutOpened> {
+    return this.openCheckoutAttempt(
+      associationId,
+      productId,
+      userId,
+      customAmountCents,
+      callbackUrls,
+      payerEmail,
+      false
+    );
+  }
+
+  /**
+   * `createCheckoutSession`'s body. `bridgeReissue` is true for the ONE re-issue a bridge's switch
+   * back owes (owner, 2026-11-13): Lydia answered error 5 for the Business a switch had made
+   * active, BEFORE any request existed, so nothing is payable on it; the attempt was released and
+   * the historical account collects again - the same purchase is opened once more, re-resolved and
+   * re-decided from the start, and never a third time. The same single re-entry follows a typed
+   * `PAYMENT_ROUTING_CHANGED` whose two routings the bridge's durable state proves to be ITS switch
+   * back (prepared on the enrolled Business, decided on the historical one: lead, 2026-11-14,
+   * `AssociationsService.countReissueAfterSwitchBack`); any other routing change stays the 409.
+   */
+  private async openCheckoutAttempt(
+    associationId: string,
+    productId: string,
+    userId: string,
+    customAmountCents: number | undefined,
+    callbackUrls: { successUrl?: string; cancelUrl?: string } | undefined,
+    payerEmail: string | undefined,
+    bridgeReissue: boolean
+  ): Promise<CheckoutOpened> {
     await assertReviewerReachesAssociation(
       this.productRepo.manager,
       userId,
@@ -2280,6 +2328,29 @@ export class ProductsService {
           productId,
           userId,
           'another attempt was opened at the same time'
+        );
+      }
+      if (
+        err instanceof PaymentRoutingChangedException &&
+        !bridgeReissue &&
+        (await this.associationsService.countReissueAfterSwitchBack(err.from, err.to))
+      ) {
+        // The decision refused BEFORE its row and before any request (both come after this
+        // transaction, which rolled back): nothing was issued on the stale routing. A bridge's
+        // switch back moved it, so the owner's re-issue applies (lead, 2026-11-14), once.
+        this.logger.warn(
+          `${LYDIA_BRIDGE_LOG_TAG} product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}: ` +
+            `prepared on the enrolled Business, decided after a switch back - the SAME purchase ` +
+            `is re-issued once on the historical account (nothing was issued on the first)`
+        );
+        return this.openCheckoutAttempt(
+          associationId,
+          productId,
+          userId,
+          customAmountCents,
+          callbackUrls,
+          payerEmail,
+          true
         );
       }
       throw err;
@@ -2345,10 +2416,35 @@ export class ProductsService {
         // vendor token stops being ready, whatever had marked it ready (lydia-readiness.ts).
         const cause = lydiaReadinessRefusal(err);
         if (cause) {
-          await this.associationsService.revertLydiaReadinessAfterRefusal(vendorToken, cause, {
-            path: 'shop',
-            id: checkout.id,
-          });
+          const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
+            vendorToken,
+            cause,
+            { path: 'shop', id: checkout.id }
+          );
+          if (reissue && !bridgeReissue) {
+            // NOT a fallback: the owner's decision for the bridge, scoped to error 5 on the
+            // Business a switch just made active, logged and counted (`reissueCount`).
+            this.logger.warn(
+              `${LYDIA_BRIDGE_LOG_TAG} checkout ${checkout.id.slice(0, 8)}: error 5 on the ` +
+                `Business a bridge switch made active, switched back - the SAME purchase is ` +
+                `re-issued once on the historical account (nothing was issued on the first)`
+            );
+            return this.openCheckoutAttempt(
+              associationId,
+              productId,
+              userId,
+              customAmountCents,
+              callbackUrls,
+              payerEmail,
+              true
+            );
+          }
+          if (reissue) {
+            this.logger.error(
+              `${LYDIA_BRIDGE_LOG_TAG} checkout ${checkout.id.slice(0, 8)}: a re-issued purchase ` +
+                `met a second switch back - refused, never issued a third time`
+            );
+          }
         }
       } else {
         // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
@@ -2376,6 +2472,9 @@ export class ProductsService {
 
     // Named columns: the request ids are the only thing this write may change.
     await this.checkoutRepo.update({ id: checkout.id }, { requestUuid, requestId });
+    // Lydia issued a request on this Business: the proof a bridge switch waits for before telling
+    // its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+    await this.associationsService.noteLydiaRequestIssued(vendorToken);
     this.logger.log(
       `[SHOP] checkout ${checkout.id.slice(0, 8)} issued: request ${requestId ?? 'without a numeric id'} ` +
         `product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
@@ -2892,6 +2991,8 @@ export class ProductsService {
           stripePaymentIntentId: paymentIntentId,
           associationId: row.associationId,
           productName: row.productName,
+          // The Business the attempt was issued to and Lydia confirmed on (migration 169).
+          lydiaVendorToken: row.vendorToken,
         },
         manager
       );
@@ -3063,7 +3164,11 @@ export class ProductsService {
 
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
-    if (!product.isActive) {
+    // A product a manager took off sale is not found. One WITHHELD (`activationWithheld`, set by
+    // the revert that stopped its association's payments, a bridge's switch back included) is
+    // judged after the readiness below, like `decidePurchase` does: the payer is owed the reason
+    // (payments not active), not "not found" - the flag is the fact, carried from the revert.
+    if (!product.isActive && !product.activationWithheld) {
       throw new NotFoundException('Product not found or inactive');
     }
     this.assertNotArchived(asso, product);
@@ -3082,17 +3187,24 @@ export class ProductsService {
       }
       throw paymentsNotReady(paymentTarget.readinessCause, paymentTarget.delegated);
     }
+    if (!product.isActive) {
+      // Withheld, yet its association collects: the release has not reached it - not on sale.
+      this.logger.warn(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} - withheld while its payments read ready`
+      );
+      throw new NotFoundException('Product not found or inactive');
+    }
     const profileFetched = product.priceMatrix
       ? dimensionsNeedProfile(product.priceMatrix.dimensions)
       : false;
-    const profile = await this.pricingFacts.profileFor(userId, profileFetched);
+    const cursus = await this.pricingFacts.cursusFor(userId, profileFetched);
     return {
       associationId,
       productId,
       provider,
       paymentTarget,
       vendorToken,
-      profile,
+      cursus,
       profileFetched,
     };
   }
@@ -3127,7 +3239,9 @@ export class ProductsService {
     });
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
-    const now = await this.routeWith(asso, prepared.provider, manager);
+    // The payee row SHARE-locked too when it is a parent: the switch of a bridge (or a revert)
+    // locks it FOR UPDATE, so the account read here is the one this attempt is issued to.
+    const now = await this.routeWith(asso, prepared.provider, manager, true);
     // Read BEFORE the product's own flag: a readiness revert committed while the purchase was being
     // prepared both clears the target's readiness and withholds the product, and the payer is owed
     // the reason (payments not active), not "product not found" nor a routing change.
@@ -3146,10 +3260,7 @@ export class ProductsService {
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'
       );
-      throw new ConflictException({
-        code: PAYMENT_ROUTING_CHANGED,
-        message: 'The payment account of this association changed while the purchase was opened.',
-      });
+      throw new PaymentRoutingChangedException(paymentTarget, now);
     }
 
     // Re-read under the lock, like the routing: an archive committed while the purchase was being
@@ -3188,21 +3299,22 @@ export class ProductsService {
       // and `memberPriceTag` decide nothing while one is set. Two mechanisms for "some people pay
       // less" would need an order between them, and an order that decides money is the priority
       // rule this whole design exists in order not to have.
-      const cell = this.resolveGridPrice(
+      const priced = this.resolveGridPrice(
         product.priceMatrix,
         facts?.heldKeys ?? [],
-        prepared.profile
+        prepared.cursus
       );
-      if (cell === null) {
+      if (priced.cents === null) {
         this.logger.log(
           `[SHOP] purchase refused by the grid: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} - ` +
-            'the association marked this combination as not sold'
+            `the association marked this combination as not sold (${describeCursus(priced)})`
         );
         throw new BadRequestException('This is not available for your situation.');
       }
-      amountCents = cell;
+      amountCents = priced.cents;
       this.logger.debug(
-        `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+        `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+          `amount=${amountCents} ${describeCursus(priced)}`
       );
     } else if (product.amountCents !== null) {
       const price = this.fixedPriceOf(product, product.amountCents, facts);
@@ -3826,17 +3938,21 @@ export class ProductsService {
     if (product.priceMatrix) {
       // A grid replaces the fixed pricing: falling back to `amountCents` here would record a price
       // the grid never quoted, and `amountCents` may not even be set.
-      const cell = this.resolveGridPrice(
+      const priced = this.resolveGridPrice(
         product.priceMatrix,
         await this.userTagService.listHeldCotisationTiers(userId, associationId),
-        await this.pricingFacts.profileFor(
+        await this.pricingFacts.cursusFor(
           userId,
           dimensionsNeedProfile(product.priceMatrix.dimensions)
         )
       );
-      return cell === null
+      this.logger.debug(
+        `[SHOP] cash sale grid quote: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+          `amount=${priced.cents ?? 'not-sold'} ${describeCursus(priced)}`
+      );
+      return priced.cents === null
         ? { kind: 'not-sold' }
-        : { kind: 'priced', amountCents: cell, preferential: false };
+        : { kind: 'priced', amountCents: priced.cents, preferential: false };
     }
     if (product.amountCents == null) return { kind: 'typed' };
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
