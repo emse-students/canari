@@ -839,12 +839,7 @@ impl MlsManager {
                 // A held tree is one this device accepted: its users were members at its epoch.
                 // Idempotent - a user seen earlier keeps the earlier epoch. A key group records none.
                 let door = state.admission.get(group_id).copied();
-                device_trust.record_sightings_at_load(
-                    group_id,
-                    group.epoch().as_u64(),
-                    &leaves,
-                    door,
-                );
+                device_trust.record_sightings(group_id, group.epoch().as_u64(), &leaves, door);
             }
             if seeded > 0 {
                 log::info!(

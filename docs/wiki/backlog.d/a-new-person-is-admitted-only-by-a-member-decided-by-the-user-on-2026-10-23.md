@@ -38,7 +38,9 @@ was reported as `new-person`. After the `1.6.12` deploy (09:11 UTC) production h
 roster's trust trade-off, *"Preuve sur l'appareil"* - the DEVICE decides. Built on #3519:** every
 tree a device accepts records, per group and per user, the first epoch it saw the user hold a leaf
 (`mls-core/src/member_sightings.rs`, sealed state), and `decideUninvitedEntry` calls an entrant
-`returning` only when that record shows them before the entering epoch; anything else is a NOT
+`returning` only when that record shows them before the entering epoch and no other member's
+commit removed every leaf of theirs since (owner, 2026-11-14: *"Retiré = non prouvé"*, which in
+practice makes every such entry `new-person`); anything else is a NOT
 PROVEN `new-person`, with no fallback to the roster. The report carries `watchedFromEpoch`
 (`watched_from=` on the server line) and the server prints one line per (entry, kind). The mechanism,
 what it survives and what it cannot prove are in

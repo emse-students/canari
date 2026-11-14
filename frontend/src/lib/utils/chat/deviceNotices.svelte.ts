@@ -105,8 +105,9 @@ export interface DeviceNoticeContext {
   /**
    * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`
    * (`IMlsService.membershipEvidence`): the first epoch it saw the user hold a leaf of a tree it
-   * accepted, or recorded them leaving it - a self-admitted entry after such a sighting is a member
-   * coming back. Never the server's word.
+   * accepted, unless another member's commit removed every leaf of theirs since (retired is not
+   * proven) - a self-admitted entry after such a sighting is a member coming back. Never the
+   * server's word.
    */
   membershipEvidence: (groupId: string, userId: string) => Promise<MembershipEvidence>;
   /**
@@ -909,7 +910,9 @@ type NoticeConversation =
  * on the device). The proof is `membershipEvidence`: the first epoch at which this device saw the
  * entrant's USER hold a leaf of a tree of this group that it accepted itself - a Welcome or GroupInfo
  * it joined by (signed by a member's leaf), a commit it merged (signed by a member), a tree it held
- * at a load. Kept per user in the sealed MLS state, so any device of the member, a reinstall
+ * at a load - and that no other member's commit RETIRED since (every leaf of theirs removed by
+ * another user: owner, 2026-11-14, "retired is not proven"). Kept per user in the sealed MLS
+ * state, so any device of the member, a reinstall
  * included, is the member, and SCOPED TO THE LINEAGE this device holds: a forget or a fresh join of
  * the group starts an empty record, so a sighting from another copy of the group (one the server
  * may have fabricated) never carries over. A sighting BEFORE the entering epoch is `returning`.

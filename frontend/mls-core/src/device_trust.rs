@@ -540,53 +540,6 @@ impl DeviceTrust {
         self.sightings.forget_group(group_id, why)
     }
 
-    /// Records a tree this device HELD AT LOAD. The first time a group is recorded (a state written
-    /// before the sightings existed), the departures already recorded for it are folded in as
-    /// sightings at `epoch - 1` - the evidence the classifier read before - and from then on the
-    /// sightings alone are read ([`Self::membership_evidence`]).
-    ///
-    /// @returns whether anything was written.
-    pub(crate) fn record_sightings_at_load(
-        &mut self,
-        group_id: &str,
-        epoch: u64,
-        leaves: &[LeafKey],
-        door: Option<AdmissionPolicy>,
-    ) -> bool {
-        if door == Some(AdmissionPolicy::Open) {
-            return false;
-        }
-        let mut wrote = false;
-        if !self.sightings.holds_group(group_id) {
-            let folded: Vec<LeafKey> = self
-                .departures
-                .iter()
-                .filter(|d| d.group_id == group_id)
-                .map(|d| (0u32, d.user_id.clone(), Vec::new()))
-                .collect();
-            for (_, user, _) in &folded {
-                let at = self
-                    .departures
-                    .iter()
-                    .filter(|d| d.group_id == group_id && &d.user_id == user)
-                    .map(|d| d.epoch.saturating_sub(1))
-                    .min()
-                    .unwrap_or(epoch);
-                wrote |= self
-                    .sightings
-                    .record_tree(group_id, at, &[(0, user.clone(), Vec::new())]);
-            }
-            if !folded.is_empty() {
-                log::info!(
-                    "[SIGHTINGS] {}: {} departure record(s) folded in at the first load that records sightings",
-                    group_id.get(..8).unwrap_or(group_id),
-                    folded.len()
-                );
-            }
-        }
-        wrote | self.sightings.record_tree(group_id, epoch, leaves)
-    }
-
     /// Drops the sightings of groups not in `held_groups`, only past the threshold
     /// ([`crate::member_sightings::SIGHTINGS_PRUNE_THRESHOLD`]).
     pub(crate) fn prune_sightings(
@@ -597,11 +550,10 @@ impl DeviceTrust {
     }
 
     /// What this device can prove about `user_id` in `group_id`, from what it saw itself in the
-    /// lineage it holds: the first epoch it saw the user hold a leaf there, and the first epoch its
-    /// record of the group covers ([`crate::member_sightings`]). Every departure merged in that
-    /// lineage was a sighting first (the tree the removing commit was built on is recorded), so the
-    /// sightings alone answer; departures from before the record are folded in once, at load
-    /// ([`Self::record_sightings_at_load`]). Never asks anybody.
+    /// lineage it holds and that no other member's commit retired since: the first epoch it saw the
+    /// user hold a leaf there, and the first epoch its record of the group covers
+    /// ([`crate::member_sightings`]). A departure is NOT evidence of membership (owner, 2026-11-14:
+    /// retired is not proven). Never asks anybody.
     pub fn membership_evidence(&self, group_id: &str, user_id: &str) -> MembershipEvidence {
         self.sightings.evidence(group_id, user_id)
     }
@@ -757,6 +709,45 @@ impl DeviceTrust {
             });
         }
         !gone.is_empty() || !devices_gone.is_empty()
+    }
+
+    /// Cancels the sighting of every user whose LAST leaf this commit removed when the committer is
+    /// ANOTHER user (or unknown): retired is not proven (owner, 2026-11-14,
+    /// [`crate::member_sightings`]). A commit of the user's own device removing their own leaves
+    /// cancels nothing.
+    ///
+    /// @returns whether anything was written.
+    fn retire_removed_users(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        before: &[LeafKey],
+        after: &[LeafKey],
+        committer: Option<&str>,
+    ) -> bool {
+        let committer_user = committer.and_then(canonical_user_of);
+        let remaining: std::collections::HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .collect();
+        let mut gone: Vec<String> = before
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .filter(|u| !remaining.contains(u))
+            .collect();
+        gone.sort();
+        gone.dedup();
+        let mut wrote = false;
+        for user in gone {
+            if committer_user.as_deref() == Some(user.as_str()) {
+                log::info!(
+                    "[SIGHTINGS] {group_id} epoch {epoch}: {user} removed their own leaves - still proven a member"
+                );
+                continue;
+            }
+            wrote |= self.sightings.retire(group_id, &user, epoch);
+        }
+        wrote
     }
 
     /// The persisted form of the pins, sorted so two saves of one record are byte-identical.
@@ -1082,6 +1073,7 @@ impl DeviceTrust {
         // which also covers a group whose record started with this build - and the one it produced.
         wrote |= self.record_sightings(group_id, epoch.saturating_sub(1), before, door);
         wrote |= self.record_sightings(group_id, epoch, after, door);
+        wrote |= self.retire_removed_users(group_id, epoch, before, after, added_by);
         wrote |= self.record_departures(group_id, epoch, before, after);
         // The committer signed this commit with the key its leaf carries: a proof it holds that key.
         if let Some(committer) = added_by
@@ -1452,9 +1444,9 @@ mod tests {
     }
 
     #[test]
-    fn membership_evidence_reads_the_sightings_and_a_departure_recorded_before_them() {
+    fn membership_evidence_is_the_sightings_and_a_removal_by_another_member_retires() {
         let leaf = |id: &str| (0u32, id.to_string(), b"k".to_vec());
-        // A state written before sightings existed: one departure of bob at epoch 4, nothing else.
+        // A departure recorded before the sightings existed is NOT evidence: retired is not proven.
         let departed = Departure {
             group_id: "g".into(),
             user_id: "bob".into(),
@@ -1463,20 +1455,8 @@ mod tests {
             user_left: true,
         };
         let mut t = DeviceTrust::from_persisted(vec![], vec![], vec![], vec![departed], vec![]);
-        assert_eq!(
-            t.membership_evidence("g", "bob").first_seen_epoch,
-            None,
-            "a departure alone is read only once folded in at load"
-        );
-        t.record_sightings_at_load("g", 6, &[leaf("alice:d")], None);
-        let e = t.membership_evidence("g", "BOB");
-        assert_eq!(
-            e.first_seen_epoch,
-            Some(3),
-            "in the tree the removing commit was built on"
-        );
-        assert_eq!(e.watched_from_epoch, Some(3));
-        assert_eq!(t.membership_evidence("g", "carol").first_seen_epoch, None);
+        t.record_sightings("g", 6, &[leaf("alice:d")], None);
+        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, None);
         assert_eq!(
             t.membership_evidence("g", "alice").first_seen_epoch,
             Some(6)
@@ -1488,20 +1468,48 @@ mod tests {
             "g",
             8,
             &[leaf("alice:d")],
-            &[leaf("alice:d"), leaf("carol:d")],
+            &[leaf("alice:d"), leaf("carol:d"), leaf("carol:d2")],
             Some("alice:d"),
             own,
             None,
         );
         assert_eq!(
-            t.membership_evidence("g", "alice").first_seen_epoch,
-            Some(6)
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
         );
+
+        // carol's own device removes her other one: she stays, and stays proven.
+        let both = [leaf("alice:d"), leaf("carol:d"), leaf("carol:d2")];
+        let one = [leaf("alice:d"), leaf("carol:d2")];
+        t.observe_merged_commit("g", 9, &both, &one, Some("carol:d2"), own, None);
         assert_eq!(
             t.membership_evidence("g", "carol").first_seen_epoch,
             Some(8)
         );
-        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, Some(3));
+
+        // A commit of carol's own removing every leaf of hers cancels nothing (MLS cannot build it -
+        // a commit never removes its sender - but the rule is the owner's, kept exact).
+        let none = [leaf("alice:d")];
+        t.observe_merged_commit("g", 10, &one, &none, Some("carol:d3"), own, None);
+        assert_eq!(
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
+        );
+
+        // alice removes dave's every leaf: dave is retired, no longer proven.
+        let with_dave = [leaf("alice:d"), leaf("dave:d")];
+        t.observe_merged_commit("g", 11, &none, &with_dave, Some("alice:d"), own, None);
+        assert_eq!(
+            t.membership_evidence("g", "dave").first_seen_epoch,
+            Some(11)
+        );
+        t.observe_merged_commit("g", 12, &with_dave, &none, Some("alice:d"), own, None);
+        assert_eq!(t.membership_evidence("g", "dave").first_seen_epoch, None);
+        // A committer nobody can name retires too.
+        let with_erin = [leaf("alice:d"), leaf("erin:d")];
+        t.observe_merged_commit("g", 13, &none, &with_erin, Some("alice:d"), own, None);
+        t.observe_merged_commit("g", 14, &with_erin, &none, None, own, None);
+        assert_eq!(t.membership_evidence("g", "erin").first_seen_epoch, None);
 
         // A key group's commit records no sighting.
         t.observe_merged_commit(
@@ -1520,7 +1528,7 @@ mod tests {
 
         // A freshly joined tree of the same group starts a new lineage: nothing carries over.
         t.observe_joined_tree("g", 20, &[leaf("alice:d")], "alice:d", None);
-        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, None);
+        assert_eq!(t.membership_evidence("g", "carol").first_seen_epoch, None);
         assert_eq!(
             t.membership_evidence("g", "alice").first_seen_epoch,
             Some(20)
@@ -1535,8 +1543,8 @@ mod tests {
             t.persisted_sightings(),
         );
         assert_eq!(
-            again.membership_evidence("g", "carol"),
-            t.membership_evidence("g", "carol")
+            again.membership_evidence("g", "alice"),
+            t.membership_evidence("g", "alice")
         );
     }
 

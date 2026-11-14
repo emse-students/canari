@@ -614,14 +614,14 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
     );
 }
 
-/// THE DEVICE'S OWN PROOF THAT AN ENTRANT WAS A MEMBER (owner, 2026-11-14): a user seen holding a
-/// leaf of a tree this device accepted, IN THE LINEAGE IT HOLDS, before the entering commit, was a
-/// member here - whichever device of theirs comes back, across a restart of the reporter. A device
-/// that joined after the person left, or that rejoined the group since (a fresh tree is a new
-/// lineage: review of #3519), holds no sighting of them and says so: `first_seen_epoch` is the
-/// entering epoch itself, never earlier, and `watched_from_epoch` names when its record starts.
+/// RETIRED IS NOT PROVEN (owner, 2026-11-14): bob's only device is removed by ANOTHER member, then a
+/// new device of bob enters alone by its own commit. No device proves him a member - not the
+/// committer of the removal, not carol who saw him and stayed across a restart, not dave who joined
+/// after he left, not erin who rejoined since (a fresh tree is a new lineage: review of #3519).
+/// `first_seen_epoch` is the entering epoch itself, never earlier, and `watched_from_epoch` names
+/// where each record starts.
 #[test]
-fn a_member_seen_before_leaving_is_proven_on_their_new_device_and_a_later_joiner_proves_nothing() {
+fn a_member_removed_by_another_then_back_alone_is_proven_by_no_device() {
     let gid = "g-sightings";
     let mut alice = device("alice", "dev1");
     let mut bob = device("bob", "dev1");
@@ -670,27 +670,24 @@ fn a_member_seen_before_leaving_is_proven_on_their_new_device_and_a_later_joiner
     }
     let entered_at = alice.get_epoch(gid).unwrap();
 
-    let carol_sees = carol.membership_evidence(gid, "BOB");
-    assert_eq!(
-        carol_sees.first_seen_epoch,
-        Some(bob_added_at),
-        "carol saw bob before his entry, a restart in between"
-    );
-    assert_eq!(
-        alice.membership_evidence(gid, "bob").first_seen_epoch,
-        Some(bob_added_at),
-        "the committer of the Add saw him from the epoch it created"
-    );
     for (who, sees) in [
+        ("alice", alice.membership_evidence(gid, "bob")),
+        ("carol", carol.membership_evidence(gid, "BOB")),
         ("dave", dave.membership_evidence(gid, "bob")),
         ("erin", erin.membership_evidence(gid, "bob")),
     ] {
         assert_eq!(
             sees.first_seen_epoch,
             Some(entered_at),
-            "{who} first saw bob in the tree his entry produced - not proven"
+            "{who} first saw bob again in the tree his entry produced - not proven"
         );
     }
+    assert!(bob_added_at < entered_at);
+    assert_eq!(
+        carol.membership_evidence(gid, "carol").first_seen_epoch,
+        Some(1),
+        "carol's record covers the whole lineage"
+    );
     let dave_sees = dave.membership_evidence(gid, "bob");
     assert_eq!(dave_sees.watched_from_epoch, Some(dave_joined_at));
     assert_eq!(
@@ -699,13 +696,49 @@ fn a_member_seen_before_leaving_is_proven_on_their_new_device_and_a_later_joiner
         "erin's record starts at her rejoin"
     );
 
-    // Kept in the sealed state, as the departures are.
-    let saved = dave.save_state().expect("save");
-    let dave = MlsManager::load_or_create("dave", "dev1", Some(saved)).expect("reload");
-    assert_eq!(dave.membership_evidence(gid, "bob"), dave_sees);
+    // Kept in the sealed state.
     let saved = carol.save_state().expect("save");
-    let carol = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
-    assert_eq!(carol.membership_evidence(gid, "bob"), carol_sees);
+    let reloaded = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        reloaded.membership_evidence(gid, "bob"),
+        carol.membership_evidence(gid, "bob")
+    );
+}
+
+/// A MEMBER REMOVING THEIR OWN OLD DEVICE STAYS PROVEN (owner, 2026-11-14): bob changes phone, and
+/// his web device removes the old phone's leaf. The commit is bob's own, so nothing is cancelled -
+/// across a reload too. (A commit never removes its own sender, so bob keeps a leaf through it: his
+/// new phone entering by its own commit is then an added device of a member, never this classifier's.)
+#[test]
+fn a_member_removing_their_own_old_device_stays_proven() {
+    let gid = "g-sightings-own-device";
+    let mut alice = device("alice", "dev1");
+    let mut phone = device("bob", "phone");
+    let mut web = device("bob", "web");
+    alice.create_group(gid.into()).expect("create");
+    let kp = phone.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut phone, gid, &kp, "bob:phone");
+    let kp = web.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut web, gid, &kp, "bob:web");
+    let seen = alice.membership_evidence(gid, "bob");
+    assert!(seen.first_seen_epoch.is_some());
+
+    let cleanup = remove(&mut web, gid, "bob:phone");
+    alice.process_incoming_message(gid, &cleanup).unwrap();
+    assert_eq!(
+        alice.membership_evidence(gid, "bob"),
+        seen,
+        "own cleanup cancels nothing"
+    );
+    assert!(
+        web.membership_evidence(gid, "bob")
+            .first_seen_epoch
+            .is_some()
+    );
+
+    let saved = alice.save_state().expect("save");
+    let alice = MlsManager::load_or_create("alice", "dev1", Some(saved)).expect("reload");
+    assert_eq!(alice.membership_evidence(gid, "bob"), seen);
 }
 
 /// A KEY GROUP RECORDS NO FURTHER SIGHTING once classified `Open` - every member enters it by

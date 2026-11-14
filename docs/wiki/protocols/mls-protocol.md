@@ -987,9 +987,13 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   (review of #3519): `forget_group` and every freshly joined tree (a Welcome, our own external join)
   drop the group's sightings first, so epochs are only ever compared within one chain of trees and a
   sighting from an earlier copy of the group - possibly a copy the server fabricated - never carries
-  into the next. At the FIRST load that records a group, the departures already recorded for it
-  (above) are folded in as sightings at `epoch - 1`, so nothing the earlier classifier proved is lost
-  at the upgrade; from then on every departure is preceded by a sighting. A tree recovered from
+  into the next. **Retired is not proven** (owner, 2026-11-14): a commit by ANOTHER user that
+  removes every leaf of a user cancels that user's sighting, so their later entry alone is not
+  proven until a tree shows them again (a member's Add); a commit by the user's own device removing
+  their own leaves cancels nothing. A commit never removes its own sender, so a user's LAST leaf
+  always goes through another member's commit - a kick and a sweep of a revoked device alike - and
+  the own-device case keeps the sighting only while one of the user's devices stays in the tree. A
+  departure is therefore NOT evidence of membership, and none is folded in. A tree recovered from
   orphan storage records nothing (it may be a refused join's tree). Kept in the sealed state
   (`PersistedState.member_sightings`), so it follows the account's state through restarts, the
   native background engine and an account switch. It answers `{ firstSeenEpoch, watchedFromEpoch }`:
@@ -1575,7 +1579,7 @@ roster it serves, and the line went silent exactly when it mattered - and the ow
 
 **The rule.** An entrant is `returning` when `membershipEvidence` (above) shows this device saw the
 entrant's USER hold a leaf of a tree of this group it accepted, at an epoch BEFORE the entering
-commit's. Anything else is `new-person`, which reads **NOT PROVEN a member by this device**: written
+commit's, and no other member's commit retired them since. Anything else is `new-person`, which reads **NOT PROVEN a member by this device**: written
 in the conversation, logged at ERROR, reported. There is NO fallback to the roster or anything else
 the server returns: a fallback is a signal, never a path. A failed read of the evidence keeps the
 entry owed to the next delivery.
@@ -1584,13 +1588,16 @@ entry owed to the next delivery.
 
 - *A member's new device, a reinstall, a new key*: the record is per USER, so any device of the
   member is the member.
-- *This device away during the departure, across restarts*: the sighting was written when the
-  member was first seen and stays in the sealed state; a restored state carries it too.
+- *This device away, across restarts*: the sighting was written when the member was first seen
+  and stays in the sealed state; a restored state carries it too.
+- *A member cleaning up their own old device*: their own commit cancels nothing.
 - *An account switch*: each account has its own MLS state, and the record is in it.
 - *A conversation of any size*: one entry per distinct user ever seen in a held conversation; key
   groups record nothing.
 
-**What it cannot prove, and how that is measured.** A device holds only what it saw. A device that
+**What it cannot prove, and how that is measured.** A member whose every device was removed by
+another member - kicked, or a revoked device swept - and who enters alone is not proven on any
+device, by the owner's rule: they come back through a member's Add. A device holds only what it saw. A device that
 joined after the person's every leaf left (a member's NEW device, the reporter's included, or a
 member who joined since), a device that REJOINED the group since (a heal, an external rejoin: a new
 lineage, deliberately), and a device whose sealed state was lost have no sighting, and accuse a
@@ -1621,8 +1628,10 @@ departures before it are known only through the departure record above.
 - *Impersonation of a past member is silent*: the user half of `userId:deviceId` is self-asserted,
   so an outsider entering under the user id of a member whose every leaf left is read as that member
   `returning` - and then appears under that member's name. The roster verdict and the departure-only
-  verdict before it had the same hole. What closes it is cross-signing of a user's devices (the work
-  package `device_trust.rs` names); until then a `returning` entry writes nothing.
+  verdict before it had the same hole. What closes it is **cross-signing of a user's devices**,
+  planned as **step 8 of the privacy chantier, after the sealed community state, designed in the
+  wiki first** (owner, 2026-11-14; [decisions](../backlog.d/owner-decisions-of-2026-11-14.md));
+  #3519 ships without it, and until then a `returning` entry writes nothing.
 
 **Designed, not built: a member's signed word for a device that was not there.** A member device
 that HOLDS a sighting of the entrant could post an MLS application message vouching for them
@@ -1631,13 +1640,19 @@ as the proof - a member's word, which is what "admitted only by a member" alread
 the server's. Built only if the `watched_from` count shows the not-there-yet accusations are a
 population.
 
-Three cases a reader must hold. A member REMOVED by another member (a kick) who re-enters by their
-own commit is `returning` on a device that saw them: a sighting is never cancelled by a removal,
-because a device sweep removes leaves through another member's commit too - whether a deliberate
-removal should cancel it is parked in [open-questions](../open-questions.md#decision-owed---does-a-members-removal-cancel-the-device-proof-that-they-were-a-member-2026-11-14).
-A member removed right after their legitimate entry is still `returning` (they WERE a member). A
-person entering for the first time, accused, then leaving and entering again, is `returning` the
-second time on a device that saw the first entry - the first entry's line stays in the conversation.
+Cases a reader must hold. A member REMOVED by another member who re-enters by their own commit is
+NOT proven (decided by the owner on 2026-11-14, *"Retiré = non prouvé"*, closing the
+[open question](../open-questions.md#decided-2026-11-14---a-members-removal-by-another-member-cancels-the-device-proof)).
+A member removed by another member right after their legitimate entry is retired by that commit.
+
+**What the rule implies, stated so nobody rediscovers it.** A self-admitted entrant holds no leaf in
+the tree before their commit, so every leaf of theirs left earlier - and a user's LAST leaf always
+leaves through another member's commit (a commit never removes its own sender). In the lineage a
+device holds, such a user was therefore always retired, and a device whose record starts after
+they left never saw them. So `returning` is in practice never reached for this classifier: every
+self-admitted entry of a user absent from the tree is `new-person`, written and reported, and the
+way back is a member's Add. The sightings still carry `watched_from`, and the own-device rule is
+kept exact for the day a removal reaches the device as the user's own (cross-signing, step 8).
 
 The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per

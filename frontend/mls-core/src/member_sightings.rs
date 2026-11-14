@@ -29,6 +29,14 @@
 //! record covers for a group, so a report separates "this device was not there yet" from "this device
 //! watched the whole time and never saw them".
 //!
+//! # Retired is not proven (owner, 2026-11-14)
+//!
+//! A user whose EVERY leaf a commit removes, when that commit was made by ANOTHER user, loses their
+//! sighting: an entry of theirs afterwards, with no member's Add, is not proven. A commit by the
+//! user's own device removing their own leaves cancels nothing. In MLS a commit never removes its
+//! own sender, so the user's LAST leaf always goes through another member's commit: the
+//! own-device case keeps the sighting only while one of the user's devices stays in the tree.
+//!
 //! # Scoped to the lineage this device holds (review of #3519)
 //!
 //! Epochs are compared within ONE chain of trees: the one this device has held since it last
@@ -177,9 +185,24 @@ impl MemberSightings {
         wrote
     }
 
-    /// Whether any sighting of `group_id` is held.
-    pub(crate) fn holds_group(&self, group_id: &str) -> bool {
-        self.groups.contains_key(group_id)
+    /// Cancels the sighting of `user_id` in `group_id`: the user was RETIRED - every leaf of theirs
+    /// removed by another member's commit at `epoch` (owner, 2026-11-14: *"Retire = non prouve"*).
+    /// An entry of theirs afterwards is not proven unless a tree shows them again (a member's Add).
+    ///
+    /// @returns whether a sighting was held.
+    pub(crate) fn retire(&mut self, group_id: &str, user_id: &str, epoch: u64) -> bool {
+        let Some(users) = self.groups.get_mut(group_id) else {
+            return false;
+        };
+        let held = users.remove(user_id).is_some();
+        if held {
+            log::info!(
+                "[SIGHTINGS] {} epoch {epoch}: {} retired by another member's commit - no longer proven a member",
+                group_id.get(..8).unwrap_or(group_id),
+                user_id.get(..8).unwrap_or(user_id)
+            );
+        }
+        held
     }
 
     /// Forgets every sighting of `group_id`: the tree this device held is gone (`why`), and a
@@ -291,10 +314,25 @@ mod tests {
     }
 
     #[test]
+    fn a_retired_user_is_no_longer_seen_and_a_later_tree_records_them_again() {
+        let mut s = MemberSightings::default();
+        s.record_tree("g", 2, &[leaf("bob:d1"), leaf("alice:d")]);
+        assert!(s.retire("g", "bob", 5));
+        assert!(!s.retire("g", "bob", 5));
+        assert_eq!(s.evidence("g", "bob").first_seen_epoch, None);
+        assert_eq!(s.evidence("g", "bob").watched_from_epoch, Some(2));
+        // A member's Add shows bob again: seen from that epoch.
+        s.record_tree("g", 9, &[leaf("bob:d2")]);
+        assert_eq!(s.evidence("g", "bob").first_seen_epoch, Some(9));
+        let back = MemberSightings::from_persisted(s.persisted());
+        assert_eq!(back.evidence("g", "bob").first_seen_epoch, Some(9));
+    }
+
+    #[test]
     fn a_forgotten_group_is_dropped_whole() {
         let mut s = MemberSightings::default();
         s.record_tree("g", 1, &[leaf("a:d")]);
-        assert!(s.holds_group("g"));
+        assert!(!s.is_empty());
         assert!(s.forget_group("g", "test"));
         assert!(!s.forget_group("g", "test"));
         assert!(s.is_empty());

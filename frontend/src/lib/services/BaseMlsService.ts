@@ -8205,7 +8205,7 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`: the first
    * epoch it saw the user hold a leaf of a tree it accepted (a Welcome or GroupInfo it joined by, a
-   * commit it merged, a tree it held at load, a departure it recorded), and the first epoch its
+   * commit it merged, a tree it held at load) and no other member's commit retired since, and the first epoch its
    * record of the group covers (`mls-core/src/member_sightings.rs`).
    *
    * WHY: whether a user entering by their own commit is a member coming back must not be the
