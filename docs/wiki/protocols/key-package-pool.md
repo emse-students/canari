@@ -625,6 +625,25 @@ one-time bundles, last-resort), which would settle this entry, the blob entry an
 **And this handset can no longer answer the other half either**: its 19.5 MB blob went with the debug
 build, so the prune's reclaim is not observable here.
 
+**THE OWED OBSERVATION, MADE: NO LOOP ON THE HANDSET (Mi 9T, `1.6.12-alpha.2` on dev,
+2026-11-14).** The CDP console was read across two cold starts and three background/resume cycles
+(30 s away, under one second away, and a send 0.4 s before the background), with logcat beside it:
+
+- every connection logs `generateKeyPackage native batch path needed=0`, then natively
+  `republishing the held last-resort` and `done count=0 - pool full and last-resort valid, nothing
+  minted so no write owed`; no `REFUSED to purge` accusation and no `purged N/M` appears;
+- the census, printed once per cold start after `MLS ready` (`recenser_key_packages`), is identical
+  at 11:16 and 11:31: `1852 proven (1851 one-time, 1 last-resort); 0 expired, 0 undecodable; 39
+  mint instant(s), largest batch 100`, and every load's composition is the same
+  `5131487B total; KeyPackage 1852x4383551B, MessageSecrets 15x484416B, Tree 15x190327B`;
+- **ONE last-resort**: the per-connection fallback reuse (#458) holds on the handset as it does on the
+  web.
+
+So the minting loop is not running here. What the census does show is the ACCRUAL of the section
+below: 1851 one-time bundles in 39 top-ups are 85% of a 5.1 MB state holding 15 groups, bounded only
+by the 84-day prune. The per-process `publishedThisSession` residue named in item 1 stays a property
+of the guard, not an observation.
+
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
