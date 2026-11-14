@@ -79,6 +79,7 @@ import { recipientsWithCategoryOn } from '../push/notification-category';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
+import { asUuidSql, targetBoundRowShownSql, UUID_SHAPE } from './bell-row-gates';
 
 /** The bell's page when the caller names none: what the bell dropdown asks. */
 export const BELL_PAGE_DEFAULT = 30;
@@ -183,10 +184,13 @@ export function birthdayRowShownSql(n: string): string {
 }
 
 /**
- * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
- * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
- * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
- * (`commentBorneNotificationSql`). The types are constants of this module.
+ * Bell row `n` may be shown: a row of a post-bound type (`POST_BOUND_NOTIFICATION_TYPES`) whose post
+ * exists, is not hidden by moderation, and its recipient still sees (`getNotifications` says why) -
+ * with its comments, for a comment-borne row (`commentBorneNotificationSql`); a row naming something
+ * else - an association's queue, an event, a form, a booking space - whose own predicate still admits
+ * its recipient (`targetBoundRowShownSql`, `BELL_ROW_GATE`); a birthday its recipient may still read;
+ * and a row about the recipient's own account. The types are constants of this module and of
+ * `bell-row-gates.ts`.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -195,7 +199,7 @@ export function birthdayRowShownSql(n: string): string {
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  return `(${birthdayRowShownSql(n)}) AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+  return `(${birthdayRowShownSql(n)}) AND ${targetBoundRowShownSql(n)} AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
@@ -224,18 +228,6 @@ export function trendLikedByOfMeta(meta: Record<string, unknown> | null | undefi
   if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
   const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
   return { name: likedBy.name, others };
-}
-
-/** The shape of a uuid, which a varchar column must have before it is cast to one. */
-const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-/**
- * `column` (a VARCHAR) as a uuid, or NULL when it does not have the shape of one. Never for a column
- * that already is a `uuid` (`associationId` is, since migration 061): `uuid ~* text` has no operator
- * and fails the whole bell with a 500 (#3019 on dev).
- */
-function asUuidSql(column: string): string {
-  return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
 }
 
 /**
@@ -980,6 +972,9 @@ export class PostNotificationsService {
    * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
    * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
+   * A row naming something else is re-asked the same way, against what it names
+   * (`targetBoundRowShownSql`): an event's opening against the event's visibility, a proposal or an
+   * officer's notice against the role that made its reader a recipient (audit of 2026-11-14).
    *
    * ONLY THE TYPES THE READER'S BUILD CAN DRAW are served (`notification-client-floor.ts`):
    * `clientVersion` is what the read's `X-Canari-Client-Version` names, `undefined` when it names

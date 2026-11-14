@@ -756,7 +756,42 @@ A bell row about a post is shown only while its recipient still SEES that post: 
 (`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
 `POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
 carrier or a hidden post takes the row out on the next read. A push already delivered to a device
-cannot be recalled. A row bound to no post is left alone.
+cannot be recalled. A row bound to something else is re-asked against THAT, below.
+
+### The bell re-checks what a row points at (audit of 2026-11-14)
+
+**The rule: a bell row is served while the predicate of the thing it names still admits its
+reader** - a post's rows above, and every other kind the same way, in the same statement. Until
+2026-11-14 a row naming no post was re-asked against nothing, so an event's title or a form's
+title outlived its reader's right to it for the row's whole 90-day life.
+
+`BELL_ROW_GATE` (`apps/social-service/src/posts/bell-row-gates.ts`) gives EVERY kind its gate and is
+exhaustive over `NotificationType`, so a new kind does not compile until it says what its row is
+re-asked against; `bell-row-gates.spec.ts` holds it to `POST_BOUND_NOTIFICATION_TYPES`. The
+target-bound kinds become one `CASE` over the row's type (`targetBoundRowShownSql`), spliced into
+`bellRowShownSql`: each row runs its own kind's correlated subquery, on about one page of rows (the
+plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`).
+
+| Kind | What `postId` names | Shown while |
+| --- | --- | --- |
+| `repost_proposed`, `coorganise_proposed` | the receiving association | the reader holds `POST_AS_ASSO` there (who `holdersOf` told) |
+| `event_validated`, `event_updated`, `event_deleted`, `event_rejected` | the organiser | the reader holds `PROPOSE_EVENT` there |
+| `event_proposed` | the organiser | the reader holds the BDE agenda right over it (`holdsBdeAgendaRightOverSql`), or is a platform admin |
+| `event_pending` | the organiser | `PROPOSE_EVENT` in the organiser, or in an ACCEPTED co-organiser of `meta.eventId` (written since 2026-11-14; an older row names no event, and only the organiser's holders keep it) |
+| `event_pending_coorganiser` | the organiser | `meta.audience = 'validators'`: as `event_proposed`; otherwise as `event_pending` |
+| `event_open` | the event | the event is validated, its organiser not archived, and `eventVisibleToViewerSql` admits the reader |
+| `booking_open` | the booking space | the space is listed, has no audience (L25), its association is not archived and is visible to the reader (`listedSpaces`' predicate) |
+| `form_paid_over_capacity` | the form | the reader owns the form or holds `MANAGE_FORMS` in its association |
+| `lydia_payments_*`, `delegation_*` | the association | the reader holds `MANAGE_PAYOUT_ACCOUNT`, resp. `MANAGE_PRODUCTS`, there |
+| post-bound kinds | a post | the section above |
+| `birthday` | - | `birthdayRowShownSql` |
+| `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
+
+A role is read through the reader's OWN membership row - the member tier the writers chose the
+recipients with - so a row is shown exactly while its reader would be told again. A row that fails
+is not served, so it is not counted unread either (the count is the served page's); it is not
+deleted by the read and goes with the 90-day sweep, as a post-bound row. `post_notifications` has
+one reader, this statement: the mark-read routes write `read` and serve nothing.
 
 A mention is held to the read's rule when it is WRITTEN, since #2947: only who may open the post
 (`mentionRecipientsOf`, the read's gate), a post's mentions told by `PostAnnounceScheduler` alone

@@ -1708,6 +1708,10 @@ reaches the personnel side"), the latter **for this consented path only**.
   delivered to a device cannot be recalled. A mention is held to the read's gate when written
   (#2947, `mentionRecipientsOf`), a post's mentions told at its announce. The bell's cost and query
   shape are on [posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03).
+  A row naming something ELSE is re-asked against that, in the same statement (`BELL_ROW_GATE`,
+  2026-11-14): an event's opening by `eventVisibleToViewerSql`, a booking opening by the listing's
+  predicate, a proposal or an officer's notice by the role that made its reader a recipient
+  ([posts](frontend/modules/posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)).
 - **The client**:
   - `personalRequestCandidates` offers the same three kinds;
   - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has

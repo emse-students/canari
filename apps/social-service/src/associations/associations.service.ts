@@ -4091,7 +4091,9 @@ ${rejectionReason}`
       postId: ev.associationId,
       actorId,
       text: ev.title,
-      meta: { reason },
+      // `eventId`: what the bell re-asks at every read - a partner's row is shown while its reader
+      // still holds PROPOSE_EVENT in an accepted co-organiser of THIS event (`BELL_ROW_GATE`).
+      meta: { reason, eventId: ev.id },
       pushData: { associationId: ev.associationId, action: 'pending', reason },
     });
     this.logger.debug(
