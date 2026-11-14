@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="13/11/2026"
+  updated="14/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -107,22 +107,25 @@
         <dt>Publications, commentaires, réactions, sondages, CanaReels</dt>
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
-          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
-          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
-          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
-          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
-          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
-          personne et il est conservé sans limite de durée, même après la suppression de votre
-          compte. Une association, une liste ou une institution peut vous demander de relayer une de
-          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
-          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
-          première fois et, pour une institution, son public possible) vous est adressée, et rien
-          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
-          d'une institution, votre publication est vue de son public, y compris de ses membres qui
-          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
-          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
-          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          plateforme selon l'audience choisie. Une institution (l'École, une Maison des Élèves,
+          l'association des alumni) choisit pour chacune de ses publications les espaces qu'elle
+          vise et son public (étudiants, personnel ou tous) ; les publics « Personnel » et « Tous »
+          atteignent tout le personnel du campus d'un espace coché. Les fichiers joints sont
+          chiffrés avant l'envoi. Une publication en cours d'envoi attend sur votre appareil, avec
+          ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une
+          simple déconnexion la conserve, la suppression de votre compte l'efface. Quand une
+          publication est supprimée, le serveur garde son identifiant et la date de suppression,
+          sans auteur ni contenu, pour qu'un envoi encore en route ne la fasse pas réapparaître ;
+          cet identifiant ne désigne plus personne et il est conservé sans limite de durée, même
+          après la suppression de votre compte. Une association, une liste ou une institution peut
+          vous demander de relayer une de vos publications personnelles : la demande (l'association,
+          la liste ou l'institution, le membre qui l'a faite, la publication, le nombre de personnes
+          qui la verraient pour la première fois et, pour une institution, son public possible) vous
+          est adressée, et rien n'est montré à son public tant que vous n'avez pas accepté. Si vous
+          acceptez la demande d'une institution, votre publication est vue de son public, y compris
+          de ses membres qui font partie du personnel ; si ce public a changé depuis que vous l'avez
+          lu, votre acceptation est refusée et le nouveau public vous est montré. Une fois le relais
+          accepté, ceux qui voient votre publication suivent le public et les membres ACTUELS de
           l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
           nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
           la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
