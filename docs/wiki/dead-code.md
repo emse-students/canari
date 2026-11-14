@@ -45,7 +45,11 @@ Once it is on `main` it only goes down; the first export sweep is the next pull 
 frontend caller. 29 were exports used only inside their own file (constants, helpers, interfaces: the
 server keeps the same names exported for ITS callers) and lost their `export`; the other two
 (`GameStatus`, `GenerationReport`) belong to the declared Minesweeper mirror and are allow-listed
-above. Nothing was deleted outright: every new item was live code, only over-exported.
+above. The first CI run then proved a blind spot of knip: five `FORM_ANSWER_*` codes of
+`forms/answerBounds.ts` are read through a NAMESPACE import (`answerBounds.test.ts` walks the contract's
+codes with `bounds[code]`), which knip cannot follow, so they keep their `export` with a `@public` tag
+and the reason. A de-export of a name that a test reaches by `import * as` is therefore checked by
+grepping the test, not only the name. Nothing was deleted outright: every new item was live code, only over-exported.
 `frontend/knip.json` is the only place a false positive is declared.
 
 ## Entry points, configured as reachable (never deleted)
