@@ -82,7 +82,6 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [the resume reload and the send-side rewind on the Mi 9T](backlog.d/p1-the-resume-reload-and-the-receive-ratchet-fixed-owed-one-device-reading-a.md)
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [a shut phone one commit behind catches up in any community](backlog.d/reading-owed-a-shut-phone-one-commit-behind-catches-up-in-any-community.md)
@@ -92,7 +91,6 @@ earliest version, as a checklist.
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
 - [ ] [a post push tapped with the session dead lands on `/login?returnTo=` the post](backlog.d/reading-owed-a-post-push-tapped-with-the-session-dead-lands-on-login-returnto.md)
-- [ ] [NOTIF-10: a refused push after real banners leaves no generic line](backlog.d/reading-owed-notif-10-a-refused-push-after-real-banners-leaves-no-generic-line.md)
 - [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
@@ -127,7 +125,6 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
-- [ ] [a notification shows the sender's face, not the app's bird](backlog.d/reading-owed-a-notification-shows-the-sender-s-face-not-the-app-s-bird.md)
 - [ ] [a push carries its ciphertext once, not twice](backlog.d/reading-owed-a-push-carries-its-ciphertext-once-not-twice.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
