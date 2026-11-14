@@ -2962,6 +2962,10 @@ What it still cannot see, and the test says so in its own header: a French liter
 exists in no table at all. On Android the accent heuristic catches most of those; on iOS nothing
 does.
 
+**Read on production, 2026-11-14:** all 475 `[PUSH_REGISTER]` lines of the 15.5 hours after the
+`v1.6.11` deploy carry `locale=fr` (376) or `locale=en` (99), none `unstated`, on both platforms.
+The visible half (the sentence a failed NSE shows) cannot be provoked on demand.
+
 #### The face on a notification, and what happens when there is none
 
 Every notification that names a person tries to show that person. **When it cannot, a coloured disc

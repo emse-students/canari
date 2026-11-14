@@ -23,3 +23,7 @@ target: 1.7.0
 
 Re-read 2026-11-11: the three are unchanged; the rate is a log read, and 2 and 3 are native changes
 for their own pull request. Re-read again 2026-12-11.
+
+**Not a server read (checked 2026-11-14):** `warm-process` appears in no server log - the refusal
+is native and never reported to the server, so the rate is read on the Mi 9T (logcat) or in an
+exported in-app log, not on production.

@@ -124,6 +124,11 @@ What the server logged in the previous 32 hours (`canari-prod-chat-delivery-serv
 
 **Owed after it ships in a stable:** the same read; `REFUSED no_key_package` on a key group of an `isNew=true` device must be zero for devices on the fixed version (a device on an older version keeps producing it until the floor moves).
 
+**Read on production, 2026-11-14 (`v1.6.11`, floor `1.6.6`): closed.** 0
+`[MEMBERSHIP_ACTIVE] REFUSED` of any reason in the 15.5 hours of chat-delivery log since the deploy,
+against 15 seat activations and 14 key-group entitlement answers in the same window (2 refusals in
+9.7 hours on 2026-10-09, before #1666 and #1700).
+
 ## A device holds a distribution group the group holds no row for (2026-08-29)
 
 Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on. Sixty seconds after

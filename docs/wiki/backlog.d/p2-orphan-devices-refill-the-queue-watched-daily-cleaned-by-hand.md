@@ -26,3 +26,10 @@ was not measured, so the first line is the baseline). Then a threshold derived f
 WARN only on the day the count CROSSES it - which needs the previous day's count kept somewhere
 durable, not in one replica's memory. If the count climbs within weeks, the cause that keeps minting
 orphans (a sign-out or an uninstall that leaves its seats) is the next item, not another pass.
+
+**First line read, 2026-11-14:** production's `[ORPHAN_DEVICES]` at the `v1.6.11` deploy
+(2026-11-13 17:02 UTC) read `devices=86 rows=8122 insideGcWindow=86`, twelve days after the fourth
+pass revoked 285 (dev: `devices=5 rows=804`). Only that one line is readable today: the live log
+starts at the deploy, and the deploy archives that hold the earlier days belong to the runner
+account, which the operator's account cannot read ([logging](../infrastructure/logging.md#reading-an-archive)).
+The two weeks of lines are read from that account, or day by day from now on.

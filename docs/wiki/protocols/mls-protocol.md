@@ -1573,6 +1573,10 @@ the way it always could - not a bypass of the rule - and is counted apart. Every
 line after the floor is the rule failing. The list stays in the private operations notes with the
 deploy date; only this query and the rule live here.
 
+**Counted on production, 2026-11-14, read-only: no awaiting seat at all** (0 `dm_group_members` rows
+with `awaitingAdmission`), so none holds no device row and an ask that never expires is not a
+population today. If one appears, record the ask's renewal on the seat and expire on it.
+
 ### A device of a member is added, never asked about (2026-10-31)
 
 **The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un

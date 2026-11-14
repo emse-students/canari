@@ -288,6 +288,12 @@ and a protected document's 410 read as a wrong password.
 exist in the backups, and so does the row holding what is needed to decrypt it. Whether to restore is the
 user's call ([backup](../infrastructure/backup.md)).
 
+**Read on production, 2026-11-14, read-only.** All 8 vault documents (`association_documents`) have
+a metadata entry of class `association`, none tombstoned; `association` is its own class in the
+index (8 entries beside 516 `ephemeral`, 323 `archive`, 180 public assets) and its own line on
+`/admin/storage` (`associationCount`); the 61 `retention_expired` tombstones name no document,
+and the access log held no `410` at all over the 12 hours it kept.
+
 ### The archive class: the feed is not a conversation (2026-09-23)
 
 **A post is a permanent row whose body was on an idle clock, and half of them had already rotted.**

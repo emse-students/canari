@@ -106,6 +106,9 @@ states now that the set is derived.
 would advertise a localhost URL to every unfurler. The absolute URL is composed from the request's
 own origin instead.
 
+**Read on production, 2026-11-14:** 6 payments completed in the 15.5 hours of social-service log
+after the `v1.6.11` deploy, and 0 `invalid input syntax for type uuid` of any value.
+
 ### A shared post, and the ten days it previewed as nothing
 
 Until 2026-09-20 the post enricher called `GET /api/posts/:id`, and **on production it had never

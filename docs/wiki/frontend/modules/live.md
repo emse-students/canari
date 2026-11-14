@@ -950,6 +950,15 @@ minute.
 two ends that are not the hour or the broadcaster's own (`dropped`, `erased`) still share the
 generic sentence.
 
+**A live that seemed to stay up after "Terminer" (iPhone, `1.6.8-alpha.3`, seen once, low
+certainty).** The alert it showed, `server-while-away`, only the phase `away` produces, so it
+cannot come from the End path; the one defect found there (the screen awaiting the server's answer)
+is fixed by #3173 (`#deliverEnd`, in `v1.6.9`). Closed 2026-11-14 without a reproduction
+(production had held no live at all). If it is seen again, two lines decide it:
+`[LIVE-SCREEN] end asked in <phase>` with no `end returned` means the confirmation never reached
+`broadcast.end()`; `end returned in ended (broadcaster)` followed by `ended (server-while-away)`
+means a second live.
+
 ### The moderation client (WP-L8's client half, 2026-10-19)
 
 Behind `LIVE_ENABLED` (every build since 2026-10-30). The `live_cut` bell row (type `live_cut`, `postId` = the live,

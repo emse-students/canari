@@ -2667,6 +2667,9 @@ revisit them:**
   one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
   admin without a cursus cannot act on a post they could not read.
 
+**Usage, counted on production 2026-11-14, read-only: not used.** 0 of 327 posts carry
+`studentsOnly` (0 of the 63 posts of the last 7 days), ten days after `v1.6.5` shipped it.
+
 ### An institution's reach per post, as built (owner, 2026-11-10)
 
 **The owner's decisions (2026-11-10)**, amending D19 for institutions only:

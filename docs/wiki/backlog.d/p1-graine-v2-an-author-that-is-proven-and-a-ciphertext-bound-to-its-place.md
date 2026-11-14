@@ -17,7 +17,7 @@ after that is a dated shim, and it lives in [legacy-compatibility](../legacy-com
 
 | What is owed | Blocked on |
 | --- | --- |
-| The count re-run (§21.8's SQL: 0 unsigned rows), §21.8 being in production since `v1.2.7` (#1802) | nothing: owed now |
+| The count re-run (§21.8's SQL: 0 unsigned rows), §21.8 being in production since `v1.2.7` (#1802) | **DONE 2026-11-14, read-only: 0 unsigned rows of 2237 written since 2026-10-10**; the legacy 373 are unchanged (newest 2026-10-09) |
 | The rig: GRAINE-AUTH-1..3 and -6 re-run (the runner changed, `rows.mjs` flags them) and -7 first run, all on one estate carrying #1802 ([board](../cross-client-testing-archive-1-4-0.md#20---graine---an-author-that-is-proven)) | a running local estate (none was up on 2026-10-14, so nothing was run) |
 | One reading on a device of the native v1-seed refusal lines (Kotlin `REFUSED N v1 seed(s)`, the NSE's `openSeedFrame: REFUSED v1 seed(s)`), compiled and never run ([§21.7](../protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) | a pre-floor v1 frame replayed to a phone, the only path that reaches them |
 

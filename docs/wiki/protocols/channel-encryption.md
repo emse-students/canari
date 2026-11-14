@@ -915,6 +915,12 @@ nobody, which is exactly the shape of row the 2026-08-17 purge had to find by ha
 re-joins by external commit instead. That is the intended rung for this group - it holds seeds, not
 a conversation - but it is a difference from ordinary groups, not an oversight.
 
+**Read on production, 2026-11-14, read-only.** The commit limit: over the 30 days of
+`mls_commit_log` (1924 commits), the busiest user-minute held 99 commits (p99 17) against the 600
+limit, and 0 `[THROTTLE] REFUSED` on production or dev. The entitlement gate: 0
+`[ENTITLEMENT] UNANSWERED` on production (14 key-group entitlement questions, all answered
+`entitled=true`, in the 15.5 hours of log since `v1.6.11`) and on dev.
+
 #### WP-22, and the race that had no election
 
 **The client joins where the community is loaded** (`useChannelWorkspaces`), through one function,
@@ -3519,8 +3525,11 @@ An alpha deploys dev alone, so production cannot run it before a stable: the pre
 evidence is the INDIRECT reading - zero `[SENDER_MISMATCH]` of any kind on chat-delivery from
 2026-10-10 to 2026-10-24, the `live` path comparing the same envelope field throughout. The order is
 alpha, `path=distribution` read on dev (weak: a fictional seed plus testers), the stable, then the
-same line read on production AFTER it, a nonzero count triaged as the
-[backlog](../backlog.d/p3-the-distribution-path-s-device-check-read-dev-on-the-alpha-production-after.md) says. Three kinds:
+same line read on production AFTER it. **Read 2026-11-14, `v1.6.11` (#2090 is in every stable since
+`v1.5.0`): 0 `[SENDER_MISMATCH]` of any path or kind on production and on dev, and 0
+`POST /api/mls/sender-mismatch` in either access log.** A nonzero `kind=device` later is triaged from
+its reports before any further stable: an honest client disagreeing with its own credential reverts
+the device hand-over in a patch release; a sibling naming another device is the case it refuses. Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
