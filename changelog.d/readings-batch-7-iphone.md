@@ -1,0 +1,1 @@
+### Changed - the iPhone 12 batch 7 readings: emoji rows 6, 8, 9 and 11, sharing from Photos, Notes and Files, the GIF relay and the institution chips ([readings](docs/wiki/device-verification.md#the-iphone-12-batch-7-readings-of-2026-11-14)).
