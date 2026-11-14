@@ -415,6 +415,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun test tools/store-screenshots
 	@bun test tools/call-audio-fidelity
 	@bun test tools/video-av-sync
+	@bun test tools/sfu-e2ee-probe
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and

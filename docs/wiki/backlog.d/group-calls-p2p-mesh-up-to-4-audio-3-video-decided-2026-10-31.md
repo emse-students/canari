@@ -55,10 +55,11 @@ pense que ce serait bien que call-service puisse fonctionner, au cas où on l'a 
 ### Open design points
 
 1. ~~**The mesh-to-SFU switch.**~~ **Decided, D1 above.**
-2. ~~**Which SFU** (WP-C4).~~ **Decided, D2 above: both, one setting.** What D2 still owes is the
-   fact Q4 left unverified - whether Cloudflare's raw SFU forwards transformed frames
-   ([calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)) -
-   and it is the first step of WP-GC3 below, before any code is written against it.
+2. ~~**Which SFU** (WP-C4).~~ **Decided, D2 above: both, one setting.** The fact Q4 left
+   unverified - whether Cloudflare's raw SFU forwards transformed frames - is **answered YES on
+   2026-11-13** (run [43521609635](https://github.com/emse-students/canari/actions/runs/43521609635):
+   252 audio + 151 VP8 frames decrypted through two Cloudflare sessions, 0 failed, every one
+   byte-identical; [calls-revival-plan](../frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)).
 3. ~~**Keys in a mesh.**~~ **Built (WP-GC1, 2026-11-13)**: one key per sender, label
    `mls-webrtc-media-group-v1`, context `<callId>|<userId>`; the 1:1 call keeps its v2 per-direction
    keys, so no shim ([calls](../frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13)).
@@ -89,22 +90,27 @@ Each is one pull request or more; none is built by the D3 change.
    Owed: the bench readings - 3-way audio and 3-way video on the Mi 9T and the iPhone 12, WebKit's
    receiver transforms per peer, CPU and fps with two receivers
    ([readings owed](../plan.md#readings-owed)).
-3. **WP-GC3 - the Cloudflare Realtime SFU leg**: first the Q4 probe (do transformed frames cross
-   the raw SFU), then the owner's one-off (a Realtime SFU app and its two secrets), then the backend
-   proxy of the sessions/tracks API and the client's SFU leg on it.
+3. **WP-GC3 - the Cloudflare Realtime SFU leg**: ~~the Q4 probe~~ **done 2026-11-13, PASS**
+   ([sfu-e2ee-probe](../../../tools/sfu-e2ee-probe/README.md), dispatch `scheduled.yml` with
+   `job=sfu-probe`); ~~the owner's one-off (a Realtime SFU app and its two secrets)~~ **done
+   2026-11-13**: `CLOUDFLARE_SFU_APP_ID` / `CLOUDFLARE_SFU_APP_SECRET` in the `production` and
+   `development` environments, wired OPTIONAL into chat-delivery-service by the probe's PR (dev's
+   deploy and the probe read `DEV_CLOUDFLARE_SFU_*`, the ONLY pair `development` keeps - provisioned
+   2026-11-13 from a new dev app that replaced the first - until the secret-name unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). Left: the
+   backend proxy of the sessions/tracks API in chat-delivery-service (its rows go `warn` the day it
+   reads them), and the client's SFU leg on it.
 4. **WP-GC4 - the relay setting (D2)**: **server half BUILT 2026-11-13** -
-   `platform_config.call_relay` (`none` | `call-service`, core migration 023, `none` in production,
-   `call-service` on dev), read at a group call's `initiate`; with `call-service` the call goes
-   through the SFU FROM THE START (`mode: sfu` signed into the tokens - interim until WP-GC5); the
+   `platform_config.call_relay` (`none` | `call-service`, core migration 023, `none` in production
+   and on dev until the client's SFU leg ships), read at a group call's `initiate`; with
+   `call-service`, a caller that declares `groupCallVersion >= 2` goes through the SFU FROM THE START (`mode: sfu` signed into the tokens - interim until WP-GC5); the
    SFU's atomic seat cap (2..=8), the sender's user id as each forwarded track's stream id, and the
    late joiner's renegotiation; a 5-party encrypted call through the SFU in CI
    ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13),
    [call-service](../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
    `cloudflare` joins the setting with WP-GC3. Owed: the client's SFU leg (the protocol
    `apps/call-service/e2e/group-page.ts` speaks in `sfu` mode), reading `mode` from
-   `initiate`/`room-token`; and a renegotiation that cannot cross another (the SFU re-offers on a
-   300 ms debounce and does not wait for the previous answer - harmless at the pace of the CI call,
-   unproven under joins faster than a round trip).
+   `initiate`/`room-token`. A renegotiation scheduled while the peer holds a remote offer is retried
+   once it is stable again (#3497); a reading under joins faster than a round trip is still owed.
 5. **WP-GC5 - the switch (D1)**: on the participant past the cap, everyone opens the SFU leg,
    proves it, then closes the mesh legs; a rig row that FAILS when any frame crosses the SFU leg
    outside a transform, as `fault-transform-late` does for 1:1.
