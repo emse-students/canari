@@ -80,6 +80,8 @@ describe.each([
     '049_report_accusations.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
   ],
+  // Row locks on `dm_group_members`, which authorises every send, and on its groups' rows.
+  ['051_departed_seats_removed.sql', /^\s*DELETE\s+FROM\s+dm_group_members\b/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

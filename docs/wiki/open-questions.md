@@ -533,6 +533,25 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 
 **Raised 2026-09-29, when the defect it caused was closed.** Rejoining a key group with the same key pair removes the device's own first leaf. That is how the PC's salon went blank ([channel-encryption §22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)). Since `v0.18.30`, a device in that state re-joins as soon as it loads, so the consequence is repaired. The cause of the double join is not. The candidates are the "externalJoin FAILED to checkpoint - a reload before the next write would rejoin" warning, or two tabs joining before the leader lock settled. **What would settle it**: a second commit from one device on one key group within minutes, read from `mls_commit_log` (`senderDeviceId`, `baseEpoch`, `createdAt`), together with that device's console from the same load.
 
+### DECISION OWED - should a conversation seat end with its person's LAST device? (2026-11-14)
+
+**Raised 2026-11-14**, with migration 051 (held), which removes the 18 seats of people who hold no
+device anywhere, as the owner decided ([entry](backlog.d/reading-owed-the-pre-038-link-seats-the-group-panel-would-list-as-members.md)).
+Those seats were written correctly and they will come back: a conversation seat is kept when its
+person's devices go, by design (`GroupMember`'s doc, `purgeDeviceFootprint`: "conversations need
+none: their seat stays"), so recovery re-invites a person who returns on a new device. 13 of the 16
+people lost their last device to a revocation (12 in the week of the fourth orphan pass), 3 to the
+90-day GC; all 16 still have an account, one a session. So every revocation of a person's last device
+mints the shape again, and the group panel lists them as members until then.
+
+The two answers, and what each costs: **keep the design** (the seat waits; a returning person is
+re-invited; the panel shows a member who has no device - the panel could mark them instead), or
+**end the seat with the last device** (in `purgeDeviceFootprint` and the GC, as a removal: the
+generation moved, the interval closed; a returning person must be re-added by a member). The second is
+not reversible for the people it touches, so no code until it is answered. Recommended: keep the
+design and mark the seat in the panel, since a hand pass that revokes devices is not a person's
+decision to leave.
+
 ### DECISION OWED - `user_dismissed_group` grows one row per manual delete, for ever
 
 **Raised 2026-08-27** (876 rows for one account, put there by the campaign). Nothing reads it in bulk, so it is no incident, but it is an unbounded table nobody has decided about. A row may only go once no device of that user can still hold the group: the group's own purge (`cleanupSoftDeletedGroups`) is the natural moment, and whether it should take the dismissals with it is the decision.
