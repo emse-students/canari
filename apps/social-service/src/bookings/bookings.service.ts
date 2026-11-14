@@ -287,8 +287,8 @@ export class BookingsService {
   /**
    * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
    * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
-   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
-   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs
+   * reaches it (owner, 2026-11-14) - the directory's predicate, the one `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
    * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
    * manager - the owner of a personal space - never reaches here (`assertMayUse`).
    *
@@ -541,7 +541,8 @@ export class BookingsService {
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
    * - an association space only while its association is not ARCHIVED, and only when that
    *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
-   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   predicate: a member of it, D21, its rules reach one of their spaces, or a nominative read
+   *   grant of theirs reaches it - owner, 2026-10-31 and 2026-11-14);
    *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
    *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
