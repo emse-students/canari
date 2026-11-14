@@ -36,12 +36,21 @@ const RAW_AMBER = /(?<![\w-])amber-(?:50|100|200|300|400|500|600|700|800|900|950
 const CN_YELLOW_UTILITY =
   /(?<![\w-])(?:[a-z0-9-]+:)*(?:text|bg|border|ring|from|to|via|fill|stroke|outline|decoration|divide|shadow)(?:-[trblxyse])?-cn-yellow(?:-hover)?(?![\w-])/g;
 
+/** Every shipped source, comment-free, read ONCE for the three sweeps below. */
+let sources: { file: string; body: string }[] | null = null;
+function shippedSources(): { file: string; body: string }[] {
+  sources ??= shippedSourceFiles(src).map((file) => ({
+    file: relative(src, file).replaceAll(sep, '/'),
+    body: withoutAnyComments(readFileSync(file, 'utf8')),
+  }));
+  return sources;
+}
+
 function count(re: RegExp): Record<string, number> {
   const found: Record<string, number> = {};
-  for (const file of shippedSourceFiles(src)) {
-    const body = withoutAnyComments(readFileSync(file, 'utf8'));
+  for (const { file, body } of shippedSources()) {
     const n = body.match(re)?.length ?? 0;
-    if (n > 0) found[relative(src, file).replaceAll(sep, '/')] = n;
+    if (n > 0) found[file] = n;
   }
   return found;
 }
@@ -163,11 +172,9 @@ describe('a solid accent fill carries the ink token', () => {
 
   it('uses text-on-accent, never cn-dark / black / white / a theme text colour', () => {
     const offenders: string[] = [];
-    for (const file of shippedSourceFiles(src)) {
-      const body = withoutAnyComments(readFileSync(file, 'utf8'));
+    for (const { file, body } of shippedSources()) {
       for (const piece of body.split(/["'`\n]/))
-        if (SOLID.test(piece) && WRONG_INK.test(piece))
-          offenders.push(`${relative(src, file).replaceAll(sep, '/')}: ${piece.trim()}`);
+        if (SOLID.test(piece) && WRONG_INK.test(piece)) offenders.push(`${file}: ${piece.trim()}`);
     }
     expect(
       offenders,

@@ -67,6 +67,7 @@ describe('MessagingService - visibility vs durability', () => {
       ) => {
         const presence = await redis.get(presenceKey);
         const declared = (await redis.hvals(hashKey)) as string[];
+        if (presence === null || presence === undefined) return 2; // no presence key: offline
         if (presence !== marker || declared.length === 0) return 0;
         if (declared.some((d) => d !== capability)) return 0;
         if (channel) await redis.publish(channel, payload);
@@ -657,6 +658,49 @@ describe('MessagingService - visibility vs durability', () => {
       expect(queuedMessageRepo.save).not.toHaveBeenCalled();
     });
 
+    /**
+     * "NO MESSAGE QUEUED" IS TWO READINGS (2026-11-13): nobody to queue for is the ordinary path
+     * during an invite (a LOG), every recipient offline on a transport frame is a rendezvous that
+     * will expire unanswered (a WARN).
+     */
+    describe('"No message queued after validation"', () => {
+      const lines = (spy: jest.SpyInstance) =>
+        spy.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('No message queued'));
+
+      it('is a LOG, not a warning, when the group named nobody to queue for', async () => {
+        groupOfThree();
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await service.sendMessage(
+          send({ silent: true, durable: true, recipientDevices: ['u9:d9', 'u1:d1'] })
+        );
+
+        expect(lines(log)).toHaveLength(1);
+        expect(lines(log)[0]).toContain('recipients=0');
+        expect(lines(warn)).toHaveLength(0);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+
+      it('stays a WARN when a transport frame found every recipient offline', async () => {
+        groupOfThree();
+        redis.exists.mockResolvedValue(0);
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(lines(warn)).toHaveLength(1);
+        expect(lines(warn)[0]).toContain('every recipient device is offline');
+        expect(lines(log)).toHaveLength(0);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+    });
+
     it('is kept OUT of the shared history stream, which every member reads', async () => {
       groupOfThree();
 
@@ -821,6 +865,33 @@ describe('MessagingService - visibility vs durability', () => {
         ).rejects.toMatchObject({
           response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
         });
+      });
+
+      /**
+       * THE LINE NAMES THE CAUSE PER DEVICE (2026-11-13). It used to say every live session had
+       * failed to declare, when the refused addressee was usually OFFLINE - a newcomer's phone when
+       * its Welcome is delivered (p2-an-offline-newcomer-receives-no-join-push). The refusal itself
+       * is unchanged.
+       */
+      it('says, per device, whether the refused addressee was offline or did not declare', async () => {
+        conversation();
+        // dB is online with a session that did not declare; dC has no presence key at all.
+        sessions('u2:dB', 'sessions-1', ['-']);
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+        await expect(
+          service.sendMessage(
+            send({ silent: true, durable: false, recipientDevices: ['u2:dB', 'u3:dC'] })
+          )
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB', 'u3:dC'] },
+        });
+
+        const line = log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('REJECT'));
+        expect(line).toContain('dB=did-not-declare');
+        expect(line).toContain('dC=offline');
+        expect(line).not.toContain('not every live session declared');
+        log.mockRestore();
       });
 
       it('refuses a device with no recorded session, even under a current presence value', async () => {

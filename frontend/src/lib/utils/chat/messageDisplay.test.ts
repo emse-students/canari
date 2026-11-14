@@ -1,5 +1,6 @@
 import {
   extractFirstUrl,
+  extractPreviewUrls,
   gifPreviewUrl,
   gifSizeFromUrl,
   isAngleBracketAutolink,
@@ -208,5 +209,21 @@ describe('splitWithHighlight', () => {
   it('returns the text untouched when there is nothing to look for', () => {
     expect(splitWithHighlight('canari', '')).toEqual([{ text: 'canari', hit: false }]);
     expect(splitWithHighlight('canari', 'perroquet')).toEqual([{ text: 'canari', hit: false }]);
+  });
+});
+
+describe('extractPreviewUrls', () => {
+  it('returns every distinct link, in the order of the text', () => {
+    const text =
+      'Polo: [site](https://a.example/polo). Goodies: https://canari.emse.fr/forms/1, again https://a.example/polo';
+    expect(extractPreviewUrls(text)).toEqual([
+      'https://a.example/polo',
+      'https://canari.emse.fr/forms/1',
+    ]);
+  });
+
+  it('skips <url> autolinks and returns nothing for a text without a link', () => {
+    expect(extractPreviewUrls('see <https://x.example> here')).toEqual([]);
+    expect(extractPreviewUrls('no link')).toEqual([]);
   });
 });

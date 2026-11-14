@@ -1,6 +1,43 @@
 import type { FormItem } from './api';
-import { PRODUCT_GRID_TYPE } from './productGridContract';
+import { PRODUCT_GRID_TYPE, productGridRequiredOnSave } from './productGridContract';
 import { editorProductGrid, productGridPayload } from './productGridEditor';
+
+/**
+ * What every form payload of this editor carries: it draws each priced grid's "Obligatoire" switch
+ * (owner, 2026-11-13), so the `required` it sends on a grid is the manager's choice. A save without
+ * it comes from an older editor, which sends `required: true` on every grid, and the server keeps
+ * each grid's stored flag instead (`productGridRequiredOnSave`).
+ */
+export const GRID_REQUIRED_SWITCH = { gridRequiredSwitch: true } as const;
+
+/**
+ * The marker a form payload carries on this estate: {@link GRID_REQUIRED_SWITCH} when the server
+ * stores the switch (`gridRequiredSwitchOn`), nothing otherwise - an older server's validation would
+ * strip it anyway, and this build then saves as the build before it ([LEGACY]).
+ */
+export function gridRequiredPayload(gridSwitch: boolean): Partial<typeof GRID_REQUIRED_SWITCH> {
+  return gridSwitch ? GRID_REQUIRED_SWITCH : {};
+}
+
+/**
+ * The questions of an unpublished revision as this editor opens them. A revision saved by an editor
+ * older than the switch ([LEGACY], docs/wiki/legacy-compatibility.md) carries no
+ * `gridRequiredSwitch` and `required: true` on every grid, which says nothing: each grid takes the
+ * flag the form stores under its id - the rule the server applies when that revision is published
+ * (`productGridRequiredOnSave`) - so opening it never turns a switch on by surprise.
+ */
+export function revisionItems(
+  document: { items?: unknown; gridRequiredSwitch?: unknown },
+  storedItems: readonly FormItem[] | null | undefined
+): FormItem[] | undefined {
+  const items = document.items as FormItem[] | undefined;
+  if (!Array.isArray(items) || document.gridRequiredSwitch === true) return items;
+  return items.map((item) =>
+    item.type === PRODUCT_GRID_TYPE
+      ? { ...item, required: productGridRequiredOnSave(item, false, storedItems) }
+      : item
+  );
+}
 
 /** Question types that carry no option list, so their options are dropped on save. */
 const TYPES_WITHOUT_OPTIONS = [
@@ -32,20 +69,23 @@ const TYPES_WITH_PRICED_OPTIONS = ['single_choice', 'multiple_choice', 'dropdown
  * A priced grid (`product_grid`) carries its definition under `productGrid`, in the contract's
  * exact shape (`productGridPayload`: cents, one price per category x axis key); every other type
  * sends none - a question turned from a grid into a choice drops it here rather than on the server.
- * A grid is always sent required: see `productGridItemRefusal` for what the flag still does.
+ * A grid's `required` is its "Obligatoire" switch, sent as the card holds it; the form payload says
+ * so with `gridRequiredSwitch` ({@link gridRequiredPayload}). `gridSwitch` false - an estate older
+ * than the switch ([LEGACY], `gridRequiredSwitchOn`) - sends every grid `required: true`, the only
+ * flag that server saves (it refuses anything else `PRODUCT_GRID_NOT_REQUIRED`).
  */
-export function toFormItemsPayload(items: any[]): FormItem[] {
+export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[] {
   return items.map((item) => {
     const hasOptions = !TYPES_WITHOUT_OPTIONS.includes(item.type);
     const pricesOptions = TYPES_WITH_PRICED_OPTIONS.includes(item.type);
     const { productGrid, ...rest } = item;
     return {
       ...rest,
-      // A grid is sent `required: true` whatever the card holds: the flag is no choice of the
-      // manager's (the order rule is the form's), and it keeps an app that cannot draw the grid
-      // holding the send (`productGridItemRefusal`).
       ...(item.type === PRODUCT_GRID_TYPE && productGrid
-        ? { productGrid: productGridPayload(productGrid), required: true }
+        ? {
+            productGrid: productGridPayload(productGrid),
+            required: gridSwitch ? item.required === true : true,
+          }
         : {}),
       options: hasOptions
         ? (item.options ?? [])

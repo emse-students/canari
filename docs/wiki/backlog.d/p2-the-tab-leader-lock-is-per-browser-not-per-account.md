@@ -1,5 +1,7 @@
 ## P2 - the tab-leader lock is one per browser, not one per account
 
+target: 1.10.0
+
 `canari-tab-leader` (`tabLeader.ts`) is a single Web Lock for the whole browser profile, so a tab
 signed in to account B while a tab of account A leads is a FOLLOWER of a leader that is not its
 account's. Since 2026-11-11 a follower writes no MLS state, emits no frame and seals no salon message

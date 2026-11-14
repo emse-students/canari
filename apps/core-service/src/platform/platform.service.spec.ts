@@ -4,12 +4,18 @@ import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
 import { deployedVersion } from './deployed-version';
 import axios from 'axios';
+import { notifyMediaRetentionChanged, readMediaRetentionHeld } from './retention-notice';
 
 jest.mock('axios');
 const mockedAxios = axios as unknown as { post: jest.Mock };
 
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
+jest.mock('./retention-notice', () => ({
+  ...jest.requireActual<object>('./retention-notice'),
+  notifyMediaRetentionChanged: jest.fn().mockResolvedValue(true),
+  readMediaRetentionHeld: jest.fn(),
+}));
 const mockDeployed = deployedVersion as jest.MockedFunction<typeof deployedVersion>;
 /** The acting administrator: a uuid whose first 8 characters are what the audit lines print. */
 const ADMIN = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -48,6 +54,12 @@ describe('PlatformService', () => {
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
+      groupCallsMode: 'off' as const,
+      callRelay: 'none' as const,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -64,6 +76,12 @@ describe('PlatformService', () => {
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
+      groupCallsMode: 'off' as const,
+      callRelay: 'none' as const,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -82,6 +100,14 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     });
 
     await service.ensureDefaults();
@@ -127,6 +153,24 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ liveReplaysMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with group calls OFF - no group call may start until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ groupCallsMode: 'off' }));
+  });
+
+  it('ensureDefaults creates the row with NO relay - a group call stays a mesh until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ callRelay: 'none' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -140,6 +184,14 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -192,6 +244,14 @@ describe('PlatformService', () => {
         pushMode: 'full',
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
+        groupCallsMode: 'off',
+        callRelay: 'none',
+        lydiaContractAnniversary: null,
+        lydiaContract: null,
+        retentionReelDays: 365,
+        retentionLiveReplayDays: 3,
+        retentionChatReelDays: 30,
+        retentionIdleFileDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -266,6 +326,14 @@ describe('PlatformService', () => {
         pushMode: 'full',
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
+        groupCallsMode: 'off',
+        callRelay: 'none',
+        lydiaContractAnniversary: null,
+        lydiaContract: null,
+        retentionReelDays: 365,
+        retentionLiveReplayDays: 3,
+        retentionChatReelDays: 30,
+        retentionIdleFileDays: 90,
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -325,6 +393,14 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -348,6 +424,14 @@ describe('PlatformService', () => {
       pushMode: 'full',
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
+      groupCallsMode: 'off',
+      callRelay: 'none',
+      lydiaContractAnniversary: null,
+      lydiaContract: null,
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 30,
+      retentionIdleFileDays: 90,
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -440,6 +524,127 @@ describe('PlatformService', () => {
       'liveReplaysMode off -> on by=aaaaaaaa'
     );
     warn.mockRestore();
+  });
+
+  it('updateConfig moves the group calls switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio_video';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ groupCallsMode: 'mesh' }, ADMIN);
+
+    expect(result.groupCallsMode).toBe('mesh');
+    expect(result.callsMode).toBe('audio_video');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { groupCallsMode: 'mesh' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'groupCallsMode off -> mesh by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the call relay, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.groupCallsMode = 'mesh';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ callRelay: 'call-service' }, ADMIN);
+
+    expect(result.callRelay).toBe('call-service');
+    expect(result.groupCallsMode).toBe('mesh');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { callRelay: 'call-service' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'callRelay none -> call-service by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves a retention duration, logs it at warn with the actor, and touches nothing else', async () => {
+    rowWithMin('0.13.0');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await service.updateConfig({ retentionReelDays: 180 }, ADMIN);
+
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { retentionReelDays: 180 });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'retentionReelDays 365 -> 180 days by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('tells media-service when a duration MOVES, and not when the save repeats the value', async () => {
+    const notify = jest.mocked(notifyMediaRetentionChanged);
+    notify.mockClear();
+    rowWithMin('0.13.0');
+    await service.updateConfig({ retentionChatReelDays: 30 }, ADMIN);
+    expect(notify).not.toHaveBeenCalled();
+    await service.updateConfig({ retentionChatReelDays: 7 }, ADMIN);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a lost notice is SEEN: behind while media-service holds the old value, applied once re-sent', async () => {
+    const row = rowWithMin('0.13.0');
+    row.retentionChatReelDays = 7;
+    repo.findOneOrFail.mockResolvedValue(row);
+    const held = jest.mocked(readMediaRetentionHeld);
+    const behind = {
+      kind: 'held',
+      held: { chatReelDays: 30, idleFileDays: 90 },
+      readAt: '2026-11-14T12:00:00.000Z',
+    } as const;
+    held.mockResolvedValueOnce(behind).mockResolvedValueOnce(behind);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await expect(service.retentionApplied()).resolves.toMatchObject({
+      state: 'behind',
+      refusal: null,
+      configured: { chatReelDays: 7, idleFileDays: 90 },
+      media: { chatReelDays: 30, idleFileDays: 90 },
+    });
+    // A second page view in the same state logs nothing more: one WARN per CHANGE.
+    await service.retentionApplied();
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('retention applied'))).toHaveLength(
+      1
+    );
+
+    const notify = jest.mocked(notifyMediaRetentionChanged);
+    notify.mockClear();
+    held.mockResolvedValueOnce({
+      kind: 'held',
+      held: { chatReelDays: 7, idleFileDays: 90 },
+      readAt: '2026-11-14T12:05:00.000Z',
+    });
+    await expect(service.resendRetentionNotice(ADMIN)).resolves.toMatchObject({
+      state: 'applied',
+    });
+    expect(notify).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('a refusal by media-service is reported as an answer, with its status and reason', async () => {
+    const row = rowWithMin('0.13.0');
+    repo.findOneOrFail.mockResolvedValue(row);
+    jest
+      .mocked(readMediaRetentionHeld)
+      .mockResolvedValueOnce({ kind: 'refused', status: 404, reason: 'route' });
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(service.retentionApplied()).resolves.toMatchObject({
+      state: 'refused',
+      refusal: { status: 404, reason: 'route' },
+      media: null,
+    });
+    warn.mockRestore();
+  });
+
+  it('getConfig publishes every retention duration the row holds', async () => {
+    const row = rowWithMin('0.13.0');
+    row.retentionChatReelDays = 14;
+    const config = await service.getConfig();
+    expect(config).toMatchObject({
+      retentionReelDays: 365,
+      retentionLiveReplayDays: 3,
+      retentionChatReelDays: 14,
+      retentionIdleFileDays: 90,
+    });
   });
 
   it('updateConfig leaves the lives mode alone when the update does not name it', async () => {

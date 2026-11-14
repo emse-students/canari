@@ -6,12 +6,18 @@
  * Both drawings are in the DOM (the width picks one by CSS alone), so each test drives the one it
  * names: `[data-grid-desktop]` (the table) or `[data-grid-phone]` (the cards and pills).
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { FormItem } from '$lib/forms/api';
 import type { ProductGridView, ProductGridViewerPrices } from '$lib/forms/productGridContract';
 import { m } from '$lib/paraglide/messages';
 import ProductGridQuestionHarness from './ProductGridQuestionHarness.test.svelte';
+
+// The media base the native app resolves against (the web's is its own origin).
+vi.mock('$lib/associations/api', () => ({
+  associationLogoSrc: (u: string | null | undefined) =>
+    u ? (u.startsWith('/') ? `https://media.test${u}` : u) : null,
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -83,6 +89,17 @@ describe('ProductGridQuestion', () => {
     expect(target.querySelector('h2')?.textContent).toContain('Sweat');
     expect(target.querySelector('[data-grid-price]')?.textContent).toContain('28,00');
     expect(target.textContent).toContain('300g - broderie');
+  });
+
+  it('loads the product photo from the media base, not as a path the native app cannot reach', () => {
+    const { target } = render(
+      grid(),
+      {},
+      { item: { ...item(grid()), imageUrl: '/api/media/public/p1' } }
+    );
+    expect(target.querySelector('img')?.getAttribute('src')).toBe(
+      'https://media.test/api/media/public/p1'
+    );
   });
 
   it('draws the product image whole and keeps the line breaks of the label and help', () => {

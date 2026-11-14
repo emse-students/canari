@@ -1,16 +1,8 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Headers,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, UseGuards } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PinPostDto } from './dto/post.dto';
 import { SpacePinsService, type PinActor } from './space-pins.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * PINS PER SPACE (WP-PIN, docs/wiki/spaces-and-audiences-reform.md section 11). Its own controller
@@ -19,6 +11,7 @@ import { SpacePinsService, type PinActor } from './space-pins.service';
  *
  * Every refusal is typed (`space-pins.ts`): `space_pin_limit` / `post_not_in_space` 409, `space_pin_forbidden` 403, `space_not_found` 404.
  */
+@RouteParams({ spaceId: 'uuid', postId: 'uuid' })
 @Controller('posts')
 export class SpacePinsController {
   constructor(private readonly pins: SpacePinsService) {}
@@ -32,7 +25,7 @@ export class SpacePinsController {
   listSpacePins(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('spaceId', ParseUUIDPipe) spaceId: string
+    @Param('spaceId') spaceId: string
   ) {
     return this.pins.listForSpace(spaceId, actorOf(xUserId, xGlobalAdmin));
   }
@@ -43,7 +36,7 @@ export class SpacePinsController {
   pinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: PinPostDto
   ) {
     return this.pins.pin(postId, actorOf(xUserId, xGlobalAdmin), body.spaceId);
@@ -55,7 +48,7 @@ export class SpacePinsController {
   unpinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: PinPostDto
   ) {
     return this.pins.unpin(postId, actorOf(xUserId, xGlobalAdmin), body.spaceId);

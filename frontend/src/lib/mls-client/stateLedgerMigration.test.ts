@@ -75,6 +75,45 @@ describe('adoptLegacyLedgers', () => {
     expect(readStateLedger(U, STATE_LEDGER.seen('g1'))).toBe(JSON.stringify(['1:a', '1786-0']));
   });
 
+  it('moves the ledgers EXACTLY ONCE across the openings a device really goes through', async () => {
+    // The state as the disk holds it: what each landed checkpoint applied (`app_ledgers.rs`).
+    const disk: Record<string, string> = {};
+    const land = (): void => {
+      for (const [key, value] of Object.entries(takeStagedStateLedgers(U) ?? {})) {
+        if (value === null) delete disk[key];
+        else disk[key] = value;
+      }
+    };
+    seedLegacy();
+
+    // Opening 1, an old client's state: migrated, and the old copies are still there.
+    hydrateStateLedgers(U, { ...disk });
+    expect(await adoptLegacyLedgers(U)).toBe('migrated');
+    // Opening 2 after a kill BEFORE the checkpoint: nothing reached the state, so it migrates
+    // again - from the same untouched copies, to the same values.
+    hydrateStateLedgers(U, { ...disk });
+    expect(await adoptLegacyLedgers(U)).toBe('migrated');
+    land();
+    const afterMigration = { ...disk };
+    expect(afterMigration[STATE_LEDGER.format]).toBe(STATE_LEDGER_FORMAT);
+    expect(afterMigration[STATE_LEDGER.sendPersisted]).toBe(JSON.stringify({ 'g1@4': 3 }));
+    expect(await readEmitted(U)).toEqual({ 'g1@4': 5 });
+
+    // Opening 3, the state carries the ledgers: the old copies go, and nothing is staged again.
+    hydrateStateLedgers(U, { ...disk });
+    expect(await adoptLegacyLedgers(U)).toBe('swept');
+    expect(takeStagedStateLedgers(U)).toBeUndefined();
+    expect(localStorage.length).toBe(0);
+
+    // Opening 4: nothing left to move, and every value is the one the first pass wrote - no count
+    // raised twice, no mark doubled.
+    hydrateStateLedgers(U, { ...disk });
+    expect(await adoptLegacyLedgers(U)).toBe('nothing');
+    expect(takeStagedStateLedgers(U)).toBeUndefined();
+    expect(disk).toEqual(afterMigration);
+    expect(await readEmitted(U)).toEqual({ 'g1@4': 5 });
+  });
+
   it('never lowers an `emitted` count the new store already holds', async () => {
     seedLegacy();
     hydrateStateLedgers(U, {});

@@ -1,5 +1,7 @@
 ## P2 - two vendored forks are behind upstream: `wry` 0.57.2 and `tauri-plugin-keystore` 2.1.0-alpha.2 (2026-11-11)
 
+target: 1.10.0
+
 Read by `vendored-upstream-report.sh` on 2026-11-11, from a working copy, against crates.io
 ([cicd](../cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)):
 

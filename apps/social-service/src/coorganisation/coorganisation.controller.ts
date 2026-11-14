@@ -1,6 +1,7 @@
-import { Controller, Get, Headers, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Headers, Param, UseGuards } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CoorganisationService } from './coorganisation.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Co-organisation (D39) under `/api/associations/...`, the prefix nginx already routes here. The
@@ -9,6 +10,7 @@ import { CoorganisationService } from './coorganisation.service';
  * and ending ride the event write itself (`coOwnerIds`); accepting and refusing are the generic
  * proposal routes.
  */
+@RouteParams({ id: 'uuid', eventId: 'uuid' })
 @Controller('associations')
 @UseGuards(NginxAuthGuard)
 export class CoorganisationController {
@@ -19,8 +21,8 @@ export class CoorganisationController {
   listStates(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('id', ParseUUIDPipe) associationId: string,
-    @Param('eventId', ParseUUIDPipe) eventId: string
+    @Param('id') associationId: string,
+    @Param('eventId') eventId: string
   ) {
     return this.coorganisation.listStatesFor(
       associationId,
@@ -38,8 +40,8 @@ export class CoorganisationController {
   writeSide(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('id', ParseUUIDPipe) associationId: string,
-    @Param('eventId', ParseUUIDPipe) eventId: string
+    @Param('id') associationId: string,
+    @Param('eventId') eventId: string
   ) {
     return this.coorganisation.writeSideFor(
       associationId,

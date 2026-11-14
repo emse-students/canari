@@ -1,5 +1,7 @@
 ## P2 - what the key-package claim fix left: the sweep claims before reading the tree, and the empty-pool WARN fires once per serve
 
+target: 1.10.0
+
 The storm of 2026-11-06 and the fixes for it are in
 [key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06):
 #3060 (the sweep and the `welcome_request` answer claim one device, the own-publication read peeks),
@@ -14,7 +16,7 @@ shared in flight. What is left, in order:
   invitation is vouched and the claimed package is discarded. The tree read needs no package, but
   moving it first changes the order against the refusal cleanup (a revoked device already in the
   tree would be vouched rather than its row deleted), so it needs a decision and a test of that case.
-- **Still refilled only at connection** - [backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable).
+- **Still refilled only at connection** - [backlog](p2-a-device-s-one-time-keypackage-pool-is-topped-up-only-when-it-connects.md).
   A new device admitted to more than 50 groups in one sitting empties its pool by design, and the
   rest of its Welcomes share the static row's init key.
 - **The `[KP] one-time pool EMPTY` WARN fires once per serve**: 176 lines for one device on one

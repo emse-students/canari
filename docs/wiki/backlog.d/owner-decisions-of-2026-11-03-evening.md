@@ -1,5 +1,7 @@
 ## Decided - the owner's answers of 2026-11-03 (evening)
 
+target: 1.7.0
+
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 
 **Carried out and pruned (batch 21, 2026-11-12), each checked:** the wry wake pipe aborts on end of

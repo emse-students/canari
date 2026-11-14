@@ -52,3 +52,21 @@ describe('callVideoAvailable', () => {
     expect(a.callVideoAvailable('audio_video')).toBe(false);
   });
 });
+
+describe('group call entry points (WP-GC2)', () => {
+  it('need the server group switch on the mesh, on top of calls open', async () => {
+    const a = await load({ calls: true, video: true });
+    expect(a.groupCallsAvailable('audio', 'off')).toBe(false);
+    expect(a.groupCallsAvailable('off', 'mesh')).toBe(false);
+    expect(a.groupCallsAvailable('audio', 'mesh')).toBe(true);
+  });
+
+  it('show video only where video is allowed and the build carries it', async () => {
+    const a = await load({ calls: true, video: true });
+    expect(a.groupCallVideoAvailable('audio', 'mesh')).toBe(false);
+    expect(a.groupCallVideoAvailable('audio_video', 'off')).toBe(false);
+    expect(a.groupCallVideoAvailable('audio_video', 'mesh')).toBe(true);
+    const audioOnly = await load({ calls: true, video: false });
+    expect(audioOnly.groupCallVideoAvailable('audio_video', 'mesh')).toBe(false);
+  });
+});

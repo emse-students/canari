@@ -3,7 +3,7 @@ import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict, MembershipEvidence } from './deviceTrust';
 import type {
   DeviceKeyPackageAnswer,
   DeviceSignatureKeys,
@@ -898,8 +898,9 @@ export interface IMlsService {
    *
    * CONCRETE IN `BaseMlsService`, and platforms supply only the write itself (`writeCheckpoint`),
    * because a checkpoint is not just a write: it is also the moment this device may declare how much
-   * of its send ratchet is now durable. That count is read before the write and committed after it,
-   * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
+   * of its send ratchet is now durable. That count is read before the export and staged INTO the
+   * state the write exports (KILL-2), so a restored snapshot always carries the count true of it -
+   * see `sendRatchetLedger` and `stateLedgers`.
    */
   persistCheckpoint(): Promise<void>;
   /**
@@ -1049,6 +1050,13 @@ export interface IMlsService {
    * `BaseMlsService.removalEpochs`.
    */
   removalEpochs(groupId: string, userId: string): Promise<number[]>;
+  /**
+   * What this device can prove, ALONE, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted, and the first epoch its record covers
+   * (`MembershipEvidence`). Per USER, kept in the sealed state, never asked of the server. See
+   * `BaseMlsService.membershipEvidence`.
+   */
+  membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
@@ -2013,10 +2021,11 @@ export interface IMlsService {
    *
    * IT DOES NOT NEED A COMPANION THAT CLOSES AT UNLOAD. One was added on 2026-08-15 (`closeForUnload`,
    * spending `1001 - going away` so a dying document would stop reporting `1006`) and removed the
-   * same day, measured inert on both sides at once: the gateway matches `disconnect` with
-   * `handle_disconnect(...); break`, leaving its read loop before any close frame can be read - 0
+   * same day, measured inert on both sides at once: the gateway then matched `disconnect` with
+   * `handle_disconnect(...); break`, leaving its read loop before any close frame could be read - 0
    * `Client closed connection` lines against 12 explicit disconnects over 25 minutes of production
-   * traffic - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
+   * traffic (since 2026-11-14 it reads on until the Close and answers it, but a close code still
+   * tells it nothing the frame has not) - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
    * needs a reply from the server and the document is gone before one can arrive. The `1006` a
    * browser console shows at a navigation is a property of unloading, not a defect to be fixed.
    */
@@ -2026,8 +2035,9 @@ export interface IMlsService {
    * Sends the `disconnect` frame, then lets go of the socket WITHOUT reporting a disconnection -
    * what `pauseConnectionImpl` asks of a backgrounded app.
    *
-   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` with `handle_disconnect(...);
-   * break`, so it stops reading the socket the moment the frame lands. Keeping the client half
+   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` by taking the socket out of
+   * routing (until 2026-11-14 it also stopped reading; it now reads on only to answer the Close,
+   * and ends the socket on any other frame). Keeping the client half
    * alive after that, which is what a bare `sendDisconnect` used to do here, kept its heartbeat too:
    * every ping went unanswered, and 32 s later the zombie watchdog closed it and reported a
    * disconnection - which the reconnect ladder answered by reconnecting a BACKGROUNDED app. Measured

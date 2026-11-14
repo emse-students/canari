@@ -92,23 +92,18 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
   });
 });
 
-describe('the feed path carries the selection', () => {
-  it('sends campus and formation only when chosen', () => {
-    const base = { from: '2026-01-01T00:00:00.000Z', to: '2026-02-01T00:00:00.000Z' };
+describe("one event's .ics path", () => {
+  it('carries its window, its event and its signature', () => {
     const q = new URLSearchParams(
-      aggregatedCalendarFeedIcsPath({ ...base, campus: 'gardanne', formation: 'ICM' }).split('?')[1]
+      aggregatedCalendarFeedIcsPath({
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-02-01T00:00:00.000Z',
+        eventId: 'ev1',
+        sig: 'abc_-9',
+      }).split('?')[1]
     );
-    expect(q.get('campus')).toBe('gardanne');
-    expect(q.get('formation')).toBe('ICM');
-    const bare = aggregatedCalendarFeedIcsPath({ ...base, campus: '' as never, formation: null });
-    expect(bare).not.toContain('campus');
-    expect(bare).not.toContain('formation');
-  });
-
-  it('carries the signature, and only when there is one', () => {
-    const base = { from: '2026-01-01T00:00:00.000Z', to: '2026-02-01T00:00:00.000Z' };
-    const signed = aggregatedCalendarFeedIcsPath({ ...base, campus: 'gardanne', sig: 'abc_-9' });
-    expect(new URLSearchParams(signed.split('?')[1]).get('sig')).toBe('abc_-9');
-    expect(aggregatedCalendarFeedIcsPath({ ...base, campus: 'gardanne' })).not.toContain('sig=');
+    expect(q.get('eventId')).toBe('ev1');
+    expect(q.get('sig')).toBe('abc_-9');
+    expect(q.get('campus')).toBeNull();
   });
 });

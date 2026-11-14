@@ -1,5 +1,7 @@
 ## The owner's decisions of 2026-11-09
 
+target: 1.7.0
+
 - **Portail `v1.0.9`** (the directory restricted to the Saint-Etienne + ICM space, portail #118): the
   lead publishes it, without asking again, once Canari `1.6.9` serves production; then reads the
   directory online (MINITEL absent, 31 associations).

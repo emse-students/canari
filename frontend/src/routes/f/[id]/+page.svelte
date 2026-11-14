@@ -26,7 +26,13 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
-  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
+  import {
+    cursusSlicesOf,
+    fillPriceState,
+    NO_PRICING_SLICE,
+    optionModifierOf,
+  } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
@@ -96,21 +102,22 @@
   const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
   // No profile half: the server refuses a public form whose questions depend on who answers.
   const visibleItems = $derived(form ? visibleItemsOf(form.items, selections) : []);
+  /** The slices the server sent: a guest has no cursus, so one (its "everyone else" row). */
+  const slices = $derived(form ? cursusSlicesOf(form) : NO_PRICING_SLICE);
   /** What the answers cost so far, from the slice the server sent (a guest's is the whole grid). */
   const price = $derived(
     fillPriceState({
       basePrice: form?.basePrice ?? 0,
-      pricing: form?.pricing ?? null,
+      slices,
       items: form?.items ?? [],
       visibleItems,
       selections,
-      productGridPrices: form?.productGridPrices,
     })
   );
   /** Whether a priced grid is shown: the footer then totals the order and sticks. */
   const hasProductGrid = $derived(visibleItems.some(isProductGrid));
   /** A guest's category on the priced grids - "everyone else" wherever the grid has categories. */
-  const tierLabels = $derived(appliedTierLabels(visibleItems, form?.productGridPrices));
+  const tierLabels = $derived(appliedTierLabels(visibleItems, price.productGridPrices));
   /** Signing in may lower the price: the sign-in page, then this form's member page. */
   const loginHref = $derived(
     `${resolve('/login')}?returnTo=${encodeURIComponent(`/forms/${formId}`)}`
@@ -152,7 +159,7 @@
 
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting || blocked) return;
-    const missing = firstMissingAnswer(visibleItems, selections);
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
     missingAnswer = missing;
     if (missing?.itemId === null) {
       // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
@@ -219,6 +226,11 @@
     }
   }
 
+  /**
+   * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
+   * it), a grid's flag means nothing and the ORDER is held empty-or-not across the grids.
+   */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
   /**
    * The empty-order sentence, shown after a send refused for it and only while the order is still
    * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
@@ -345,7 +357,7 @@
               grid={item.productGrid}
               bind:value={selections[item.id]}
               disabled={isNotOpenYet || isClosed || form.formFull || submitting}
-              prices={form.productGridPrices?.[item.id]}
+              prices={price.productGridPrices[item.id]}
               currency={form.currency}
               error={questionError(item)}
             />

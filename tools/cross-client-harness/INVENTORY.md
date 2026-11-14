@@ -257,7 +257,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-70 scripts.
+71 scripts.
 
 | script | what it is |
 |---|---|
@@ -310,6 +310,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/phonefocus-selftest.mjs` | Pins `focusOf` (phonefocus.mjs): the app in front, the app behind, and the dump that says neither - |
 | `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
+| `archive/purgedevices-selftest.mjs` | THE DEVICE PANEL'S ROW HOOK AND THE TOOL THAT READS IT MUST STILL AGREE. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/removals-selftest.mjs` | THE REMOVAL ROWS' JUDGE, PINNED (`removalrows.mjs`): a clean measurement passes, each fact broken |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
@@ -389,4 +390,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-328 scripts in total.
+329 scripts in total.

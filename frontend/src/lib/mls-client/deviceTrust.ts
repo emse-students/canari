@@ -42,6 +42,26 @@ export interface DevicePin {
   reaffirmations: number;
 }
 
+/**
+ * What THIS DEVICE can prove, alone, about a user having been a member of a group -
+ * `IMlsService.membershipEvidence` (`MembershipEvidence` in Rust, `mls-core/src/member_sightings.rs`).
+ * Read from trees this device accepted and departures it recorded; never from the server.
+ */
+export interface MembershipEvidence {
+  /**
+   * The first epoch at which this device saw the user hold a leaf of the group's tree, `null` when
+   * it never did. A sighting BEFORE an entering commit's epoch proves the entrant was a member.
+   * `null` is NOT SEEN, never "never a member".
+   */
+  firstSeenEpoch: number | null;
+  /**
+   * The first epoch this device's record covers for the group, `null` when it holds none. Never a
+   * verdict: what a report carries so "this device was not there yet" is told from "it watched and
+   * never saw them".
+   */
+  watchedFromEpoch: number | null;
+}
+
 /** How an admitted leaf's key relates to the pin (`LeafTrust` in Rust). */
 export type LeafTrust = 'first-sight' | 'pinned' | 'key-changed';
 

@@ -53,12 +53,17 @@ const PORT = PORTS[DEVICE];
  *
  * Group ids are summed rather than listed: this file is committed and they identify conversations.
  */
+// SINCE KILL-2 (#2515) THE LEDGER IS NOT IN `localStorage`: `emitted` is in IndexedDB and
+// `persisted` is sealed inside the MLS state, which no page script can read. A client that has
+// migrated therefore reports `present: false` here - never `unpersisted: 0`, which would read as a
+// window that was missed - and the verdict is INCONCLUSIVE until this check reads a witness again.
 const LEDGER = `(function () {
   try {
-    var total = 0, groups = 0;
+    var total = 0, groups = 0, found = false;
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
       if (!k || k.indexOf('mls_send_ledger_') !== 0) continue;
+      found = true;
       var l = JSON.parse(localStorage.getItem(k) || '{}');
       var em = l.emitted || {}, pe = l.persisted || {};
       for (var g in em) {
@@ -66,7 +71,7 @@ const LEDGER = `(function () {
         if (d > 0) { total += d; groups++; }
       }
     }
-    return JSON.stringify({ present: true, unpersisted: total, groups: groups });
+    return JSON.stringify({ present: found, unpersisted: total, groups: groups });
   } catch (e) {
     return JSON.stringify({ present: false, unpersisted: 0, groups: 0 });
   }
@@ -250,7 +255,7 @@ out.verdict =
   !out.baselineDelivered
     ? 'INCONCLUSIVE - the pair could not deliver a baseline, nothing here is about the window'
     : !out.ledgerBeforeReload.present
-      ? 'INCONCLUSIVE - no send ledger on this device, so the repair cannot have run'
+      ? 'INCONCLUSIVE - no send ledger readable from the page (since KILL-2 it is sealed in the MLS state), so the window cannot be proved entered'
       : out.burned === 0
         ? 'INCONCLUSIVE - the checkpoint landed before the reload, so the window was never entered'
         : // THE ASSERTION IS THE ABSENCE OF THE FAULT, and the fault has two halves that must BOTH

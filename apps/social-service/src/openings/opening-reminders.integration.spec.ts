@@ -130,7 +130,10 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
       CREATE TABLE booking_spaces (id uuid PRIMARY KEY, name varchar NOT NULL, "associationId" uuid,
         discoverability varchar(8) NOT NULL DEFAULT 'listed', audience jsonb);
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, title varchar NOT NULL,
-        "associationId" uuid NOT NULL, status varchar NOT NULL DEFAULT 'pending');
+        "associationId" uuid NOT NULL, status varchar NOT NULL DEFAULT 'pending',
+        "reachPublic" varchar(16), "reachSpaces" jsonb);
+      CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id uuid NOT NULL, association_id uuid NOT NULL);
       -- form_reminders exactly as TypeORM built it on the estates (\\d form_reminders).
       CREATE TABLE form_reminders (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "formId" uuid NOT NULL, "userId" varchar(255) NOT NULL, "opensAt" timestamptz NOT NULL,
@@ -541,6 +544,48 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
             `${MUTED_FAN}:social_event_open`,
           ])
         );
+      });
+
+      it("(11) an institution's event reach: a follower outside it is not written, and a narrowing before the opening tells nobody", async () => {
+        const ICM_SE = JSON.stringify([{ formation: 'ICM', campus: 'saint-etienne' }]);
+        const setReach = (pub: string | null) =>
+          q(
+            `UPDATE association_calendar_events SET "reachPublic" = $2, "reachSpaces" = $3::jsonb
+              WHERE id = $1`,
+            [EVENT, pub, pub ? ICM_SE : null]
+          );
+        try {
+          // For staff only: every follower here is a student of ICM x Saint-Etienne, so none is written.
+          await setReach('staff');
+          await announceOpeningToFollowers(ds.manager, {
+            kind: 'event',
+            targetId: EVENT,
+            associationId: BDE,
+            opensAt: null,
+            actorId: PUBLISHER,
+          });
+          expect(await rows()).toEqual([]);
+          // Written while it reached them, then narrowed to staff before the tick: claimed, told nothing.
+          await setReach('students');
+          await announceOpeningToFollowers(ds.manager, {
+            kind: 'event',
+            targetId: EVENT,
+            associationId: BDE,
+            opensAt: null,
+            actorId: PUBLISHER,
+          });
+          expect(await rows()).toContain(`event:${FAN}:followed:true/false`);
+          await setReach('staff');
+          await openNow();
+          await scheduler.checkReminders();
+          expect(pushes()).toEqual([]);
+          const untold = await q(
+            `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
+          );
+          expect(untold.rows[0].n).toBe(0);
+        } finally {
+          await setReach(null);
+        }
       });
 
       it('(5) an archived association pushes nothing, a follower row or an ask', async () => {

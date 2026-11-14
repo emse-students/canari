@@ -1,14 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { Log } from '$lib/utils/Log';
   import { createProductCheckout, type AssociationProduct } from '$lib/associations/api';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
-  import { shopCheckoutCallbacks } from '$lib/utils/checkoutCallbacks';
+  import { isMobileTauri, shopCheckoutCallbacks } from '$lib/utils/checkoutCallbacks';
+  import { watchReturnsToApp, type OnceReader } from '$lib/forms/checkoutReturn';
+  import {
+    checkoutReturnText,
+    createShopCheckoutReader,
+    type CheckoutReturnView,
+  } from '$lib/shop/checkoutReturn';
   import { showToast } from '$lib/stores/toast.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -32,6 +41,19 @@
   let checkingOut = $state(false);
   let askingPayerEmail = $state(false);
 
+  /**
+   * The purchase this phone handed to Lydia's page (the system browser): the page cannot know the
+   * payer came back, so it keeps the attempt, says it is in progress and reads it ONCE each time
+   * the app returns to the screen (`watchReturnsToApp`). Its reader is the attempt's identity: a
+   * read that lands after a newer purchase replaced it is dropped.
+   */
+  let pending = $state.raw<{
+    checkoutUrl: string;
+    reader: OnceReader<CheckoutReturnView>;
+  } | null>(null);
+  /** What the last read of the attempt ended on, once final. */
+  let settled = $state<CheckoutReturnView | null>(null);
+
   const buttonLabel = $derived(
     label ??
       (product.type === 'membership'
@@ -41,8 +63,12 @@
           : m.shop_product_type_buy())
   );
 
+  /** Paid just now and the product cannot be bought twice: no "Cotiser" offered after a payment. */
+  const boughtAndFinal = $derived(settled === 'paid' && !product.allowRepeatPurchase);
+
   const isDisabled = $derived(
     disabled ||
+      boughtAndFinal ||
       checkingOut ||
       (product.allowCustomAmount &&
         product.amountCents === null &&
@@ -52,6 +78,46 @@
   onMount(() => {
     void loadActivePaymentProvider();
   });
+
+  // While a purchase is pending, each return of the app to the screen reads it once.
+  $effect(() => {
+    if (!pending) return;
+    return watchReturnsToApp(() => {
+      void readPending();
+    });
+  });
+
+  /** ONE read of the pending attempt; only an outcome about the attempt still shown is applied. */
+  async function readPending(): Promise<void> {
+    const attempt = pending;
+    if (!attempt) return;
+    let view: CheckoutReturnView | null;
+    try {
+      view = await attempt.reader.readOnce();
+    } catch (err) {
+      // Unknown is not a verdict: the note stays and the next return asks again.
+      console.warn(
+        `[ProductPurchase] could not read the pending purchase status=${refusalStatus(err) ?? 'transport'}`,
+        err
+      );
+      return;
+    }
+    if (view === null || pending !== attempt) return;
+    Log.d('ProductPurchase', `pending purchase read: ${view}`);
+    if (view === 'waiting') return;
+    pending = null;
+    settled = view;
+  }
+
+  /** Lydia's payer page again, for a payer who came back before confirming. */
+  async function reopenCheckout(): Promise<void> {
+    const url = pending?.checkoutUrl;
+    if (!url) return;
+    const { navigateExternal } = await import('$lib/utils/openExternal');
+    await navigateExternal(url).catch((err: unknown) =>
+      console.error('[ProductPurchase] reopening the payer page failed:', err)
+    );
+  }
 
   /** Resolves custom amount in cents when applicable. */
   function resolveCustomCents(): number | undefined {
@@ -78,6 +144,7 @@
 
   async function runCheckout(payerEmail?: string) {
     checkingOut = true;
+    settled = null;
     try {
       const res = await createProductCheckout(
         product.associationId,
@@ -87,6 +154,19 @@
         payerEmail
       );
       const { navigateExternal } = await import('$lib/utils/openExternal');
+      if (isMobileTauri()) {
+        // BEFORE the hand-off: the browser may open and the call still reject, or resolve after the
+        // app already returned to the screen - neither may lose the watch.
+        Log.d('ProductPurchase', 'handing to Lydia, watching for the return to the app');
+        pending = {
+          checkoutUrl: res.checkoutUrl,
+          reader: createShopCheckoutReader({
+            associationId: product.associationId,
+            productId: product.id,
+            checkoutId: res.checkoutId,
+          }),
+        };
+      }
       await navigateExternal(res.checkoutUrl);
     } catch (err) {
       // A provider refusal (Lydia: blocked venue, bad phone...) is an answer about THIS purchase and
@@ -121,4 +201,17 @@
     }}
     onClose={() => (askingPayerEmail = false)}
   />
+{/if}
+
+{#if pending}
+  <div class="mt-2 flex flex-col gap-1.5 text-xs" role="status" data-purchase-in-progress>
+    <p class="text-amber-warn-text font-medium">{m.shop_payment_in_progress_note()}</p>
+    <Button variant="link" class="self-start" onclick={() => void reopenCheckout()}>
+      {m.form_view_payment_reopen()}
+    </Button>
+  </div>
+{:else if settled}
+  <p class="text-text-muted mt-2 text-xs" role="status" data-purchase-outcome={settled}>
+    {checkoutReturnText(settled, product.type)}
+  </p>
 {/if}

@@ -76,6 +76,8 @@ export function nextEchoMessages(
       ...row,
       ...dated,
       id: serverId,
+      // The row keeps the key it was drawn under, so the re-key updates it in place (no remount).
+      renderKey: row.renderKey ?? localId,
       status: 'sent',
       awaitingServerId: undefined,
     });

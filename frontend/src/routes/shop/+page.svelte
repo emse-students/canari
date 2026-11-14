@@ -34,11 +34,15 @@
   } from '$lib/shop/productCards';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
+  import PaymentHandedNotice from '$lib/components/payments/PaymentHandedNotice.svelte';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
   import { internalPath } from '$lib/utils/internalPath';
   import { Log } from '$lib/utils/Log';
   import {
     CHECKOUT_RETURN_PARAMS,
     checkoutReturnTarget,
+    checkoutReturnText,
+    paymentReturnAppLink,
     checkoutReturnView,
     type CheckoutReturnView,
   } from '$lib/shop/checkoutReturn';
@@ -104,25 +108,6 @@
     }
   }
 
-  /**
-   * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and
-   * no Cercle delivery state - so a top-up says the payment was received and the credit follows,
-   * never that it already landed.
-   */
-  function paidText(): string {
-    if (returnProductType === 'balance_topup') return m.shop_return_topup_paid();
-    if (returnProductType === 'membership') return m.shop_return_membership_paid();
-    return m.shop_return_paid();
-  }
-
-  const CHECKOUT_RETURN_TEXT: Record<CheckoutReturnView, () => string> = {
-    checking: () => m.shop_return_checking(),
-    paid: paidText,
-    waiting: () => m.shop_return_waiting(),
-    declined: () => m.shop_return_declined(),
-    notCompleted: () => m.shop_return_not_completed(),
-    unknown: () => m.shop_return_unknown(),
-  };
   // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
 
@@ -138,6 +123,13 @@
   }
 
   const isLoggedIn = $derived(!!currentUserId());
+  /**
+   * A payer the https return left in the phone's browser has no session here: say the payment went
+   * to Lydia and offer the app, whose own read shows its confirmation. Never in the app itself.
+   */
+  const paymentReturnHref = $derived(
+    isLoggedIn || isTauriRuntime() ? null : paymentReturnAppLink(`/shop${page.url.search}`)
+  );
 
   /** Products grouped by associationId. */
   const grouped = $derived.by(() => {
@@ -204,6 +196,7 @@
 
   <div class="space-y-8">
     {#if !isLoggedIn}
+      {#if paymentReturnHref}<PaymentHandedNotice href={paymentReturnHref} />{/if}
       <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-8 text-center">
         <p class="text-text-main text-lg font-semibold">{m.shop_login_required_title()}</p>
         <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
@@ -234,7 +227,7 @@
               ? 'text-accent-text'
               : 'text-text-muted'}"
         >
-          {CHECKOUT_RETURN_TEXT[checkoutReturn]()}
+          {checkoutReturnText(checkoutReturn, returnProductType)}
         </div>
       {/if}
       <SegmentedControl

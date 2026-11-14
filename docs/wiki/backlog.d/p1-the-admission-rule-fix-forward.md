@@ -1,5 +1,7 @@
 ## P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one
 
+target: 1.7.0
+
 #2815 made a conversation refuse an external commit by a user holding no leaf, then freeze. Its
 post-merge review found it froze legitimate members out for good and dropped every later frame, so
 the owner DISARMED it on 2026-10-31: the verdict is computed and logged, the commit is merged, and
@@ -15,6 +17,10 @@ Owed, in this order, before any refusal is re-armed:
    0 `unstated`, 0 `invalid`. The window is that short because the reading took only the LIVE
    container's log (`docker logs`), and a deploy recreates the container. It is not enough to decide
    anything: it is a 4-hour window, not a measure of the legitimate paths.
+
+   **Reading, 2026-11-13 (read-only sweep of the production logs, 24 h).** 5 `[UNINVITED_ENTRY]` lines, all
+   `kind=returning`, 0 `new-person`. A 24-hour window of live logs, subject to the same dedup and restart
+   gap below, so it advances the count without closing item 1.
 
    **The gap: the count does not accumulate.** `[UNINVITED_ENTRY]` exists only as a log line, and
    its dedup set (`reportedUninvitedEntries`, `messaging.controller.ts`) is in memory per replica,

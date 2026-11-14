@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
+import { bridgeJoinSql, managedVendorTokenSql } from './lydia-account-bridge';
 
 /**
  * THE ONE CLAIM OF EVERY LYDIA CASHIER OPERATION OF AN ASSOCIATION (lots 2 and 3): the
@@ -34,12 +35,19 @@ export const LYDIA_CASHIER_CONFIRMED_REQUIRED = 'LYDIA_CASHIER_CONFIRMED_REQUIRE
 
 /** The association row as a claim reads it, locked (`FOR UPDATE`) by the transaction. */
 export interface LockedAssociation {
+  /**
+   * The Business the managers MANAGE (`managedVendorTokenSql`): on a bridge whose historical
+   * account collects, the enrolled Business - never the historical account (owner, 2026-11-13).
+   */
   vendorToken: string | null;
   claimed: boolean;
   claimToken: string | null;
 }
 
-/** Locks association `id` in `manager`'s transaction; null when it does not exist. */
+/**
+ * Locks association `id` in `manager`'s transaction (its row only: a bridge row is locked after it
+ * by a bridge transition, never by a claim); null when it does not exist.
+ */
 export async function lockAssociation(
   manager: EntityManager,
   id: string
@@ -49,9 +57,9 @@ export async function lockAssociation(
     startedAt: Date | null;
     claimToken: string | null;
   }> = await manager.query(
-    `SELECT "lydiaAccountId" AS "vendorToken", "lydiaResponsableStartedAt" AS "startedAt",
-            "lydiaCashierClaimToken" AS "claimToken"
-       FROM associations WHERE id = $1 FOR UPDATE`,
+    `SELECT ${managedVendorTokenSql('a', 'b')} AS "vendorToken",
+            a."lydiaResponsableStartedAt" AS "startedAt", a."lydiaCashierClaimToken" AS "claimToken"
+       FROM associations a ${bridgeJoinSql('a', 'b')} WHERE a.id = $1 FOR UPDATE OF a`,
     [id]
   );
   if (rows.length === 0) return null;

@@ -77,12 +77,18 @@
   let unverifiedOpen = $state(false);
   // A FAILURE IS SHOWN WHEREVER IT IS, not only on the last own message: a salon message that was
   // refused and then followed by another one must not look delivered.
+  //
+  // A SEND IN TRANSIT IS SHOWN UNDER THE BUBBLE, WHERE ITS CHECK WILL BE (2026-11-13,
+  // keyboard-and-send-motion.md). Inside, its "En attente..." / "Envoi..." line made the bubble two
+  // lines tall until delivery, and the bubble then shrank by that line in one frame, ~680 ms after
+  // the send (Mi 9T recording); Messenger's bubble never changes size. Under it, the line hands over
+  // to the check in the same row, held one `--text-2xs` line tall by that token's own line height
+  // (so text zoom moves it too) - the row keeps its height.
+  // A failure stays inside: it is an exception carrying its buttons, not a passing state.
+  const inTransit = $derived(status === 'sending' || status === 'pending');
   const showSendStatus = $derived(
     isOwn &&
-      !outsideBubble &&
-      (status === 'error' ||
-        status === 'unconfirmed' ||
-        (isLastOwn && (status === 'sending' || status === 'pending')))
+      (outsideBubble ? isLastOwn && inTransit : status === 'error' || status === 'unconfirmed')
   );
   const showSent = $derived(
     isOwn &&
@@ -139,7 +145,7 @@
 {#if show}
   <div
     class="flex w-full items-center gap-1.5 {outsideBubble
-      ? 'mt-0.5 justify-end px-0.5'
+      ? 'mt-0.5 min-h-[var(--text-2xs--line-height)] justify-end px-0.5'
       : 'mt-1 justify-end'}"
   >
     {#if showEdited}
@@ -163,6 +169,7 @@
         <span
           class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50"
           data-testid="message-pending"
+          role="status"
         >
           <Clock size={12} />
           {waitingOn === 'server'
@@ -174,7 +181,10 @@
           {@render sendActions(false)}
         </span>
       {:else if status === 'sending'}
-        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
+        <span
+          class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50"
+          role="status"
+        >
           <LoaderCircle size={12} class="animate-spin" />
           {m.common_sending_label()}
         </span>

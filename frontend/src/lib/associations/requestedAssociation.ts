@@ -1,5 +1,15 @@
-import type { Association } from '$lib/associations/api';
+import { AssociationPermissionFlag, type Association } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
+
+/**
+ * The memberships whose forms the reader MANAGES (MANAGE_FORMS): the only associations a form may be
+ * created for or moved to (owner, 2026-11-14: only the members holding "gérer les formulaires"
+ * manage an association's forms; social-service refuses anyone else `FORM_ASSOCIATION_NOT_YOURS`).
+ * Offering a plain membership was offering a choice the save refuses.
+ */
+export function formManagedAssociations(mine: Association[]): Association[] {
+  return mine.filter((a) => ((a.permissions ?? 0) & AssociationPermissionFlag.MANAGE_FORMS) !== 0);
+}
 
 /**
  * The association list a form builder offers, with the one the URL ASKED for guaranteed in it.

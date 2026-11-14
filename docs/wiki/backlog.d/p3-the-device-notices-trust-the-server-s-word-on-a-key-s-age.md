@@ -1,5 +1,7 @@
 ## P3 - The device notices trust the server's word on a key's age (review of #2791, 2026-10-31)
 
+target: 1.10.0
+
 Not built; two edges of one mechanism (`isNewToItsOwner`, `KeyFirstSight`,
 [mls-protocol](../protocols/mls-protocol.md)).
 

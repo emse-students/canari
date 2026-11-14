@@ -38,4 +38,11 @@ export class MinesweeperChallenge {
 
   @Column({ type: 'varchar', length: 16, default: 'open' })
   status!: MinesweeperChallengeStatus;
+
+  /**
+   * The mine-placement generator the board is replayed with: part of the challenge, because the same
+   * (seed, first click) makes a different board under each. 1 for a challenge issued before versions.
+   */
+  @Column({ type: 'smallint', default: 1 })
+  generatorVersion!: number;
 }

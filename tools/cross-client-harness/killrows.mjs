@@ -27,7 +27,7 @@ export const KILL_BLOCKED = { 'KILL-4': TAURI_HTTP_BLOCKED };
  * - `send-before-server`: the message POST is held, so it never reaches the server.
  * - `send-after-accept`: the server stored the message, and the answer never came back.
  * - `after-send`: the send answered, and the browser dies inside the lazy checkpoint. Only the send
- *   ledger (`sendRatchetLedger`, a synchronous localStorage write) covers the generation spent.
+ *   ledger (`sendRatchetLedger`, an IndexedDB write awaited before the POST) covers the generation spent.
  * - `after-receive`: W2's message was decrypted and shown, and the browser dies before the checkpoint
  *   that makes its seen-mark durable (`markHistoryFrameConsumed`).
  */

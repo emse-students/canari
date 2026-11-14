@@ -194,6 +194,13 @@ export interface ChatMessage {
    * pin) is unavailable until `settleSalonEcho` re-keys it. Memory only, never persisted.
    */
   awaitingServerId?: boolean;
+  /**
+   * The key the thread drew this row under the first time, when that is no longer `id`: a salon echo
+   * keeps its client UUID here once `salonEcho` re-keys it to the server's id, so `ChatMessageGroups`
+   * updates the row instead of remounting it - a remount would replay its entrance at delivery
+   * (keyboard-and-send-motion.md). Memory only, never persisted.
+   */
+  renderKey?: string;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
   /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */

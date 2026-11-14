@@ -27,8 +27,14 @@ export interface ThreadGrowth {
    * content growing under a stationary reader fires none.
    */
   wasNearBottom: boolean;
-  /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
+  /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
+  /**
+   * The pane's own box changed height in this change (the keyboard, a resize) - measured apart from
+   * the content, so a box change landing in the same mutation as a prepend is still seen. Optional: a
+   * caller that cannot tell says nothing, and the change is treated as content alone.
+   */
+  boxChanged?: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
@@ -71,6 +77,8 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * 357 px keyboard on the Mi 9T), the rows below it moved up, and the anchor "kept the reader's row"
  * by scrolling the pane UP by those 214 px: the last messages went under the composer and the
  * scroll-down arrow appeared. A text-only thread has no viewport-relative row and never showed it.
+ * (Since 2026-11-13 the media ceiling itself holds while a keyboard is up -
+ * `keyboardFreeViewportHeight` - but the rule stays: any box can shrink under a pinned reader.)
  *
  * For a reader at the bottom the bottom IS the anchor: any change of reach is followed.
  *
@@ -84,10 +92,15 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
-  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
-  // restores `scrollTop` by exactly that much; following the bottom here would throw away the
-  // history it had just fetched and land them where they already were.
-  if (growth.isLoadingOlder) return 'keep-row';
+  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
+  // and the row anchor keeps their row; following the bottom here would throw away the history it
+  // had just fetched.
+  // EXCEPT A BOX CHANGE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
+  // store is read moved the bottom, and that reader follows it - whatever the content did in the same
+  // change, since a prepend above a reader at the bottom leaves them at the bottom anyway.
+  if (growth.isLoadingOlder) {
+    return growth.wasNearBottom && growth.boxChanged === true ? 'follow-bottom' : 'keep-row';
+  }
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
@@ -222,8 +235,27 @@ export interface NewMessageState {
   catchupActive: boolean;
   /** Whether the reader was at the live end BEFORE this message. */
   isNearBottom: boolean;
-  /** The message that just landed is the reader's own, which always follows. */
+  /** The message that just landed is the reader's own, which always follows ({@link ownMessageAppended}). */
   ownMessageAdded: boolean;
+}
+
+/**
+ * WHETHER THE READER'S OWN MESSAGE WAS JUST ADDED AT THE END of the list: the newest message is
+ * theirs AND it is not the one that was newest before the list grew.
+ *
+ * 'The newest message is mine' is not that question. A list also grows at the TOP - an older page
+ * from the device, a peer's scrollback answer - and under a reader whose last message was their own
+ * every such page read as 'I just sent': the pane followed the bottom and threw them out of the
+ * history they were reading. The newest id is what tells an append from a prepend.
+ *
+ * @param previousNewestId the id of the newest message before this growth, `undefined` for an empty list
+ * @param newest the newest message now
+ */
+export function ownMessageAppended(
+  previousNewestId: string | undefined,
+  newest: { id: string; isOwn?: boolean } | undefined
+): boolean {
+  return newest?.isOwn === true && newest.id !== previousNewestId;
 }
 
 export function respondToNewMessage(state: NewMessageState): NewMessageResponse {
@@ -333,4 +365,44 @@ export interface EntryPinOutcome {
  */
 export function chatViewEntryLine(conversationId: string, outcome: EntryPinOutcome): string {
   return `${conversationId.slice(0, 8)} entry settled: pinned=${outcome.pinned} isNearBottom=${outcome.isNearBottom} newestVisible=${outcome.newestVisible} rows=${outcome.rows} fromBottom=${outcome.fromBottom}`;
+}
+
+/** The inputs of {@link appendGlidePx}: one `follow-bottom` the observer just applied. */
+export interface AppendGlide {
+  /** What triggered it: rows added or removed (`rows`), or a box changing size (`box`). */
+  cause: 'rows' | 'box';
+  /** `scrollTop` before the pin, and after it. */
+  previousScrollTop: number;
+  currentScrollTop: number;
+  /** The pane's own height before and after - a change is the keyboard, a panel or a resize. */
+  previousClientHeight: number;
+  currentClientHeight: number;
+  /** The conversation is still being entered: its first pin is a placement, not an arrival. */
+  isEntering: boolean;
+  /** `prefers-reduced-motion: reduce`. */
+  reducedMotion: boolean;
+}
+
+/** Above this share of the pane, an arrival is a batch and the thread jumps rather than glides. */
+const GLIDE_MAX_SHARE_OF_PANE = 0.5;
+
+/**
+ * HOW FAR THE THREAD GLIDES INTO ITS NEW BOTTOM, in px, or 0 to leave the pin as a jump.
+ *
+ * Messenger makes room for a new message by sliding the thread up by the row's height (~220 ms,
+ * measured 2026-11-13, keyboard-and-send-motion.md); Canari jumped there in one frame. The pin itself
+ * stays the instant `scrollTop` write it always was - the observer then plays the distance it just
+ * jumped as a transform from where the rows WERE back to where they are, so the position is final
+ * from the first frame and nothing reads a mid-glide `scrollTop`.
+ *
+ * Only an ARRIVAL glides: rows added under a reader at the bottom, by less than half the pane. A box
+ * change (the keyboard - Messenger jumps there too), the entry's placement, a batch, a shrink, or a
+ * reader who asked for reduced motion keeps the jump.
+ */
+export function appendGlidePx(g: AppendGlide): number {
+  if (g.cause !== 'rows' || g.isEntering || g.reducedMotion) return 0;
+  if (Math.abs(g.currentClientHeight - g.previousClientHeight) > 1) return 0;
+  const delta = g.currentScrollTop - g.previousScrollTop;
+  if (delta <= 0 || delta > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) return 0;
+  return delta;
 }

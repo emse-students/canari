@@ -118,8 +118,9 @@ vi.mock('$lib/forms/draftCopies', async (orig) => ({
   },
 }));
 const ASSOS = vi.hoisted(() => [
-  { id: 'a1', name: 'BDE', type: 'association' },
-  { id: 'a2', name: 'BDS', type: 'association' },
+  // The builder manages both associations' forms (MANAGE_FORMS = 16, owner 2026-11-14).
+  { id: 'a1', name: 'BDE', type: 'association', permissions: 16 },
+  { id: 'a2', name: 'BDS', type: 'association', permissions: 16 },
 ]);
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),

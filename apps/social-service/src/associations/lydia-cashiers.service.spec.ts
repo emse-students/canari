@@ -141,7 +141,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     const live = () => rows.filter((r) => !r.removedAt);
     const byId = (id: unknown) => rows.find((r) => r.id === id && !r.removedAt);
     const query = jest.fn(async (sql: string, params: unknown[] = []): Promise<unknown> => {
-      if (sql.includes('FROM associations WHERE id = $1 FOR UPDATE')) {
+      if (sql.includes('WHERE a.id = $1 FOR UPDATE OF a')) {
         return [
           {
             vendorToken: asso.vendorToken,

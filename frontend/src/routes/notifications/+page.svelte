@@ -11,6 +11,7 @@
     markDeviceNoticesRead,
     pendingDeviceNotices,
   } from '$lib/utils/chat/deviceNotices.svelte';
+  import { dropAlertsOfRevokedDevices } from '$lib/utils/chat/deviceNoticeWiring';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import {
@@ -75,6 +76,8 @@
         .map((n) => n.key)
     );
     markDeviceNoticesRead();
+    // A device revoked since its alert was raised leaves no row to act on; the server says which.
+    void dropAlertsOfRevokedDevices();
   });
 
   onMount(() => {

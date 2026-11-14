@@ -1,5 +1,6 @@
 <script lang="ts">
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import NeutralEventMark from './NeutralEventMark.svelte';
   import {
     organisersFullList,
     splitOrganiserFaces,
@@ -35,13 +36,18 @@
 <span class="inline-flex shrink-0 items-center" role="img" aria-label={fullList} title={fullList}>
   {#each faces.shown as owner, i (owner.associationId)}
     <span class="ring-cn-surface rounded-full ring-2 {i > 0 ? '-ml-2' : ''}">
-      <AssociationAvatar
-        id={owner.associationId}
-        name={owner.name}
-        logoUrl={owner.logoUrl}
-        {size}
-        shape="circle"
-      />
+      {#if owner.neutral}
+        <!-- "Campus" has no logo: a generic mark, never initials (owner, 2026-11-13). -->
+        <NeutralEventMark {size} />
+      {:else}
+        <AssociationAvatar
+          id={owner.associationId}
+          name={owner.name}
+          logoUrl={owner.logoUrl}
+          {size}
+          shape="circle"
+        />
+      {/if}
     </span>
   {/each}
   {#if faces.hidden.length > 0}

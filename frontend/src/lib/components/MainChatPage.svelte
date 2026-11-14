@@ -67,6 +67,7 @@
   import { deliverSalonWrite, nothingLeftTheDevice } from '$lib/utils/chat/salonOwed';
   import { channelReactionMap } from '$lib/stores/reactionStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
+  import { provideChatMediaSequence } from '$lib/utils/chat/chatMediaSequence';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
   import {
@@ -98,8 +99,13 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import { callsAvailable, callVideoAvailable } from '$lib/utils/callsAvailability';
-  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    callsAvailable,
+    callVideoAvailable,
+    groupCallsAvailable,
+    groupCallVideoAvailable,
+  } from '$lib/utils/callsAvailability';
+  import { serverCallsMode, serverGroupCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import type {
     AddMessageToChatOptions,
     ChatMessage,
@@ -1456,6 +1462,10 @@
     return aggregateSharedContent(msgs);
   }
 
+  // The bubbles' media viewer walks the OPEN conversation's images and videos from this same local
+  // read (never a history fetch); the id is read when a viewer opens, not when this mounts.
+  provideChatMediaSequence(async () => (await loadSharedContent(selectedConversationId)).media);
+
   /**
    * Full-conversation search returning matching message IDs oldest-first: over the local store for
    * DMs/groups, and over the full decrypted server history for channels (which are not persisted
@@ -1638,21 +1648,33 @@
   }
 
   /**
-   * Whether the conversation on screen is a one-to-one DM. A call is peer to peer since the
-   * 2026-10-17 revival, and the signalling room seats exactly two users: a group has no call
-   * button until a group design exists (calls-revival-plan WP-C4/WP-C11).
+   * The kind of conversation on screen, for its call buttons: a one-to-one DM calls whenever calls
+   * are open; a GROUP conversation calls only when the server runs group calls on the peer-to-peer
+   * mesh (WP-GC2, `serverGroupCallsMode`). A community channel has no call.
    */
-  let selectedIsDirect = $derived(
-    !!convs.selectedContact &&
-      convs.conversations.get(convs.selectedContact)?.conversationType === 'direct'
+  let selectedType = $derived(
+    convs.selectedContact
+      ? convs.conversations.get(convs.selectedContact)?.conversationType
+      : undefined
+  );
+  let canStartAudioCall = $derived(
+    selectedType === 'direct'
+      ? callsAvailable(serverCallsMode())
+      : selectedType === 'group' && groupCallsAvailable(serverCallsMode(), serverGroupCallsMode())
+  );
+  let canStartVideoCall = $derived(
+    selectedType === 'direct'
+      ? callVideoAvailable(serverCallsMode())
+      : selectedType === 'group' &&
+          groupCallVideoAvailable(serverCallsMode(), serverGroupCallsMode())
   );
 
-  /** Starts a voice or video call in the one-to-one conversation on screen. */
+  /** Starts a voice or video call in the conversation on screen: a DM, or a group (WP-GC2). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo) return;
-    if (convo.conversationType !== 'direct') return;
+    if (convo.conversationType !== 'direct' && convo.conversationType !== 'group') return;
     if (convo.lifecycle !== 'active') {
       showToast(m.chat_call_session_not_ready(), 'warning');
       return;
@@ -1824,12 +1846,12 @@
           onRemovePendingFile={(index) =>
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
-          onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
+          onStartAudioCall={canStartAudioCall
             ? () => {
                 void startCallForCurrentConversation(false);
               }
             : undefined}
-          onStartVideoCall={callVideoAvailable(serverCallsMode()) && selectedIsDirect
+          onStartVideoCall={canStartVideoCall
             ? () => {
                 void startCallForCurrentConversation(true);
               }

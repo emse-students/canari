@@ -374,6 +374,12 @@ export interface ListedSpace {
   poster: SpacePoster | null;
 }
 
+/** The person a booker may write to about a space. */
+export interface SpaceContact {
+  userId: string;
+  displayName: string;
+}
+
 /** A resource as a booker reads it: no private text (D32). */
 export interface BookerResource {
   id: string;
@@ -409,6 +415,11 @@ export interface BookerSpace {
   poster: SpacePoster | null;
   /** The reader manages the space: they book on behalf, block, cancel any coming booking. */
   canManage: boolean;
+  /**
+   * Who is responsible for the space (its personal owner, or the first member holding the booking
+   * right): the person the "Contact" button opens a DM with. Null: show nobody.
+   */
+  contact: SpaceContact | null;
   resources: BookerResource[];
 }
 
