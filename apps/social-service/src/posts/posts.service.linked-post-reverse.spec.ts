@@ -98,6 +98,15 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     expect(calls[0].params).toEqual(['event-1', null]);
   });
 
+  it('never serves a post scheduled for later: the statement keeps published posts only', async () => {
+    // The feeds, the search and the by-id gate all refuse an unpublished post; this read did not.
+    const { service, calls } = makeService([ROW]);
+    await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
+    expect(calls[0].sql).toMatch(
+      /AND \(posts\."scheduledAt" IS NULL OR posts\."scheduledAt" <= NOW\(\)\)/
+    );
+  });
+
   it('returns only a post the viewer may see (WP6b), the viewer being the last parameter', async () => {
     const { service, calls } = makeService([ROW]);
     await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);

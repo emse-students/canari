@@ -410,6 +410,24 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     expect(on).toEqual([...ADMITTED]);
   });
 
+  it("the agenda's link back never serves a post scheduled for later, whoever reads", async () => {
+    // Audience audit, 2026-11-14: the statement had no schedule term, so every reader of the
+    // association read an unpublished post through the event's card.
+    const linked = (reader: Reader) => async () =>
+      (
+        await statementRows(/"linkedCalendarEventId" = \$1/, (svc) =>
+          svc.findPostLinkedToCalendarEvent(EVENT, reader, false)
+        )
+      ).some((r) => r.id === P);
+    await q(`UPDATE posts SET "scheduledAt" = NOW() + interval '1 day' WHERE id = $1`, [P]);
+    try {
+      expect(await whoOf((r) => linked(r)())).toEqual([]);
+    } finally {
+      await q(`UPDATE posts SET "scheduledAt" = NULL WHERE id = $1`, [P]);
+    }
+    expect((await whoOf((r) => linked(r)())).length).toBeGreaterThan(0);
+  });
+
   it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(
     'the post by id, intent %s (`readPostOpenVerdict`): ON, the admin browsing is refused too',
     async (intent: PostAccessIntent) => {

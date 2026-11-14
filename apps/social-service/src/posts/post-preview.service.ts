@@ -33,8 +33,8 @@ import { PostCardCache } from './post-card-cache';
  * publication instant, and a post marked "Entre étudiants" (owner, 2026-11-04). A per-post audience used to be a fourth refusal (D33, WP6b: an author who
  * chose who sees a post did not choose "anyone holding the link"), but the per-post audiences table
  * was dropped in migration 073 and nothing in {@link PostPreviewService.findShareable} reads one any
- * more. Whether a campus-restricted post should still preview is a question left open for the user,
- * not decided here. Reactions, comments, poll results, mentions and the author's user id are
+ * more. A post of an association addressing one campus or one formation STILL previews (owner,
+ * 2026-11-14: "Garder tel quel" - sharing the link is the sharer's choice). Reactions, comments, poll results, mentions and the author's user id are
  * not in the payload at all - a preview card needs none of them, and the cheapest way not to leak
  * a field is not to select it.
  */

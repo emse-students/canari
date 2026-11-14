@@ -2505,6 +2505,11 @@ export class PostsService {
    * its association, so the post of a neutral event would name the owner the presentation hides.
    * The link write and the presentation switch exclude each other (`saveWithEventLink`), so no
    * post links a neutral event; this join is the read's own statement of the same rule.
+   *
+   * ONLY A PUBLISHED POST (audience audit, 2026-11-14): a post scheduled for later is not served,
+   * its author included - an event card is a public surface, and the by-id gate hides an
+   * unpublished post's very existence (`readPostOpenVerdict`, term 4). Without the term, every
+   * reader of the association read a scheduled post here before its hour.
    */
   async findPostLinkedToCalendarEvent(
     eventId: string,
@@ -2526,6 +2531,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
          AND NOT COALESCE(posts."hiddenByModeration", false)
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
